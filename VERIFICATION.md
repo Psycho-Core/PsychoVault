@@ -1097,3 +1097,9 @@ Local audit, unit tests, JavaScript/shell syntax, YAML parsing, and whitespace c
 installer build itself passed on GitHub Actions, but the current repository quota prevents a
 reliable downloadable CI artifact. A public v1.0.4 release still requires the Actions update-signing
 secret, and the installer still needs an Authenticode certificate to show a verified Windows publisher.
+
+Because no signed v1.0.4 release had been published and the earlier private key was unavailable in
+this workspace, the Ed25519 key pair was rotated before release. The new public key is in
+`app/update-public-key.pem`; its matching private key remains outside the repository with mode 0600
+and passed a local sign/verify smoke test. The new matching key must be stored as
+`UPDATE_SIGNING_PRIVATE_KEY_B64` before publishing.
