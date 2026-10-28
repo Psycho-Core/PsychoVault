@@ -22,6 +22,9 @@ contextBridge.exposeInMainWorld('pv', {
     stop: () => invoke('nav:stop'),
     home: () => invoke('nav:home')
   },
+  translate: {
+    page: () => invoke('translate:page')
+  },
   win: {
     minimize: () => invoke('win:minimize'),
     maximize: () => invoke('win:maximize'),

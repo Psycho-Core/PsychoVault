@@ -37,11 +37,11 @@ extension from tunnelling traffic here. The round's other pictures show a tab he
 downloads panel live. Nothing here is a mock-up, and each working feature is followed by its
 assertion in `VERIFICATION.md`.
 
-Settings now has seventeen focused sections grouped into nine categories: General, Privacy & security,
-Downloads, Extensions, Performance, Appearance, Spelling, Passwords, and About. The category
-navigation keeps the long list out of your way and remembers where you left off. The screenshots
-above show the former layout; the running page is navigable by category. Every control still writes
-to disk.
+Settings now has nineteen focused sections grouped into ten categories: General, Privacy & security,
+Downloads, Extensions, Performance, Appearance, Spelling, Passwords, Accessibility & language, and
+About. The category navigation keeps the long list out of your way and remembers where you left off.
+The screenshots above show the former layout; the running page is navigable by category. Every control
+still writes to disk.
 
 The pinned-tab screenshot predates the sizing fix: it shows the old favicon-only pill.
 Pinned tabs now keep the same width as regular tabs, while retaining the pin marker, omitting
@@ -75,8 +75,10 @@ it were restored in the same way.
 | Sidebar | Bookmarks, history and downloads in a panel that pushes the page instead of covering it |
 | Find in page | `Ctrl+F`, live match count |
 | Zoom | Per tab, `Ctrl+plus`, `Ctrl+minus`, `Ctrl+0` |
+| Page translation | Choose one of 20 target languages in Settings, then choose **Translate current page** from the top-right Menu button or command palette. PsychoVault asks before sending the current page URL to Google Translate; it opens a translated copy in a new tab and leaves the original alone. Google may fetch the page, and some sites may not translate correctly. |
+| Accessibility | High-contrast browser controls, less animation in PsychoVault and pages that honor reduced-motion CSS, visible keyboard focus, arrow/Home/End tab navigation with screen-reader tab names, and an option to keep tab-close buttons visible. Find these in **Settings → Accessibility & language**. |
 | Downloads | A Save As dialog is mandatory for every file, opened in your chosen starting folder with the suggested name - choose the exact destination, and cancel to stop the download. Live percentage in the rail badge, a message when a file starts (naming the folder) and when it finishes, a system notification if the window is behind something, and a panel that states where files go with a **Change** button |
-| Settings | Seventeen sections in nine navigable categories: search engine, blocking, third-party cookies, DNT/GPC, autoplay, history, restore, home page, governor (CPU + sleeping tabs + battery saver), accent colour, sidebar visibility, speed dial tiles, mandatory Save As downloads, delete-on-exit, a live list of every file in your profile, the vault, GX Control, sidebar services, containers, WebRTC/DNS/referrer hardening and stylesheet mods |
+| Settings | Nineteen sections in ten navigable categories: General, Privacy & security, Downloads, Extensions, Performance, Appearance, Spelling, Passwords, Accessibility & language, and About. Includes search engine, blocking, cookies, tracking signals, autoplay, history, governor, Save As downloads, delete-on-exit, profile cleanup, vault, extensions, browser appearance, translation language, and accessibility controls |
 | GX Control | Live per-tab memory and CPU (`Ctrl+Shift+H` or the speedometer in the rail), sleep any tab from the panel, CPU priority limiter, RAM governor, bandwidth cap on downloads, battery saver that switches itself on when you unplug |
 | Tab islands | A tab opened from a page joins that page's island; the group gets a collapse control in the strip, and the tab you are reading is never hidden by a collapse |
 | Containers | Named cookie jar + localStorage + cache per tab (Work, Shopping, Social, Banking, or your own), assigned from the tab menu, dot in the strip, so two identities on one site never touch |
@@ -149,7 +151,7 @@ does not any more.
 this archive into:
 
 ```bash
-sha256sum -c SHA256SUMS.txt          # Windows: certutil -hashfile PsychoVault-Setup-1.0.2.exe SHA256
+sha256sum -c SHA256SUMS.txt          # Windows: certutil -hashfile PsychoVault-Setup-1.0.3.exe SHA256
 ```
 
 No document packed inside the installer carries the hash of the archive containing it,
@@ -184,6 +186,8 @@ rights, writes no services, and registers a normal uninstall entry.
 ```
 app/
   main.js            windows, tabs, sessions, blocking, stores, menus, IPC
+  download-save.js  fail-closed, paused Save As handoff
+  translation.js    supported target languages and safe Google Translate URL builder
   preload.js         contextBridge surface, whitelisted channels only
   page-preload.js    bridge for psychovault:// pages only - web pages get nothing
   blocklist.json     262 blocked domains
@@ -192,14 +196,13 @@ app/
     style.css        navy/cyan design tokens
     renderer.js      tab rendering, omnibox, palette, panels, shortcuts
     newtab.html      new tab page
-    settings.html    settings page (17 sections in 9 categories, incl. the vault and extensions)
+    settings.html    settings page (19 sections in 10 categories, incl. translation, accessibility, vault, extensions)
   package.json
 tools/
   build-installer.sh rebuild the Windows installer from a staged Electron tree, then verify
                        what actually went inside it
-  audit.mjs          static self-check: every IPC bridge has a handler, every declared
-                     setting has a control on the page, every id referenced by the UI
-                     exists, no dead handlers - exits non-zero when it finds a defect
+  audit.mjs          static self-check: IPC, settings, UI ids, translation, accessibility, syntax
+  translation.test.cjs tests URL construction, unsafe inputs, and supported languages
 installer.nsi        NSIS script, per-user install
 docs/                screenshots used above
 VERIFICATION.md      test log

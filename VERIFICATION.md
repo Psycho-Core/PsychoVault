@@ -1031,3 +1031,27 @@ JavaScript/shell syntax checks through the audit, and `git diff --check`. The Wi
 is built by the source-based GitHub Actions workflow. The native Windows picker itself still needs a
 manual Windows run; the helper tests verify the event ordering and fail-closed behavior without
 pretending to draw a native dialog.
+
+## Round 31 - page translation and accessibility controls
+
+- Added a target-language choice with 20 destinations under **Settings → Accessibility & language**.
+  The browser Menu and command palette can translate the active HTTP(S) page. PsychoVault asks for
+  consent before opening Google's webpage-translation route, explains that Google receives the full
+  page URL and retrieves its contents, leaves the original tab untouched, and opens the translated
+  copy in a new tab. Internal pages, credential-bearing URLs, and unsupported language codes are
+  rejected by the URL builder. Google Translate needs an internet connection and may not work on
+  every site; do not use it for sensitive pages.
+- Added optional high-contrast browser chrome and Settings colors, reduced-motion styling for the
+  browser and Settings (also honoring the OS preference) plus a reduced-motion stylesheet for pages,
+  and a setting that keeps tab-close buttons visible. Browser tab items now expose tab names and
+  selected state to assistive technology, support Left/Right/Home/End/Enter/Space keyboard use, and
+  provide an accessible button for expanding/collapsing tab islands. Focus rings, accessible names
+  for browser controls, status announcements, and Settings control focus styles were also improved.
+- Bumped the app version to 1.0.3. The installer staging/verification script now checks
+  `translation.js`; the release workflow runs the complete test glob alongside the static audit.
+
+Checks run: `node tools/audit.mjs` (no defects), `node --test tools/*.test.cjs` (7 passed),
+JavaScript syntax checks and shell syntax validation through the audit, and `git diff --check`.
+A Windows installer/runtime GUI test was not run in this sandbox because no Electron display/runtime
+is available. The Google Translate route is an external service, so a live translation test also
+requires an internet-enabled app session.

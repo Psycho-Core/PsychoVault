@@ -20,6 +20,7 @@ const chromeJs = read('ui/renderer.js')
 const settingsHtml = read('ui/settings.html')
 const newtabHtml = read('ui/newtab.html')
 const downloadSave = read('download-save.js')
+const translation = read('translation.js')
 const css = read('ui/style.css')
 
 const defects = []
@@ -80,6 +81,15 @@ if (downloadFlow.includes('showSaveDialogSync')) defects.push('downloads: the Sa
 if (!downloadSave.includes('item.pause()') || !downloadSave.includes('dialog.showSaveDialog') || !downloadSave.includes('item.setSavePath') || !downloadSave.includes('item.cancel()')) defects.push('downloads: pause, async Save As, selected path, and cancellation must all be implemented')
 if (downloadSave.indexOf('item.pause()') > downloadSave.indexOf('dialog.showSaveDialog')) defects.push('downloads: the transfer must be paused before the Save As dialog opens')
 if (downloadFlow.includes('settings.askSaveLocation')) defects.push('downloads: legacy setting still controls whether Save As appears')
+if (!translation.includes("new URL('https://translate.google.com/translate')") || !translation.includes("searchParams.set('sl', 'auto')")) defects.push('translation: the in-app translation URL must auto-detect the source language')
+if (!main.includes("ipcMain.handle('translate:page'") || !main.includes('Google Translate will receive this page URL')) defects.push('translation: page translation must be bridged and disclose the third-party URL/content request')
+if (!chromeHtml.includes('data-cmd="translate"') || !chromeJs.includes('translateCurrentPage')) defects.push('translation: the page-translation action must be discoverable from browser chrome')
+if (!settingsHtml.includes('id="translateTarget"')) defects.push('translation: target language needs a Settings control')
+if (!css.includes('body.high-contrast') || !css.includes('body.reduce-motion') || !css.includes('body.always-show-tab-close')) defects.push('accessibility: high contrast, reduced motion, and persistent tab controls must be styled')
+if (!chromeHtml.includes('role="tablist"') || !chromeJs.includes("setAttribute('role', 'tab')")) defects.push('accessibility: the tab strip needs accessible tab semantics')
+if (!chromeJs.includes("e.key === 'ArrowRight'") || !chromeJs.includes("e.key === 'Home'") || !chromeJs.includes("e.key === 'End'")) defects.push('accessibility: tabs need keyboard selection and navigation keys')
+if (!chromeHtml.includes('aria-label="Search the web or enter an address"') || !chromeHtml.includes('aria-live="polite"')) defects.push('accessibility: browser controls and status feedback need accessible names/announcements')
+if (!settingsHtml.includes('select:focus-visible') || !settingsHtml.includes('input[type=text]:focus-visible')) defects.push('accessibility: Settings form fields need visible keyboard focus')
 
 // A BrowserWindow maximize event must never publish a partial state snapshot that
 // replaces the tab list in the chrome renderer. Pinned tabs should use the normal tab
@@ -168,7 +178,7 @@ for (const [file, which] of Object.entries(PAGE_PRELOAD_FOR)) {
   }
 }
 
-for (const f of ['main.js', 'download-save.js', 'preload.js', 'page-preload.js', 'spell-page.js', 'ui/renderer.js']) {
+for (const f of ['main.js', 'download-save.js', 'translation.js', 'preload.js', 'page-preload.js', 'spell-page.js', 'ui/renderer.js']) {
   try { execFileSync(process.execPath, ['--check', A(f)], { stdio: 'pipe' }) }
   catch (e) { defects.push(`${f}: does not parse - ${String(e.stderr).split('\n')[0]}`) }
 }

@@ -10,23 +10,23 @@
 
   <!-- left icon rail -->
   <div id="rail">
-    <button class="rail-btn" data-panel="bookmarks" title="Bookmarks">
+    <button class="rail-btn" data-panel="bookmarks" title="Bookmarks" aria-label="Bookmarks" aria-controls="panel" aria-expanded="false">
       <svg viewBox="0 0 16 16"><path d="M3 1h10v14l-5-3.4L3 15z"/></svg>
     </button>
-    <button class="rail-btn" data-panel="history" title="History">
+    <button class="rail-btn" data-panel="history" title="History" aria-label="History" aria-controls="panel" aria-expanded="false">
       <svg viewBox="0 0 16 16"><path d="M8 2a6 6 0 1 0 6 6h-2a4 4 0 1 1-4-4v3l4-4-4-4z"/></svg>
     </button>
-    <button class="rail-btn" data-panel="downloads" title="Downloads">
+    <button class="rail-btn" data-panel="downloads" title="Downloads" aria-label="Downloads" aria-controls="panel" aria-expanded="false">
       <svg viewBox="0 0 16 16"><path d="M7 1h2v8h3l-4 5-4-5h3zM2 14h12v2H2z"/></svg>
     </button>
     <div class="rail-sep"></div>
     <div id="rail-svc"></div>
     <div class="rail-sep"></div>
-    <button class="rail-btn" id="btn-private" title="New private window">
+    <button class="rail-btn" id="btn-private" title="New private window" aria-label="New private window">
       <svg viewBox="0 0 16 16"><path d="M8 1l6 3v5c0 3-2.6 5.3-6 6-3.4-.7-6-3-6-6V4z"/></svg>
     </button>
     <div style="flex:1"></div>
-    <button class="rail-btn" id="btn-settings" title="Settings">
+    <button class="rail-btn" id="btn-settings" title="Settings" aria-label="Settings">
       <svg viewBox="0 0 16 16"><path d="M8 5.5A2.5 2.5 0 1 0 8 10.5 2.5 2.5 0 0 0 8 5.5zm6 2.5l1.4 1.1-1.4 2.4-1.7-.6-1.2.7-.3 1.8h-2.8l-.3-1.8-1.2-.7-1.7.6L1.4 9.1 3 8 3 8l-1.5-1.1L3 4.5l1.7.6 1.2-.7.3-1.8h2.8l.3 1.8 1.2.7 1.7-.6 1.4 2.4L12 8z"/></svg>
     </button>
   </div>
@@ -36,38 +36,38 @@
     <div id="tabstrip">
       <div id="logo"></div>
       <div id="private-badge" class="hidden">Private</div>
-      <div id="tabs"></div>
-      <button id="btn-newtab" title="New tab">+</button>
+      <div id="tabs" role="tablist" aria-label="Open tabs" aria-orientation="horizontal"></div>
+      <button id="btn-newtab" title="New tab" aria-label="New tab">+</button>
       <div id="ws"></div>
       <div id="drag"></div>
       <div id="winctl">
-        <button class="wc" id="wc-min" title="Minimise"><svg viewBox="0 0 10 10"><path d="M1 5h8v1H1z"/></svg></button>
-        <button class="wc" id="wc-max" title="Maximise"><svg viewBox="0 0 10 10"><path d="M1 1h8v8H1V1zm1 1v6h6V2H2z"/></svg></button>
-        <button class="wc close" id="wc-close" title="Close"><svg viewBox="0 0 10 10"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" stroke-width="1.4" fill="none"/></svg></button>
+        <button class="wc" id="wc-min" title="Minimise" aria-label="Minimise window"><svg viewBox="0 0 10 10"><path d="M1 5h8v1H1z"/></svg></button>
+        <button class="wc" id="wc-max" title="Maximise" aria-label="Maximise window"><svg viewBox="0 0 10 10"><path d="M1 1h8v8H1V1zm1 1v6h6V2H2z"/></svg></button>
+        <button class="wc close" id="wc-close" title="Close" aria-label="Close window"><svg viewBox="0 0 10 10"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" stroke-width="1.4" fill="none"/></svg></button>
       </div>
     </div>
 
     <div id="toolbar">
-      <button class="nav" id="btn-back" title="Back"><svg viewBox="0 0 16 16"><path d="M10.5 2.5L5 8l5.5 5.5 1-1L7 8l4.5-4.5z"/></svg></button>
-      <button class="nav" id="btn-fwd" title="Forward"><svg viewBox="0 0 16 16"><path d="M5.5 2.5L11 8l-5.5 5.5-1-1L9 8 4.5 3.5z"/></svg></button>
-      <button class="nav" id="btn-reload" title="Reload"><svg viewBox="0 0 16 16"><path d="M8 2a6 6 0 1 0 5.7 4.1h-2.1A4 4 0 1 1 8 4v3l4-4-4-4z"/></svg></button>
-      <button class="nav" id="btn-home" title="Home"><svg viewBox="0 0 16 16"><path d="M8 1l7 6h-2v8H9v-5H7v5H3V7H1z"/></svg></button>
+      <button class="nav" id="btn-back" title="Back" aria-label="Go back"><svg viewBox="0 0 16 16"><path d="M10.5 2.5L5 8l5.5 5.5 1-1L7 8l4.5-4.5z"/></svg></button>
+      <button class="nav" id="btn-fwd" title="Forward" aria-label="Go forward"><svg viewBox="0 0 16 16"><path d="M5.5 2.5L11 8l-5.5 5.5-1-1L9 8 4.5 3.5z"/></svg></button>
+      <button class="nav" id="btn-reload" title="Reload" aria-label="Reload page"><svg viewBox="0 0 16 16"><path d="M8 2a6 6 0 1 0 5.7 4.1h-2.1A4 4 0 1 1 8 4v3l4-4-4-4z"/></svg></button>
+      <button class="nav" id="btn-home" title="Home" aria-label="Go to home page"><svg viewBox="0 0 16 16"><path d="M8 1l7 6h-2v8H9v-5H7v5H3V7H1z"/></svg></button>
 
-      <button class="nav" id="btn-split" title="Split view (Ctrl+\\)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.75" y="3" width="5" height="10" rx="1"/><rect x="9.25" y="3" width="5" height="10" rx="1"/></svg></button>
+      <button class="nav" id="btn-split" title="Split view (Ctrl+\\)" aria-label="Toggle split view" aria-pressed="false"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.75" y="3" width="5" height="10" rx="1"/><rect x="9.25" y="3" width="5" height="10" rx="1"/></svg></button>
 
       <div id="omnibox-wrap">
         <div id="shield" title="Tracker blocking">
           <svg viewBox="0 0 16 16"><path d="M8 1l6 3v5c0 3-2.6 5.3-6 6-3.4-.7-6-3-6-6V4z"/></svg>
           <span id="shield-count">0</span>
         </div>
-        <input id="omnibox" type="text" spellcheck="false" autocomplete="off"
+        <input id="omnibox" type="text" spellcheck="false" autocomplete="off" aria-label="Search the web or enter an address"
                placeholder="Search the web or enter an address">
-        <button id="btn-bookmark" title="Bookmark this page">
+        <button id="btn-bookmark" title="Bookmark this page" aria-label="Bookmark this page" aria-pressed="false">
           <svg viewBox="0 0 16 16"><path d="M3 1h10v14l-5-3.4L3 15z"/></svg>
         </button>
       </div>
 
-      <button class="nav" id="btn-menu" title="Menu"><svg viewBox="0 0 16 16"><path d="M2 4h12v1.6H2zM2 7.2h12v1.6H2zM2 10.4h12V12H2z"/></svg></button>
+      <button class="nav" id="btn-menu" title="Menu" aria-label="Open menu" aria-haspopup="true" aria-controls="menu" aria-expanded="false"><svg viewBox="0 0 16 16"><path d="M2 4h12v1.6H2zM2 7.2h12v1.6H2zM2 10.4h12V12H2z"/></svg></button>
     </div>
   </div>
 
@@ -76,7 +76,7 @@
   <!-- command palette -->
   <div id="palette" class="hidden">
     <div id="palette-box">
-      <input id="palette-input" placeholder="Type a command or a URL" spellcheck="false" autocomplete="off">
+      <input id="palette-input" placeholder="Type a command or a URL" aria-label="Type a command or a URL" spellcheck="false" autocomplete="off">
       <div id="palette-list"></div>
       <div id="palette-foot"><span>Enter to run</span><span>Esc to close</span><span>Ctrl+K anytime</span></div>
     </div>
@@ -86,15 +86,15 @@
 
   <!-- side panel -->
   <div id="panel" class="hidden">
-    <div id="panel-head"><span id="panel-title">Bookmarks</span><button id="panel-close">&times;</button></div>
+    <div id="panel-head"><span id="panel-title">Bookmarks</span><button id="panel-close" aria-label="Close panel">&times;</button></div>
     <div id="panel-body"></div>
   </div>
 
   <!-- find bar -->
   <div id="findbar" class="hidden">
-    <input id="find-input" placeholder="Find in page">
+    <input id="find-input" placeholder="Find in page" aria-label="Find in page">
     <span id="find-count"></span>
-    <button id="find-close">&times;</button>
+    <button id="find-close" aria-label="Close find bar">&times;</button>
   </div>
 
   <!-- status bar -->
@@ -107,6 +107,7 @@
     <button data-cmd="reopen">Reopen closed tab<span>Ctrl+Shift+T</span></button>
     <div class="sep"></div>
     <button data-cmd="find">Find in page<span>Ctrl+F</span></button>
+    <button data-cmd="translate">Translate current page</button>
     <button data-cmd="zoomin">Zoom in<span>Ctrl++</span></button>
     <button data-cmd="zoomout">Zoom out<span>Ctrl+-</span></button>
     <button data-cmd="zoomreset">Reset zoom<span>Ctrl+0</span></button>
@@ -119,7 +120,7 @@
     <button data-cmd="devtools">Developer tools<span>Ctrl+Shift+I</span></button>
   </div>
 
-  <div id="toast" class="hidden"></div>
+  <div id="toast" class="hidden" role="status" aria-live="polite"></div>
 </div>
 <script src="renderer.js"></script>
 </body>
