@@ -14,20 +14,36 @@ const installerPath = path.resolve(process.argv[2] || '')
 const assetName = `${PRODUCT}-Setup-${version}.exe`
 const expectedInstaller = path.join(ROOT, assetName)
 const repository = process.env.GITHUB_REPOSITORY || REPOSITORY
-const secret = String(process.env.UPDATE_SIGNING_PRIVATE_KEY_B64 || '').replace(/\s+/g, '')
+const rawSecret = String(process.env.UPDATE_SIGNING_PRIVATE_KEY_B64 || '').trim().replace(/^["']|["']$/g, '')
 
 if (repository !== REPOSITORY) throw new Error(`Refusing to sign for unexpected repository: ${repository}`)
 if (!process.argv[2] || installerPath !== expectedInstaller) {
   throw new Error(`Usage: node tools/sign-update-manifest.mjs ${assetName}`)
 }
 if (!fs.existsSync(installerPath) || !fs.statSync(installerPath).isFile()) throw new Error(`Installer not found: ${installerPath}`)
-if (!secret) throw new Error('Missing UPDATE_SIGNING_PRIVATE_KEY_B64. Add the Ed25519 private key as a GitHub Actions repository secret.')
-if (!/^[A-Za-z0-9+/]+={0,2}$/.test(secret)) throw new Error('UPDATE_SIGNING_PRIVATE_KEY_B64 is not valid base64.')
+if (!rawSecret) throw new Error('Missing UPDATE_SIGNING_PRIVATE_KEY_B64. Add the Ed25519 private key as a GitHub Actions repository secret.')
 
-const privatePem = Buffer.from(secret, 'base64').toString('utf8')
-let privateKey
-try { privateKey = crypto.createPrivateKey(privatePem) }
-catch { throw new Error('Could not parse UPDATE_SIGNING_PRIVATE_KEY_B64 as a PEM private key.') }
+// Accept a raw PEM, base64-wrapped PEM, base64 PKCS#8 DER, or a base64 32-byte Ed25519 seed.
+function parsePrivateKey(value) {
+  const candidates = []
+  const unescaped = value.replace(/\\n/g, '\n')
+  if (unescaped.includes('-----BEGIN')) candidates.push({ key: unescaped, format: 'pem' })
+  const compact = value.replace(/\s+/g, '')
+  if (/^[A-Za-z0-9+/_-]+={0,2}$/.test(compact)) {
+    const bytes = Buffer.from(compact.replace(/-/g, '+').replace(/_/g, '/'), 'base64')
+    const text = bytes.toString('utf8')
+    if (text.includes('-----BEGIN')) candidates.push({ key: text.replace(/\\n/g, '\n'), format: 'pem' })
+    candidates.push({ key: bytes, format: 'der', type: 'pkcs8' })
+    if (bytes.length === 32) {
+      candidates.push({ key: Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), bytes]), format: 'der', type: 'pkcs8' })
+    }
+  }
+  for (const candidate of candidates) {
+    try { return crypto.createPrivateKey(candidate) } catch {}
+  }
+  throw new Error('Could not parse UPDATE_SIGNING_PRIVATE_KEY_B64 as an Ed25519 private key (PEM, base64 PEM, or base64 PKCS#8).')
+}
+const privateKey = parsePrivateKey(rawSecret)
 if (privateKey.asymmetricKeyType !== 'ed25519') throw new Error('The update signing key must be an Ed25519 private key.')
 
 const publicPath = path.join(ROOT, 'app', 'update-public-key.pem')
