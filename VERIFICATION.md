@@ -1101,8 +1101,13 @@ That run skipped signing and public-release creation because the Actions update-
 not available. A public v1.0.4 release still requires that secret, and the installer still needs an
 Authenticode certificate to show a verified Windows publisher.
 
-Because no signed v1.0.4 release had been published and the earlier private key was unavailable in
-this workspace, the Ed25519 key pair was rotated before release. The new public key is in
-`app/update-public-key.pem`; its matching private key remains outside the repository with mode 0600
-and passed a local sign/verify smoke test. The new matching key must be stored as
+## Round 34 - re-establishing the release signing key
+
+The merge-triggered Master run 40757959144 built and verified the installer, but its signing and
+publishing steps were skipped because `UPDATE_SIGNING_PRIVATE_KEY_B64` was still unavailable. The
+matching private key from the earlier rotation was no longer present in this workspace, and no
+signed v1.0.4 release used that key. A replacement Ed25519 pair was generated: the public key is
+`app/update-public-key.pem`, and its private counterpart is outside the repository at
+`/home/user/.psychovault-update-signing-private.pem` (mode 0600). A local temporary-payload
+sign/verify smoke test passed. Save this current key—not an earlier value—as
 `UPDATE_SIGNING_PRIVATE_KEY_B64` before publishing.
