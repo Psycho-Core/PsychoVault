@@ -1094,9 +1094,12 @@ configuration is still a manual maintainer step; do not treat signed releases as
   rather than Electron; confirmation of the visible label still requires a Windows run.
 
 Local audit, unit tests, JavaScript/shell syntax, YAML parsing, and whitespace checks pass. The
-installer build itself passed on GitHub Actions, but the current repository quota prevents a
-reliable downloadable CI artifact. A public v1.0.4 release still requires the Actions update-signing
-secret, and the installer still needs an Authenticode certificate to show a verified Windows publisher.
+installer build passed on GitHub Actions. Run 40749613268 could not retain its artifact because the
+repository Actions-storage quota was full; the later run 40754930467 successfully uploaded
+`PsychoVault-Setup-1.0.4-unsigned` (116,541,456 bytes). Artifact retention may still be quota-sensitive.
+That run skipped signing and public-release creation because the Actions update-signing secret was
+not available. A public v1.0.4 release still requires that secret, and the installer still needs an
+Authenticode certificate to show a verified Windows publisher.
 
 Because no signed v1.0.4 release had been published and the earlier private key was unavailable in
 this workspace, the Ed25519 key pair was rotated before release. The new public key is in
