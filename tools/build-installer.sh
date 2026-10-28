@@ -29,8 +29,8 @@ rm -rf "$STAGE/resources/app" "$STAGE/resources/app.asar"
 echo "[2/4] copying app source"
 mkdir -p "$STAGE/resources/app"
 cp -a app/. "$STAGE/resources/app/"
-for f in main.js download-save.js translation.js preload.js page-preload.js spell-page.js spell-words.txt \
-         ui/renderer.js ui/style.css ui/settings.html; do
+for f in main.js download-save.js translation.js update-manifest.js update-public-key.pem auto-updater.js \
+         preload.js page-preload.js spell-page.js spell-words.txt ui/renderer.js ui/style.css ui/settings.html; do
   if [ -f "app/$f" ]; then
     cmp -s "$STAGE/resources/app/$f" "app/$f" || { echo "  MISMATCH in staged $f"; exit 1; }
     echo "  ok  $f  $(stat -c %s "app/$f") bytes"
@@ -56,6 +56,7 @@ echo "[4/4] verifying what actually went inside"
 V=/var/tmp/vfy-$$; mkdir -p "$V"
 7z x -y -bso0 -bse0 "$OUT" 'resources/app/*' README.txt LICENSE.txt VERIFICATION.txt -o"$V" > /dev/null 2>&1
 for f in resources/app/main.js resources/app/download-save.js resources/app/translation.js \
+         resources/app/update-manifest.js resources/app/update-public-key.pem resources/app/auto-updater.js \
          resources/app/spell-page.js resources/app/spell-words.txt resources/app/preload.js \
          resources/app/page-preload.js resources/app/ui/renderer.js resources/app/ui/style.css \
          resources/app/ui/settings.html; do

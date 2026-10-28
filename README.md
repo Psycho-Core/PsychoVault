@@ -76,6 +76,7 @@ it were restored in the same way.
 | Find in page | `Ctrl+F`, live match count |
 | Zoom | Per tab, `Ctrl+plus`, `Ctrl+minus`, `Ctrl+0` |
 | Page translation | Choose one of 20 target languages in Settings, then choose **Translate current page** from the top-right Menu button or command palette. PsychoVault asks before sending the current page URL to Google Translate; it opens a translated copy in a new tab and leaves the original alone. Google may fetch the page, and some sites may not translate correctly. |
+| Automatic updates | On Windows x64, checks public GitHub Releases at startup. It asks before downloading and shows Save As for the installer, verifies an Ed25519-signed update manifest and the installer SHA-256 against a public key bundled with PsychoVault, then opens the verified installer. |
 | Accessibility | High-contrast browser controls, less animation in PsychoVault and pages that honor reduced-motion CSS, visible keyboard focus, arrow/Home/End tab navigation with screen-reader tab names, and an option to keep tab-close buttons visible. Find these in **Settings → Accessibility & language**. |
 | Downloads | A Save As dialog is mandatory for every file, opened in your chosen starting folder with the suggested name - choose the exact destination, and cancel to stop the download. Live percentage in the rail badge, a message when a file starts (naming the folder) and when it finishes, a system notification if the window is behind something, and a panel that states where files go with a **Change** button |
 | Settings | Nineteen sections in ten navigable categories: General, Privacy & security, Downloads, Extensions, Performance, Appearance, Spelling, Passwords, Accessibility & language, and About. Includes search engine, blocking, cookies, tracking signals, autoplay, history, governor, Save As downloads, delete-on-exit, profile cleanup, vault, extensions, browser appearance, translation language, and accessibility controls |
@@ -151,18 +152,50 @@ does not any more.
 this archive into:
 
 ```bash
-sha256sum -c SHA256SUMS.txt          # Windows: certutil -hashfile PsychoVault-Setup-1.0.3.exe SHA256
+sha256sum -c SHA256SUMS.txt          # Windows: certutil -hashfile PsychoVault-Setup-1.0.4.exe SHA256
 ```
 
 No document packed inside the installer carries the hash of the archive containing it,
 which is why the sums file is separate and written after the build.
+
+
+## Automatic updates
+
+PsychoVault checks the latest public GitHub Release once after startup on Windows x64. It does not
+send browsing history or page URLs; GitHub receives a normal release API request from your network.
+If a newer signed release is available, the browser asks before downloading and then shows Save As
+for the installer. It verifies the Ed25519 signature on `update-manifest.json`, checks the release tag
+and platform, downloads to a temporary file beside the selected destination, and validates its exact
+size and SHA-256 before saving and launching it. An
+unsigned, mismatched, or corrupted release is never run. Offline and GitHub API failures are silent
+so they do not interrupt browsing.
+
+### One-time repository setup for maintainers
+
+The Ed25519 **public** key lives in `app/update-public-key.pem` and ships with the browser. The
+matching private key must stay out of Git and is needed only by the release workflow. In the GitHub
+repository, open **Settings → Secrets and variables → Actions → New repository secret** and set:
+
+- Name: `UPDATE_SIGNING_PRIVATE_KEY_B64`
+- Value: the base64-encoded contents of the matching private PEM key (`base64 -w0 <private-key.pem>`
+  on Linux; use `base64 <private-key.pem | tr -d '\n'` on macOS)
+
+The workflow fails closed with a clear missing-key error if this secret is absent or does not match
+the bundled public key. After saving it, rerun the failed release workflow. Do not paste the private
+key into a commit, issue, or chat. GitHub-generated release notes provide the public release history.
+
+The existing 1.0.3 installer predates this updater. Users must install **1.0.4 once** from GitHub
+Releases; later versions can then be checked and installed from inside the app. The detached Ed25519
+signature authenticates update metadata and the installer hash; it is not a Windows Authenticode
+certificate, so it does not remove the existing SmartScreen warning.
 
 ## Package for Windows
 
 Pushes that change app code, the installer script, or its build tools to the active Arena branch
 run `.github/workflows/build-release.yml`. The workflow downloads the checksum-pinned Electron
 45.1.0 Windows runtime, patches the PsychoVault icon and version, stages the checked-out app source,
-verifies the packaged files, and publishes a versioned installer and checksum to GitHub Releases.
+verifies the packaged files, signs update metadata with the `UPDATE_SIGNING_PRIVATE_KEY_B64` Actions
+secret, and publishes the installer, checksum, signature, and generated release notes to GitHub Releases.
 
 For a local rebuild, install NSIS and 7-Zip, then provide `$PAYLOAD` (default `/var/tmp/payload`)
 with the unpacked Windows Electron runtime and `PsychoVault.exe`. The `patch-exe` helper sets the
@@ -188,6 +221,9 @@ app/
   main.js            windows, tabs, sessions, blocking, stores, menus, IPC
   download-save.js  fail-closed, paused Save As handoff
   translation.js    supported target languages and safe Google Translate URL builder
+  update-manifest.js signed-release verification helpers
+  auto-updater.js   startup GitHub Releases check, verified download and installer handoff
+  update-public-key.pem pinned Ed25519 key used to authenticate update manifests
   preload.js         contextBridge surface, whitelisted channels only
   page-preload.js    bridge for psychovault:// pages only - web pages get nothing
   blocklist.json     262 blocked domains
@@ -203,6 +239,9 @@ tools/
                        what actually went inside it
   audit.mjs          static self-check: IPC, settings, UI ids, translation, accessibility, syntax
   translation.test.cjs tests URL construction, unsafe inputs, and supported languages
+  sign-update-manifest.mjs signs installer metadata for a release
+  generate-update-keypair.mjs creates an Ed25519 key pair (private key outside Git)
+  update-manifest.test.cjs tests manifest signature, integrity, version, and platform checks
 installer.nsi        NSIS script, per-user install
 docs/                screenshots used above
 VERIFICATION.md      test log

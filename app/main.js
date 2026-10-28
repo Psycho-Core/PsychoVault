@@ -3,6 +3,7 @@
 const { app, BrowserWindow, WebContentsView, ipcMain, session, shell, Menu, clipboard, safeStorage, dialog, globalShortcut, powerMonitor, screen, Notification } = require('electron')
 const { createSaveDialogQueue } = require('./download-save')
 const { buildTranslationUrl } = require('./translation')
+const { checkOnStartup: checkForUpdatesOnStartup } = require('./auto-updater')
 const path = require('node:path')
 const fs = require('node:fs')
 const crypto = require('node:crypto')
@@ -3041,6 +3042,11 @@ app.whenReady().then(() => {
 
   const cliURL = urlFromArgv(process.argv)
   if (cliURL) w.win.webContents.once('did-finish-load', () => w.createTab(cliURL))
+
+  checkForUpdatesOnStartup({
+    onProgress: ({ message }) => { if (message) broadcast('update-progress', { message }) },
+    onError: (error) => logMainError(error)
+  })
 
   app.on('activate', () => {
     if (mainWindows.size === 0) {

@@ -115,7 +115,7 @@ contextBridge.exposeInMainWorld('pv', {
   },
   openExternal: (url) => invoke('open:external', url),
   on: (channel, cb) => {
-    const allowed = ['state', 'hover', 'downloads', 'downloader', 'loadfail', 'cmd', 'vault', 'workspaces', 'spell', 'icons', 'extensions']
+    const allowed = ['state', 'hover', 'downloads', 'downloader', 'loadfail', 'cmd', 'vault', 'workspaces', 'spell', 'icons', 'extensions', 'update-progress']
     if (!allowed.includes(channel)) return
     ipcRenderer.on(channel, (_e, payload) => cb(payload))
   }

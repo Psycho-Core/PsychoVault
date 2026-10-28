@@ -1055,3 +1055,26 @@ JavaScript syntax checks and shell syntax validation through the audit, and `git
 A Windows installer/runtime GUI test was not run in this sandbox because no Electron display/runtime
 is available. The Google Translate route is an external service, so a live translation test also
 requires an internet-enabled app session.
+
+## Round 32 - signed automatic updates and public release notes
+
+- Added a delayed startup check for the latest stable public GitHub Release on packaged Windows x64
+  builds. The app verifies the detached Ed25519 signature against its embedded public key, validates
+  the tag/version/platform and signed installer size/hash, offers Save As, then launches only the
+  verified installer. Network or metadata failures fail closed and do not interrupt browsing.
+- Added a release signer that checks the Actions private key matches the embedded public key before
+  writing `update-manifest.json` and `update-manifest.sig`. The workflow will not publish an unsigned
+  release if `UPDATE_SIGNING_PRIVATE_KEY_B64` is missing. It also attaches the installer checksum,
+  manifest and signature, and uses GitHub's generated notes with categorized release history.
+- Bumped the application version to 1.0.4. Existing 1.0.3 installs need this one-time manual update
+  because they do not contain the updater.
+
+Checks run in this workspace: `node tools/audit.mjs` (no defects), `node --test tools/*.test.cjs`
+(10 passed, including signature-tampering and version/platform rejection cases), JavaScript and shell
+syntax checks, YAML parsing for both release workflow/config files, and `git diff --check`. The
+release signer was smoke-tested with a temporary dummy installer payload: the actual local private
+key produced metadata whose signature and SHA-256 verified with the embedded public key. That was
+not a Windows installer or a GitHub release. The Windows installer build, native Save As dialog,
+installer handoff, and live GitHub update were not run in this sandbox. Repository Actions secret
+configuration is still a manual maintainer step; do not treat signed releases as operational until
+`UPDATE_SIGNING_PRIVATE_KEY_B64` is saved in GitHub Actions secrets.

@@ -13,8 +13,11 @@ on:
       - 'installer.nsi'
       - 'tools/build-installer.sh'
       - 'tools/patch-exe.mjs'
+      - 'tools/sign-update-manifest.mjs'
+      - 'tools/generate-update-keypair.mjs'
       - 'tools/audit.mjs'
       - 'tools/*.test.cjs'
+      - '.github/release.yml'
       - 'tools/package.json'
       - 'tools/package-lock.json'
       - '.github/workflows/build-release.yml'
@@ -35,10 +38,19 @@ jobs:
         with:
           node-version: 24
 
-      - name: Audit source and test download and translation flows
+      - name: Audit source and test download, translation, and update flows
         run: |
           node tools/audit.mjs
           node --test tools/*.test.cjs
+
+      - name: Confirm the update signing key is configured
+        env:
+          UPDATE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY_B64 }}
+        run: |
+          if [ -z "$UPDATE_SIGNING_PRIVATE_KEY_B64" ]; then
+            echo "::error title=Missing update signing key::Add UPDATE_SIGNING_PRIVATE_KEY_B64 under repository Settings > Secrets and variables > Actions, then rerun this workflow."
+            exit 1
+          fi
 
       - name: Install NSIS and 7-Zip
         run: |
@@ -78,6 +90,12 @@ jobs:
           OUT: ${{ github.workspace }}/PsychoVault-Setup-${{ steps.version.outputs.version }}.exe
         run: bash tools/build-installer.sh
 
+      - name: Sign update manifest
+        env:
+          UPDATE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY_B64 }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node tools/sign-update-manifest.mjs "PsychoVault-Setup-${{ steps.version.outputs.version }}.exe"
+
       - name: Write checksum
         run: sha256sum "PsychoVault-Setup-${{ steps.version.outputs.version }}.exe" > SHA256SUMS.txt
 
@@ -96,7 +114,11 @@ jobs:
           gh release create "v${{ steps.version.outputs.version }}" \
             "PsychoVault-Setup-${{ steps.version.outputs.version }}.exe" \
             SHA256SUMS.txt \
+            update-manifest.json \
+            update-manifest.sig \
             --repo "$GITHUB_REPOSITORY" \
             --target "$(git rev-parse HEAD)" \
             --title "PsychoVault ${{ steps.version.outputs.version }}" \
-            --notes "Rebuilt Windows x64 installer from the active Arena branch. Core application files and installer documents were byte-compared with the checked-out source; SHA-256 is attached as SHA256SUMS.txt."
+            --notes "Download the Windows x64 installer below. SHA256SUMS.txt is a checksum for manual checks; the updater authenticates update-manifest.json with the detached Ed25519 signature update-manifest.sig before trusting the installer hash. Generated notes list the changes included in this release." \
+            --generate-notes \
+            --latest

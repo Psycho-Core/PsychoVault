@@ -389,6 +389,9 @@ window.pv.on('hover', ({ url }) => {
 window.pv.on('vault', (v) => {
   if (v && v.toast) toast(v.toast)
 })
+window.pv.on('update-progress', ({ message }) => {
+  if (message) toast(message)
+})
 
 window.pv.on('workspaces', (ws) => {
   if (ws) { state.workspaces = ws; renderWorkspaces() }
