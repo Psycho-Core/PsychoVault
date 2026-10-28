@@ -31,9 +31,6 @@ jobs:
   build:
     name: Build Windows x64 installer
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      signing_key_configured: ${{ steps.signing-key.outputs.configured }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -62,7 +59,7 @@ jobs:
             echo "A signed GitHub Release can be published after the installer build."
           else
             echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::warning title=Release not published::The installer will be built and uploaded as an unsigned CI artifact, but no public GitHub Release will be created until UPDATE_SIGNING_PRIVATE_KEY_B64 is saved in repository Actions secrets."
+            echo "::warning title=Release not published::The installer will still be built, but no public GitHub Release will be created until UPDATE_SIGNING_PRIVATE_KEY_B64 is saved in repository Actions secrets."
           fi
 
       - name: Install NSIS and 7-Zip
@@ -99,7 +96,9 @@ jobs:
           OUT: ${{ github.workspace }}/PsychoVault-Setup-${{ steps.version.outputs.version }}.exe
         run: bash tools/build-installer.sh
 
-      - name: Upload unsigned installer build artifact
+      - name: Upload unsigned installer artifact for testing
+        id: unsigned-artifact
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: PsychoVault-Setup-${{ steps.version.outputs.version }}-unsigned
@@ -107,36 +106,23 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  publish:
-    name: Sign and publish Windows release
-    needs: build
-    if: needs.build.outputs.signing_key_configured == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-
-      - name: Download the built installer
-        uses: actions/download-artifact@v4
-        with:
-          name: PsychoVault-Setup-${{ needs.build.outputs.version }}-unsigned
-          path: .
+      - name: Report when Actions storage prevents artifact retention
+        if: steps.unsigned-artifact.outcome == 'failure'
+        run: echo "::warning title=Build succeeded; artifact unavailable::The installer was built, but GitHub Actions could not retain a downloadable artifact. Free Actions artifact storage quota if you need the temporary installer file."
 
       - name: Sign update manifest
+        if: steps.signing-key.outputs.configured == 'true'
         env:
           UPDATE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY_B64 }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: node tools/sign-update-manifest.mjs "PsychoVault-Setup-${{ needs.build.outputs.version }}.exe"
+        run: node tools/sign-update-manifest.mjs "PsychoVault-Setup-${{ steps.version.outputs.version }}.exe"
 
       - name: Write checksum
-        run: sha256sum "PsychoVault-Setup-${{ needs.build.outputs.version }}.exe" > SHA256SUMS.txt
+        if: steps.signing-key.outputs.configured == 'true'
+        run: sha256sum "PsychoVault-Setup-${{ steps.version.outputs.version }}.exe" > SHA256SUMS.txt
 
       - name: Update the branch checksum
+        if: steps.signing-key.outputs.configured == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -144,22 +130,23 @@ jobs:
           if git diff --cached --quiet; then
             echo "The branch checksum is already current."
           else
-            git commit -m "chore: update installer checksum for v${{ needs.build.outputs.version }}"
+            git commit -m "chore: update installer checksum for v${{ steps.version.outputs.version }}"
             git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"
           fi
 
       - name: Publish the signed release
+        if: steps.signing-key.outputs.configured == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v${{ needs.build.outputs.version }}" \
-            "PsychoVault-Setup-${{ needs.build.outputs.version }}.exe" \
+          gh release create "v${{ steps.version.outputs.version }}" \
+            "PsychoVault-Setup-${{ steps.version.outputs.version }}.exe" \
             SHA256SUMS.txt \
             update-manifest.json \
             update-manifest.sig \
             --repo "$GITHUB_REPOSITORY" \
             --target "$(git rev-parse HEAD)" \
-            --title "PsychoVault ${{ needs.build.outputs.version }}" \
+            --title "PsychoVault ${{ steps.version.outputs.version }}" \
             --notes "Download the Windows x64 installer below. SHA256SUMS.txt is a checksum for manual checks; the updater authenticates update-manifest.json with the detached Ed25519 signature update-manifest.sig before trusting the installer hash. Generated notes list the changes included in this release." \
             --generate-notes \
             --latest

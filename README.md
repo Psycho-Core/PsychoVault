@@ -189,11 +189,13 @@ the repository, open **Settings → Secrets and variables → Actions → New re
 - Value: one-line base64 of the matching private PEM (`base64 -w0 <private-key.pem>` on Linux; on
   macOS use `base64 <private-key.pem | tr -d '\n'`).
 
-If the secret is absent, CI can still build and upload a temporary, unsigned installer artifact for
-testing, but it deliberately skips publishing a GitHub Release. That artifact is not an automatic
-update and Windows may still warn about it. If the secret is present but invalid or does not match
-the embedded public key, signing fails and no release is published. Never commit or paste the private
-key into an issue or chat. GitHub-generated release notes provide the public change history.
+If the secret is absent, CI still builds the installer and skips publishing a GitHub Release. It
+tries to retain an unsigned Actions artifact for 14 days for testing; if the repository's Actions
+storage quota is full, the build still completes but GitHub cannot offer that artifact for download.
+An unsigned artifact is not an automatic update and Windows may still warn about it. If the secret is
+present but invalid or does not match the embedded public key, signing fails and no release is
+published. Never commit or paste the private key into an issue or chat. GitHub-generated release
+notes provide the public change history.
 
 The existing 1.0.3 installer predates this updater, so it cannot update itself. Install 1.0.4 once
 from GitHub Releases when available; after that, later signed releases can be checked from inside the
@@ -204,11 +206,12 @@ Windows Authenticode signature and does not remove the SmartScreen warning.
 
 Pushes that change app code, the installer script, or its build tools to the active Arena branch or
 `Master` run `.github/workflows/build-release.yml`; it can also be started manually from Actions. The
-build job runs the audit and tests, downloads the checksum-pinned Electron 45.1.0 Windows runtime,
-patches the PsychoVault icon/version, builds and verifies the installer, then uploads an unsigned
-CI artifact for 14 days. If `UPDATE_SIGNING_PRIVATE_KEY_B64` is configured, a separate job signs the
-update manifest and publishes the installer, checksum, signature, and generated release notes. If
-not, the installer build still succeeds but no public release is created.
+workflow runs the audit and tests, downloads the checksum-pinned Electron 45.1.0 Windows runtime,
+patches the PsychoVault icon/version, then builds and verifies the installer. It tries to retain an
+unsigned CI artifact for 14 days; a full Actions storage quota may prevent the download, but does not
+fail the build. If `UPDATE_SIGNING_PRIVATE_KEY_B64` is configured, later steps sign the update
+manifest and publish the installer, checksum, signature, and generated release notes. If not, those
+release steps are skipped and no public release is created.
 
 For a local rebuild, install NSIS and 7-Zip, then provide `$PAYLOAD` (default `/var/tmp/payload`)
 with the unpacked Windows Electron runtime and `PsychoVault.exe`. The `patch-exe` helper sets the

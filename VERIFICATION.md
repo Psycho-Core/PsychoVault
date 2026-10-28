@@ -1079,17 +1079,21 @@ installer handoff, and live GitHub update were not run in this sandbox. Reposito
 configuration is still a manual maintainer step; do not treat signed releases as operational until
 `UPDATE_SIGNING_PRIVATE_KEY_B64` is saved in GitHub Actions secrets.
 
-## Round 33 - independent build and signed-release stages
+## Round 33 - installer build no longer gated by update-signing secrets
 
-- The Windows installer build no longer stops at the start just because the update signing secret is
-  absent. CI runs audit/tests and builds the installer first, then uploads an unsigned installer
-  artifact for 14 days. The separate public-release job runs only when
-  `UPDATE_SIGNING_PRIVATE_KEY_B64` is configured; without it, no unsigned GitHub Release is created.
+- The 1.0.4 workflow run reached and passed **Build and verify the installer**; it had initially
+  stopped earlier because the repository update-signing secret was absent. The public release was not
+  created, correctly, because its Ed25519 manifest could not be signed.
+- The workflow now completes the installer build even when that secret is absent. It conditionally
+  runs signing and public-release steps only when the key is configured, so it never publishes an
+  unsigned release. Uploading an unsigned CI artifact is best-effort: the first attempt after the
+  build passed failed because the repository's GitHub Actions artifact-storage quota was full; this
+  upload failure is now allowed to warn without masking a successful build.
 - Added manual workflow dispatch and triggers for both `Master` and the current Arena branch.
 - Set the Windows AppUserModelID to `com.psychocore.psychovault` so taskbar grouping uses PsychoVault
   rather than Electron; confirmation of the visible label still requires a Windows run.
 
-The static audit, unit tests, syntax checks, YAML parse, and CI artifact/release configuration have
-been checked locally. This Linux sandbox cannot execute the Windows installer or confirm the taskbar
-label. A public v1.0.4 release still requires the repository Actions update-signing secret, and the
-installer still needs an Authenticode certificate to show a verified Windows publisher.
+Local audit, unit tests, JavaScript/shell syntax, YAML parsing, and whitespace checks pass. The
+installer build itself passed on GitHub Actions, but the current repository quota prevents a
+reliable downloadable CI artifact. A public v1.0.4 release still requires the Actions update-signing
+secret, and the installer still needs an Authenticode certificate to show a verified Windows publisher.
