@@ -342,10 +342,10 @@
     <div class="hint">Chrome-style extensions, loaded the way Chromium's own "load unpacked" works: install a folder, or a <b>.crx</b> file (this unpacks it, because Electron refuses crx files outright). Extensions run inside every tab and can read the pages you visit - only install ones you trust, and note that <b>no signature is verified</b> for a crx here.</div>
     <div class="hint"><b>What actually works.</b> Content scripts, page changes, request blocking through the old <code>webRequest</code> API, storage and messaging all work. What does not exist in this engine: <b>chrome.proxy</b> (which is how a browser VPN extension redirects traffic), <b>declarativeNetRequest</b> (the MV3 rules engine), native messaging, and a toolbar to click. Every extension below is checked against that list, and anything it needs that is missing is named under it rather than left to fail silently.</div>
     <div class="proton-card">
-      <div class="proton-title">Use Proton VPN with PsychoVault</div>
-      <p>The Proton VPN browser extension can be installed, but it cannot route traffic in this Electron-based browser: the engine does not expose <code>chrome.proxy</code>. It will be marked as unsupported rather than pretending a VPN connection is active.</p>
-      <p>To protect PsychoVault, install and connect Proton VPN's official desktop app. A system-wide VPN tunnels this browser's traffic too.</p>
-      <button class="mini" id="protonVpnDownload" type="button">Get Proton VPN for desktop</button>
+      <div class="proton-title">Proton VPN Chrome extension</div>
+      <p>Open Proton's official Chrome-extension page in a new PsychoVault tab. If you obtain a <code>.crx</code> file, use <b>Install .crx...</b> below.</p>
+      <p><b>Important:</b> this Electron build does not expose <code>chrome.proxy</code>, which Proton VPN's extension needs to route browser traffic. It may install, but it cannot currently provide VPN protection in PsychoVault.</p>
+      <button class="mini" id="protonVpnDownload" type="button">Open Proton VPN Chrome extension</button>
     </div>
     <div id="extList" class="ext-list"></div>
     <div class="btnrow">
@@ -753,8 +753,10 @@
       if (picked) { s('downloadDir').value = picked; save({ downloadDir: picked }) }
     }
     if (s('protonVpnDownload')) s('protonVpnDownload').onclick = async () => {
-      try { await window.pv.openExternal('https://protonvpn.com/download') }
-      catch { flag('Could not open the Proton VPN download page') }
+      try {
+        const result = await window.pv.tab.open('https://protonvpn.com/download-chrome-extension')
+        if (!result || !result.ok) flag('Could not open the Proton VPN Chrome extension page')
+      } catch { flag('Could not open the Proton VPN Chrome extension page') }
     }
     s('clear').onclick = async () => {
       await window.pv.data.clear({ history: true })

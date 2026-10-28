@@ -3,7 +3,7 @@ name: Build and publish Windows installer
 on:
   push:
     branches:
-      - arena/4bcc0ade-psychovault
+      - arena/f81a816a-psychovault
     paths:
       - 'app/**'
       - 'assets/psychovault.ico'
@@ -13,6 +13,8 @@ on:
       - 'installer.nsi'
       - 'tools/build-installer.sh'
       - 'tools/patch-exe.mjs'
+      - 'tools/audit.mjs'
+      - 'tools/download-save.test.cjs'
       - 'tools/package.json'
       - 'tools/package-lock.json'
       - '.github/workflows/build-release.yml'
@@ -32,6 +34,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
+
+      - name: Audit source and test Save As flow
+        run: |
+          node tools/audit.mjs
+          node --test tools/download-save.test.cjs
 
       - name: Install NSIS and 7-Zip
         run: |

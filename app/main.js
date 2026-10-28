@@ -1,6 +1,7 @@
 // PsychoVault - main process
 // Owns the windows, the tab views, the sessions, the blocker and the stores.
 const { app, BrowserWindow, WebContentsView, ipcMain, session, shell, Menu, clipboard, safeStorage, dialog, globalShortcut, powerMonitor, screen, Notification } = require('electron')
+const { createSaveDialogQueue } = require('./download-save')
 const path = require('node:path')
 const fs = require('node:fs')
 const crypto = require('node:crypto')
@@ -9,6 +10,7 @@ const { net: electronNet } = require('electron')   // this is the one that makes
 const { spawn, execFile } = require('node:child_process')
 
 app.setName('PsychoVault')
+const requestDownloadSavePath = createSaveDialogQueue(dialog)
 
 // chrome geometry - must match style.css
 const CHROME_H = 84
@@ -2236,6 +2238,16 @@ ipcMain.handle('tab:new', (e, url) => {
   const w = [...mainWindows].find(w => w.win.webContents === e.sender)
   if (w) w.createTab(url || 'psychovault://newtab')
 })
+ipcMain.handle('tab:open', (e, rawUrl) => {
+  const tab = wcTabs.get(e.sender.id)
+  const w = tab && [...mainWindows].find((owner) => owner.tabs.get(tab.id) === tab)
+  if (!w) return { ok: false, error: 'browser tab not found' }
+  let url
+  try { url = new URL(String(rawUrl || '')) } catch { return { ok: false, error: 'invalid URL' } }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return { ok: false, error: 'only web links can be opened' }
+  w.createTab(url.href, { parentId: tab.id, container: tab.container || null })
+  return { ok: true }
+})
 ipcMain.handle('tab:close', (e, id) => {
   const w = [...mainWindows].find(w => w.win.webContents === e.sender)
   if (w) w.closeTab(id)
@@ -2794,88 +2806,111 @@ setInterval(() => {
   downloadRate = Math.round(sum / 2)
 }, 2000)
 
+function downloadDialogParent(webContents) {
+  const alive = [...mainWindows].filter((w) => w.win && !w.win.isDestroyed())
+  const tab = webContents && wcTabs.get(webContents.id)
+  if (tab) {
+    const owner = alive.find((w) => w.tabs.get(tab.id) === tab)
+    if (owner) return owner.win
+  }
+  const focused = alive.find((w) => w.win.isFocused())
+  return (focused || alive[0] || {}).win || null
+}
+
 function watchDownloads(ses) {
   if (ses._pvDl) return
   ses._pvDl = true
-  ses.on('will-download', (event, item) => {
+  ses.on('will-download', (_event, item, webContents) => {
+    // Pause on the first line of will-download; do not spend time resolving paths
+    // while Chromium can still write to its default destination.
+    try { item.pause() } catch (e) {
+      logMainError(e)
+      try { item.cancel() } catch (cancelError) { logMainError(cancelError) }
+      notifyDownload({ kind: 'failed', name: item.getFilename() || 'download', path: '' })
+      return
+    }
     const dir = downloadDir()
     try { fs.mkdirSync(dir, { recursive: true }) } catch (e) { logMainError(e) }
     const suggested = String(item.getFilename() || 'download').replace(/[\\/:*?"<>|]/g, '_').slice(0, 180) || 'download'
-    let target = path.join(dir, suggested)
-    // Always ask where to save, regardless of a legacy profile value or caller. A
-    // cancelled dialog prevents the download before a file or history row is created.
-    // The dialog belongs to the window that owns this session; for containers/private
-    // sessions that do not map to the chrome WebContents, use the first live window.
-    const alive = [...mainWindows].filter((w) => w.win && !w.win.isDestroyed())
-    const owner = alive.find((w) => w.win.webContents && w.win.webContents.session === ses) || alive[0]
-    const parent = owner ? owner.win : null
-    const picked = dialog.showSaveDialogSync(parent, {
-      title: 'Save file', defaultPath: target, buttonLabel: 'Save',
-      properties: ['createDirectory', 'showOverwriteConfirmation']
-    })
-    if (!picked) { event.preventDefault(); return }
-    target = picked
-    item.setSavePath(target)
+    const defaultPath = path.join(dir, suggested)
+    const parent = downloadDialogParent(webContents)
 
-    const entry = { name: item.getFilename() || suggested, received: 0, total: item.getTotalBytes(), state: 'progress', path: target, at: Date.now() }
-    downloads.unshift(entry)
-    if (downloads.length > 50) downloads.length = 50
-    saveDownloads()
-    broadcast('downloads', downloads)
-    notifyDownload({ kind: 'start', name: entry.name, path: target })
-
-    // Progress while the file moves, not only when it lands. Throttled to five pushes a
-    // second - 'updated' fires per chunk and the strip does not need 400 repaints a second.
-    let lastBeat = 0
-    item.on('updated', (_ev, dlState) => {
-      entry.received = item.getReceivedBytes()
-      const total = item.getTotalBytes()
-      if (total > 0) entry.total = total
-      if (dlState === 'interrupted') entry.state = 'interrupted'
-      const now = Date.now()
-      if (now - lastBeat >= 200) { lastBeat = now; broadcast('downloads', downloads) }
-    })
-    // Bandwidth cap - GX's network limiter. Electron has no bytes-per-second hook,
-    // so this is a duty cycle with cumulative accounting: the transfer is only
-    // allowed to be "ahead of schedule", where schedule = bytes received / cap.
-    // The cap is read when the download starts; changing it does not affect a file
-    // already coming down, which is what a limiter should do anyway.
-    const capKB = Number(settings.netLimit) || 0
-    const capBytes = capKB * 1024
-    let started = Date.now(), stalled = 0, stallFrom = 0, stallTimer = null
-    if (capBytes > 0) {
-      item.on('updated', () => {
-        const state = item.getState()
-        if (state !== 'progressing' || stallTimer) return
-        const total = item.getReceivedBytes()
-        if (total <= 0) return
-        const busy = (Date.now() - started) - stalled
-        const allowed = (total / capBytes) * 1000
-        const ahead = allowed - busy
-        if (ahead < -40) return                       // already behind schedule
-        const wait = Math.max(40, Math.min(15000, ahead))
-        stallFrom = Date.now()
-        try { item.pause() } catch { return }
-        stallTimer = setTimeout(() => {
-          stallTimer = null
-          stalled += Date.now() - stallFrom
-          try { if (item.getState() === 'progressing') item.resume() } catch { /* finished */ }
-        }, wait)
-      })
-    }
-    item.once('done', (_e, state) => {
-      if (stallTimer) { clearTimeout(stallTimer); stallTimer = null }
-      entry.received = item.getReceivedBytes()
-      const total = item.getTotalBytes()
-      if (total > 0) entry.total = total
-      entry.state = state
-      entry.path = item.getSavePath() || entry.path
-      saveDownloads()
-      broadcast('downloads', downloads)
-      if (state === 'completed') notifyDownload({ kind: 'done', name: entry.name, path: entry.path, size: entry.received })
-      else if (state === 'interrupted') notifyDownload({ kind: 'failed', name: entry.name, path: entry.path })
+    // The asynchronous native picker now runs with the item paused. Do not call
+    // event.preventDefault(): that permanently cancels the transfer. Cancellation in the
+    // picker calls item.cancel(); only a chosen path reaches tracking and item.resume().
+    requestDownloadSavePath(item, parent, defaultPath, true).then((target) => {
+      if (!target) return
+      trackDownload(item, target, suggested)
+      // Attach progress and completion listeners before the first resumed bytes can land.
+      item.resume()
+    }).catch((e) => {
+      logMainError(e)
+      try { item.cancel() } catch (cancelError) { logMainError(cancelError) }
+      notifyDownload({ kind: 'failed', name: suggested, path: '' })
     })
   })
+}
+
+function trackDownload(item, target, suggested) {
+  const entry = { name: item.getFilename() || suggested, received: 0, total: item.getTotalBytes(), state: 'progress', path: target, at: Date.now() }
+  downloads.unshift(entry)
+  if (downloads.length > 50) downloads.length = 50
+  saveDownloads()
+  broadcast('downloads', downloads)
+  notifyDownload({ kind: 'start', name: entry.name, path: target })
+
+  // Progress while the file moves, not only when it lands. Throttled to five pushes a
+  // second - 'updated' fires per chunk and the strip does not need 400 repaints a second.
+  let lastBeat = 0
+  item.on('updated', (_ev, dlState) => {
+    entry.received = item.getReceivedBytes()
+    const total = item.getTotalBytes()
+    if (total > 0) entry.total = total
+    if (dlState === 'interrupted') entry.state = 'interrupted'
+    const now = Date.now()
+    if (now - lastBeat >= 200) { lastBeat = now; broadcast('downloads', downloads) }
+  })
+  // Bandwidth cap - GX's network limiter. Electron has no bytes-per-second hook,
+  // so this is a duty cycle with cumulative accounting: the transfer is only
+  // allowed to be "ahead of schedule", where schedule = bytes received / cap.
+  // The cap is read when the download starts; changing it does not affect a file
+  // already coming down, which is what a limiter should do anyway.
+  const capKB = Number(settings.netLimit) || 0
+  const capBytes = capKB * 1024
+  let started = Date.now(), stalled = 0, stallFrom = 0, stallTimer = null
+  if (capBytes > 0) {
+    item.on('updated', () => {
+      const state = item.getState()
+      if (state !== 'progressing' || stallTimer) return
+      const total = item.getReceivedBytes()
+      if (total <= 0) return
+      const busy = (Date.now() - started) - stalled
+      const allowed = (total / capBytes) * 1000
+      const ahead = allowed - busy
+      if (ahead < -40) return                       // already behind schedule
+      const wait = Math.max(40, Math.min(15000, ahead))
+      stallFrom = Date.now()
+      try { item.pause() } catch { return }
+      stallTimer = setTimeout(() => {
+        stallTimer = null
+        stalled += Date.now() - stallFrom
+        try { if (item.getState() === 'progressing') item.resume() } catch { /* finished */ }
+      }, wait)
+    })
+  }
+  item.once('done', (_e, state) => {
+    if (stallTimer) { clearTimeout(stallTimer); stallTimer = null }
+    entry.received = item.getReceivedBytes()
+    const total = item.getTotalBytes()
+    if (total > 0) entry.total = total
+    entry.state = state
+    entry.path = item.getSavePath() || entry.path
+    saveDownloads()
+    broadcast('downloads', downloads)
+    if (state === 'completed') notifyDownload({ kind: 'done', name: entry.name, path: entry.path, size: entry.received })
+    else if (state === 'interrupted') notifyDownload({ kind: 'failed', name: entry.name, path: entry.path })
+  })
+  return entry
 }
 function broadcast(ch, payload) {
   for (const w of mainWindows) w.sendChrome(ch, payload)

@@ -925,11 +925,10 @@ and its code calls `chrome.proxy.settings` and `chrome.proxy.onProxyError`. That
 VPN extension works: it does not encrypt anything itself, it points the browser at a proxy.
 
 Electron's documented extension support lists `devtools.*`, `extension`, `management`, `runtime`,
-`scripting`, `storage`, `tabs` and `webRequest`. **`chrome.proxy` is not implemented, and it is an
-explicit non-goal of the project** - Electron also does not support arbitrary store extensions,
-only unpacked ones. So the honest result on this engine is: the extension installs, loads, appears
-in Settings, and **cannot make a tunnel**. The panel says exactly that, in those words, next to a
-live install.
+`scripting`, `storage`, `tabs` and `webRequest`. **`chrome.proxy` is not implemented in this build** -
+Electron also does not support arbitrary store extensions, only unpacked ones. So the honest result
+on this engine is: the extension installs, loads, appears in Settings, and **cannot make a tunnel**.
+The panel says exactly that, in those words, next to a live install.
 
 Two consequences worth writing down rather than discovering later:
 
@@ -940,10 +939,10 @@ Two consequences worth writing down rather than discovering later:
 - MV3 `declarativeNetRequest` is also missing, so an MV3 blocker that relies on it will not filter
   anything. Only MV2 `webRequest` blocking works, and that is what the harness exercises.
 
-**What actually gets Proton VPN covering this browser:** the Proton VPN Windows application. It
-creates a system-wide tunnel below the browser, so every tab is inside it with no extension and no
-code from me - which is also true of every other system-wide VPN. That is the recommended path,
-and it is what the Settings text now says.
+At the time of this verification, the Settings card recommended the Windows app. The user later
+clarified that the requested destination is Proton VPN's Chrome extension, not its desktop client;
+Round 30 below supersedes that recommendation. The extension still cannot tunnel traffic until the
+missing `chrome.proxy` API is implemented.
 
 
 ## Round 28 - settings categories, mandatory Save As, and Proton VPN guidance
@@ -962,20 +961,21 @@ not provide.
 
 ### Downloads
 
-- The Save As dialog is now unconditional; there is no setting that can silently bypass it.
-- Startup migration removes the old `askSaveLocation` value from existing profiles, and settings
-  writes discard that retired key as well.
-- The chosen download folder is only the dialog's starting directory. Choosing Cancel calls
-  `preventDefault()` before a download row is created or any file is written.
+- At this revision, the Save As dialog was unconditional; there was no setting that could silently
+  bypass it. Startup migration removed the old `askSaveLocation` value from existing profiles, and
+  settings writes discarded that retired key as well.
+- The chosen download folder was only the dialog's starting directory. At that stage, Cancel called
+  `preventDefault()` before a download row was created. Round 30 below replaces the synchronous
+  dialog path with an explicitly paused async flow and `item.cancel()`.
 
 ### Extensions and Proton VPN
 
 The extension manager remains available in the new Extensions category (unpacked folders and
 `.crx` installs, enable/disable/remove, with missing APIs reported). Proton VPN's browser extension
 still cannot route traffic here: it requires `chrome.proxy`, which this Electron engine does not
-implement. The UI now says this plainly and links to Proton's official desktop download page; once
-the desktop app is installed and connected, its system-wide VPN covers PsychoVault. No VPN state
-or successful connection is simulated by the browser.
+implement. At that revision, the UI linked to Proton's desktop download page; Round 30 below
+replaces that CTA with the user's requested Chrome-extension page. No VPN state or successful
+connection is simulated by the browser.
 
 ### Checks run
 
@@ -1004,3 +1004,30 @@ Electron runtime installed.
 Checks run: `node tools/audit.mjs` (no defects), JavaScript syntax checks through the audit,
 HTML nesting/unique-ID check, and `git diff --check`. A GUI regression run was not possible in this
 sandbox because no Electron runtime or display server is installed.
+
+## Round 30 - paused Save As handoff and Proton VPN Chrome-extension destination
+
+A user report against the previous build showed that the synchronous save-picker implementation
+still allowed downloads to land without a useful location choice. This round changes the handoff,
+not just the dialog text:
+
+- Every `will-download` item is paused before the asynchronous native Save As dialog is shown.
+- The selected path is applied while the item is paused. Only after the download row and progress/
+  completion listeners are installed does PsychoVault resume the transfer.
+- Cancelling the dialog calls `item.cancel()` and creates no download-history row. A dialog failure
+  also cancels instead of silently falling back to the Downloads folder.
+- Simultaneous downloads queue their native dialogs, and the parent window is resolved from the
+  actual tab WebContents so container and private-window prompts belong to the window that started
+  the download.
+- The Proton VPN Settings card now opens `https://protonvpn.com/download-chrome-extension` in a
+  new PsychoVault tab, rather than opening the desktop-client page in the system browser. A
+  downloaded file therefore goes through PsychoVault's own download handling. The card still says
+  plainly that the extension cannot route traffic in this Electron build because `chrome.proxy` is
+  missing; there is no desktop-app recommendation or claim of an active VPN tunnel.
+
+Checks run: `node tools/audit.mjs` (no defects), `node --test tools/download-save.test.cjs` (4 passed,
+covering pause-before-picker, chosen-path application, cancellation, picker errors, and queuing),
+JavaScript/shell syntax checks through the audit, and `git diff --check`. The Windows v1.0.2 installer
+is built by the source-based GitHub Actions workflow. The native Windows picker itself still needs a
+manual Windows run; the helper tests verify the event ordering and fail-closed behavior without
+pretending to draw a native dialog.

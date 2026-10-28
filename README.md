@@ -19,7 +19,7 @@ Dark navy, cyan accents, everything in a rail down the left. Fast enough to forg
 | ![GX Control panel with hot tabs](docs/screenshot-gx-control.png) | ![Enhance and personality settings](docs/screenshot-gx-enhance.png) |
 | ![Workspace chips with their close buttons](docs/screenshot-workspaces.png) | ![Your data, read off the disk](docs/screenshot-your-data.png) |
 | ![Spelling settings](docs/screenshot-spelling.png) | ![The services rail with each site's own icon](docs/screenshot-rail-icons.png) |
-| ![Extensions: the Proton VPN extension installed, labelled "cannot work here" with the reason](docs/screenshot-extensions.png) | ![Typo underlined, with the menu open](docs/screenshot-spell-menu.png) |
+| ![Earlier Extensions screenshot: Proton VPN is marked unsupported; the old desktop-app button has since been replaced with a Chrome-extension link](docs/screenshot-extensions.png) | ![Typo underlined, with the menu open](docs/screenshot-spell-menu.png) |
 | ![A tab held mid-drag: the tab is ghosted and a caret marks where it will land](docs/screenshot-tab-drag.png) | ![The downloads panel mid-transfer: folder line with a Change button, a live 28% row, done rows, the rail badge and the start message](docs/screenshot-downloads-live.png) |
 | ![The download folder and notification controls in Settings](docs/screenshot-settings-downloads.png) | ![Downloads](docs/screenshot-downloads.png) |
 
@@ -30,9 +30,12 @@ the services rail down the left, and a tab pinned in a container at the head of 
 The three new ones are the round's work: a typo underlined in a real page with the right-click
 menu offering the fix, the rail painted with each site's own favicon, and the two new settings
 sections. The fifth row is the extension manager: Proton VPN's own Chrome extension installed from its
-`.crx`, and the panel saying in plain words which API it needs that this engine does not have -
-and the round's own pictures follow it: a tab held mid-drag, and the downloads panel live. Nothing here is a mock-up, and nothing is a switch that leads nowhere - each one is
-followed by the assertion that ran against it (see `VERIFICATION.md`).
+`.crx`, and the panel saying in plain words which API it needs that this engine does not have. That
+screenshot predates the current Settings link: it now opens Proton's official Chrome-extension page
+in a new PsychoVault tab, not the desktop-app page, and explains that the missing API prevents the
+extension from tunnelling traffic here. The round's other pictures show a tab held mid-drag and the
+downloads panel live. Nothing here is a mock-up, and each working feature is followed by its
+assertion in `VERIFICATION.md`.
 
 Settings now has seventeen focused sections grouped into nine categories: General, Privacy & security,
 Downloads, Extensions, Performance, Appearance, Spelling, Passwords, and About. The category
@@ -82,7 +85,7 @@ it were restored in the same way.
 | RGX | Contrast/saturation/brightness filters on `video` and `img` elements, two switches, off by default |
 | Sidebar services | Up to 14 services in the rail, each with the site's own favicon and brand colour (a picker has Discord, Twitch, YouTube, YouTube Music, X, Reddit, GitHub, WhatsApp, Telegram, Spotify, Slack, Messenger, ICQ and more; anything else you can add by URL), opened as ordinary tabs, so logins and video players keep working; global media keys route to them and auto-pause the music when another tab starts making sound; right-click a button for open / new window / reload / copy / remove |
 | Spelling | Red wavy underlines in every text field you type in, suggestions and "Add to dictionary" in the right-click menu, and a "your words" box in Settings you can edit in bulk. It is PsychoVault's own checker - a 15,000-word frequency list plus your words, run in the page - because an Electron build cannot load or download dictionaries (tested: no `downloadDictionary`, `<profile>/Dictionaries` is not read, the download URL is never fetched) |
-| Extensions | Chrome-style extensions, installed from an unpacked folder or **.crx** (unpacked here because Electron refuses crx files), loaded into every session including containers, and managed with enable / disable / remove. The settings category reports missing APIs rather than failing silently. Proton VPN's browser extension needs `chrome.proxy`, which Electron does not implement; use the official Proton VPN desktop app to tunnel PsychoVault system-wide (the Extensions category links to it) |
+| Extensions | Chrome-style extensions, installed from an unpacked folder or **.crx** (unpacked here because Electron refuses crx files), loaded into every session including containers, and managed with enable / disable / remove. The settings category reports missing APIs rather than failing silently. The Proton VPN Chrome-extension button opens Proton's official extension page in a new in-app tab; its extension still cannot route traffic until this Electron build implements the required `chrome.proxy` API, and is not presented as a working VPN |
 | Personality | Synthesised keyboard sounds (no audio files in the repo), six accent colours, and a custom stylesheet box that repaints the chrome
 | Governor | CPU priority limiter and tab sleeping, so background tabs stop costing RAM |
 | Context menus | Right-click a tab, a link, an image, selected text, or a text field (Cut / Copy / Paste / Select all all the way through) |
@@ -146,7 +149,7 @@ does not any more.
 this archive into:
 
 ```bash
-sha256sum -c SHA256SUMS.txt          # Windows: certutil -hashfile PsychoVault-Setup-1.0.1.exe SHA256
+sha256sum -c SHA256SUMS.txt          # Windows: certutil -hashfile PsychoVault-Setup-1.0.2.exe SHA256
 ```
 
 No document packed inside the installer carries the hash of the archive containing it,
@@ -254,7 +257,7 @@ deliberately not here, and why.
 | Split-Screen | **yes** - two pages in one window, `Ctrl+\` | `main.js: splitId` |
 | Sidebar services (Discord, Twitch, messengers) | **yes** - up to 14 entries with their real favicons and brand colours, opened as ordinary tabs rather than embedded webviews, so logins, notifications and video players keep working | Settings - Sidebar services |
 | Spell check | **yes, and it works** - underlines, suggestions and your own words, from a checker this app ships rather than one it would have to borrow from a browser it is not | Settings - Spelling |
-| VPN (Opera's is a free proxy service run by Opera) | **no longer built in** - it used to drive a bundled WireGuard client; it is removed. A system-wide VPN (Proton VPN's Windows app, or any other) covers this browser because it works below it. Browser VPN extensions cannot work here: they need `chrome.proxy`, which Electron does not implement | Settings - Extensions says so per extension |
+| VPN (Opera's is a free proxy service run by Opera) | **no longer built in** - the bundled WireGuard client is removed. Browser VPN extensions including Proton VPN cannot route traffic in this Electron build because `chrome.proxy` is not implemented. Settings links to Proton's Chrome-extension page as requested but clearly marks the extension as unable to protect PsychoVault | Settings - Extensions says so per extension |
 | Music Player / Mini Player + auto-pause | **partly** - global media keys route to the tab holding audio, and anything that starts making sound pauses the music tab after 2.5 s. No floating mini-player window | `main.js: mediaRoute` |
 | Browser player (video popout) | **no** - not built. Sites can still take Chromium's own picture-in-picture | - |
 | Password manager | **yes** - local encrypted vault, save and fill from the field menu, auto-lock, no sync | Settings - Passwords |
