@@ -19,6 +19,7 @@ const chromeHtml = read('ui/index.html')
 const chromeJs = read('ui/renderer.js')
 const settingsHtml = read('ui/settings.html')
 const newtabHtml = read('ui/newtab.html')
+const downloadSave = read('download-save.js')
 const css = read('ui/style.css')
 
 const defects = []
@@ -73,7 +74,11 @@ const allSections = (settingsHtml.match(/<section>/g) || []).length
 if (!panels.length || groupedSections !== allSections) defects.push(`settings categories: only ${groupedSections} of ${allSections} sections are inside a category`)
 if (/id="askSaveLocation"/.test(settingsHtml)) defects.push('downloads: save-location prompt must not be disableable in Settings')
 const downloadFlow = main.slice(main.indexOf('function watchDownloads(ses)'), main.indexOf('function broadcast(ch, payload)', main.indexOf('function watchDownloads(ses)')))
-if (!downloadFlow.includes('dialog.showSaveDialogSync') || !/if \(!picked\) \{ event\.preventDefault\(\); return \}/.test(downloadFlow)) defects.push('downloads: every download must show Save As and cancelling must prevent the transfer')
+if (!downloadFlow.includes('requestDownloadSavePath') || !downloadFlow.includes('item.resume()')) defects.push('downloads: every download must wait for its Save As path before resuming')
+if (downloadFlow.indexOf('item.pause()') < 0 || downloadFlow.indexOf('item.pause()') > downloadFlow.indexOf('requestDownloadSavePath')) defects.push('downloads: pause the item before doing save-dialog setup')
+if (downloadFlow.includes('showSaveDialogSync')) defects.push('downloads: the Save As picker must not block synchronously inside will-download')
+if (!downloadSave.includes('item.pause()') || !downloadSave.includes('dialog.showSaveDialog') || !downloadSave.includes('item.setSavePath') || !downloadSave.includes('item.cancel()')) defects.push('downloads: pause, async Save As, selected path, and cancellation must all be implemented')
+if (downloadSave.indexOf('item.pause()') > downloadSave.indexOf('dialog.showSaveDialog')) defects.push('downloads: the transfer must be paused before the Save As dialog opens')
 if (downloadFlow.includes('settings.askSaveLocation')) defects.push('downloads: legacy setting still controls whether Save As appears')
 
 // A BrowserWindow maximize event must never publish a partial state snapshot that
@@ -163,7 +168,7 @@ for (const [file, which] of Object.entries(PAGE_PRELOAD_FOR)) {
   }
 }
 
-for (const f of ['main.js', 'preload.js', 'page-preload.js', 'spell-page.js', 'ui/renderer.js']) {
+for (const f of ['main.js', 'download-save.js', 'preload.js', 'page-preload.js', 'spell-page.js', 'ui/renderer.js']) {
   try { execFileSync(process.execPath, ['--check', A(f)], { stdio: 'pipe' }) }
   catch (e) { defects.push(`${f}: does not parse - ${String(e.stderr).split('\n')[0]}`) }
 }

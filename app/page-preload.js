@@ -30,7 +30,8 @@ if (isInternal) {
     },
     openExternal: (url) => invoke('open:external', url),
     tab: {
-      close: (id) => invoke('tab:close', id)
+      close: (id) => invoke('tab:close', id),
+      open: (url) => invoke('tab:open', url)
     },
     // the settings page owns the download folder control, so it needs the picker
     downloads: {
