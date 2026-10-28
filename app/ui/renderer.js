@@ -4,7 +4,7 @@ const params = new URLSearchParams(location.search)
 const isPrivate = params.get('private') === '1'
 if (isPrivate) document.body.classList.add('private')
 
-let state = { tabs: [], activeId: null, canGoBack: false, canGoForward: false, loading: false, url: '' }
+let state = { tabs: [], activeId: null, canGoBack: false, canGoForward: false, loading: false, url: '', maximized: false }
 let SUGGEST_H = 250
 const FIND_H = 44
 let MENU_H = 340
@@ -302,9 +302,14 @@ function renderWorkspaces() {
   wrap.appendChild(add)
 }
 
-function applyState(s) {
-  state = s
+function applyState(update) {
+  if (!update || typeof update !== 'object' || Array.isArray(update)) return
+  // Some window lifecycle events carry a small patch. Merge them instead of replacing
+  // the full state snapshot, otherwise tabs/settings disappear on maximize/restore.
+  const s = state = { ...state, ...update }
   applyAccent(s)
+  const maxButton = $('#wc-max')
+  if (maxButton) maxButton.title = s.maximized ? 'Restore' : 'Maximise'
   let ms = document.getElementById('modstyle')
   if (!ms) {
     ms = document.createElement('style')
@@ -317,10 +322,13 @@ function applyState(s) {
   renderRail()
   renderWorkspaces()
   renderNav()
-  window.pv.bookmarks.isBookmarked(s.url || '').then((v) => {
+  const bookmarkUrl = s.url || ''
+  window.pv.bookmarks.isBookmarked(bookmarkUrl).then((v) => {
+    // A slower IPC reply for a previous tab must not repaint the current tab's star.
+    if ((state.url || '') !== bookmarkUrl) return
     state.isBookmarked = v
     $('#btn-bookmark').classList.toggle('on', v)
-  })
+  }).catch(() => { /* the window may be closing */ })
 }
 
 window.pv.on('state', applyState)

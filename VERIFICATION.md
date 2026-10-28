@@ -945,3 +945,62 @@ creates a system-wide tunnel below the browser, so every tab is inside it with n
 code from me - which is also true of every other system-wide VPN. That is the recommended path,
 and it is what the Settings text now says.
 
+
+## Round 28 - settings categories, mandatory Save As, and Proton VPN guidance
+
+This pass addresses the three user-facing requests without claiming API support Electron does
+not provide.
+
+### Settings organization
+
+- The 17 settings sections are now grouped into nine selectable categories: General, Privacy &
+  security, Downloads, Extensions, Performance, Appearance, Spelling, Passwords, and About.
+- The selected category is available as a URL fragment and remembered in local storage. The nav
+  collapses to a horizontally scrollable strip on narrow windows; section controls themselves
+  keep their existing ids and settings bindings.
+- Download controls and the stylesheet editor were moved into their own appropriate categories.
+
+### Downloads
+
+- The Save As dialog is now unconditional; there is no setting that can silently bypass it.
+- Startup migration removes the old `askSaveLocation` value from existing profiles, and settings
+  writes discard that retired key as well.
+- The chosen download folder is only the dialog's starting directory. Choosing Cancel calls
+  `preventDefault()` before a download row is created or any file is written.
+
+### Extensions and Proton VPN
+
+The extension manager remains available in the new Extensions category (unpacked folders and
+`.crx` installs, enable/disable/remove, with missing APIs reported). Proton VPN's browser extension
+still cannot route traffic here: it requires `chrome.proxy`, which this Electron engine does not
+implement. The UI now says this plainly and links to Proton's official desktop download page; once
+the desktop app is installed and connected, its system-wide VPN covers PsychoVault. No VPN state
+or successful connection is simulated by the browser.
+
+### Checks run
+
+- `node --check` passed for `app/main.js`, `app/preload.js`, `app/page-preload.js`,
+  `app/ui/renderer.js`, and the inline Settings script.
+- `node tools/audit.mjs` passed, including checks that every category has a navigation button and
+  panel, all 17 sections are grouped, Save As cannot be disabled, cancellation prevents a transfer,
+  and IPC bridges match their handlers.
+- `git diff --check` passed.
+
+An Electron GUI/runtime test was not run in this sandbox because there is no display server or
+Electron runtime installed.
+
+## Round 29 - window state and pinned tab size
+
+- Maximize/unmaximize no longer push `{ maximized }` as if it were the entire renderer state. They
+  trigger a full snapshot (including the current `maximized` flag); restore also relayouts and
+  refreshes state. The renderer merges state updates defensively, so a future partial state message
+  cannot wipe `tabs`, `settings`, or other existing fields.
+- A restored/maximized state updates the window control's title, while retaining the same tabs.
+- Pinned tabs now inherit the normal tab flex-basis and width instead of being forced to an
+  icon-only 42-pixel tab. The pin marker stays visible; pinned tabs still omit the close button.
+- The static audit now checks these invariants, syntax-checks `spell-page.js` and both inline HTML
+  scripts, and retains the prior IPC/settings/download/category checks.
+
+Checks run: `node tools/audit.mjs` (no defects), JavaScript syntax checks through the audit,
+HTML nesting/unique-ID check, and `git diff --check`. A GUI regression run was not possible in this
+sandbox because no Electron runtime or display server is installed.
