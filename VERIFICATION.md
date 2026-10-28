@@ -1078,3 +1078,31 @@ not a Windows installer or a GitHub release. The Windows installer build, native
 installer handoff, and live GitHub update were not run in this sandbox. Repository Actions secret
 configuration is still a manual maintainer step; do not treat signed releases as operational until
 `UPDATE_SIGNING_PRIVATE_KEY_B64` is saved in GitHub Actions secrets.
+
+## Round 33 - installer build no longer gated by update-signing secrets
+
+- The 1.0.4 workflow run reached and passed **Build and verify the installer**; it had initially
+  stopped earlier because the repository update-signing secret was absent. The public release was not
+  created, correctly, because its Ed25519 manifest could not be signed.
+- The workflow now completes the installer build even when that secret is absent. It conditionally
+  runs signing and public-release steps only when the key is configured, so it never publishes an
+  unsigned release. Uploading an unsigned CI artifact is best-effort: the first attempt after the
+  build passed failed because the repository's GitHub Actions artifact-storage quota was full; this
+  upload failure is now allowed to warn without masking a successful build.
+- Added manual workflow dispatch and triggers for both `Master` and the current Arena branch.
+- Set the Windows AppUserModelID to `com.psychocore.psychovault` so taskbar grouping uses PsychoVault
+  rather than Electron; confirmation of the visible label still requires a Windows run.
+
+Local audit, unit tests, JavaScript/shell syntax, YAML parsing, and whitespace checks pass. The
+installer build passed on GitHub Actions. Run 40749613268 could not retain its artifact because the
+repository Actions-storage quota was full; the later run 40754930467 successfully uploaded
+`PsychoVault-Setup-1.0.4-unsigned` (116,541,456 bytes). Artifact retention may still be quota-sensitive.
+That run skipped signing and public-release creation because the Actions update-signing secret was
+not available. A public v1.0.4 release still requires that secret, and the installer still needs an
+Authenticode certificate to show a verified Windows publisher.
+
+Because no signed v1.0.4 release had been published and the earlier private key was unavailable in
+this workspace, the Ed25519 key pair was rotated before release. The new public key is in
+`app/update-public-key.pem`; its matching private key remains outside the repository with mode 0600
+and passed a local sign/verify smoke test. The new matching key must be stored as
+`UPDATE_SIGNING_PRIVATE_KEY_B64` before publishing.

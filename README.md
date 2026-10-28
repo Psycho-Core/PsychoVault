@@ -161,41 +161,57 @@ which is why the sums file is separate and written after the build.
 
 ## Automatic updates
 
-PsychoVault checks the latest public GitHub Release once after startup on Windows x64. It does not
-send browsing history or page URLs; GitHub receives a normal release API request from your network.
-If a newer signed release is available, the browser asks before downloading and then shows Save As
-for the installer. It verifies the Ed25519 signature on `update-manifest.json`, checks the release tag
-and platform, downloads to a temporary file beside the selected destination, and validates its exact
-size and SHA-256 before saving and launching it. An
-unsigned, mismatched, or corrupted release is never run. Offline and GitHub API failures are silent
-so they do not interrupt browsing.
+On packaged Windows x64 builds, PsychoVault 1.0.4 checks GitHub Releases once after startup. It sends
+GitHub a release lookup request, not browsing history or page URLs. If a newer stable release exists,
+the app downloads two small metadata files before asking whether you want to proceed:
+
+1. `update-manifest.json` names the version and installer and records its exact byte size and
+   SHA-256 hash.
+2. `update-manifest.sig` is an Ed25519 signature over the exact manifest bytes. PsychoVault checks
+   that signature using `app/update-public-key.pem`, a public key embedded in the installed app.
+   Only someone holding the matching private key can create a valid signature.
+
+After the signature and release details pass validation, PsychoVault asks you to continue and shows
+**Save As** for the installer. It downloads to a temporary file beside your chosen destination,
+checks the actual byte count and SHA-256 against the signed manifest, then saves and launches it. If
+anything is unsigned, altered, truncated, for the wrong platform, or for a non-newer version, it is
+not run. A checksum alone detects changed bytes but does not identify who approved them; the
+signature authenticates the expected checksum and release metadata. Offline checks fail quietly so
+they do not interrupt browsing.
 
 ### One-time repository setup for maintainers
 
-The Ed25519 **public** key lives in `app/update-public-key.pem` and ships with the browser. The
-matching private key must stay out of Git and is needed only by the release workflow. In the GitHub
-repository, open **Settings → Secrets and variables → Actions → New repository secret** and set:
+The Ed25519 **public** key lives in `app/update-public-key.pem` and ships with the browser. Its
+matching **private** key stays out of Git. GitHub Actions needs it to sign each release manifest. In
+the repository, open **Settings → Secrets and variables → Actions → New repository secret** and set:
 
 - Name: `UPDATE_SIGNING_PRIVATE_KEY_B64`
-- Value: the base64-encoded contents of the matching private PEM key (`base64 -w0 <private-key.pem>`
-  on Linux; use `base64 <private-key.pem | tr -d '\n'` on macOS)
+- Value: one-line base64 of the matching private PEM (`base64 -w0 <private-key.pem>` on Linux; on
+  macOS use `base64 <private-key.pem | tr -d '\n'`).
 
-The workflow fails closed with a clear missing-key error if this secret is absent or does not match
-the bundled public key. After saving it, rerun the failed release workflow. Do not paste the private
-key into a commit, issue, or chat. GitHub-generated release notes provide the public release history.
+If the secret is absent, CI still builds the installer and skips publishing a GitHub Release. It
+tries to retain an unsigned Actions artifact for 14 days for testing; if the repository's Actions
+storage quota is full, the build still completes but GitHub cannot offer that artifact for download.
+An unsigned artifact is not an automatic update and Windows may still warn about it. If the secret is
+present but invalid or does not match the embedded public key, signing fails and no release is
+published. Never commit or paste the private key into an issue or chat. GitHub-generated release
+notes provide the public change history.
 
-The existing 1.0.3 installer predates this updater. Users must install **1.0.4 once** from GitHub
-Releases; later versions can then be checked and installed from inside the app. The detached Ed25519
-signature authenticates update metadata and the installer hash; it is not a Windows Authenticode
-certificate, so it does not remove the existing SmartScreen warning.
+The existing 1.0.3 installer predates this updater, so it cannot update itself. Install 1.0.4 once
+from GitHub Releases when available; after that, later signed releases can be checked from inside the
+app. The Ed25519 signature authenticates update metadata and the installer hash; it is **not** a
+Windows Authenticode signature and does not remove the SmartScreen warning.
 
 ## Package for Windows
 
-Pushes that change app code, the installer script, or its build tools to the active Arena branch
-run `.github/workflows/build-release.yml`. The workflow downloads the checksum-pinned Electron
-45.1.0 Windows runtime, patches the PsychoVault icon and version, stages the checked-out app source,
-verifies the packaged files, signs update metadata with the `UPDATE_SIGNING_PRIVATE_KEY_B64` Actions
-secret, and publishes the installer, checksum, signature, and generated release notes to GitHub Releases.
+Pushes that change app code, the installer script, or its build tools to the active Arena branch or
+`Master` run `.github/workflows/build-release.yml`; it can also be started manually from Actions. The
+workflow runs the audit and tests, downloads the checksum-pinned Electron 45.1.0 Windows runtime,
+patches the PsychoVault icon/version, then builds and verifies the installer. It tries to retain an
+unsigned CI artifact for 14 days; a full Actions storage quota may prevent the download, but does not
+fail the build. If `UPDATE_SIGNING_PRIVATE_KEY_B64` is configured, later steps sign the update
+manifest and publish the installer, checksum, signature, and generated release notes. If not, those
+release steps are skipped and no public release is created.
 
 For a local rebuild, install NSIS and 7-Zip, then provide `$PAYLOAD` (default `/var/tmp/payload`)
 with the unpacked Windows Electron runtime and `PsychoVault.exe`. The `patch-exe` helper sets the
