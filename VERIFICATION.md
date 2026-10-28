@@ -1105,9 +1105,9 @@ Authenticode certificate to show a verified Windows publisher.
 
 The merge-triggered Master run 40757959144 built and verified the installer, but its signing and
 publishing steps were skipped because `UPDATE_SIGNING_PRIVATE_KEY_B64` was still unavailable. The
-matching private key from the earlier rotation was no longer present in this workspace, and no
-signed v1.0.4 release used that key. A replacement Ed25519 pair was generated: the public key is
+matching private key from that rotation was later unavailable in this workspace. A new Ed25519 pair
+was generated after a subsequent signing attempt failed: the public key is in
 `app/update-public-key.pem`, and its private counterpart is outside the repository at
 `/home/user/.psychovault-update-signing-private.pem` (mode 0600). A local temporary-payload
-sign/verify smoke test passed. Save this current key—not an earlier value—as
+sign/verify smoke test passed. Save this latest matching key—not an earlier value—as
 `UPDATE_SIGNING_PRIVATE_KEY_B64` before publishing.

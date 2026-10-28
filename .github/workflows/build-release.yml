@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - Master
-      - arena/7e4e596a-psychovault
+      - arena/cd680033-psychovault
     paths:
       - 'app/**'
       - 'assets/psychovault.ico'

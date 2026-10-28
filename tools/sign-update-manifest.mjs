@@ -14,7 +14,7 @@ const installerPath = path.resolve(process.argv[2] || '')
 const assetName = `${PRODUCT}-Setup-${version}.exe`
 const expectedInstaller = path.join(ROOT, assetName)
 const repository = process.env.GITHUB_REPOSITORY || REPOSITORY
-const secret = String(process.env.UPDATE_SIGNING_PRIVATE_KEY_B64 || '').trim()
+const secret = String(process.env.UPDATE_SIGNING_PRIVATE_KEY_B64 || '').replace(/\s+/g, '')
 
 if (repository !== REPOSITORY) throw new Error(`Refusing to sign for unexpected repository: ${repository}`)
 if (!process.argv[2] || installerPath !== expectedInstaller) {
