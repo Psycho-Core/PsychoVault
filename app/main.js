@@ -2,6 +2,8 @@
 // Owns the windows, the tab views, the sessions, the blocker and the stores.
 const { app, BrowserWindow, WebContentsView, ipcMain, session, shell, Menu, clipboard, safeStorage, dialog, globalShortcut, powerMonitor, screen, Notification } = require('electron')
 const { createSaveDialogQueue } = require('./download-save')
+const { buildTranslationUrl } = require('./translation')
+const { checkOnStartup: checkForUpdatesOnStartup } = require('./auto-updater')
 const path = require('node:path')
 const fs = require('node:fs')
 const crypto = require('node:crypto')
@@ -58,6 +60,10 @@ const DEFAULT_SETTINGS = {
   // --- extras, every one of them user-controllable ---
   accent: 'cyan',                 // "mods": accent colour of the whole UI
   hideSidebar: false,             // collapse the GX rail
+  highContrast: false,            // higher contrast for browser chrome and Settings
+  reduceMotion: false,             // reduce interface and page animations
+  showTabCloseButtons: false,     // keep tab close controls visible without hover
+  translateTarget: 'en',          // page-translation destination language
   blockAutoplay: false,           // video autoplay needs a click first
   blockThirdPartyCookies: false,  // cross-site Cookie header stripped
   sendDNT: true,                  // DNT + Global Privacy Control headers
@@ -1620,6 +1626,20 @@ class TabWindow {
     return !!css
   })()`
 
+  static ACCESSIBILITY_CSS = `(() => {
+    const on = __REDUCE__
+    const id = '__pv_reduce_motion'
+    let style = document.getElementById(id)
+    if (on && !style) {
+      style = document.createElement('style')
+      style.id = id
+      document.documentElement.appendChild(style)
+    }
+    if (style && on) style.textContent = '*,:before,:after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}'
+    else if (style && !on) style.remove()
+    return on
+  })()`
+
   applyEnhancements(tab) {
     const wc = tab && tab.view && tab.view.webContents
     if (!wc || wc.isDestroyed()) return
@@ -1627,12 +1647,14 @@ class TabWindow {
     const on = !!settings.enhanceVideo || !!settings.enhanceImages
     if (!on) {
       wc.executeJavaScript(`(function(){const a=document.getElementById('__pv_rgx');if(a)a.remove();return true})()`).catch(() => {})
-      return
+    } else {
+      const css = TabWindow.ENHANCE_CSS
+        .replace('__VIDEO__', JSON.stringify(!!settings.enhanceVideo))
+        .replace('__IMAGES__', JSON.stringify(!!settings.enhanceImages))
+      wc.executeJavaScript(css).catch(() => { /* page refused; enhancement is cosmetic */ })
     }
-    const css = TabWindow.ENHANCE_CSS
-      .replace('__VIDEO__', JSON.stringify(!!settings.enhanceVideo))
-      .replace('__IMAGES__', JSON.stringify(!!settings.enhanceImages))
-    wc.executeJavaScript(css).catch(() => { /* page refused; enhancement is cosmetic */ })
+    const accessibilityCss = TabWindow.ACCESSIBILITY_CSS.replace('__REDUCE__', JSON.stringify(!!settings.reduceMotion))
+    wc.executeJavaScript(accessibilityCss).catch(() => { /* the page may have navigated away */ })
   }
 
   setEnhancements(patch) {
@@ -2248,6 +2270,34 @@ ipcMain.handle('tab:open', (e, rawUrl) => {
   w.createTab(url.href, { parentId: tab.id, container: tab.container || null })
   return { ok: true }
 })
+ipcMain.handle('translate:page', async (e) => {
+  const w = findWin(e)
+  const tab = w && w.tabs.get(w.activeId)
+  if (!w || !tab) return { ok: false, error: 'There is no active page to translate.' }
+  const translation = buildTranslationUrl(tab.url, settings.translateTarget)
+  if (!translation.ok) return translation
+
+  let answer
+  try {
+    answer = await dialog.showMessageBox(w.win, {
+      type: 'info',
+      title: 'Translate page with Google Translate?',
+      message: `Translate this page to ${translation.languageName}?`,
+      detail: 'Google Translate will receive this page URL and retrieve its contents. PsychoVault opens the translated copy in a new tab, leaving the original untouched. Avoid this for private or sensitive pages.',
+      buttons: ['Cancel', 'Continue'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true
+    })
+  } catch (error) {
+    logMainError(error)
+    return { ok: false, error: 'Could not open the translation confirmation.' }
+  }
+  if (answer.response !== 1) return { ok: false, cancelled: true }
+  if (w.win.isDestroyed() || !w.tabs.has(tab.id)) return { ok: false, error: 'The source tab was closed.' }
+  w.createTab(translation.url, { parentId: tab.id, container: tab.container || null })
+  return { ok: true, language: translation.languageName }
+})
 ipcMain.handle('tab:close', (e, id) => {
   const w = [...mainWindows].find(w => w.win.webContents === e.sender)
   if (w) w.closeTab(id)
@@ -2714,7 +2764,7 @@ ipcMain.handle('settings:set', (e, patch) => {
   loadBlocklist()
   applyCpuLimit()
   for (const ses of liveSessions) applySessionPolicy(ses)
-  if ('enhanceVideo' in patch || 'enhanceImages' in patch) {
+  if ('enhanceVideo' in patch || 'enhanceImages' in patch || 'reduceMotion' in patch) {
     for (const w of mainWindows) for (const t of w.tabs.values()) w.applyEnhancements(t)
   }
   if ('vaultLockMin' in patch || 'vaultEnabled' in patch) vaultArmLock()
@@ -2992,6 +3042,11 @@ app.whenReady().then(() => {
 
   const cliURL = urlFromArgv(process.argv)
   if (cliURL) w.win.webContents.once('did-finish-load', () => w.createTab(cliURL))
+
+  checkForUpdatesOnStartup({
+    onProgress: ({ message }) => { if (message) broadcast('update-progress', { message }) },
+    onError: (error) => logMainError(error)
+  })
 
   app.on('activate', () => {
     if (mainWindows.size === 0) {

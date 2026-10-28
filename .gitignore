@@ -2,3 +2,5 @@ PsychoVault/PsychoVaultExe/
 /Exe
 node_modules/
 PsychoVault-Setup-*.exe
+update-manifest.json
+update-manifest.sig

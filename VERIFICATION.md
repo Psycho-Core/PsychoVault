@@ -1031,3 +1031,50 @@ JavaScript/shell syntax checks through the audit, and `git diff --check`. The Wi
 is built by the source-based GitHub Actions workflow. The native Windows picker itself still needs a
 manual Windows run; the helper tests verify the event ordering and fail-closed behavior without
 pretending to draw a native dialog.
+
+## Round 31 - page translation and accessibility controls
+
+- Added a target-language choice with 20 destinations under **Settings → Accessibility & language**.
+  The browser Menu and command palette can translate the active HTTP(S) page. PsychoVault asks for
+  consent before opening Google's webpage-translation route, explains that Google receives the full
+  page URL and retrieves its contents, leaves the original tab untouched, and opens the translated
+  copy in a new tab. Internal pages, credential-bearing URLs, and unsupported language codes are
+  rejected by the URL builder. Google Translate needs an internet connection and may not work on
+  every site; do not use it for sensitive pages.
+- Added optional high-contrast browser chrome and Settings colors, reduced-motion styling for the
+  browser and Settings (also honoring the OS preference) plus a reduced-motion stylesheet for pages,
+  and a setting that keeps tab-close buttons visible. Browser tab items now expose tab names and
+  selected state to assistive technology, support Left/Right/Home/End/Enter/Space keyboard use, and
+  provide an accessible button for expanding/collapsing tab islands. Focus rings, accessible names
+  for browser controls, status announcements, and Settings control focus styles were also improved.
+- Bumped the app version to 1.0.3. The installer staging/verification script now checks
+  `translation.js`; the release workflow runs the complete test glob alongside the static audit.
+
+Checks run: `node tools/audit.mjs` (no defects), `node --test tools/*.test.cjs` (7 passed),
+JavaScript syntax checks and shell syntax validation through the audit, and `git diff --check`.
+A Windows installer/runtime GUI test was not run in this sandbox because no Electron display/runtime
+is available. The Google Translate route is an external service, so a live translation test also
+requires an internet-enabled app session.
+
+## Round 32 - signed automatic updates and public release notes
+
+- Added a delayed startup check for the latest stable public GitHub Release on packaged Windows x64
+  builds. The app verifies the detached Ed25519 signature against its embedded public key, validates
+  the tag/version/platform and signed installer size/hash, offers Save As, then launches only the
+  verified installer. Network or metadata failures fail closed and do not interrupt browsing.
+- Added a release signer that checks the Actions private key matches the embedded public key before
+  writing `update-manifest.json` and `update-manifest.sig`. The workflow will not publish an unsigned
+  release if `UPDATE_SIGNING_PRIVATE_KEY_B64` is missing. It also attaches the installer checksum,
+  manifest and signature, and uses GitHub's generated notes with categorized release history.
+- Bumped the application version to 1.0.4. Existing 1.0.3 installs need this one-time manual update
+  because they do not contain the updater.
+
+Checks run in this workspace: `node tools/audit.mjs` (no defects), `node --test tools/*.test.cjs`
+(10 passed, including signature-tampering and version/platform rejection cases), JavaScript and shell
+syntax checks, YAML parsing for both release workflow/config files, and `git diff --check`. The
+release signer was smoke-tested with a temporary dummy installer payload: the actual local private
+key produced metadata whose signature and SHA-256 verified with the embedded public key. That was
+not a Windows installer or a GitHub release. The Windows installer build, native Save As dialog,
+installer handoff, and live GitHub update were not run in this sandbox. Repository Actions secret
+configuration is still a manual maintainer step; do not treat signed releases as operational until
+`UPDATE_SIGNING_PRIVATE_KEY_B64` is saved in GitHub Actions secrets.

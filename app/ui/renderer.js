@@ -69,6 +69,10 @@ function renderTabs() {
       (t.discarded ? ' dozing' : '') +
       (t.muted ? ' muted' : '')
     el.dataset.id = t.id
+    el.setAttribute('role', 'tab')
+    el.setAttribute('aria-selected', t.id === state.activeId ? 'true' : 'false')
+    el.setAttribute('aria-label', prettyTitle(t) + (t.pinned ? ', pinned' : '') + (t.muted ? ', muted' : '') + (t.discarded ? ', sleeping' : ''))
+    el.tabIndex = t.id === state.activeId ? 0 : -1
     el.title = (t.pinned ? 'Pinned - ' : '') + (t.url || 'New tab') + (t.discarded ? ' (sleeping)' : '')
 
     if (t.loading) {
@@ -102,10 +106,14 @@ function renderTabs() {
       el.classList.add('contained')
     }
     if (islandCount.has(t.id)) {   // the root itself has no island id - count is the test
-      const b = document.createElement('span')
+      const collapsed = collapsedIslands.has(t.id)
+      const b = document.createElement('button')
+      b.type = 'button'
       b.className = 'island-btn'
-      b.textContent = collapsedIslands.has(t.id) ? '+' + islandCount.get(t.id) : '\u25be'
-      b.title = collapsedIslands.has(t.id) ? 'Expand this island' : 'Collapse this island'
+      b.textContent = collapsed ? '+' + islandCount.get(t.id) : '\u25be'
+      b.title = collapsed ? 'Expand this island' : 'Collapse this island'
+      b.setAttribute('aria-label', (collapsed ? 'Expand' : 'Collapse') + ' tabs opened from ' + prettyTitle(t))
+      b.setAttribute('aria-expanded', String(!collapsed))
       b.onclick = (e) => {
         e.stopPropagation()
         if (collapsedIslands.has(t.id)) collapsedIslands.delete(t.id)
@@ -124,10 +132,30 @@ function renderTabs() {
       const x = document.createElement('button')
       x.className = 'tab-close'
       x.textContent = '\u00d7'
+      x.setAttribute('aria-label', 'Close ' + prettyTitle(t))
+      x.title = 'Close tab'
       x.onclick = (e) => { e.stopPropagation(); window.pv.tab.close(t.id) }
       el.appendChild(x)
     }
 
+    el.onkeydown = (e) => {
+      if (e.target !== el || e.altKey || e.ctrlKey || e.metaKey) return
+      const visible = [...wrap.querySelectorAll('.tab')]
+      const current = visible.indexOf(el)
+      let next = -1
+      if (e.key === 'ArrowRight') next = (current + 1) % visible.length
+      else if (e.key === 'ArrowLeft') next = (current - 1 + visible.length) % visible.length
+      else if (e.key === 'Home') next = 0
+      else if (e.key === 'End') next = visible.length - 1
+      else if (e.key === 'Enter' || e.key === ' ') next = current
+      if (next < 0 || !visible[next]) return
+      e.preventDefault()
+      const targetId = Number(visible[next].dataset.id)
+      window.pv.tab.activate(targetId).then(() => {
+        const active = [...wrap.querySelectorAll('.tab')].find((node) => Number(node.dataset.id) === targetId)
+        if (active) active.focus()
+      }).catch(() => {})
+    }
     el.onclick = () => { if (Date.now() < suppressTabClickUntil) return; gxSound('tab'); window.pv.tab.activate(t.id) }
     el.onauxclick = (e) => { if (e.button === 1 && !t.pinned) window.pv.tab.close(t.id) }
     el.oncontextmenu = (e) => {
@@ -192,6 +220,16 @@ function prettyTitle(t) {
   return t.title
 }
 
+function updateBookmarkButton(bookmarked) {
+  const button = $('#btn-bookmark')
+  if (!button) return
+  const label = bookmarked ? 'Remove bookmark' : 'Bookmark this page'
+  button.classList.toggle('on', !!bookmarked)
+  button.setAttribute('aria-pressed', String(!!bookmarked))
+  button.setAttribute('aria-label', label)
+  button.title = label
+}
+
 function renderNav() {
   $('#btn-back').disabled = !state.canGoBack
   $('#btn-fwd').disabled = !state.canGoForward
@@ -200,7 +238,7 @@ function renderNav() {
     const u = state.url || ''
     om.value = u.startsWith('file://') ? '' : u
   }
-  $('#btn-bookmark').classList.toggle('on', !!state.isBookmarked)
+  updateBookmarkButton(!!state.isBookmarked)
   const act = (state.tabs || []).find(t => t.id === state.activeId)
   const pageBlocked = act ? act.blocked || 0 : 0
   $('#shield-count').textContent = pageBlocked
@@ -212,7 +250,10 @@ function renderNav() {
     shields.classList.toggle('off', !!(state.settings && state.settings.blockAds === false))
   }
   const sp = $('#btn-split')
-  if (sp) sp.classList.toggle('on', !!state.splitId)
+  if (sp) {
+    sp.classList.toggle('on', !!state.splitId)
+    sp.setAttribute('aria-pressed', String(!!state.splitId))
+  }
 }
 
 const ACCENTS = {
@@ -233,7 +274,11 @@ function rgba(hex, a) {
 // Private windows keep the violet accent: it is the signal that nothing is stored.
 function applyAccent(s) {
   const name = (s.settings && s.settings.accent) || 'cyan'
-  document.body.classList.toggle('no-rail', !!(s.settings && s.settings.hideSidebar))
+  const prefs = s.settings || {}
+  document.body.classList.toggle('no-rail', !!prefs.hideSidebar)
+  document.body.classList.toggle('high-contrast', !!prefs.highContrast)
+  document.body.classList.toggle('reduce-motion', !!prefs.reduceMotion)
+  document.body.classList.toggle('always-show-tab-close', !!prefs.showTabCloseButtons)
   if (isPrivate || name === lastAccent) return
   lastAccent = name
   const c = ACCENTS[name] || ACCENTS.cyan
@@ -309,7 +354,11 @@ function applyState(update) {
   const s = state = { ...state, ...update }
   applyAccent(s)
   const maxButton = $('#wc-max')
-  if (maxButton) maxButton.title = s.maximized ? 'Restore' : 'Maximise'
+  if (maxButton) {
+    const label = s.maximized ? 'Restore window' : 'Maximise window'
+    maxButton.title = label
+    maxButton.setAttribute('aria-label', label)
+  }
   let ms = document.getElementById('modstyle')
   if (!ms) {
     ms = document.createElement('style')
@@ -327,7 +376,7 @@ function applyState(update) {
     // A slower IPC reply for a previous tab must not repaint the current tab's star.
     if ((state.url || '') !== bookmarkUrl) return
     state.isBookmarked = v
-    $('#btn-bookmark').classList.toggle('on', v)
+    updateBookmarkButton(v)
   }).catch(() => { /* the window may be closing */ })
 }
 
@@ -339,6 +388,9 @@ window.pv.on('hover', ({ url }) => {
 })
 window.pv.on('vault', (v) => {
   if (v && v.toast) toast(v.toast)
+})
+window.pv.on('update-progress', ({ message }) => {
+  if (message) toast(message)
 })
 
 window.pv.on('workspaces', (ws) => {
@@ -373,9 +425,11 @@ function paintDlBadge(list) {
     if (!badge) { badge = document.createElement('span'); badge.className = 'dl-badge'; btn.appendChild(badge) }
     badge.textContent = String(live)
     btn.title = live === 1 ? 'Downloads - 1 in progress' : 'Downloads - ' + live + ' in progress'
+    btn.setAttribute('aria-label', live === 1 ? 'Downloads, 1 in progress' : 'Downloads, ' + live + ' in progress')
   } else if (badge) {
     badge.remove()
     btn.title = 'Downloads'
+    btn.setAttribute('aria-label', 'Downloads')
   }
 }
 
@@ -491,6 +545,7 @@ document.addEventListener('mousedown', (e) => {
   if (!e.target.closest('#suggest') && !e.target.closest('#omnibox-wrap')) hideSuggest()
   if (!e.target.closest('#menu') && !e.target.closest('#btn-menu') && !$('#menu').classList.contains('hidden')) {
     $('#menu').classList.add('hidden')
+    $('#btn-menu').setAttribute('aria-expanded', 'false')
     syncChrome()
   }
 })
@@ -507,7 +562,7 @@ $('#btn-bookmark').onclick = async () => {
     toast('Bookmarked')
   }
   state.isBookmarked = !state.isBookmarked
-  $('#btn-bookmark').classList.toggle('on', state.isBookmarked)
+  updateBookmarkButton(state.isBookmarked)
 }
 
 // ------------------------------------------------------------------ panels
@@ -527,6 +582,7 @@ function renderRail() {
     const b = document.createElement('button')
     b.className = 'rail-btn svc'
     b.title = svc.name + ' - opens in a tab, keeps playing when you switch away. Right-click for the rest.'
+    b.setAttribute('aria-label', 'Open ' + svc.name + ' sidebar service')
     b.style.setProperty('--svc', svc.color || 'var(--dim)')
     const icon = svc.origin && railIconMap[svc.origin]
     if (icon) {
@@ -558,12 +614,20 @@ async function openPanel(name, btn) {
   const panel = $('#panel')
   if (panel.dataset.open === name && !panel.classList.contains('hidden')) {
     panel.classList.add('hidden'); panel.dataset.open = ''
-    document.querySelectorAll('.rail-btn[data-panel]').forEach(b => b.classList.remove('active'))
+    document.querySelectorAll('.rail-btn[data-panel]').forEach(b => {
+      b.classList.remove('active')
+      b.setAttribute('aria-expanded', 'false')
+    })
+    if (btn && !btn.matches('.rail-btn[data-panel]')) btn.classList.remove('active')
     syncChrome()
     return
   }
-  document.querySelectorAll('.rail-btn[data-panel]').forEach(b => b.classList.remove('active'))
-  if (btn) btn.classList.add('active')
+  document.querySelectorAll('.rail-btn[data-panel]').forEach(b => {
+    const expanded = b.dataset.panel === name
+    b.classList.toggle('active', expanded)
+    b.setAttribute('aria-expanded', String(expanded))
+  })
+  if (btn && !btn.matches('.rail-btn[data-panel]')) btn.classList.add('active')
   panel.dataset.open = name
   panel.classList.remove('hidden')
   syncChrome()
@@ -735,15 +799,29 @@ function panelRow(item, removable) {
 
 $('#panel-close').onclick = () => {
   $('#panel').classList.add('hidden')
-  railBtns.forEach(b => b.classList.remove('active'))
+  $('#panel').dataset.open = ''
+  railBtns.forEach(b => {
+    b.classList.remove('active')
+    b.setAttribute('aria-expanded', 'false')
+  })
   syncChrome()
+}
+
+async function translateCurrentPage() {
+  try {
+    const result = await window.pv.translate.page()
+    if (result && result.ok) toast('Opened ' + result.language + ' translation in a new tab')
+    else if (!result || !result.cancelled) toast((result && result.error) || 'Could not translate this page')
+  } catch { toast('Could not translate this page') }
 }
 
 // ------------------------------------------------------------------ menu
 $('#btn-menu').onclick = (e) => {
   e.stopPropagation()
   $('#menu').classList.toggle('hidden')
-  if (!$('#menu').classList.contains('hidden')) MENU_H = $('#menu').offsetHeight + 14
+  const open = !$('#menu').classList.contains('hidden')
+  $('#btn-menu').setAttribute('aria-expanded', String(open))
+  if (open) MENU_H = $('#menu').offsetHeight + 14
   syncChrome()
 }
 
@@ -751,12 +829,14 @@ $('#menu').addEventListener('click', async (e) => {
   const btn = e.target.closest('button')
   if (!btn) return
   $('#menu').classList.add('hidden')
+  $('#btn-menu').setAttribute('aria-expanded', 'false')
   syncChrome()
   const cmd = btn.dataset.cmd
   if (cmd === 'newtab') window.pv.tab.new()
   else if (cmd === 'private') window.pv.win.private()
   else if (cmd === 'reopen') window.pv.tab.reopen()
   else if (cmd === 'find') showFind()
+  else if (cmd === 'translate') translateCurrentPage()
   else if (cmd === 'zoomin') window.pv.zoom.in()
   else if (cmd === 'zoomout') window.pv.zoom.out()
   else if (cmd === 'zoomreset') window.pv.zoom.reset()
@@ -784,6 +864,7 @@ const COMMANDS = [
   { id: 'history',  title: 'Show history',       keys: '',            run: () => openPanel('history', railBtns[1]) },
   { id: 'downloads',title: 'Show downloads',     keys: '',            run: () => openPanel('downloads', railBtns[2]) },
   { id: 'find',     title: 'Find in page',       keys: 'Ctrl+F',      run: () => showFind() },
+  { id: 'translate',title: 'Translate current page', keys: '',             run: () => translateCurrentPage() },
   { id: 'wsnew',    title: 'New workspace',       keys: '',            run: () => window.pv.ws.new('Workspace') },
   { id: 'ws1',      title: 'Switch to workspace 1', keys: 'Ctrl+1',    run: () => window.pv.ws.switch(0) },
   { id: 'ws2',      title: 'Switch to workspace 2', keys: 'Ctrl+2',    run: () => window.pv.ws.switch(1) },
@@ -910,6 +991,13 @@ $('#find-input').addEventListener('keydown', (e) => {
 
 // ------------------------------------------------------------------ keyboard
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('#menu').classList.contains('hidden')) {
+    $('#menu').classList.add('hidden')
+    $('#btn-menu').setAttribute('aria-expanded', 'false')
+    $('#btn-menu').focus()
+    syncChrome()
+    return
+  }
   const mod = e.ctrlKey || e.metaKey
   if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette() }
   else if (mod && e.key === '\\') { e.preventDefault(); window.pv.view.split() }
