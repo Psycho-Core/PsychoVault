@@ -1078,3 +1078,14 @@ not a Windows installer or a GitHub release. The Windows installer build, native
 installer handoff, and live GitHub update were not run in this sandbox. Repository Actions secret
 configuration is still a manual maintainer step; do not treat signed releases as operational until
 `UPDATE_SIGNING_PRIVATE_KEY_B64` is saved in GitHub Actions secrets.
+
+## Round 33 - Windows shell identity and release-branch trigger
+
+- The Windows process now assigns a stable `com.psychocore.psychovault` AppUserModelID, intended to
+  replace Electron's default name in Windows taskbar grouping/context menus. A source audit guards it.
+- The release workflow now also watches `Master` so future production merges can invoke the release
+  pipeline, not only pushes to the Arena session branch.
+
+Static audit and syntax checks pass. The taskbar label change needs confirmation on Windows. It does
+not Authenticode-sign the executable: the SmartScreen "Unknown publisher" prompt remains until a
+trusted code-signing certificate is configured and the EXE and installer are signed.

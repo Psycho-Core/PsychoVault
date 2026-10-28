@@ -3,6 +3,7 @@ name: Build and publish Windows installer
 on:
   push:
     branches:
+      - Master
       - arena/6281e61d-psychovault
     paths:
       - 'app/**'

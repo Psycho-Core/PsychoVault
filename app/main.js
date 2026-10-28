@@ -12,6 +12,7 @@ const { net: electronNet } = require('electron')   // this is the one that makes
 const { spawn, execFile } = require('node:child_process')
 
 app.setName('PsychoVault')
+if (process.platform === 'win32') app.setAppUserModelId('com.psychocore.psychovault')
 const requestDownloadSavePath = createSaveDialogQueue(dialog)
 
 // chrome geometry - must match style.css
