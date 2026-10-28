@@ -93,12 +93,14 @@ if (!chromeHtml.includes('role="tablist"') || !chromeJs.includes("setAttribute('
 if (!chromeJs.includes("e.key === 'ArrowRight'") || !chromeJs.includes("e.key === 'Home'") || !chromeJs.includes("e.key === 'End'")) defects.push('accessibility: tabs need keyboard selection and navigation keys')
 if (!chromeHtml.includes('aria-label="Search the web or enter an address"') || !chromeHtml.includes('aria-live="polite"')) defects.push('accessibility: browser controls and status feedback need accessible names/announcements')
 if (!settingsHtml.includes('select:focus-visible') || !settingsHtml.includes('input[type=text]:focus-visible')) defects.push('accessibility: Settings form fields need visible keyboard focus')
+if (!main.includes("app.setAppUserModelId('com.psychocore.psychovault')")) defects.push('Windows taskbar: set a stable PsychoVault AppUserModelID instead of the Electron default')
 if (!main.includes('checkForUpdatesOnStartup') || !main.includes("broadcast('update-progress'")) defects.push('updates: main process must start the startup check and forward progress feedback')
 if (!autoUpdater.includes('https://api.github.com/repos/${REPOSITORY}/releases/latest') || !updateManifest.includes("const REPOSITORY = 'Psycho-Core/PsychoVault'") || !autoUpdater.includes('verifyUpdateManifest') || !autoUpdater.includes('downloadInstaller')) defects.push('updates: release discovery, signature verification, and verified installer download must be wired')
 if (!autoUpdater.includes('dialog.showSaveDialog') || !autoUpdater.includes("app.getPath('downloads')")) defects.push('updates: saving the installer must offer a Save As destination')
 if (!autoUpdater.includes("createHash('sha256')") || !autoUpdater.includes('manifest.sha256') || !autoUpdater.includes('manifest.size')) defects.push('updates: the downloaded installer must be checked against its signed size and SHA-256')
 if (!updateManifest.includes('crypto.verify') || !updateManifest.includes("createHash('sha256')") || !fs.existsSync(A('update-public-key.pem'))) defects.push('updates: the Ed25519 public key and manifest verification code must be packaged')
 if (!releaseWorkflow.includes('UPDATE_SIGNING_PRIVATE_KEY_B64') || !releaseWorkflow.includes('update-manifest.sig') || !releaseWorkflow.includes('--generate-notes') || !fs.existsSync(path.join(ROOT, '.github/release.yml'))) defects.push('updates: release workflow must sign manifest assets and generate public release notes')
+if (!releaseWorkflow.includes('Upload unsigned installer build artifact') || !releaseWorkflow.includes('signing_key_configured')) defects.push('release pipeline: installer build must remain runnable without publishing an unsigned public release')
 
 // A BrowserWindow maximize event must never publish a partial state snapshot that
 // replaces the tab list in the chrome renderer. Pinned tabs should use the normal tab

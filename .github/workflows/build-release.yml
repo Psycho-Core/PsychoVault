@@ -3,7 +3,8 @@ name: Build and publish Windows installer
 on:
   push:
     branches:
-      - arena/6281e61d-psychovault
+      - Master
+      - arena/7e4e596a-psychovault
     paths:
       - 'app/**'
       - 'assets/psychovault.ico'
@@ -21,6 +22,7 @@ on:
       - 'tools/package.json'
       - 'tools/package-lock.json'
       - '.github/workflows/build-release.yml'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -29,8 +31,11 @@ jobs:
   build:
     name: Build Windows x64 installer
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      signing_key_configured: ${{ steps.signing-key.outputs.configured }}
     steps:
-      - name: Check out the session branch
+      - name: Check out source
         uses: actions/checkout@v4
 
       - name: Set up Node.js
@@ -43,23 +48,27 @@ jobs:
           node tools/audit.mjs
           node --test tools/*.test.cjs
 
-      - name: Confirm the update signing key is configured
+      - name: Read release version
+        id: version
+        run: echo "version=$(node -p 'require("./app/package.json").version')" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether signed release publishing is configured
+        id: signing-key
         env:
           UPDATE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY_B64 }}
         run: |
-          if [ -z "$UPDATE_SIGNING_PRIVATE_KEY_B64" ]; then
-            echo "::error title=Missing update signing key::Add UPDATE_SIGNING_PRIVATE_KEY_B64 under repository Settings > Secrets and variables > Actions, then rerun this workflow."
-            exit 1
+          if [ -n "$UPDATE_SIGNING_PRIVATE_KEY_B64" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "A signed GitHub Release can be published after the installer build."
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Release not published::The installer will be built and uploaded as an unsigned CI artifact, but no public GitHub Release will be created until UPDATE_SIGNING_PRIVATE_KEY_B64 is saved in repository Actions secrets."
           fi
 
       - name: Install NSIS and 7-Zip
         run: |
           sudo apt-get update
           sudo apt-get install -y nsis p7zip-full unzip
-
-      - name: Read release version
-        id: version
-        run: echo "version=$(node -p 'require("./app/package.json").version')" >> "$GITHUB_OUTPUT"
 
       - name: Download the pinned Electron Windows runtime
         env:
@@ -90,35 +99,67 @@ jobs:
           OUT: ${{ github.workspace }}/PsychoVault-Setup-${{ steps.version.outputs.version }}.exe
         run: bash tools/build-installer.sh
 
+      - name: Upload unsigned installer build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PsychoVault-Setup-${{ steps.version.outputs.version }}-unsigned
+          path: PsychoVault-Setup-${{ steps.version.outputs.version }}.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Sign and publish Windows release
+    needs: build
+    if: needs.build.outputs.signing_key_configured == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Download the built installer
+        uses: actions/download-artifact@v4
+        with:
+          name: PsychoVault-Setup-${{ needs.build.outputs.version }}-unsigned
+          path: .
+
       - name: Sign update manifest
         env:
           UPDATE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY_B64 }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: node tools/sign-update-manifest.mjs "PsychoVault-Setup-${{ steps.version.outputs.version }}.exe"
+        run: node tools/sign-update-manifest.mjs "PsychoVault-Setup-${{ needs.build.outputs.version }}.exe"
 
       - name: Write checksum
-        run: sha256sum "PsychoVault-Setup-${{ steps.version.outputs.version }}.exe" > SHA256SUMS.txt
+        run: sha256sum "PsychoVault-Setup-${{ needs.build.outputs.version }}.exe" > SHA256SUMS.txt
 
       - name: Update the branch checksum
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add SHA256SUMS.txt
-          git commit -m "chore: update installer checksum for v${{ steps.version.outputs.version }}"
-          git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"
+          if git diff --cached --quiet; then
+            echo "The branch checksum is already current."
+          else
+            git commit -m "chore: update installer checksum for v${{ needs.build.outputs.version }}"
+            git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"
+          fi
 
-      - name: Publish the new release
+      - name: Publish the signed release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v${{ steps.version.outputs.version }}" \
-            "PsychoVault-Setup-${{ steps.version.outputs.version }}.exe" \
+          gh release create "v${{ needs.build.outputs.version }}" \
+            "PsychoVault-Setup-${{ needs.build.outputs.version }}.exe" \
             SHA256SUMS.txt \
             update-manifest.json \
             update-manifest.sig \
             --repo "$GITHUB_REPOSITORY" \
             --target "$(git rev-parse HEAD)" \
-            --title "PsychoVault ${{ steps.version.outputs.version }}" \
+            --title "PsychoVault ${{ needs.build.outputs.version }}" \
             --notes "Download the Windows x64 installer below. SHA256SUMS.txt is a checksum for manual checks; the updater authenticates update-manifest.json with the detached Ed25519 signature update-manifest.sig before trusting the installer hash. Generated notes list the changes included in this release." \
             --generate-notes \
             --latest

@@ -1078,3 +1078,18 @@ not a Windows installer or a GitHub release. The Windows installer build, native
 installer handoff, and live GitHub update were not run in this sandbox. Repository Actions secret
 configuration is still a manual maintainer step; do not treat signed releases as operational until
 `UPDATE_SIGNING_PRIVATE_KEY_B64` is saved in GitHub Actions secrets.
+
+## Round 33 - independent build and signed-release stages
+
+- The Windows installer build no longer stops at the start just because the update signing secret is
+  absent. CI runs audit/tests and builds the installer first, then uploads an unsigned installer
+  artifact for 14 days. The separate public-release job runs only when
+  `UPDATE_SIGNING_PRIVATE_KEY_B64` is configured; without it, no unsigned GitHub Release is created.
+- Added manual workflow dispatch and triggers for both `Master` and the current Arena branch.
+- Set the Windows AppUserModelID to `com.psychocore.psychovault` so taskbar grouping uses PsychoVault
+  rather than Electron; confirmation of the visible label still requires a Windows run.
+
+The static audit, unit tests, syntax checks, YAML parse, and CI artifact/release configuration have
+been checked locally. This Linux sandbox cannot execute the Windows installer or confirm the taskbar
+label. A public v1.0.4 release still requires the repository Actions update-signing secret, and the
+installer still needs an Authenticode certificate to show a verified Windows publisher.
