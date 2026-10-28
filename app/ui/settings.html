@@ -1,0 +1,1013 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>PsychoVault Settings</title>
+<style>
+  :root { --bg:#0a0e17; --bg2:#0f1523; --bg3:#141c2e; --fg:#e6edf7; --dim:#8b9bb4; --accent:#38bdf8; --line:#1e293b; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--fg); font:14px/1.6 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+         padding:40px 24px 80px; display:flex; flex-direction:column; align-items:center; }
+  .wrap { width:min(720px,100%); }
+  h1 { font-size:24px; margin-bottom:6px; }
+  .sub { color:var(--dim); margin-bottom:28px; font-size:13px; }
+  section { background:var(--bg2); border:1px solid var(--line); border-radius:14px; padding:18px 20px; margin-bottom:16px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.6px; color:var(--accent); margin-bottom:14px; font-weight:600; }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:9px 0; border-bottom:1px solid rgba(30,41,59,.6); }
+  .row:last-child { border-bottom:0; }
+  .lbl { font-size:13.5px; }
+  .hint { color:var(--dim); font-size:12px; }
+  select, input[type=text] {
+    background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:8px;
+    padding:7px 10px; font-size:13px; outline:none; min-width:180px;
+  }
+  select:focus, input[type=text]:focus { border-color:var(--accent); }
+  .cat { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 4px 10px; margin: 8px 0 2px; }
+  .cat-item { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--fg); cursor: pointer; }
+  .cat-item input { width: auto; margin: 0; }
+  button.wide { padding: 9px 16px; font-size: 12.5px; letter-spacing: .4px; }
+  .pill-on, .pill-off, .pill-bad {
+    font-size: 11px; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--line);
+    color: var(--dim); letter-spacing: .4px; text-transform: uppercase;
+  }
+  .pill-on { color: #7ee787; border-color: rgba(126,231,135,.45); background: rgba(126,231,135,.1) }
+  .pill-bad { color: #ff6b81; border-color: rgba(255,107,129,.45); background: rgba(255,107,129,.1) }
+  code { font: inherit; color: var(--accent) }
+  textarea { width:100%; background:var(--bg); border:1px solid var(--line2); color:var(--fg);
+    border-radius:8px; padding:8px 10px; font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  textarea:focus { border-color:var(--accent); outline:none; }
+  .cdot { width:12px; height:12px; border-radius:50%; display:inline-block; flex:0 0 auto; }
+  #restartNote { border-left:3px solid var(--accent); }
+  .switch { position:relative; width:44px; height:24px; flex:0 0 44px; }
+  .switch input { opacity:0; width:0; height:0; }
+  .slider { position:absolute; inset:0; background:var(--bg3); border:1px solid var(--line);
+            border-radius:999px; cursor:pointer; transition:.15s; }
+  .slider:before { content:""; position:absolute; width:16px; height:16px; left:3px; top:3px;
+            background:var(--dim); border-radius:50%; transition:.15s; }
+  .switch input:checked + .slider { background:rgba(56,189,248,.25); border-color:var(--accent); }
+  .switch input:checked + .slider:before { transform:translateX(20px); background:var(--accent); }
+  .note { color:var(--dim); font-size:12px; margin-top:10px; }
+  button.danger { background:transparent; border:1px solid #7f1d1d; color:#fca5a5;
+    border-radius:8px; padding:7px 14px; font-size:12.5px; cursor:pointer; }
+  button.danger:hover { background:#7f1d1d; color:#fff; }
+  .about { color:var(--dim); font-size:12px; line-height:1.8; }
+  .about b { color:var(--fg); font-weight:500; }
+  button.mini { background:var(--bg3); color:var(--fg); border:1px solid var(--line);
+    border-radius:8px; padding:6px 11px; font-size:12.5px; cursor:pointer; font-family:inherit; }
+  button.mini:hover { border-color:var(--accent); color:var(--accent); }
+  .ext-list { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+  .ext-item { border: 1px solid var(--line); border-radius: 9px; padding: 9px 11px; background: var(--bg2); }
+  .ext-head { display: flex; align-items: baseline; gap: 8px; }
+  .ext-name { font-weight: 600; font-size: 13px; }
+  .ext-ver { font-size: 11px; color: var(--dim); }
+  .ext-pill { margin-left: auto; font-size: 10px; text-transform: uppercase; letter-spacing: .6px; padding: 2px 7px; border-radius: 9px; }
+  .ext-pill.on { background: rgba(61,220,151,.14); color: #3ddc97; }
+  .ext-pill.off { background: rgba(139,155,180,.14); color: var(--dim); }
+  .ext-pill.bad { background: rgba(255,107,129,.14); color: #ff6b81; }
+  .ext-block { margin-top: 6px; font-size: 11.5px; line-height: 1.45; color: #ff9d9d; }
+  .ext-note { margin-top: 4px; font-size: 11.5px; line-height: 1.45; color: var(--dim); }
+  .ext-acts { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  .ext-empty { padding: 12px; border: 1px dashed var(--line); border-radius: 9px; color: var(--dim); font-size: 12px; text-align: center; }
+  .tile-row { display:flex; gap:8px; align-items:center; padding:5px 0; }
+  .tile-row input { flex:1; min-width:0; }
+  .tiles-edit { margin-top:8px; }
+  table.data { width:100%; border-collapse:collapse; font-size:12.5px; margin-top:6px; }
+  table.data td { padding:4px 6px; border-bottom:1px solid rgba(30,41,59,.5); color:var(--dim); }
+  table.data td:first-child { color:var(--fg); }
+  table.data td:last-child { text-align:right; }
+  .btnrow { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Settings</h1>
+  <div class="sub">PsychoVault 1.0.0 - built by Psycho-Core</div>
+
+  <section>
+    <h2>Search</h2>
+    <div class="row">
+      <div>
+        <div class="lbl">Search engine</div>
+        <div class="hint">No sponsored results in any of these.</div>
+      </div>
+      <select id="search">
+        <option value="duckduckgo">DuckDuckGo</option>
+        <option value="brave">Brave Search</option>
+        <option value="startpage">Startpage</option>
+        <option value="wikipedia">Wikipedia</option>
+      </select>
+    </div>
+  </section>
+
+  <section>
+    <h2>Privacy</h2>
+    <div class="row">
+      <div>
+        <div class="lbl">Block ads and trackers</div>
+        <div class="hint">Uses a bundled domain list, checked on every request. No remote calls.</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="blockAds"><span class="slider"></span></label>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Remember history</div>
+        <div class="hint">Turn off and history stops being written. Private windows never record.</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="remember"><span class="slider"></span></label>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Clear browsing history</div>
+        <div class="hint">Bookmarks are kept.</div>
+      </div>
+      <button class="danger" id="clear">Clear history</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Startup</h2>
+    <div class="row">
+      <div>
+        <div class="lbl">Restore tabs on launch</div>
+        <div class="hint">Reopens the tabs you had open last time.</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="restore"><span class="slider"></span></label>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Home page</div>
+        <div class="hint">What the home button opens.</div>
+      </div>
+      <input type="text" id="homepage" placeholder="psychovault://newtab">
+    </div>
+  </section>
+
+  <section>
+    <h2>Shields</h2>
+    <div class="row">
+      <div>
+        <div class="lbl">Block third-party cookies</div>
+        <div class="hint">Strips the Cookie header on cross-site subresources. Can sign you out of embedded widgets.</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="blockThirdPartyCookies"><span class="slider"></span></label>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Send Do Not Track and GPC</div>
+        <div class="hint">Adds DNT and Sec-GPC request headers. Sites are free to ignore them.</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="sendDNT"><span class="slider"></span></label>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Block video autoplay</div>
+        <div class="hint">Video and audio with sound wait for one click on the page.</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="blockAutoplay"><span class="slider"></span></label>
+    </div>
+  </section>
+
+  <section>
+    <h2>Governor</h2>
+    <div class="row">
+      <div>
+        <div class="lbl">CPU limit</div>
+        <div class="hint">Lowers this browser's scheduler priority so games and captures get the cores.</div>
+      </div>
+      <select id="cpuLimit">
+        <option value="off">Off</option>
+        <option value="balanced">Balanced</option>
+        <option value="low">Low</option>
+      </select>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Battery saver</div>
+        <div class="hint">GX power save: lowers priority further and sleeps tabs after three minutes.</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="batterySaver"><span class="slider"></span></label>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Sleep tabs after</div>
+        <div class="hint">Background tabs are dropped from memory and reload when clicked. Pinned tabs never sleep.</div>
+      </div>
+      <select id="sleepTabsMin">
+        <option value="0">Never</option>
+        <option value="5">5 minutes</option>
+        <option value="15">15 minutes</option>
+        <option value="30">30 minutes</option>
+        <option value="60">1 hour</option>
+      </select>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Bandwidth cap</div>
+        <div class="hint">GX's network limiter. Downloads are paused and resumed to hold the average - Electron gives no byte-rate hook, so this is a duty cycle, not a hard ceiling.</div>
+      </div>
+      <select id="netLimit">
+        <option value="0">No cap</option>
+        <option value="64">64 KB/s</option>
+        <option value="256">256 KB/s</option>
+        <option value="1024">1 MB/s</option>
+        <option value="5120">5 MB/s</option>
+      </select>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Battery saver on unplug</div>
+        <div class="hint">Turn the limiter and fast tab sleep on by itself when the power lead comes out.</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="batteryAuto"><span class="slider"></span></label>
+    </div>
+  </section>
+
+  <section>
+    <h2>Appearance</h2>
+    <div class="row">
+      <div>
+        <div class="lbl">Accent colour</div>
+        <div class="hint">The GX "mod" colour, applied to the whole UI. Private windows stay violet.</div>
+      </div>
+      <select id="accent">
+        <option value="cyan">Neon blue</option>
+        <option value="red">GX red</option>
+        <option value="purple">Purple</option>
+        <option value="green">Green</option>
+        <option value="orange">Orange</option>
+        <option value="pink">Pink</option>
+      </select>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Hide the sidebar</div>
+        <div class="hint">Collapses the icon rail for more page width.</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="hideSidebar"><span class="slider"></span></label>
+    </div>
+  </section>
+
+  <section>
+    <h2>Enhance &amp; personality</h2>
+    <div class="row">
+      <div>
+        <div class="lbl">Enhance videos (RGX)</div>
+        <div class="hint">Contrast, saturation and brightness lifted on every video element, the way GX does it.</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="enhanceVideo"><span class="slider"></span></label>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Enhance images (RGX)</div>
+        <div class="hint">Same treatment for images on the page.</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="enhanceImages"><span class="slider"></span></label>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Keyboard sounds</div>
+        <div class="hint">Synthesised in the browser, no audio files shipped. Chrome keys only - it will not click while you type into a page.</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="uiSounds"><span class="slider"></span></label>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Sound volume</div>
+        <div class="hint">0 to 1.</div>
+      </div>
+      <input type="text" id="soundVol" style="width:70px">
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Media keys drive the sidebar app</div>
+        <div class="hint">Play/pause, next and previous go to the tab holding audio - the service tab, or whatever is focused.</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="mediaKeys"><span class="slider"></span></label>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Pause music when other media starts</div>
+        <div class="hint">GX's mini-player behaviour, polled every couple of seconds.</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="mediaAutoPause"><span class="slider"></span></label>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Panic button</div>
+        <div class="hint">F12 tucks every tab away and shows the escape page; F11 brings them back. Nothing is written to disk while panicked.</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="panicEnabled"><span class="slider"></span></label>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Escape page</div>
+        <div class="hint">Where the panic button takes you.</div>
+      </div>
+      <input type="text" id="panicUrl" placeholder="https://en.wikipedia.org/wiki/Main_Page">
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Ask where to save each file</div>
+        <div class="hint">On by default: every download opens a save dialog with the folder and name already filled in. Off means files go straight to the folder below.</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="askSaveLocation"><span class="slider"></span></label>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Download folder</div>
+        <div class="hint">Where files land when you are not asked. Empty means your system Downloads folder.</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="text" id="downloadDir" placeholder="(system Downloads folder)" style="width:270px">
+        <button class="mini" id="downloadDirPick">Browse</button>
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Notify when a download finishes</div>
+        <div class="hint">A system notification while PsychoVault is in the background. The rail badge and the in-window message happen either way.</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="downloadNotify"><span class="slider"></span></label>
+    </div>
+    <div class="hint">Custom stylesheet - a one-file mod for the browser chrome. CSS only, no shaders, and it cannot reach into pages.</div>
+    <textarea id="modCss" rows="4" placeholder=":root { --accent: #ff0055 }"></textarea>
+    <div class="btnrow"><button class="mini" id="modSave">Apply mod</button><button class="mini" id="modClear">Clear</button></div>
+  </section>
+
+  <section>
+    <h2>Sidebar services</h2>
+    <div class="hint">Buttons added to the left rail. They open as ordinary tabs - so they keep playing when you switch away - and they use the normal profile, so you stay signed in.</div>
+    <div class="hint"><b>Pick from the usual ones</b> - tick it and the button goes in the rail with the site's own icon (fetched from that site, never from a third-party icon service):</div>
+    <div id="svcCat" class="cat"></div>
+    <div class="hint">Or write your own:</div>
+    <div class="tiles-edit" id="svcList"></div>
+    <div class="btnrow">
+      <button class="mini" id="svcAdd">Add service</button>
+      <button class="mini" id="svcSave">Save services</button>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Favicons in the rail</div>
+        <div class="hint">Off gives you two-letter badges instead. Icons are cached in your profile folder (icons/) and never fetched again while they are there.</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="railIcons"><span class="slider"></span></label>
+    </div>
+  </section>
+
+  <section>
+    <h2>Speed dial</h2>
+    <div class="hint">The tiles on the new tab page. Names are yours; keep the URL complete.</div>
+    <div class="tiles-edit" id="tiles"></div>
+    <div class="btnrow">
+      <button class="mini" id="tileAdd">Add tile</button>
+      <button class="mini" id="tileSave">Save tiles</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>On exit</h2>
+    <div class="row">
+      <div>
+        <div class="lbl">Delete browsing data on close</div>
+        <div class="hint">The Cleaner. "Cookies and site data" also clears logins and will sign you out.</div>
+      </div>
+      <select id="clearOnExit">
+        <option value="nothing">Nothing</option>
+        <option value="cache">Cached images and files</option>
+        <option value="all">Cookies, site data, cache and saved tabs</option>
+      </select>
+    </div>
+  </section>
+
+  <section>
+    <h2>Your data</h2>
+    <div class="hint">Everything PsychoVault keeps, read straight off the disk right now.</div>
+    <table class="data" id="dataFiles"></table>
+    <div class="hint" id="dataCookies"></div>
+    <div class="btnrow">
+      <button class="mini" data-clear="cache">Clear cache</button>
+      <button class="mini" data-clear="cookies">Clear cookies</button>
+      <button class="mini" data-clear="storage">Clear site data</button>
+      <button class="mini" data-clear="history">Clear history</button>
+      <button class="mini" data-clear="downloads">Clear downloads</button>
+      <button class="mini" data-clear="session">Forget saved tabs</button>
+      <button class="mini" id="dataRefresh">Refresh</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Hardening</h2>
+    <div class="note" id="restartNote" style="display:none">
+      These two are read by Chromium once, at startup. They are not live yet -
+      restart the browser to apply them.
+      <div class="btnrow"><button class="mini" id="relaunch">Restart PsychoVault</button></div>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">WebRTC IP handling</div>
+        <div class="hint">WebRTC is the classic way a site learns your LAN address past a proxy. "Hide private addresses" keeps calls working; "block UDP" stops leaks hardest and breaks some P2P.</div>
+      </div>
+      <select id="webRtc">
+        <option value="default">Browser default (leaks your LAN IP)</option>
+        <option value="publiconly">Hide private addresses</option>
+        <option value="disableudp">Block non-proximity UDP</option>
+      </select>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">DNS over HTTPS</div>
+        <div class="hint">Automatic uses the system resolver's DoH records; "secure" needs a template you trust.</div>
+      </div>
+      <select id="doh">
+        <option value="off">Off</option>
+        <option value="automatic">Automatic</option>
+        <option value="secure">Secure (template below)</option>
+      </select>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">DoH template</div>
+        <div class="hint">For example https://dns.quad9.net/dns-query</div>
+      </div>
+      <input type="text" id="dohTemplate" placeholder="https://dns.quad9.net/dns-query">
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Drop cross-site Referer</div>
+        <div class="hint">Subresources on another registrable domain get no Referer header. Same-site navigation keeps it.</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="stripReferrer"><span class="slider"></span></label>
+    </div>
+    <div class="hint">
+      No canvas or audio farbling: Electron can only run script in a page after its own
+      scripts have already read the canvas, and a fingerprint seen through a patch is a
+      signal in itself. Blocking and origin hygiene here; noise injection would be a placebo.
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Permissions denied to every site</div>
+        <div class="hint">Comma separated. Anything not listed is allowed without asking, which is the opposite of a prompt-based browser - say so if that bothers you.</div>
+      </div>
+    </div>
+    <input type="text" id="denyPerms" style="width:100%">
+    <div class="hint">Containers - a separate cookie jar, localStorage and cache per tab, so two identities on the same site never touch.</div>
+    <div class="tiles-edit" id="contList"></div>
+    <div class="btnrow">
+      <button class="mini" id="contAdd">Add container</button>
+      <button class="mini" id="contSave">Save containers</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Spelling</h2>
+    <div class="row">
+      <div>
+        <div class="lbl">Spell-check text you type in pages</div>
+        <div class="hint">Turns the whole feature on or off: red underlines in a page's own fields, the suggestions in the right-click menu and &ldquo;Add to dictionary&rdquo;. The address bar, the palette and this page are deliberately not checked.</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="spellCheck"><span class="slider"></span></label>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">PsychoVault's own checker</div>
+        <div class="hint">This is what actually draws the red line and offers &ldquo;the&rdquo; for &ldquo;teh&rdquo;: a 15,000-word frequency list plus your own words, checked in the page. Electron builds ship no dictionary and cannot download one, so without this the spellchecker is a flag with nothing behind it. Turn it off only if you have patched dictionaries in yourself.</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="spellBuiltin"><span class="slider"></span></label>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Languages</div>
+        <div class="hint">Which language the <i>browser</i> is told to check, and which word list the built-in checker prefers: <code>en</code> uses the English list, <code>de</code> falls back to "no dictionary for this language" because only English ships here. Blank uses your system locale; case does not matter.</div>
+      </div>
+      <input type="text" id="spellLangs" placeholder="en-gb, de-de">
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Dictionary source</div>
+        <div class="hint">A folder or mirror holding <code>&lt;lang&gt;.dic</code> and <code>&lt;lang&gt;.aff</code> Hunspell files. Kept because it is the knob Chromium documents, but an Electron build has no dictionary downloader: nothing is fetched from here, and <code>&lt;profile&gt;/Dictionaries</code> is not read either - all three were tested. The built-in checker above is what makes the feature work.</div>
+      </div>
+      <input type="text" id="spellDictUrl" placeholder="https://mirror.example/dictionaries/ or file:///path/">
+    </div>
+    <div class="hint" id="spellStatus">reading the spellchecker state&hellip;</div>
+    <details class="hint"><summary>languages this build has dictionaries for</summary><div id="spellAvail">reading&hellip;</div></details>
+    <div class="hint">Your words - one per line. Saving adds what is new and removes what you deleted, so this list is the dictionary.</div>
+    <textarea id="spellUserWords" rows="3" placeholder="Psycho-Core&#10;psychovault"></textarea>
+    <div class="btnrow"><button class="mini" id="spellWordsSave">Save words</button><button class="mini" id="spellWordsRefresh">Reload status</button></div>
+  </section>
+
+  <section>
+    <h2>Extensions</h2>
+    <div class="hint">Chrome-style extensions, loaded the way Chromium's own "load unpacked" works: install a folder, or a <b>.crx</b> file (this unpacks it, because Electron refuses crx files outright). Extensions run inside every tab and can read the pages you visit - only install ones you trust, and note that <b>no signature is verified</b> for a crx here.</div>
+    <div class="hint"><b>What actually works.</b> Content scripts, page changes, request blocking through the old <code>webRequest</code> API, storage and messaging all work. What does not exist in this engine: <b>chrome.proxy</b> (which is how a browser VPN extension redirects traffic), <b>declarativeNetRequest</b> (the MV3 rules engine), native messaging, and a toolbar to click. Every extension below is checked against that list, and anything it needs that is missing is named under it rather than left to fail silently.</div>
+    <div class="hint"><b>VPN extensions.</b> Proton VPN's Chrome extension asks for <code>proxy</code> and calls <code>chrome.proxy.settings</code>. Electron implements neither, so it cannot make a tunnel here. A system-wide VPN - Proton VPN's Windows app or any other - covers this app automatically, because it works below the browser.</div>
+    <div id="extList" class="ext-list"></div>
+    <div class="btnrow">
+      <button class="mini" id="extAddFolder">Load unpacked...</button>
+      <button class="mini" id="extAddCrx">Install .crx...</button>
+      <button class="mini" id="extReload">Reload list</button>
+    </div>
+    <div class="hint" id="extMsg"></div>
+  </section>
+
+  <section>
+    <h2>Passwords</h2>
+    <div class="hint" id="vstat">Checking the vault...</div>
+
+    <div class="row">
+      <div>
+        <div class="lbl">Vault enabled</div>
+        <div class="hint">Off means the browser reads nothing from the vault and writes nothing to it.</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="vaultEnabled"><span class="slider"></span></label>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Auto-lock after</div>
+        <div class="hint">Wipes the decrypted vault from memory. Copying a password starts a one-minute lock on its own.</div>
+      </div>
+      <select id="vaultLockMin">
+        <option value="1">1 minute</option>
+        <option value="5">5 minutes</option>
+        <option value="15">15 minutes</option>
+        <option value="0">Never while the app runs</option>
+      </select>
+    </div>
+
+    <div id="vunlock" style="display:none">
+      <div class="note">The vault is locked - the decrypted copy was wiped from memory. Open it for this session:</div>
+      <div class="tile-row">
+        <input type="text" id="vpw" placeholder="master password">
+        <button class="mini" id="vgo">Unlock vault</button>
+        <button class="mini" id="vforget">Stop using a master password</button>
+      </div>
+    </div>
+
+    <div id="vmaster" style="display:none">
+      <div class="note">This system gave no usable keychain, so the vault will not store anything until
+      you set a master password. It is deliberate: PsychoVault never writes a plaintext password file.</div>
+      <div class="tile-row">
+        <input type="text" id="vnew" placeholder="master password, 8 characters or more">
+        <button class="mini" id="vset">Set master password</button>
+      </div>
+    </div>
+
+    <div class="tiles-edit" id="vlist"></div>
+
+    <div class="hint">Add an entry by hand - or right-click a password field on a real site and choose
+    "Save password for this site".</div>
+    <div class="tile-row">
+      <input type="text" id="eSite" placeholder="site, e.g. github.com">
+      <input type="text" id="eUser" placeholder="username or email">
+      <input type="text" id="ePass" placeholder="password">
+      <button class="mini" id="eGen">Generate</button>
+      <button class="mini" id="eSave">Save</button>
+    </div>
+    <div class="btnrow">
+      <button class="mini" id="vLock">Lock now</button>
+      <button class="mini" id="vRefresh">Refresh</button>
+    </div>
+    <div class="note" id="vnote"></div>
+  </section>
+
+  <section>
+    <h2>About</h2>
+    <div class="about">
+      <b>PsychoVault 1.0.0</b><br>
+      Browser application (this UI, tabs, bookmarks, history, downloads, blocking): written for this project.<br>
+      Rendering engine: Chromium, via Electron 45.1.0.<br>
+      Bookmark, history and settings files live in your user data folder.<br>
+      Licensed MIT. Chromium components under their own licences - see THIRD-PARTY-NOTICES.md.
+    </div>
+  </section>
+</div>
+
+<script>
+  const s = (id) => document.getElementById(id)
+  const ACCENTS = {
+    cyan: ['#38bdf8', '#0ea5e9'], red: ['#ff5a5a', '#e03131'],
+    purple: ['#a78bfa', '#8b5cf6'], green: ['#3ddc97', '#22c55e'],
+    orange: ['#ffb020', '#f97316'], pink: ['#f472b6', '#ec4899']
+  }
+  let settings = {}
+  // every switch on this page, and how its default reads when the key is absent
+  const TOGGLES = {
+    blockAds: true, restore: true, remember: true, sendDNT: true,
+    blockThirdPartyCookies: false, blockAutoplay: false, hideSidebar: false,
+    batterySaver: false, batteryAuto: false, vaultEnabled: true,
+    enhanceVideo: false, enhanceImages: false, uiSounds: false, mediaKeys: true,
+    mediaAutoPause: true, panicEnabled: true, askSaveLocation: true, downloadNotify: true,
+    stripReferrer: true, railIcons: true, spellCheck: true, spellBuiltin: true
+  }
+  const hasVault = !!(window.pv && window.pv.vault)
+
+  async function save(patch) {
+    settings = await window.pv.settings.set(patch)
+    paint(settings)
+  }
+
+  function paint(st) {
+    settings = st
+    for (const id of Object.keys(TOGGLES)) {
+      const el = s(id)
+      if (el) el.checked = st[id] === undefined ? TOGGLES[id] : !!st[id]
+    }
+    s('homepage').value = st.homepage || 'psychovault://newtab'
+    if (s('downloadDir')) s('downloadDir').value = st.downloadDir || ''
+    for (const id of ['search', 'cpuLimit', 'accent', 'clearOnExit']) { const el = s(id); if (el) el.value = st[id] || el.options[0].value }
+    s('netLimit').value = String(st.netLimit || 0)
+    s('webRtc').value = st.webRtc || 'publiconly'
+    s('doh').value = st.doh || 'off'
+    s('dohTemplate').value = st.dohTemplate || ''
+    s('denyPerms').value = st.denyPerms || ''
+    s('soundVol').value = String(st.soundVol === undefined ? 0.4 : st.soundVol)
+    s('panicUrl').value = st.panicUrl || ''
+    s('modCss').value = st.modCss || ''
+    s('spellLangs').value = st.spellLangs || ''
+    s('spellDictUrl').value = st.spellDictUrl || ''
+    s('spellBuiltin').checked = st.spellBuiltin !== false
+    s('spellUserWords').value = (st.spellUserWords || []).join('\n')
+    refreshSpell()
+    renderCatalogue()
+    renderServices(st.services || [])
+    renderContainers(st.containers || [])
+    if (window.pv.gx) window.pv.gx.switches().then((r) => {
+      s('restartNote').style.display = r.restartNeeded ? 'block' : 'none'
+    }).catch(() => {})
+    s('sleepTabsMin').value = String(st.sleepTabsMin || 0)
+    if (s('vaultLockMin')) s('vaultLockMin').value = String(st.vaultLockMin === undefined ? 5 : st.vaultLockMin)
+    const c = ACCENTS[st.accent] || ACCENTS.cyan
+    document.documentElement.style.setProperty('--accent', c[0])
+    document.documentElement.style.setProperty('--accent2', c[1])
+    renderTiles(st.speedDial || [])
+  }
+
+  ;(async () => {
+    paint(await window.pv.settings.get())
+    for (const id of Object.keys(TOGGLES)) {
+      const el = s(id)
+      if (el) el.onchange = () => save({ [id]: el.checked })
+    }
+    for (const id of ['search', 'cpuLimit', 'accent', 'clearOnExit', 'sleepTabsMin']) {
+      const el = s(id)
+      if (el) el.onchange = () => save({ [id]: id === 'sleepTabsMin' ? Number(el.value) : el.value })
+    }
+    s('homepage').onchange = () => save({ homepage: s('homepage').value || 'psychovault://newtab' })
+    if (s('downloadDir')) s('downloadDir').onchange = () => save({ downloadDir: s('downloadDir').value.trim() })
+    if (s('downloadDirPick')) s('downloadDirPick').onclick = async () => {
+      const picked = await window.pv.downloads.pickdir()
+      if (picked) { s('downloadDir').value = picked; save({ downloadDir: picked }) }
+    }
+    s('clear').onclick = async () => {
+      await window.pv.data.clear({ history: true })
+      s('clear').textContent = 'Cleared'
+      refreshData()
+      setTimeout(() => { s('clear').textContent = 'Clear history' }, 1400)
+    }
+    s('tileAdd').onclick = () => {
+      const list = tilesValue()
+      list.push({ title: 'New', url: 'https://' })
+      renderTiles(list)
+    }
+    s('tileSave').onclick = () => save({ speedDial: tilesValue().filter(t => t.title && t.url) })
+    for (const id of ['netLimit']) { const el = s(id); if (el) el.onchange = () => save({ netLimit: Number(el.value) }) }
+    for (const id of ['webRtc', 'doh']) { const el = s(id); if (el) el.onchange = () => { save({ [id]: el.value }).then(() => window.pv.gx.switches().then((r) => { s('restartNote').style.display = r.restartNeeded ? 'block' : 'none' })) } }
+    s('relaunch').onclick = () => window.pv.gx.relaunch()
+    for (const id of ['dohTemplate', 'denyPerms', 'panicUrl']) { const el = s(id); if (el) el.onchange = () => save({ [id]: el.value.trim() }) }
+    s('soundVol').onchange = () => save({ soundVol: Math.max(0, Math.min(1, Number(s('soundVol').value) || 0)) })
+    s('modSave').onclick = () => save({ modCss: s('modCss').value }).then(() => flag('Mod applied'))
+    s('modClear').onclick = () => { s('modCss').value = ''; save({ modCss: '' }).then(() => flag('Mod cleared')) }
+    s('svcAdd').onclick = () => { const l = servicesValue(); l.push({ name: 'New', url: 'https://' }); renderServices(l) }
+    s('svcSave').onclick = () => { const l = servicesValue().filter(x => x.name && x.url); save({ services: l }).then(() => flag(l.length + ' services saved')) }
+    for (const id of ['spellLangs', 'spellDictUrl']) {
+      const el = s(id)
+      if (el) el.onchange = () => save({ [id]: el.value.trim() })
+    }
+    s('spellWordsSave').onclick = async () => {
+      const want = s('spellUserWords').value.split(/[\n,]+/).map((x) => x.trim().toLowerCase()).filter(Boolean).slice(0, 200)
+      const now = (settings.spellUserWords || []).map((x) => String(x).toLowerCase())
+      for (const w of want) if (!now.includes(w)) await window.pv.spell.add(w)
+      for (const w of now) if (!want.includes(w)) await window.pv.spell.remove(w)
+      await save({ spellUserWords: want })
+      refreshSpell()
+      flag(want.length + ' words in the dictionary')
+    }
+    s('spellWordsRefresh').onclick = refreshSpell
+    s('extAddFolder').onclick = async () => {
+      s('extMsg').textContent = 'reading the extension\u2026'
+      const r = await window.pv.extensions.addfolder()
+      s('extMsg').textContent = !r || r.ok === false
+        ? (r && r.error === 'cancelled' ? '' : 'could not install: ' + ((r && r.error) || 'unknown error'))
+        : 'installed ' + r.name + (r.blockers && r.blockers.length ? ' - but see what it needs above' : '') + (r.error ? ' (' + r.error + ')' : '')
+      paintExtensions()
+    }
+    s('extAddCrx').onclick = async () => {
+      s('extMsg').textContent = 'unpacking the crx\u2026'
+      const r = await window.pv.extensions.addcrx()
+      s('extMsg').textContent = !r || r.ok === false
+        ? (r && r.error === 'cancelled' ? '' : 'could not install: ' + ((r && r.error) || 'unknown error'))
+        : 'installed ' + r.name + ' (' + (r.files || 0) + ' files)' + (r.error ? ' - the engine refused to load it: ' + r.error : '')
+      paintExtensions()
+    }
+    s('extReload').onclick = paintExtensions
+    paintExtensions()
+    s('contAdd').onclick = () => { const l = containersValue(); l.push({ name: 'New', color: '#38bdf8' }); renderContainers(l) }
+    s('contSave').onclick = () => { const l = containersValue().filter(x => x.name); save({ containers: l }).then(() => flag(l.length + ' containers saved - a tab picks one up from its right-click menu')) }
+    s('dataRefresh').onclick = refreshData
+    if (hasVault) {
+      s('vaultLockMin').onchange = () => save({ vaultLockMin: Number(s('vaultLockMin').value) })
+      s('eGen').onclick = async () => {
+        const pw = await window.pv.vault.generate({ mode: 'words', words: 4 })
+        s('ePass').value = pw
+      }
+      s('eSave').onclick = async () => {
+        const r = await window.pv.vault.add({ site: s('eSite').value, user: s('eUser').value, pass: s('ePass').value })
+        note(r.ok ? 'Saved' : (r.reason || 'Not saved'))
+        if (r.ok) { s('eSite').value = ''; s('eUser').value = ''; s('ePass').value = '' }
+        refreshVault()
+      }
+      s('vLock').onclick = async () => { await window.pv.vault.lock(); note('Vault locked'); refreshVault() }
+      s('vRefresh').onclick = refreshVault
+      s('vgo').onclick = async () => {
+        const r = await window.pv.vault.unlock(s('vpw').value)
+        note(r.ok ? 'Unlocked' : (r.reason || 'That is not the master password'))
+        if (r.ok) s('vpw').value = ''
+        refreshVault()
+      }
+      s('vpw').onkeydown = (e) => { if (e.key === 'Enter') s('vgo').click(); e.stopPropagation() }
+      s('vforget').onclick = async () => {
+        const r = await window.pv.vault.forgetMaster()
+        note(r.ok ? 'Master password removed; entries are now sealed by the OS keychain' : (r.reason || 'Failed'))
+        refreshVault()
+      }
+      s('vset').onclick = async () => {
+        const r = await window.pv.vault.setMaster(s('vnew').value)
+        note(r.ok ? 'Master password set; entries are encrypted with scrypt + AES-256-GCM' : (r.reason || 'Failed'))
+        if (r.ok) s('vnew').value = ''
+        refreshVault()
+      }
+      refreshVault()
+    }
+    for (const btn of document.querySelectorAll('[data-clear]')) {
+      const label = btn.textContent
+      btn.onclick = async () => {
+        await window.pv.data.clear({ [btn.dataset.clear]: true })
+        btn.textContent = 'Cleared'
+        refreshData()
+        setTimeout(() => { btn.textContent = label }, 1400)
+      }
+    }
+    refreshData()
+  })()
+
+  function flag(msg) {
+    let f = s('flagline')
+    if (!f) { f = document.createElement('div'); f.id = 'flagline'; f.className = 'hint'; document.querySelector('.wrap').appendChild(f) }
+    f.textContent = msg
+    setTimeout(() => { f.textContent = '' }, 2600)
+  }
+
+  async function renderCatalogue() {
+    const box = s('svcCat')
+    if (!box) return
+    let cat = []
+    try { cat = await window.pv.rail.catalogue() } catch { return }
+    box.innerHTML = ''
+    for (const c of cat) {
+      const lab = document.createElement('label')
+      lab.className = 'cat-item'
+      const cb = document.createElement('input')
+      cb.type = 'checkbox'
+      cb.checked = !!c.on
+      cb.onchange = async () => {
+        const r = await window.pv.rail.toggle(c.name)
+        if (!r.ok) { flag(r.why || 'refused'); cb.checked = !cb.checked; return }
+        flag((r.on ? 'added ' : 'removed ') + c.name + (r.on ? ' - fetching its icon from ' + c.host : ''))
+        await save({})
+        renderCatalogue()
+      }
+      const sw = document.createElement('span')
+      sw.className = 'cdot'
+      sw.style.background = c.color || 'var(--dim)'
+      lab.append(cb, sw, document.createTextNode(c.name))
+      lab.title = c.url
+      box.appendChild(lab)
+    }
+  }
+
+  // ---- extensions: list, install, remove, and say what will not work before it is used
+  async function paintExtensions() {
+    const box = s('extList')
+    if (!box || !window.pv || !window.pv.extensions) return
+    let items = []
+    try { items = await window.pv.extensions.list() } catch (e) { return }
+    box.innerHTML = ''
+    if (!items.length) {
+      const none = document.createElement('div')
+      none.className = 'ext-empty'
+      none.textContent = 'No extensions installed.'
+      box.appendChild(none)
+      return
+    }
+    for (const x of items) {
+      const item = document.createElement('div')
+      item.className = 'ext-item'
+      const head = document.createElement('div')
+      head.className = 'ext-head'
+      const nm = document.createElement('span')
+      nm.className = 'ext-name'
+      nm.textContent = x.name
+      const ver = document.createElement('span')
+      ver.className = 'ext-ver'
+      ver.textContent = (x.version ? 'v' + x.version : '') + (x.mv ? ' \u00b7 manifest v' + x.mv : '')
+      const pill = document.createElement('span')
+      const broken = x.blockers && x.blockers.length
+      pill.className = 'ext-pill ' + (broken ? 'bad' : (x.enabled && x.loaded ? 'on' : 'off'))
+      pill.textContent = broken ? 'cannot work here' : (x.enabled ? (x.loaded ? 'loaded' : 'error') : 'off')
+      head.append(nm, ver, pill)
+      item.appendChild(head)
+      for (const b of (x.blockers || [])) {
+        const d = document.createElement('div')
+        d.className = 'ext-block'
+        d.textContent = 'Needs ' + b + '.'
+        item.appendChild(d)
+      }
+      if (x.error) {
+        const d = document.createElement('div')
+        d.className = 'ext-block'
+        d.textContent = 'The engine refused it: ' + x.error
+        item.appendChild(d)
+      }
+      for (const n of (x.notes || [])) {
+        const d = document.createElement('div')
+        d.className = 'ext-note'
+        d.textContent = n + '.'
+        item.appendChild(d)
+      }
+      const acts = document.createElement('div')
+      acts.className = 'ext-acts'
+      const mkBtn = (label, fn) => {
+        const b = document.createElement('button')
+        b.className = 'mini'
+        b.textContent = label
+        b.onclick = async () => { await fn() }
+        acts.appendChild(b)
+      }
+      if (x.popup) mkBtn('Open its window', async () => { await window.pv.extensions.openpage({ dir: x.dir, page: x.popup }) })
+      if (x.options) mkBtn('Options', async () => { await window.pv.extensions.openpage({ dir: x.dir, page: x.options }) })
+      mkBtn(x.enabled ? 'Disable' : 'Enable', async () => {
+        await window.pv.extensions.toggle({ dir: x.dir, enabled: !x.enabled })
+        paintExtensions()
+      })
+      mkBtn('Remove', async () => {
+        await window.pv.extensions.remove(x.dir)
+        paintExtensions()
+      })
+      item.appendChild(acts)
+      box.appendChild(item)
+    }
+  }
+
+  async function refreshSpell() {
+    let st = null
+    try { st = await window.pv.spell.status() } catch { return }
+    if (!st) return
+    const have = (st.languages || []).length
+    const parts = [
+      st.enabled ? 'spellchecking on' : 'spellchecking off',
+      (st.builtin && st.builtin.on)
+        ? 'engine: PsychoVault (' + st.builtin.words + ' words)'
+        : 'engine: none, nothing will be underlined',
+      have ? 'checking ' + st.languages.join(', ') : 'no usable language out of ' + JSON.stringify(st.want) + ' - Chromium ships ' + (st.count || 0) + ' dictionaries in all',
+      st.missing ? 'Chromium could not get a dictionary for ' + st.missing + ' - that is why there are no red lines; set a mirror or a local folder above' : '',
+      (st.words ? st.words + ' of your own words' : 'no custom words'),
+      'locale ' + st.locale
+    ].filter(Boolean)
+    s('spellStatus').textContent = parts.join('  |  ')
+    const box = s('spellAvail')
+    if (box) box.textContent = 'available: ' + (st.available || []).join(' ')
+    const el = s('spellUserWords')
+    if (el && !el.value) el.value = (st.words || []).join('\n')
+  }
+
+  function renderServices(list) {
+    const wrap = s('svcList')
+    wrap.innerHTML = ''
+    if (!list.length) { wrap.innerHTML = '<div class="hint">No services.</div>'; return }
+    for (const x of list) {
+      const row = document.createElement('div')
+      row.className = 'tile-row'
+      const name = document.createElement('input'); name.className = 't'; name.type = 'text'; name.value = x.name || ''; name.placeholder = 'Name'
+      const url = document.createElement('input'); url.className = 'u'; url.type = 'text'; url.value = x.url || ''; url.placeholder = 'https://...'
+      const del = document.createElement('button'); del.className = 'mini'; del.textContent = 'Remove'
+      del.onclick = () => row.remove()
+      row.append(name, url, del)
+      wrap.appendChild(row)
+    }
+  }
+  function servicesValue() {
+    return [...s('svcList').querySelectorAll('.tile-row')].map((row) => ({
+      name: row.querySelector('.t').value.trim(), url: row.querySelector('.u').value.trim()
+    }))
+  }
+
+  function renderContainers(list) {
+    const wrap = s('contList')
+    wrap.innerHTML = ''
+    if (!list.length) { wrap.innerHTML = '<div class="hint">No containers.</div>'; return }
+    for (const x of list) {
+      const row = document.createElement('div')
+      row.className = 'tile-row'
+      const name = document.createElement('input'); name.className = 't'; name.type = 'text'; name.value = x.name || ''; name.placeholder = 'Name'
+      const col = document.createElement('input'); col.className = 'c'; col.type = 'text'; col.value = x.color || '#38bdf8'; col.placeholder = '#rrggbb'
+      const sw = document.createElement('span'); sw.className = 'cdot'; sw.style.cssText = 'width:12px;height:12px;border-radius:50%;display:inline-block;background:' + (x.color || '#38bdf8')
+      const del = document.createElement('button'); del.className = 'mini'; del.textContent = 'Remove'
+      del.onclick = () => row.remove()
+      row.append(name, col, sw, del)
+      wrap.appendChild(row)
+    }
+  }
+  function containersValue() {
+    return [...s('contList').querySelectorAll('.tile-row')].map((row) => ({
+      name: row.querySelector('.t').value.trim(), color: row.querySelector('.c').value.trim() || '#38bdf8'
+    }))
+  }
+
+  function tilesValue() {
+    return [...s('tiles').querySelectorAll('.tile-row')].map(row => ({
+      title: row.querySelector('.t').value.trim(),
+      url: row.querySelector('.u').value.trim()
+    }))
+  }
+
+  function renderTiles(list) {
+    const wrap = s('tiles')
+    wrap.innerHTML = ''
+    if (!list.length) { wrap.innerHTML = '<div class="hint">No tiles.</div>'; return }
+    for (const t of list) {
+      const row = document.createElement('div')
+      row.className = 'tile-row'
+      const name = document.createElement('input')
+      name.className = 't'; name.type = 'text'; name.value = t.title || ''; name.placeholder = 'Name'
+      const url = document.createElement('input')
+      url.className = 'u'; url.type = 'text'; url.value = t.url || ''; url.placeholder = 'https://...'
+      const del = document.createElement('button')
+      del.className = 'mini'; del.textContent = 'Remove'
+      del.onclick = () => { row.remove() }
+      row.append(name, url, del)
+      wrap.appendChild(row)
+    }
+  }
+
+  function note(msg) { const n = s('vnote'); if (n) n.textContent = msg || '' }
+
+  async function refreshVault() {
+    if (!hasVault) return
+    const st = await window.pv.vault.status()
+    const bits = []
+    bits.push(st.enabled ? 'vault on' : 'vault off')
+    bits.push(st.method === 'master' ? 'encrypted with your master password (scrypt + AES-256-GCM)'
+      : st.method === 'keychain' ? 'encrypted with the OS keychain (safeStorage)'
+      : 'no encryption available')
+    bits.push(st.locked ? 'locked' : 'unlocked')
+    bits.push(st.count + (st.count === 1 ? ' entry' : ' entries'))
+    s('vstat').textContent = bits.join(' - ')
+    s('vmaster').style.display = st.method === 'master' ? 'none' : 'block'
+    s('vunlock').style.display = (st.locked && st.method === 'master') ? 'block' : 'none'
+    s('vforget').style.display = st.method === 'master' ? '' : 'none'
+    const r = await window.pv.vault.list()
+    const wrap = s('vlist')
+    wrap.innerHTML = ''
+    if (r.error) {
+      wrap.innerHTML = r.error === 'locked'
+        ? '<div class="note">Locked. Enter the master password above to open it - the decrypted copy is not kept in memory while it is shut.</div>'
+        : '<div class="note">The vault is off, so nothing can be read or written.</div>'
+      return
+    }
+    if (!r.entries.length) { wrap.innerHTML = '<div class="note">No entries yet.</div>'; return }
+    for (const e of r.entries) {
+      const row = document.createElement('div')
+      row.className = 'tile-row'
+      const site = document.createElement('input'); site.type = 'text'; site.value = e.site; site.readOnly = true
+      const user = document.createElement('input'); user.type = 'text'; user.value = e.user || ''; user.readOnly = true
+      const pass = document.createElement('input'); pass.type = 'text'; pass.value = '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022'; pass.readOnly = true
+      const mk = (label, fn) => { const b = document.createElement('button'); b.className = 'mini'; b.textContent = label; b.onclick = fn; return b }
+      row.append(site, user, pass,
+        mk('Show', async () => { const v = await window.pv.vault.reveal(e.id); pass.value = v.pass || 'locked' }),
+        mk('Copy', async () => { await window.pv.vault.copy(e.id, 'pass'); note('Password copied - the vault locks and the clipboard is cleared in 60s'); refreshVault() }),
+        mk('Delete', async () => { await window.pv.vault.remove(e.id); note('Deleted'); refreshVault() }))
+      wrap.appendChild(row)
+    }
+  }
+
+  async function refreshData() {
+    const r = await window.pv.data.report()
+    const rows = (r.files || []).map(f => {
+      const kb = f.bytes > 1024 ? (f.bytes / 1024).toFixed(1) + ' KB' : f.bytes + ' B'
+      return `<tr><td>${f.name}</td><td>${kb}</td></tr>`
+    }).join('')
+    s('dataFiles').innerHTML = rows || '<tr><td>nothing yet</td><td></td></tr>'
+    s('dataCookies').textContent = `${r.cookies} cookie(s) in the profile · folder ${r.dir}`
+  }
+</script>
+</body>
+</html>

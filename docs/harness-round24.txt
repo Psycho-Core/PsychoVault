@@ -1,0 +1,39 @@
+PASS chrome window is up
+PASS three tabs in the strip (3)
+PASS moveTab puts 3 first: [3,1,2]
+PASS drag paints a drop caret before the tab it would land on (1 marked)
+PASS the dragged tab is ghosted while it moves
+PASS pointer drag moves tab 3 to the end: [1,2,3]
+PASS pinned tab stays at the head after a move to the end
+PASS unpinned tab lands after the pinned block, not in it
+PASS a pinned tab cannot be dragged past its block
+PASS download starts in progress state
+PASS progress reaches the UI while the file runs (2 live pushes, last 135168 bytes)
+PASS rail badge counts it while it runs ({"badge":"1","busy":true,"title":"Downloads - 1 in progress"})
+PASS download finishes as completed
+PASS file landed in the chosen folder at full size (245760 bytes)
+PASS start is announced with the file name
+PASS start announcement names the folder it is going to
+PASS finish is announced
+PASS badge clears when nothing is moving
+PASS panel states the destination folder (Saved to /tmp/pvdl)
+PASS panel offers a Change button next to it
+PASS one save dialog per download when the setting is on (1)
+PASS dialog opens in the download folder with the name filled in (/tmp/pvdl/quick-test.txt)
+PASS dialog offers to make a new folder
+PASS the finished dialog download added exactly one row
+PASS the file is saved exactly where the dialog said (/tmp/pvdl2/picked-name.txt)
+PASS picked file exists on disk
+PASS cancelling writes no row into the list (2 -> 2)
+PASS cancelling leaves no file behind
+PASS a second file with the same name becomes "quick-test (1).txt" [quick-test (1).txt, quick-test.txt]
+PASS downloads:dir reports the chosen folder (/tmp/pvdl)
+PASS the panel stays open while progress streams in
+PASS the open panel shows a live row (28%)
+PASS the open panel keeps its folder line (Saved to /tmp/pvdl)
+PASS captured the downloads panel mid-transfer
+PASS mid-drag state holds for the frame (1/1)
+PASS a state push mid-drag leaves the drag alive (1/1)
+PASS captured the tab strip mid-drag
+PASS captured the settings download rows
+H24 TOTAL 38 PASS 0 FAIL

@@ -1,0 +1,35 @@
+PASS chrome window is up
+PASS panel is open
+PASS a fresh profile lists no locations
+PASS the panel explains what to do: "Nothing to run yet. Add the WireGuard configs your provider gave you -"
+PASS import buttons are offered
+PASS three configs in the folder became three locations (3)
+PASS the .txt that is not a config was skipped
+PASS the panel reports what it imported: "3 locations imported. Click one to connect."
+PASS each location shows its endpoint (127.0.0.1:51821)
+PASS locations are sorted by name [au-sydney-001, de-frankfurt-002, us-newyork-003]
+PASS the first location is active and satisfies needsConfig
+PASS importing does not silently start a tunnel
+PASS clicking a location connects (running)
+PASS the clicked location is the active one (de-frankfurt-002)
+PASS wireproxy is running (pid 8432)
+PASS traffic goes through it (SOCKS5 127.0.0.1:25455)
+PASS the list marks the connected location with a live dot
+PASS and the banner names it: "Connected through de-frankfurt-002. Browsing goes through so"
+PASS switching while connected leaves the tunnel running (running)
+PASS on the new location (au-sydney-001)
+PASS with a new wireproxy process (8432 -> 8449)
+PASS the runtime config was rewritten for the new location
+PASS the active location is written into settings.json
+PASS all three are listed in settings.json
+PASS with the active id recorded
+PASS removing the active location leaves the rest (2)
+PASS the removed one is gone from the list
+PASS another location became active instead of none
+PASS an existing pasted config is imported as one location (1)
+PASS and is active, so nothing looks lost after an upgrade
+PASS with its endpoint read from the file (127.0.0.1:51822)
+PASS captured the location list
+PASS connected to de-frankfurt-002 for the second shot
+PASS captured the list with one location connected
+H26 TOTAL 34 PASS 0 FAIL

@@ -1,0 +1,123 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>New Tab</title>
+<style>
+  :root { --bg:#0a0e17; --bg2:#0f1523; --bg3:#141c2e; --fg:#e6edf7; --dim:#8b9bb4; --accent:#38bdf8; --line:#1e293b; }
+  body.private { --accent:#a78bfa; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body {
+    background: var(--bg); color: var(--fg); min-height:100vh;
+    font:14px/1.5 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:26px;
+  }
+  .glow { position:fixed; inset:0; pointer-events:none;
+    background: radial-gradient(620px 320px at 50% 34%, rgba(56,189,248,.13), transparent 70%); }
+  .mark { width:52px; height:52px; position:relative; z-index:1; }
+  h1 { font-size:34px; letter-spacing:-.5px; z-index:1; }
+  form { width:min(620px,86vw); z-index:1; }
+  input { width:100%; height:48px; border-radius:24px; border:1px solid var(--line);
+    background:var(--bg2); color:var(--fg); padding:0 20px; font-size:14px; outline:none;
+    transition:border-color .12s, box-shadow .12s; }
+  input:focus { border-color:var(--accent); box-shadow:0 0 0 1px rgba(56,189,248,.35), 0 0 18px rgba(56,189,248,.18); }
+  input::placeholder { color:#64748b; }
+  .tiles { display:flex; gap:14px; flex-wrap:wrap; justify-content:center; z-index:1; max-width:760px; }
+  .tile { width:104px; height:104px; border-radius:14px; border:1px solid var(--line);
+    background:var(--bg2); display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:8px; cursor:pointer; text-decoration:none; color:var(--dim); font-size:11.5px;
+    transition:border-color .12s, background .12s; }
+  .tile:hover { border-color:var(--accent); background:var(--bg3); color:var(--fg); }
+  .dot { width:34px; height:34px; border-radius:50%; background:var(--bg3);
+    border:1px solid var(--line); display:grid; place-items:center; color:var(--accent); font-weight:600; font-size:15px; }
+  footer { position:fixed; bottom:18px; color:#4b5a72; font-size:11.5px; }
+</style>
+</head>
+<body>
+<div class="glow"></div>
+<svg class="mark" viewBox="0 0 48 48">
+  <path d="M24 3l18 9v13c0 9.6-7.6 17.4-18 20-10.4-2.6-18-10.4-18-20V12z"
+        fill="none" stroke="#38bdf8" stroke-width="2.4" stroke-linejoin="round"/>
+  <path d="M27 14L18 27h5l-2 9 10-14h-6z" fill="#e6edf7"/>
+</svg>
+<h1>PsychoVault</h1>
+<form onsubmit="go(event)">
+  <input id="q" placeholder="Search DuckDuckGo or enter an address" autofocus autocomplete="off">
+</form>
+<div class="tiles" id="tiles"></div>
+<footer>Nothing leaves this machine unless you ask it to.</footer>
+<script>
+  const body = document.body
+  const isPriv = new URLSearchParams(location.search).get('private') === '1'
+  if (isPriv) {
+    body.classList.add('private')
+    document.querySelector('h1').textContent = 'PsychoVault Private'
+    document.querySelector('footer').textContent = 'This window writes nothing to disk. Closing it forgets everything.'
+    document.querySelector('.mark path').setAttribute('stroke', '#a78bfa')
+  }
+  const enc = (v) => encodeURIComponent(v)
+  const ENGINE = {
+    duckduckgo: ['DuckDuckGo', 'https://duckduckgo.com/?q='],
+    brave: ['Brave Search', 'https://search.brave.com/search?q='],
+    startpage: ['Startpage', 'https://www.startpage.com/do/search?query='],
+    wikipedia: ['Wikipedia', 'https://en.wikipedia.org/w/index.js?search=']
+  }
+  const ACCENT = { cyan:'#38bdf8', red:'#ff5a5a', purple:'#a78bfa', green:'#3ddc97', orange:'#ffb020', pink:'#f472b6' }
+  let engine = ENGINE.duckduckgo
+
+  function go(e) {
+    e.preventDefault()
+    const v = document.getElementById('q').value.trim()
+    if (!v) return
+    const abs = /^[a-z][a-z0-9+.-]*:\/\//i.test(v)
+    const hosty = !/\s/.test(v) && /^[^\s/]+\.[a-z]{2,}/i.test(v)
+    location.href = abs ? v : hosty ? 'https://' + v : engine[1] + enc(v)
+  }
+
+  let tiles = [
+    ['GitHub', 'https://github.com'], ['YouTube', 'https://youtube.com'],
+    ['Reddit', 'https://reddit.com'], ['Wikipedia', 'https://wikipedia.org'],
+    ['Mail', 'https://mail.google.com'], ['News', 'https://news.ycombinator.com']
+  ]
+
+  function paintTiles(list) {
+    const wrap = document.getElementById('tiles')
+    wrap.innerHTML = ''
+    for (const [name, url] of list) {
+      const a = document.createElement('a')
+      a.className = 'tile'
+      a.href = url
+      const d = document.createElement('div')
+      d.className = 'dot'
+      d.textContent = String(name || url || '?')[0].toUpperCase()
+      const sp = document.createElement('span')
+      sp.textContent = name
+      a.append(d, sp)
+      wrap.appendChild(a)
+    }
+  }
+  paintTiles(tiles)
+
+  // Speed dial, search engine and accent come from the same settings store the
+  // settings page writes to, so a tile edited there shows up here on next new tab.
+  if (window.pv && window.pv.settings) {
+    window.pv.settings.get().then((st) => {
+      if (!st) return
+      if (Array.isArray(st.speedDial) && st.speedDial.length) tiles = st.speedDial.map(t => [t.title, t.url])
+      if (ENGINE[st.search]) engine = ENGINE[st.search]
+      if (!isPriv) {
+        const q = document.getElementById('q')
+        q.placeholder = 'Search ' + engine[0] + ' or enter an address'
+        const c = ACCENT[st.accent]
+        if (c) {
+          document.documentElement.style.setProperty('--accent', c)
+          document.querySelector('.mark path').setAttribute('stroke', c)
+        }
+      }
+      paintTiles(tiles)
+    }).catch(() => {})
+  }
+</script>
+</body>
+</html>

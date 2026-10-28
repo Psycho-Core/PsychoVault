@@ -1,0 +1,58 @@
+Round-20 runtime harness output - 51 PASS / 0 FAIL / 0 ERROR.
+Driven through the real app under Xvfb against two local probe servers (a page with a
+login form, <video>, canvas, geolocation and ICE probes, a chunked attachment download,
+a cross-port subresource). The harness block itself was removed from main.js before
+this build was packaged; VERIFICATION.md explains each group.
+
+PASS exact host matches its own entry  << octo,octo2
+PASS subdomain matches the parent entry  << octo
+PASS parent matches a www entry  << octo,octo2
+PASS lookalike suffix is refused  << none
+PASS co.uk entry is NOT offered on another .co.uk site  << []
+PASS co.uk entry still matches its own host and subdomains  << uki
+PASS every write uses a fresh 12-byte IV (no GCM nonce reuse)  << 40 unique, 0 reused
+PASS same plaintext gives different ciphertext each time
+PASS scrypt makes guessing expensive  << 65 ms per guess = 55728 guesses/hour per core
+PASS no plaintext password in vault.bin
+PASS a field inside another site\u0027s frame is refused  << This field is in a frame from another site - the vault will not touch …
+PASS a same-origin frame is allowed  << Save password for this site
+PASS storeUrl strips inline credentials  << https://example.com/path
+PASS credentials in a URL never reach history.json  << [ [multi-line value elided] [multi-line value elided] [multi-line valu…
+PASS nor into session.json / workspaces
+PASS the "remember history" switch actually gates recording  << 1 -> 1
+PASS and turning it back on records again  << 1 -> 2
+PASS a container gets its own cookie jar on the same site  << {"cookieDef":"tag=A-10","cookieWork":"tag=A-15"}
+PASS and its own localStorage  << null
+PASS the tab menu offers the container picker
+PASS snapshot of a page writes a real PNG
+PASS save as PDF writes a real PDF
+PASS enhance videos puts a real CSS filter on the element  << {"has":true,"vf":"contrast(1.06) saturate(1.1) brightness(1.03)","if_"…
+PASS and installs one idempotent style node
+PASS turning it off removes the style again
+PASS farbling is gone from the shipped code and the UI  << key=undefined main=false ui=false
+PASS geolocation is denied by the permissions list  << denied:1
+PASS cross-site subresource gets no Referer when stripping is on  << {"url":"/img","referer":null}
+PASS and the switch changes real behaviour, not just state  << {"url":"/img","referer":"http://127.0.0.1:8799/"}
+PASS and the deny list is a real setting
+PASS WebRTC policy reached Chromium  << {"webrtc":"default_public_interface_only","dohMode":null,"dohTemplate"…
+PASS DoH change is reported as needing a restart  << {"webrtc":"default_public_interface_only","dohMode":null,"dohTemplate"…
+PASS hot tabs lists memory and CPU per tab  << ["106MB/0%","101MB/0%"]
+PASS the panel can sleep a tab from here
+PASS and wake it again  << {"id":3,"title":"H4 probe","url":"http://127.0.0.1:8799/nokeep","memMB…
+PASS panic tucks the tabs away and shows the escape page  << https://en.wikipedia.org/wiki/Main_Page
+PASS and brings the same set back  << 5 -> 5
+PASS the chrome sound engine is reachable and does not throw  << called-ok
+PASS a user stylesheet mod really repaints the chrome  << #ff0055
+PASS a rail service opens as a tab  << {"ok":true,"opened":"WhatsApp"}
+PASS and is marked as a service tab
+PASS media keys drive the audio tab  << {"before2":false,"after":true,"how":"pause"}
+PASS a tab opened from a page joins an island  << 15 vs 15
+PASS the island gets a collapse control in the strip  << 1
+PASS collapsing hides the children  << 9,10,11,12,13,14,15
+PASS expanding brings them back  << 9,10,11,12,13,14,15,16
+PASS uncapped download keeps the server pace  << 0.723s, longest plateau 0.643s
+PASS the cap really slows it down  << 120 KB/s took 3.383s vs 0.723s
+PASS and the pause is visible as a plateau in the byte counter  << capped plateau 3.302s vs uncapped 0.643s
+NOTE the cap binds through pause/resume duty cycles: precision is limited by socket buffering, so on loopback a 512 KB file arrives from the buffer once the deficit is paid. Fine-grained settings (45 vs 120 KB/s) measured identical here - see docs.
+PASS batteryAuto persists like any other setting
+PASS no password, master password or credential URL anywhere in the profile  <<

@@ -1,0 +1,39 @@
+PASS chrome window is up
+PASS the VPN panel opens
+PASS state reads "needs a config" (stateneeds a config)
+PASS the panel says what it wants instead of just refusing
+PASS the example is a placeholder, not content (value is empty)
+PASS the placeholder says it is an example
+PASS pressing it with an empty box explains itself: "The box is empty - there is no config to run. Paste one (Ctr"
+PASS and the explanation is styled as a problem, not a passing note
+PASS nothing was armed and nothing pretends to run
+PASS state did not become running
+PASS clipText() sees the clipboard (249 chars) - it used to return "" for a Promise
+PASS Paste from clipboard fills the box
+PASS and the panel confirms it looks like a config
+PASS Choose .conf file loads the file into the box
+PASS and says where it came from: "Loaded from /tmp/pvtest/wg.conf. Looks like a wg-quick config - press Save and t"
+PASS plain text is met with what is missing: "That does not look like a WireGuard config yet - missing [In"
+PASS a saved config clears the needs-config state
+PASS saving leaves the tunnel off and the error empty, not "error"
+PASS the config was written to disk (/tmp/pvH25/.config/PsychoVault/wireproxy.conf)
+PASS and written 0600 (mode 600)
+PASS the panel confirms the save with the path: "Saved to /tmp/pvH25/.config/PsychoVault/wireproxy.conf. 250 bytes."
+PASS the primary button becomes "Turn on" once a config exists (Turn on / Save config / Test config / Check exit IP / Settings / Paste from clipboard / Choose .conf file…)
+PASS a bad PrivateKey is refused with a reason on the panel: "wireproxy refused it: 2026/10/28 14:56:14 invalid base64 string: broke"
+PASS the reason is wireproxy's own text, not a generic failure
+PASS a typed path is read from disk instead of being saved as text
+PASS the [Socks5] section is added to what was saved
+PASS Save and turn on brings the tunnel up (state running)
+PASS wireproxy is a live process (pid 7795)
+PASS the state row names the listener
+PASS the banner says the tunnel is up (got kind="vpn-hint ok" text="The tunnel is up. Browsing goes through socks5 127.0.0.1:25455.")
+PASS the profile is actually proxied through it (SOCKS5 127.0.0.1:25455)
+PASS Turn off stops it and disarms auto-start
+PASS and the proxy is handed back (DIRECT)
+PASS panel is open before the shots
+PASS reset to a profile with no config at all (needsConfig=true)
+PASS captured the panel with nothing configured
+PASS pressed the primary button with an empty box for the shot
+PASS captured the panel explaining the empty box
+H25 TOTAL 38 PASS 0 FAIL

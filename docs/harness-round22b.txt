@@ -1,0 +1,26 @@
+PASS a real .ico is recognised for what it is  << {"head":"0,0,1,0,2,0","got":"image/x-icon"}
+PASS a .ico too short to be one is still refused
+PASS PNG, GIF and JPEG are still read correctly
+PASS an .ico served at the origin is fetched and reaches the rail as a data URL  << ["http://127.0.0.1:8798"]
+PASS and the rail paints it, decoded
+PASS a live fetch for github.com now succeeds (this is the one the bug was hiding)  << {"live":true}
+PASS and youtube.com too  << true
+PASS spellcheck is on for pages
+PASS and the switch really turns it off on the default session
+PASS language names are resolved to the tags Chromium accepts  << ["de-DE","en-US"]
+PASS a language with no dictionary is reported and throws nothing  << {"missing":"zz-zz"}
+PASS your own words are mirrored into settings so the box can round-trip
+PASS the edit menu carries the suggestions and the dictionary item  << ["Cut","Copy","Paste","Paste and match style","Delete",null,"Select all","Undo","Redo",null,"the","dictionary: browser","Add “teh” to dictionary"]
+PASS and clicking one applies it  << "the"
+PASS a generated keypair plus a plain config passes wireproxy's own configtest  << {}
+PASS the tunnel comes up  << {"state":"running","port":25431}
+PASS the proxy rule is what we set
+PASS Chromium agrees: a page would go through the SOCKS listener  << "SOCKS5 127.0.0.1:25431"
+PASS with a dead peer the page does not load in the clear  << "hung"
+PASS when the process dies the kill switch arms  << {"state":"down","blocked":true}
+PASS and the message says what it did, and did not, do  << ["kill switch armed: web requests are blocked rather than sent without the tunnel","not retried - auto-restart is off"]
+PASS while blocked, requests are cancelled by us (-20 is net::ERR_BLOCKED_BY_CLIENT)  << "failed:-20"
+PASS turning it off disarms the switch and gives the proxy back  << {"state":"off","blocked":false,"rule":"system"}
+PASS and browsing works again  << "loaded"
+PASS a missing binary is reported with the folders it searched, no invented path  << "wireproxy is not here. PsychoVault looks for tools/wireproxy next to PsychoVault.exe, then"
+PASS no older harness or driver code survives in the shipped file  << {"len":120652}

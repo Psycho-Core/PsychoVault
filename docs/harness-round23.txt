@@ -1,0 +1,35 @@
+PASS with no wireproxy on disk the answer is "missing", and it is stated once  << {"state":"missing","n":1}
+PASS a refused start does NOT leave "bring the tunnel up at boot" switched on  << {"vpnEnabled":false}
+PASS clicking again says the same thing without spamming the log or flickering the panel  << ["start refused: no binary"]
+PASS with the binary but no config, the panel calls it a setup step, not a crash  << {"needs":true,"conf":"","confExists":false}
+PASS the state line reads "needs a config" in the warning colour  << "vpn-row warn|needs a config"
+PASS the rail button stops looking broken and says why  << "true | false | WireGuard tunnel (wireproxy): no config yet. Click to toggle, right-click for the panel, Shift+click for the panel."
+PASS the panel itself carries the box to paste a config into
+PASS and its main button offers to set it up instead of starting something that cannot start
+SHOT h11-needs-config.png 229734
+PASS turning it on with no config still refuses, and names the fix  << "no WireGuard config yet - paste one in Settings - VPN, or point the co"
+PASS and still does not arm auto-start for a tunnel that cannot exist  << {"vpnEnabled":false}
+PASS and the refusal is not repeated once per click  << ["start refused: no binary","start refused: no WireGuard config yet - paste one in Settings - VPN, or point the config-file "]
+PASS booting into that state turns auto-start back off, so the error does not return tomorrow  << {"vpnEnabled":false,"state":"error"}
+PASS and it is written down where you can read it  << ["start refused: no WireGuard config yet - paste one in Settings - VPN, or point the config-file ","auto-start turned off: no WireGuard config yet"]
+PASS the box takes your paste and the panel button saves it and starts the tunnel
+PASS saving writes the config file, readable only by you  << {"path":"/tmp/pvH11/.config/PsychoVault/wireproxy.conf"}
+PASS the stale red error goes away the moment there is something to start  << {"state":"off","err":"","needs":false}
+PASS the panel now says where the config came from, and offers Turn on  << {"row":"vpn-row|the config you pasted in Settings","btn":"Turn on"}
+PASS and refills the box from disk, so closing the panel does not eat your config  << {"from":"the config you pasted in Settings","len":235}
+SHOT h11-configured.png 232611
+PASS a config wireproxy refuses is reported with its own words, not a bare "error"  << "Turn on / Save config / 2026/10/28 13:51:13 invalid base64 string: broken / Check exit IP / Settings"
+PASS and the panel does not claim to be running after a refused config test
+PASS a config on disk alone is enough - an empty box must not veto it
+PASS an empty box refills itself from the config that is on disk  << "[Interface]\nPrivateKey = z8fYYhgj9JMyD24"
+PASS the button was there to click  << 1
+PASS clicking it brought the tunnel up on the configured port  << {"state":"running","port":25455,"pid":4146}
+PASS auto-start is only promised once there really is a tunnel
+PASS the rail button switched to its live style
+PASS and the profile session is actually pointed at it  << "SOCKS5 127.0.0.1:25455"
+SHOT h11-running.png 230408
+PASS turning it off is offered while it runs
+PASS turning it off resets the state and the boot promise together  << {"state":"off","auto":false,"blocked":false}
+PASS turning it off hands the network back - no session left pointing at a dead port  << "DIRECT"
+NOTE PASS a state push onto a torn-down window does not throw  << no throw
+NOTE log tail: ["DEBUG: 2026/10/28 13:51:16 Routine: event worker - started","DEBUG: 2026/10/28 13:51:16 Interface up requested","DEBUG: 2026/10/28 13:51:16 Routine: receive incoming v6 - started","tunnel up, socks5 on 127.0.0.1:25455","stopped from the rail","stopped"]

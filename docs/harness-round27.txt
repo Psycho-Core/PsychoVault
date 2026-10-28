@@ -1,0 +1,31 @@
+PASS chrome window is up
+PASS unpacked extension installs (Harness Test Extension)
+PASS it appears in the list
+PASS and the engine loaded it (no error)
+PASS nothing it needs is missing
+PASS the toolbar limitation is stated as a note, not hidden
+PASS its popup is recorded so the panel can open it
+PASS the content script ran in the page (title is "EXT-OK: Plain")
+PASS and it changed the DOM (data attribute set)
+PASS the extension cancelled a request to blocked.test (blocked: Failed to fetch)
+PASS and left ordinary traffic alone (ok 200)
+PASS Disable marks it off
+PASS and unloads it from the session (0 left)
+PASS Enable loads it again
+PASS Remove takes it off the list
+PASS and deletes the installed copy from the profile
+PASS with nothing left loaded
+PASS Proton VPN crx is on disk (2604047 bytes)
+PASS the crx unpacks and installs (336 files)
+PASS Proton VPN appears in the extensions list
+PASS with its real version (1.3.6)
+PASS manifest v3, as the manifest says
+PASS and the panel names what it needs: chrome.proxy
+PASS the engine verdict is recorded too (loaded=true, error="")
+PASS the installed manifest really does request the proxy permission
+PASS Settings has the extensions block
+PASS the settings page shows the installed extension (1 row)
+PASS Proton VPN is labelled "cannot work here" in the UI
+PASS with the reason spelled out under it
+PASS captured the extensions panel
+H27 TOTAL 30 PASS 0 FAIL

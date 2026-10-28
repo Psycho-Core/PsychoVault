@@ -1,0 +1,13 @@
+{
+  "name": "psychovault",
+  "productName": "PsychoVault",
+  "version": "1.0.0",
+  "description": "A private browser application built on Chromium via Electron",
+  "main": "main.js",
+  "author": "Psycho-Core",
+  "license": "MIT",
+  "private": true,
+  "devDependencies": {
+    "electron": "45.1.0"
+  }
+}

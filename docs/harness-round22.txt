@@ -1,0 +1,56 @@
+PASS spellcheck is on for pages by default
+PASS Chromium reports a real dictionary list  << 57
+PASS the switch turns it off at the session level, not just in state
+PASS and back on
+PASS the languages you name are resolved to what Chromium accepts  << ["de-DE","en-US"]
+PASS a language with no dictionary is reported, not swallowed  << {"missing":"zz-zz","languages":[]}
+PASS blank goes back to the system locale  << ["en-US","en"]
+PASS adding your own word reaches Chromium and the settings mirror  << {"ok":true,"word":"pvtestword","note":""}
+PASS and removing it does too  << {"ok":true,"word":"pvtestword"}
+PASS the right-click menu offers the suggestions  << ["Cut","Copy","Paste","Paste and match style","Delete",null,"Select all","Undo","Redo",null,"the","tea","Add “teh” to dictionary"]
+PASS and offers to add the word to your dictionary
+PASS clicking a suggestion calls replaceMisspelling with it  << "the"
+PASS no suggestions says so instead of showing a blank gap
+PASS and a missing dictionary points at Settings
+PASS the icon came from the site itself and is cached in the profile  << ["http://127.0.0.1:8799"]
+PASS it was found through the document link after /favicon.ico 404ed  << {"faviconHits":1,"docHits":1}
+PASS the rail repaints itself when the icon lands, with the real bytes  << {"map":"[\"http://127.0.0.1:8799\"]","src":"data:image/png;base64,iV"}
+PASS a second look uses the cache instead of the network  << {"f0":1,"d0":1,"faviconHits":1,"docHits":1}
+PASS a response with no image magic in it is rejected before it is ever cached  << {"html":"null","png":"image/png"}
+PASS and a picture that will not decode falls back to the badge instead of a broken-image box
+PASS each service button carries a brand tint  << "\"#8b9bb4\""
+PASS the switch off gives two-letter badges instead
+PASS the picker knows the usual services, each with a colour  << ["Discord","Twitch","YouTube Music","YouTube","X","Reddit","GitHub","WhatsApp","Telegram","Spotify"]
+PASS ticking one puts it in the rail
+PASS the rail grew a button for it
+PASS unticking it takes the button away
+PASS right-click on a rail button: open, new window, reload, copy, remove  << ["Open Probe","Open in a new window","Reload","Copy address","Remove from rail"]
+PASS the shipped default rail has the ones you asked for  << ["Probe"]
+PASS the generated keypair looks like a WireGuard key  << {"len":44}
+PASS saving a plain wg-quick config adds the [Socks5] section on our port  << "[Socks5]|BindAddress = 127.0.0.1:25399|"
+PASS and writes it 0600, because it holds a private key  << "600"
+PASS wireproxy itself accepts the config we generated  << {"ok":true,"lines":["Config OK"],"code":0}
+PASS the exit-IP check reads the reply through whatever proxy is set  << {"ok":true,"ip":"203.0.113.7","via":"direct (no tunnel)","code":200}
+PASS the tunnel comes up on the port we asked for  << {"state":"running","port":25399,"pid":27423}
+PASS and the settings remember you wanted it on at boot
+PASS Chromium is told to use the SOCKS listener  << "socks5://127.0.0.1:25399"
+PASS a normal page really would be routed through it  << "SOCKS5 127.0.0.1:25399"
+PASS with the tunnel up and the peer dead, example.com does not come back in the clear  << "hung"
+PASS the tunnel is still up, so wireproxy itself survived a dead peer  << "running"
+PASS and the log says what it is listening on  << ["DEBUG: 2026/10/28 12:06:34 Interface up requested","tunnel up, socks5 on 127.0.0.1:25399","2026/10/28 12:06:34 Resolving address for example.com"]
+PASS a tunnel that dies unexpectedly is reported with the wireproxy exit code  << ["wireproxy exited (SIGKILL)","kill switch armed: web requests are blocked rather than sent without the tunnel","not retried - auto-restart is off"]
+PASS and it arms the kill switch instead of failing open  << {"state":"down","blocked":true}
+PASS and it does not retry when auto-restart is off  << ["not retried - auto-restart is off"]
+PASS and it never claims retries it did not schedule
+PASS while it is down, web traffic is blocked rather than leaked  << "failed:-20"
+PASS turning it off disarms the kill switch and hands the proxy back  << {"state":"off","blocked":false,"proxy":"system"}
+PASS and the network is yours again  << "loaded"
+PASS a stop you asked for is not described as a crash  << ["not retried - auto-restart is off","stopped from the rail"]
+PASS a config the binary refuses is never spawned as a tunnel  << {"state":"error","log":["configtest with /tmp/pvH6/.config/PsychoVault/wireproxy.conf","configtest failed"]}
+PASS a binary that starts and dies is retried, with the interval in the log  << {"state":"down","log":["kill switch armed: web requests are blocked rather than sent without the tunnel","retry 3/3 in 8s","socks port 25399 never ans
+PASS turning it off also stops the retry loop  << {"state":"off","tries":0}
+PASS a missing binary is named as missing, with where it should be  << "wireproxy is not here. It ships in the PsychoVault install folder (too"
+PASS the bundled path is a tools folder next to the app or the exe  << ["/nope/wireproxy","/var/tmp/rt/el/tools/wireproxy","/home/user/psychovault/app/tools/wireproxy","wireproxy"]
+PASS the QUIC switch says it needs a restart rather than lying  << "true"
+PASS no bare clipboard.readText().trim() survives
+PASS no spell-check code depends on the removed farbling

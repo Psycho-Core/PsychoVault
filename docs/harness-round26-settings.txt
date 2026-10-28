@@ -1,0 +1,10 @@
+PASS Settings has a locations block
+PASS with Add configs / Add folder buttons
+PASS importing from Settings fills the list (3)
+PASS one of them is marked active in Settings
+PASS each row shows its endpoint
+PASS clicking a row in Settings makes it the active location (de-frankfurt-002)
+PASS exactly one row is highlighted after the click (1)
+PASS the rail panel shows the same active location (de-frankfurt-002)
+PASS captured the Settings locations list
+H26B TOTAL 9 PASS 0 FAIL

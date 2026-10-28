@@ -1,0 +1,20 @@
+PASS the checker is in the page, with the whole word list  << {"on":true,"dict":15000,"user":0,"bad":0,"field":"textarea","has":true}
+PASS it flags the four typos and nothing else in that sentence  << {"on":true,"dict":15000,"user":0,"bad":4,"field":"textarea","has":true}
+PASS the underline is painted over the field, one span per bad word
+PASS and it is a wavy red line, not just a mark
+PASS the word under the caret is what it says it is  << {"word":"teh","start":0,"end":3,"suggestions":["the","ten","eh","tea","heh"],"field":"textarea"}
+PASS with a real suggestion for it  << ["the","ten","eh","tea","heh"]
+PASS frequency ranking puts the common fix first  << ["the","ten","eh","tea","heh"]
+PASS so the right-click menu PsychoVault builds carries the fix  << ["Cut","Copy","Paste","Paste and match style","Delete",null,"Select all","Undo","Redo",null,"the","ten","eh","tea","heh","suggestion by PsychoVault","Add “teh” to diction
+PASS it says where the suggestion came from  << ["suggestion by PsychoVault","Add “teh” to dictionary"]
+PASS and offers the word for your dictionary
+PASS clicking the suggestion rewrites the page field  << {"before":"teh quikc brown fox ","after":"the quikc brown fox "}
+PASS and the underline goes away with it
+PASS a word you add stops being flagged, in the page too  << {"add":{"ok":true,"word":"laty","note":""},"bad":2}
+PASS a correctly spelled or proper-cased word is never flagged
+PASS the switch turns it off in the page, not just in settings  << {"on":false,"display":"none"}
+PASS and the menu stops inventing rows
+PASS back on it works again
+PASS the Settings status line reports the engine honestly  << {"on":true,"words":15000,"page":true,"engine":"PsychoVault"}
+PASS injecting into a page with no text fields is harmless
+NOTE words shipped: 15000, page script 10704 bytes

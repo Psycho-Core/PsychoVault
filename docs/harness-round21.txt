@@ -1,0 +1,26 @@
+PASS starts with one workspace  << ["General"]
+PASS two more were added  << ["General","Alpha","Beta"]
+PASS every chip renders an x you can click
+PASS left-click on the x closes a workspace  << ["Alpha","Beta"]
+PASS and the chrome chip row follows it
+PASS the closure is on disk too
+PASS the active index stayed in range  << 0
+PASS the chip right-click offers a close item  << ["Switch to this workspace","New workspace","Close workspace \"Alpha\""]
+PASS and it names the workspace it will close  << ["Switch to this workspace","New workspace","Close workspace \"Alpha\""]
+PASS down to the last one  << ["Alpha"]
+PASS the menu changes wording on the last one  << ["Switch to this workspace","New workspace","Close all tabs in this workspace"]
+PASS clicking it on the last workspace clears its tabs and keeps the workspace  << {"kept":1,"tabs":1,"was":"https://example.com/","now":"file:///home/user/psychovault/app/ui/newtab.html?private=0","disk
+PASS a clipboard that returns a number gives an empty string, not a crash  << ""
+PASS and Paste and go is disabled rather than fatal
+PASS a clipboard that throws is caught and logged
+PASS the palette copy route reaches the main process  << {"wrote":{"ok":true},"readback":"\"\""}
+NOTE   clipboard read-back returned an empty string under Xvfb (the same sandbox limitation as round 19); the write itself reported ok
+PASS a broken clipboard never navigated the active tab  << 0
+PASS an uncaught main-process error is logged instead of dialogging
+PASS and the process is still here to say so
+PASS no bare clipboard.readText().trim() survives in the shipped file
+PASS the stale LOCALAPPDATA profile path is gone from the installer
+
+Run on Linux under Xvfb against the real app. Read-back of the X clipboard returns an
+empty string in this sandbox (same limitation noted in round 19), so the write path is
+verified by its return value, not by a round-trip.
