@@ -52,8 +52,39 @@ const declared = uniq([...keys, ...reads])
 const uiIds = uniq([...settingsHtml.matchAll(/id="([a-zA-Z0-9_]+)"/g)].map((m) => m[1]))
 
 const ALIAS = { speedDial: 'tiles', services: 'svcList', containers: 'contList' }
-// Keys the app writes for itself: a migration marker is not something you can switch.
-const INTERNAL = ['settingsVersion', 'extensions']
+// Keys the app writes for itself: schema markers, extension inventory, and the retired
+// askSaveLocation preference (consumed only by the one-time migration to mandatory Save As).
+const INTERNAL = ['settingsVersion', 'extensions', 'askSaveLocation']
+
+// The settings view must have one navigation button for every category panel, and all
+// real sections must live inside one of those panels.
+const navCategories = [...settingsHtml.matchAll(/data-category="([a-z0-9-]+)"/g)].map((m) => m[1])
+const panels = [...settingsHtml.matchAll(/data-category-panel="([a-z0-9-]+)"[^>]*>/g)]
+const panelCategories = panels.map((m) => m[1])
+if (!navCategories.length || new Set(navCategories).size !== navCategories.length) defects.push('settings categories: missing or duplicate navigation category')
+if (navCategories.length !== panelCategories.length || navCategories.some((x) => !panelCategories.includes(x))) defects.push('settings categories: navigation buttons and panels do not match')
+let groupedSections = 0
+for (let i = 0; i < panels.length; i++) {
+  const from = panels[i].index + panels[i][0].length
+  const to = i + 1 < panels.length ? panels[i + 1].index : settingsHtml.length
+  groupedSections += (settingsHtml.slice(from, to).match(/<section>/g) || []).length
+}
+const allSections = (settingsHtml.match(/<section>/g) || []).length
+if (!panels.length || groupedSections !== allSections) defects.push(`settings categories: only ${groupedSections} of ${allSections} sections are inside a category`)
+if (/id="askSaveLocation"/.test(settingsHtml)) defects.push('downloads: save-location prompt must not be disableable in Settings')
+const downloadFlow = main.slice(main.indexOf('function watchDownloads(ses)'), main.indexOf('function broadcast(ch, payload)', main.indexOf('function watchDownloads(ses)')))
+if (!downloadFlow.includes('dialog.showSaveDialogSync') || !/if \(!picked\) \{ event\.preventDefault\(\); return \}/.test(downloadFlow)) defects.push('downloads: every download must show Save As and cancelling must prevent the transfer')
+if (downloadFlow.includes('settings.askSaveLocation')) defects.push('downloads: legacy setting still controls whether Save As appears')
+
+// A BrowserWindow maximize event must never publish a partial state snapshot that
+// replaces the tab list in the chrome renderer. Pinned tabs should use the normal tab
+// width rules, not an icon-only fixed width.
+if (/sendChrome\(['"]state['"]\s*,\s*\{\s*maximized\s*:/.test(main)) defects.push('window state: maximize/unmaximize pushes a partial snapshot instead of calling sendState()')
+if (!/const s = state = \{ \.\.\.state, \.\.\.update \}/.test(chromeJs)) defects.push('window state: renderer must merge state updates so a partial update cannot erase tabs')
+if (!/maximized:\s*this\.win\.isMaximized\(\)/.test(main)) defects.push('window state: full state snapshot does not include the current maximize state')
+const pinnedRule = css.match(/\.tab\.pinned\s*\{([^}]*)\}/)
+if (pinnedRule && /(?:^|[;\s])(?:width|min-width|max-width)\s*:|(?:^|[;\s])flex\s*:\s*0\s+0\s+\d/.test(pinnedRule[1])) defects.push('pinned tabs: a fixed narrow width overrides the normal tab size')
+
 for (const k of declared) {
   if (INTERNAL.includes(k)) continue
   const want = ALIAS[k] || k
@@ -63,8 +94,8 @@ for (const id of uiIds) {
   if (!declared.includes(id)) {
     // ids that are pure UI (buttons, panels) are fine; a control whose name matches a
     // setting must be a setting
-    if (/^(btn|tab|omni|panel|find|palette|rail|drag|ws|toast|win)/.test(id)) continue
-    if (/^(v|e|data|tile|svc|cont|mod|flag|restart|relaunch|clear|search)/.test(id)) continue
+    if (/^(btn|tab|omni|panel|find|palette|rail|drag|ws|toast|win|protonVpnDownload|downloadDirPick)/.test(id)) continue
+    if (/^(v|e|data|tile|svc|cont|mod|flag|restart|relaunch|clear|search|spell)/.test(id)) continue
     notes.push(`settings control "${id}" does not map to a known key`)
   }
 }
@@ -132,14 +163,20 @@ for (const [file, which] of Object.entries(PAGE_PRELOAD_FOR)) {
   }
 }
 
-for (const f of ['main.js', 'preload.js', 'page-preload.js', 'ui/renderer.js']) {
+for (const f of ['main.js', 'preload.js', 'page-preload.js', 'spell-page.js', 'ui/renderer.js']) {
   try { execFileSync(process.execPath, ['--check', A(f)], { stdio: 'pipe' }) }
   catch (e) { defects.push(`${f}: does not parse - ${String(e.stderr).split('\n')[0]}`) }
 }
+try { execFileSync(process.execPath, ['--check', path.join(ROOT, 'tools', 'patch-exe.mjs')], { stdio: 'pipe' }) }
+catch (e) { defects.push(`tools/patch-exe.mjs: does not parse - ${String(e.stderr).split('\n')[0]}`) }
+try { execFileSync('bash', ['-n', path.join(ROOT, 'tools', 'build-installer.sh')], { stdio: 'pipe' }) }
+catch (e) { defects.push(`tools/build-installer.sh: does not parse - ${String(e.stderr).split('\n')[0]}`) }
 for (const [label, src] of [['settings.html', settingsHtml], ['newtab.html', newtabHtml]]) {
   const m = src.match(/<script>([\s\S]*)<\/script>/)
   if (!m) { defects.push(`${label}: no script block found`); continue }
   const body = m[1]
+  try { execFileSync(process.execPath, ['--check'], { input: body, encoding: 'utf8' }) }
+  catch (e) { defects.push(`${label}: inline script does not parse - ${String(e.stderr || e.message).split('\n')[0]}`) }
   const bal = (a, b) => (body.split(a).length - 1) - (body.split(b).length - 1)
   if (bal('{', '}') !== 0) defects.push(`${label}: script braces unbalanced by ${bal('{', '}')}`)
   if (bal('(', ')') !== 0) defects.push(`${label}: script parens unbalanced by ${bal('(', ')')}`)
@@ -152,8 +189,8 @@ for (const [label, src] of [['settings.html', settingsHtml], ['newtab.html', new
 }
 
 // ---------------------------------------------------------------- 6. swallowed errors
-const catches = [...main.matchAll(/\}\s*catch\s*(?:\([^)]*\))?\s*\{\s*(?:\/\*[^*]*\*\/)?\s*\}/g)]
-notes.push(`main.js has ${catches.length} empty catch blocks - each one is a place a failure becomes invisible`)
+const catches = [...main.matchAll(/\}\s*catch\s*(?:\([^)]*\))?\s*\{\s*\}/g)]
+if (catches.length) notes.push(`main.js has ${catches.length} truly empty catch blocks - document or handle the intentionally ignored failure`)
 
 // ---------------------------------------------------------------- report
 console.log(`channels: ${handlers.length} handled, ${bridgeCalls.length} called from bridges, ${sendEvents.length} push events`)

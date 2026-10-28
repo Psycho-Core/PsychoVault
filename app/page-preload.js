@@ -28,6 +28,7 @@ if (isInternal) {
     nav: {
       go: (input) => invoke('nav:go', input)
     },
+    openExternal: (url) => invoke('open:external', url),
     tab: {
       close: (id) => invoke('tab:close', id)
     },

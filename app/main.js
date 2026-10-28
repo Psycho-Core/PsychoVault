@@ -70,9 +70,8 @@ const DEFAULT_SETTINGS = {
   enhanceImages: false,
   // --- GX Control third limiter: bandwidth, in KB/s (0 = no cap) ---
   netLimit: 0,
-  settingsVersion: 2,           // bumped when a default has to reach an existing profile
-  askSaveLocation: true,        // ask where every file goes - off means silent to downloadDir
-  downloadDir: '',              // empty = the system Downloads folder
+  settingsVersion: 3,           // internal settings schema version
+  downloadDir: '',              // initial location for each Save As dialog; empty = system Downloads
   downloadNotify: true,         // system notification when the window is behind something
   // --- GX Panic Button ---
   panicEnabled: true,
@@ -129,16 +128,15 @@ const DEFAULT_SETTINGS = {
   ]
 }
 let settings = Object.assign({}, DEFAULT_SETTINGS, readJSON('settings.json', {}))
-// Round 24: downloads used to mean "silent, straight to the Downloads folder", and an
-// existing profile already has askSaveLocation:false written into settings.json - a new
-// default alone would never reach it. Bump the version once and switch the save dialog
-// back on for anyone who never chose otherwise; a later choice sticks because the
-// version stops moving.
+// Save As is now mandatory for every download, not a preference that can be left off
+// in an old profile. Remove the retired setting so legacy `false` values cannot silently
+// bypass the location picker.
 ;(function migrateSettings() {
-  const v = Number(settings.settingsVersion) || 1
-  if (v >= 2) return
-  if (settings.askSaveLocation !== true) settings.askSaveLocation = true
-  settings.settingsVersion = 2
+  const savedVersion = Number(settings.settingsVersion) || 1
+  const hadLegacySavePreference = Object.prototype.hasOwnProperty.call(settings, 'askSaveLocation')
+  if (savedVersion >= 3 && !hadLegacySavePreference) return
+  delete settings['askSaveLocation']
+  settings.settingsVersion = 3
   writeJSON('settings.json', settings)
 })()
 
@@ -360,10 +358,10 @@ function httpGrab(url, asText) {
     try { req = electronNet.request({ url, method: 'GET', redirects: 'follow', useSessionCookies: false }) } catch (e) { logMainError(e); return resolve(null) }
     const chunks = []
     let size = 0
-    const timer = setTimeout(() => { try { req.abort() } catch {} resolve(null) }, 7000)
+    const timer = setTimeout(() => { try { req.abort() } catch { /* request may already be closed */ } resolve(null) }, 7000)
     req.on('response', (res) => {
       if (res.statusCode >= 400) { clearTimeout(timer); return resolve(null) }
-      res.on('data', (c) => { size += c.length; if (size > 512 * 1024) { try { res.destroy() } catch {} return resolve(null) }; chunks.push(c) })
+      res.on('data', (c) => { size += c.length; if (size > 512 * 1024) { try { res.destroy() } catch { /* response may already be destroyed */ } return resolve(null) }; chunks.push(c) })
       res.on('end', () => { clearTimeout(timer); resolve(asText ? Buffer.concat(chunks).toString('utf8') : Buffer.concat(chunks)) })
       res.on('error', () => { clearTimeout(timer); resolve(null) })
     })
@@ -1207,10 +1205,12 @@ class TabWindow {
     this.win.on('moved', relayout)
     this.win.on('focus', relayout)
     this.win.on('show', relayout)
-    this.win.on('restore', relayout)
+    this.win.on('restore', () => { relayout(); this.sendState() })
     this.win.on('minimize', relayout)
-    this.win.on('maximize', () => this.sendChrome('state', { maximized: true }))
-    this.win.on('unmaximize', () => this.sendChrome('state', { maximized: false }))
+    // State pushes are full snapshots; a partial `{ maximized }` object used to be
+    // treated as a complete tab state by the renderer and erased the visible tabs.
+    this.win.on('maximize', () => { relayout(); this.sendState() })
+    this.win.on('unmaximize', () => { relayout(); this.sendState() })
     this.win.on('enter-full-screen', () => this.layout())
     this.win.on('leave-full-screen', () => this.layout())
     this.win.on('closed', () => {
@@ -1695,11 +1695,11 @@ class TabWindow {
     const t = this.tabs.get(this.activeId) || [...this.tabs.values()].find((x) => x.service) || [...this.tabs.values()][0]
     if (!t) return { ok: false, reason: 'no tab to control' }
     const js = {
-      play: `document.querySelectorAll('audio,video').forEach(m=>{try{m.play()}catch(e){}});'play'`,
-      pause: `document.querySelectorAll('audio,video').forEach(m=>{try{m.pause()}catch(e){}});'pause'`,
-      toggle: `(()=>{const m=document.querySelector('audio,video');if(!m)return 'none';if(m.paused){try{m.play()}catch(e){}}else m.pause();return m.paused?'pause':'play'})()`,
-      next: `[...document.querySelectorAll('audio,video')].forEach(m=>{try{m.currentTime=m.duration-1}catch(e){}});'next'`,
-      prev: `[...document.querySelectorAll('audio,video')].forEach(m=>{try{m.currentTime=0}catch(e){}});'prev'`
+      play: `document.querySelectorAll('audio,video').forEach(m=>{try{m.play().catch(()=>{})}catch(e){/* media may be detached or policy-blocked */}});'play'`,
+      pause: `document.querySelectorAll('audio,video').forEach(m=>{try{m.pause()}catch(e){/* media may be detached */}});'pause'`,
+      toggle: `(()=>{const m=document.querySelector('audio,video');if(!m)return 'none';if(m.paused){try{m.play().catch(()=>{})}catch(e){/* media may be detached or policy-blocked */}}else m.pause();return m.paused?'pause':'play'})()`,
+      next: `[...document.querySelectorAll('audio,video')].forEach(m=>{try{m.currentTime=m.duration-1}catch(e){/* live or unseekable media */}});'next'`,
+      prev: `[...document.querySelectorAll('audio,video')].forEach(m=>{try{m.currentTime=0}catch(e){/* live or unseekable media */}});'prev'`
     }[cmd]
     if (!js) return { ok: false, reason: 'unknown command ' + cmd }
     return t.view.webContents.executeJavaScript(js)
@@ -1858,8 +1858,8 @@ class TabWindow {
     this.order = this.order.filter(x => x !== id)
     this.tabs.delete(id)
     wcTabs.delete(tab.wcId)
-    try { this.win.contentView.removeChildView(tab.view) } catch {}
-    try { tab.view.webContents.close() } catch {}
+    try { this.win.contentView.removeChildView(tab.view) } catch { /* view may already be detached */ }
+    try { tab.view.webContents.close() } catch { /* contents may already be destroyed */ }
 
     if (this.order.length === 0 && !opts.keepOpen) {
       if (mainWindows.size > 1) this.win.close()
@@ -2074,6 +2074,7 @@ class TabWindow {
   }
 
   sendState() {
+    if (!this.win || this.win.isDestroyed()) return
     // a window being torn down can fire a state push after its tabs are gone, and an
     // uncaught error here would leave every open window with a frozen tab strip
     this.order = this.order.filter((id) => this.tabs.has(id))
@@ -2091,6 +2092,7 @@ class TabWindow {
     this.sendChrome('state', {
       tabs,
       activeId: this.activeId,
+      maximized: this.win.isMaximized(),
       private: this.private,
       canGoBack: a ? a.canGoBack : false,
       canGoForward: a ? a.canGoForward : false,
@@ -2687,7 +2689,6 @@ ipcMain.handle('vault:forgetMaster', () => {
   vaultCache = data
   vaultLocked = false
   const w = vaultWrite()
-  if (w.ok) { try { /* keep entries, now under the keychain */ } catch (e) {} }
   vaultBroadcast()
   return { ...w, status: vaultStatus() }
 })
@@ -2695,6 +2696,8 @@ ipcMain.handle('vault:forgetMaster', () => {
 ipcMain.handle('settings:get', () => settings)
 ipcMain.handle('settings:set', (e, patch) => {
   settings = { ...settings, ...patch }
+  delete settings['askSaveLocation']
+  settings.settingsVersion = 3
   writeJSON('settings.json', settings)
   loadBlocklist()
   applyCpuLimit()
@@ -2722,7 +2725,13 @@ ipcMain.handle('zoom:in', (e) => { const w = findWin(e); const t = w && w.tabs.g
 ipcMain.handle('zoom:out', (e) => { const w = findWin(e); const t = w && w.tabs.get(w.activeId); if (t) t.view.webContents.setZoomLevel(t.view.webContents.getZoomLevel() - 0.5) })
 ipcMain.handle('zoom:reset', (e) => { const w = findWin(e); const t = w && w.tabs.get(w.activeId); if (t) t.view.webContents.setZoomLevel(0) })
 
-ipcMain.handle('open:external', (e, url) => shell.openExternal(url))
+ipcMain.handle('open:external', async (_e, rawUrl) => {
+  let url
+  try { url = new URL(String(rawUrl || '')) } catch { return { ok: false, error: 'invalid URL' } }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return { ok: false, error: 'only web links can be opened externally' }
+  await shell.openExternal(url.href)
+  return { ok: true }
+})
 
 ipcMain.handle('downloads:list', () => downloads)
 ipcMain.handle('downloads:clear', () => { downloads = []; saveDownloads(); broadcast('downloads', downloads); return [] })
@@ -2793,30 +2802,19 @@ function watchDownloads(ses) {
     try { fs.mkdirSync(dir, { recursive: true }) } catch (e) { logMainError(e) }
     const suggested = String(item.getFilename() || 'download').replace(/[\\/:*?"<>|]/g, '_').slice(0, 180) || 'download'
     let target = path.join(dir, suggested)
-    let chosen = false
-    if (settings.askSaveLocation) {
-      // the dialog belongs to whichever window owns this session; tab sessions are
-      // per-partition, so fall back to the first live window (containers, private)
-      const alive = [...mainWindows].filter((w) => w.win && !w.win.isDestroyed())
-      const owner = alive.find((w) => w.win.webContents && w.win.webContents.session === ses) || alive[0]
-      const parent = owner ? owner.win : null
-      // save-dialog, not the old ask-then-ask-again pair: one question, and the folder
-      // is part of the answer. Cancel means nothing is written - the old code started
-      // the transfer and only then refused, which still put a row in the list.
-      const picked = dialog.showSaveDialogSync(parent, {
-        title: 'Save file', defaultPath: target, buttonLabel: 'Save',
-        properties: ['createDirectory', 'showOverwriteConfirmation']
-      })
-      if (!picked) { event.preventDefault(); return }
-      target = picked
-      chosen = true
-    }
-    if (!chosen) {
-      let n = 1
-      const ext = path.extname(target)
-      const base = target.slice(0, target.length - ext.length)
-      while (fs.existsSync(target)) target = `${base} (${n++})${ext}`
-    }
+    // Always ask where to save, regardless of a legacy profile value or caller. A
+    // cancelled dialog prevents the download before a file or history row is created.
+    // The dialog belongs to the window that owns this session; for containers/private
+    // sessions that do not map to the chrome WebContents, use the first live window.
+    const alive = [...mainWindows].filter((w) => w.win && !w.win.isDestroyed())
+    const owner = alive.find((w) => w.win.webContents && w.win.webContents.session === ses) || alive[0]
+    const parent = owner ? owner.win : null
+    const picked = dialog.showSaveDialogSync(parent, {
+      title: 'Save file', defaultPath: target, buttonLabel: 'Save',
+      properties: ['createDirectory', 'showOverwriteConfirmation']
+    })
+    if (!picked) { event.preventDefault(); return }
+    target = picked
     item.setSavePath(target)
 
     const entry = { name: item.getFilename() || suggested, received: 0, total: item.getTotalBytes(), state: 'progress', path: target, at: Date.now() }

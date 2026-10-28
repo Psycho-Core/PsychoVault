@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Rebuild PsychoVault-Setup-1.0.0.exe.
+# Rebuild the versioned PsychoVault Windows installer.
 #
 # The Windows runtime it packages is the staged Electron tree in $PAYLOAD
 # (PsychoVault.exe with the icon/version info already patched in, the .pak files,
@@ -11,10 +11,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+VERSION="${VERSION:-$(node -p "require('./app/package.json').version")}"
 PAYLOAD="${PAYLOAD:-/var/tmp/payload}"
-OUT="${OUT:-$PWD/PsychoVault-Setup-1.0.0.exe}"
-VERSION="${VERSION:-1.0.0}"
-STAGE=/var/tmp/stage-build
+OUT="${OUT:-$PWD/PsychoVault-Setup-${VERSION}.exe}"
+MUI_ICON="${MUI_ICON:-$PWD/assets/psychovault.ico}"
+STAGE="${STAGE:-/var/tmp/stage-build}"
 
 test -d "$PAYLOAD"        || { echo "no payload dir at $PAYLOAD"; exit 1; }
 test -f "$PAYLOAD/PsychoVault.exe" || { echo "no PsychoVault.exe in $PAYLOAD"; exit 1; }
@@ -36,16 +37,24 @@ for f in main.js preload.js page-preload.js spell-page.js spell-words.txt \
   fi
 done
 
+# Keep the installer-facing documents in step with the source checkout rather than
+# carrying stale copies forward from a previously staged Electron payload.
+cp LICENSE "$STAGE/LICENSE.txt"
+cp README.md "$STAGE/README.txt"
+cp VERIFICATION.md "$STAGE/VERIFICATION.txt"
+
 echo "[3/4] makensis"
-mkdir -p /var/tmp/nsitmp
-TMPDIR=/var/tmp/nsitmp makensis -V2 -DWANT_UNINSTALLER \
+NSIS_TMPDIR="${NSIS_TMPDIR:-/var/tmp/nsitmp}"
+mkdir -p "$NSIS_TMPDIR"
+TMPDIR="$NSIS_TMPDIR" makensis -V2 -DWANT_UNINSTALLER \
+  -DVERSION="$VERSION" -DMUI_ICON="$MUI_ICON" \
   -DPAYLOADDIR="$STAGE" -DOUTFILE="$OUT" installer.nsi
 test -s "$OUT" || { echo "no installer produced"; exit 1; }
 echo "  $(stat -c %s "$OUT") bytes -> $OUT"
 
 echo "[4/4] verifying what actually went inside"
 V=/var/tmp/vfy-$$; mkdir -p "$V"
-7z x -y -bso0 -bse0 "$OUT" 'resources/app/*' -o"$V" > /dev/null 2>&1
+7z x -y -bso0 -bse0 "$OUT" 'resources/app/*' README.txt LICENSE.txt VERIFICATION.txt -o"$V" > /dev/null 2>&1
 for f in resources/app/main.js resources/app/spell-page.js resources/app/spell-words.txt \
          resources/app/preload.js resources/app/page-preload.js resources/app/ui/renderer.js \
          resources/app/ui/style.css resources/app/ui/settings.html; do
@@ -53,6 +62,16 @@ for f in resources/app/main.js resources/app/spell-page.js resources/app/spell-w
   found="$V/resources/app/$rel"
   if [ -f "$found" ] && cmp -s "$found" "app/$rel"; then echo "  identical in installer:  $f"
   else echo "  MISSING/DIFFERENT:       $f"; exit 1; fi
+done
+for spec in 'README.txt:README.md' 'LICENSE.txt:LICENSE' 'VERIFICATION.txt:VERIFICATION.md'; do
+  packed="${spec%%:*}"
+  source="${spec#*:}"
+  if [ -f "$V/$packed" ] && cmp -s "$V/$packed" "$source"; then
+    echo "  identical in installer:  $packed"
+  else
+    echo "  MISSING/DIFFERENT:       $packed"
+    exit 1
+  fi
 done
 rm -rf "$V" "$STAGE"
 echo "done."

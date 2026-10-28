@@ -34,17 +34,16 @@ sections. The fifth row is the extension manager: Proton VPN's own Chrome extens
 and the round's own pictures follow it: a tab held mid-drag, and the downloads panel live. Nothing here is a mock-up, and nothing is a switch that leads nowhere - each one is
 followed by the assertion that ran against it (see `VERIFICATION.md`).
 
-The settings page runs to sixteen sections (Search, Privacy, Startup, Shields, Governor,
-Appearance, Enhance & personality, Sidebar services, Spelling, Extensions, Speed dial,
-On exit, Your data, Hardening, Passwords, About), which is taller than one screenshot frame, so I show
-you the top half as it renders and the two new sections in their own shots
-(`screenshot-gx-enhance.png`, `screenshot-gx-hardening.png`). I did not stitch a tidy
-whole-page image together out of three captures - that would be a picture of a page nobody
-scrolled. Every control in every section writes to disk.
+Settings now has seventeen focused sections grouped into nine categories: General, Privacy & security,
+Downloads, Extensions, Performance, Appearance, Spelling, Passwords, and About. The category
+navigation keeps the long list out of your way and remembers where you left off. The screenshots
+above show the former layout; the running page is navigable by category. Every control still writes
+to disk.
 
-In the pinned-tab shot, the pill at the head of the strip is that tab: favicon only,
-no close button, and it comes back pinned after a restart (the session file stores the
-flag). The two normal tabs beside it were restored in the same way.
+The pinned-tab screenshot predates the sizing fix: it shows the old favicon-only pill.
+Pinned tabs now keep the same width as regular tabs, while retaining the pin marker, omitting
+the close button, and restoring their pinned state after a restart. The two normal tabs beside
+it were restored in the same way.
 
 ## What it is
 
@@ -61,7 +60,7 @@ flag). The two normal tabs beside it were restored in the same way.
 
 | Area | What you get |
 | --- | --- |
-| Tabs | Horizontal strip, **drag a tab to move it** (a caret shows the gap it will drop into; pinned tabs stay a block at the head, and the order survives a restart), right-click menu (pin, duplicate, mute, split, move to window, close others), double-click to pin, middle-click to close, `Ctrl+Shift+T` to reopen |
+| Tabs | Horizontal strip, **drag a tab to move it** (a caret shows the gap it will drop into; pinned tabs stay a block at the head, keep the same width as regular tabs, and the order survives a restart), right-click menu (pin, duplicate, mute, split, move to window, close others), double-click to pin, middle-click to close, `Ctrl+Shift+T` to reopen |
 | Address bar | URL or search, live history suggestions, four search engines |
 | Blocking | 262-domain bundled list, checked on every request, counted **per page** on the shield, resets on navigation |
 | Private windows | Separate in-memory session, violet chrome, `Ctrl+Shift+P`, nothing written to disk |
@@ -73,8 +72,8 @@ flag). The two normal tabs beside it were restored in the same way.
 | Sidebar | Bookmarks, history and downloads in a panel that pushes the page instead of covering it |
 | Find in page | `Ctrl+F`, live match count |
 | Zoom | Per tab, `Ctrl+plus`, `Ctrl+minus`, `Ctrl+0` |
-| Downloads | A save dialog on every file, opened in your download folder with the name filled in and a button to make a new folder - cancel writes nothing at all. Live percentage in the rail badge, a message when a file starts (naming the folder) and when it finishes, a system notification if the window is behind something, a panel that states where files go with a **Change** button, and `name (1).ext` instead of overwriting |
-| Settings | Sixteen sections, all of them live controls: search engine, blocking, third-party cookies, DNT/GPC, autoplay, history, restore, home page, governor (CPU + sleeping tabs + battery saver), accent colour, sidebar visibility, speed dial tiles, delete-on-exit, a live list of every file in your profile, the vault, GX Control, sidebar services, containers, WebRTC/DNS/referrer hardening and the stylesheet mod box |
+| Downloads | A Save As dialog is mandatory for every file, opened in your chosen starting folder with the suggested name - choose the exact destination, and cancel to stop the download. Live percentage in the rail badge, a message when a file starts (naming the folder) and when it finishes, a system notification if the window is behind something, and a panel that states where files go with a **Change** button |
+| Settings | Seventeen sections in nine navigable categories: search engine, blocking, third-party cookies, DNT/GPC, autoplay, history, restore, home page, governor (CPU + sleeping tabs + battery saver), accent colour, sidebar visibility, speed dial tiles, mandatory Save As downloads, delete-on-exit, a live list of every file in your profile, the vault, GX Control, sidebar services, containers, WebRTC/DNS/referrer hardening and stylesheet mods |
 | GX Control | Live per-tab memory and CPU (`Ctrl+Shift+H` or the speedometer in the rail), sleep any tab from the panel, CPU priority limiter, RAM governor, bandwidth cap on downloads, battery saver that switches itself on when you unplug |
 | Tab islands | A tab opened from a page joins that page's island; the group gets a collapse control in the strip, and the tab you are reading is never hidden by a collapse |
 | Containers | Named cookie jar + localStorage + cache per tab (Work, Shopping, Social, Banking, or your own), assigned from the tab menu, dot in the strip, so two identities on one site never touch |
@@ -83,7 +82,7 @@ flag). The two normal tabs beside it were restored in the same way.
 | RGX | Contrast/saturation/brightness filters on `video` and `img` elements, two switches, off by default |
 | Sidebar services | Up to 14 services in the rail, each with the site's own favicon and brand colour (a picker has Discord, Twitch, YouTube, YouTube Music, X, Reddit, GitHub, WhatsApp, Telegram, Spotify, Slack, Messenger, ICQ and more; anything else you can add by URL), opened as ordinary tabs, so logins and video players keep working; global media keys route to them and auto-pause the music when another tab starts making sound; right-click a button for open / new window / reload / copy / remove |
 | Spelling | Red wavy underlines in every text field you type in, suggestions and "Add to dictionary" in the right-click menu, and a "your words" box in Settings you can edit in bulk. It is PsychoVault's own checker - a 15,000-word frequency list plus your words, run in the page - because an Electron build cannot load or download dictionaries (tested: no `downloadDictionary`, `<profile>/Dictionaries` is not read, the download URL is never fetched) |
-| Extensions | Chrome-style extensions, installed from an unpacked folder or from a **.crx** (unpacked here, because Electron refuses crx files). Loaded into every session including containers, listed in Settings with enable / disable / remove, and every one is checked against the API list this engine actually implements - a missing API is named under the extension instead of being left to fail quietly. Proton VPN's extension is the worked example: installed, loaded, and labelled `cannot work here` because it needs `chrome.proxy`. What does work is demonstrated by the harness: a content script running in a real page and a `webRequest` rule cancelling a request |
+| Extensions | Chrome-style extensions, installed from an unpacked folder or **.crx** (unpacked here because Electron refuses crx files), loaded into every session including containers, and managed with enable / disable / remove. The settings category reports missing APIs rather than failing silently. Proton VPN's browser extension needs `chrome.proxy`, which Electron does not implement; use the official Proton VPN desktop app to tunnel PsychoVault system-wide (the Extensions category links to it) |
 | Personality | Synthesised keyboard sounds (no audio files in the repo), six accent colours, and a custom stylesheet box that repaints the chrome
 | Governor | CPU priority limiter and tab sleeping, so background tabs stop costing RAM |
 | Context menus | Right-click a tab, a link, an image, selected text, or a text field (Cut / Copy / Paste / Select all all the way through) |
@@ -147,7 +146,7 @@ does not any more.
 this archive into:
 
 ```bash
-sha256sum -c SHA256SUMS.txt          # Windows: certutil -hashfile PsychoVault-Setup-1.0.0.exe SHA256
+sha256sum -c SHA256SUMS.txt          # Windows: certutil -hashfile PsychoVault-Setup-1.0.1.exe SHA256
 ```
 
 No document packed inside the installer carries the hash of the archive containing it,
@@ -155,15 +154,24 @@ which is why the sums file is separate and written after the build.
 
 ## Package for Windows
 
+Pushes that change app code, the installer script, or its build tools to the active Arena branch
+run `.github/workflows/build-release.yml`. The workflow downloads the checksum-pinned Electron
+45.1.0 Windows runtime, patches the PsychoVault icon and version, stages the checked-out app source,
+verifies the packaged files, and publishes a versioned installer and checksum to GitHub Releases.
+
+For a local rebuild, install NSIS and 7-Zip, then provide `$PAYLOAD` (default `/var/tmp/payload`)
+with the unpacked Windows Electron runtime and `PsychoVault.exe`. The `patch-exe` helper sets the
+runtime icon/version; the build script stages the app, runs `makensis`, and byte-compares the
+packaged app files against source:
+
 ```bash
-bash tools/build-installer.sh     # restages resources/app over the staged Windows tree,
-                                  # runs makensis, then extracts the built installer and
-                                  # byte-compares nine payload files against the source
+npm ci --prefix tools
+VERSION=$(node -p 'require("./app/package.json").version')
+node tools/patch-exe.mjs "$PAYLOAD/PsychoVault.exe" assets/psychovault.ico "$VERSION"
+bash tools/build-installer.sh
 ```
-It expects `$PAYLOAD` (default `/var/tmp/payload`) to hold an unpacked
-`electron-v<ver>-win32-x64.zip` whose `electron.exe` was renamed to `PsychoVault.exe` and had
-its icon and version info patched. That part is the expensive one, so the script reuses it and
-replaces only the app code. Override with `PAYLOAD=... OUT=... bash tools/build-installer.sh`.
+The output name and installer version come from `app/package.json`; override with
+`PAYLOAD=... OUT=... VERSION=... bash tools/build-installer.sh`.
 
 The installer is per-user (`%LOCALAPPDATA%\PsychoVault`), asks for no administrator
 rights, writes no services, and registers a normal uninstall entry.
@@ -181,7 +189,7 @@ app/
     style.css        navy/cyan design tokens
     renderer.js      tab rendering, omnibox, palette, panels, shortcuts
     newtab.html      new tab page
-    settings.html    settings page (16 sections, incl. the vault and extensions)
+    settings.html    settings page (17 sections in 9 categories, incl. the vault and extensions)
   package.json
 tools/
   build-installer.sh rebuild the Windows installer from a staged Electron tree, then verify
@@ -201,7 +209,9 @@ VERIFICATION.md      test log
 - **static**, `node tools/audit.mjs` - every channel the renderer calls has a handler in
   the main process, every pushed event is in the preload allow-list, every setting key has
   a control on the settings page, every id the UI reaches for exists, no duplicate ids, no
-  unscoped selectors. It exits non-zero on a defect. It found two real bugs while I wrote
+  unscoped selectors, no partial window-state updates that erase tabs, and no fixed narrow
+  width on pinned tabs. It syntax-checks all app scripts including the inline settings pages.
+  It exits non-zero on a defect. It found two real bugs while I wrote
   it: a switch with no key behind it and a settings row matching the wrong elements.
 - **runtime**, a throwaway harness that drove the real app under Xvfb against local test
   pages: 51 assertions for the browser core, then 101 more for the spell checker, the

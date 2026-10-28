@@ -6,7 +6,9 @@ Unicode true
 !include "LogicLib.nsh"
 
 !define PRODUCT   "PsychoVault"
-!define VERSION   "1.0.0"
+!ifndef VERSION
+  !define VERSION "1.0.1"
+!endif
 !define PUBLISHER "Psycho-Core"
 !define APPURL    "https://github.com/"
 
@@ -14,10 +16,10 @@ Unicode true
   !define PAYLOADDIR "/var/tmp/stage/PsychoVault"
 !endif
 !ifndef OUTFILE
-  !define OUTFILE "/home/user/psychovault/PsychoVault-Setup-${VERSION}.exe"
+  !define OUTFILE "PsychoVault-Setup-${VERSION}.exe"
 !endif
 !ifndef MUI_ICON
-  !define MUI_ICON "/home/user/psychovault/assets/psychovault.ico"
+  !define MUI_ICON "assets/psychovault.ico"
 !endif
 !define MUI_UNICON "${MUI_ICON}"
 
@@ -32,7 +34,7 @@ SetDatablockOptimize on
 AllowRootDirInstall false
 XPStyle on
 
-VIProductVersion "1.0.0.0"
+VIProductVersion "${VERSION}.0"
 VIAddVersionKey "ProductName"     "${PRODUCT}"
 VIAddVersionKey "ProductVersion"  "${VERSION}"
 VIAddVersionKey "FileVersion"     "${VERSION}.0"
@@ -44,7 +46,7 @@ VIAddVersionKey "Comments"        "Browser application built on Electron 45.1.0 
 !define MUI_ABORTWARNING
 !define MUI_HEADERIMAGE_RIGHT
 !define MUI_WELCOMEPAGE_TITLE "Install ${PRODUCT} ${VERSION}"
-!define MUI_WELCOMEPAGE_TEXT "A browser I wrote myself, running on Chromium.\r\n\r\nIt installs into your own user folder - no administrator rights, no services, no system changes.\r\n\r\n- Own tab strip, omnibox, bookmarks, history and downloads\r\n- 262-domain ad and tracker blocking, on by default\r\n- Private windows that write nothing to disk\r\n- Split view, command palette, sidebar panel\r\n- Workspaces, tab pinning, per-page blocker counters\r\n- A local password vault, encrypted, syncing to nothing\r\n- GX Control: CPU, RAM and bandwidth limiters, hot tabs, panic button\r\n- Service rail with real site icons, built-in spell checking, WireGuard toggle\r\n- Dark navy interface with cyan accents\r\n\r\nAbout 1 GB of disk space. First start takes a few seconds."
+!define MUI_WELCOMEPAGE_TEXT "A browser I wrote myself, running on Chromium.\r\n\r\nIt installs into your own user folder - no administrator rights, no services, no system changes.\r\n\r\n- Own tab strip, omnibox, bookmarks, history and downloads\r\n- 262-domain ad and tracker blocking, on by default\r\n- Private windows that write nothing to disk\r\n- Split view, command palette, sidebar panel\r\n- Workspaces, tab pinning, per-page blocker counters\r\n- A local password vault, encrypted, syncing to nothing\r\n- GX Control: CPU, RAM and bandwidth limiters, hot tabs, panic button\r\n- Service rail with real site icons, built-in spell checking, extension manager\r\n- Save As for every download, with settings grouped by category\r\n- Dark navy interface with cyan accents\r\n\r\nAbout 1 GB of disk space. First start takes a few seconds."
 
 !define MUI_FINISHPAGE_TITLE "${PRODUCT} is installed"
 !define MUI_FINISHPAGE_TEXT "Your browser is ready.\r\n\r\nCtrl+K opens the command palette. Ctrl+Shift+P opens a private window. Ctrl+1..9 switches workspaces.\r\nSettings live in the gear at the bottom of the left rail - the Passwords section there is where you set a master password before you rely on the vault."
