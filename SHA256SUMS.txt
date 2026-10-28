@@ -1,1 +1,1 @@
-326533ef01f503e7e2725baf0c7be3e0a5e9d0ca7e5d9714ab876330e3dfab3e  PsychoVault-Setup-1.0.1.exe
+358f6a044262bb4fa142465fb02692194d0c18c05012871f6b4a54548fc6c1e5  PsychoVault-Setup-1.0.2.exe
