@@ -357,7 +357,9 @@
       <p>You need your own Proton account. Sign in with it in the extension window; PsychoVault does not see, store, or ship your Proton password, and no subscription or server list is bundled. Traffic is then routed by Chromium through Proton's proxy - the same mechanism the extension uses in Chrome.</p>
       <p>Want the store listing instead? <button class="mini" id="protonVpnDownload" type="button">Open Proton's extension page</button></p>
       <button class="mini" id="protonVpnRestore" type="button">Restore / reinstall Proton VPN</button>
+      <button class="mini" id="protonVpnStatus" type="button">Check install</button>
     </div>
+    <div class="hint" id="protonVpnState">Press <b>Check install</b> to see what the bundled extension did at startup.</div>
     <div id="extList" class="ext-list"></div>
     <div class="btnrow">
       <button class="mini" id="extAddFolder">Load unpacked...</button>
@@ -384,7 +386,7 @@
     <div class="row">
       <div>
         <div class="lbl">Battery saver</div>
-        <div class="hint">GX power save: lowers priority further and sleeps tabs after three minutes.</div>
+        <div class="hint">Battery saver: lowers priority further and sleeps tabs after three minutes.</div>
       </div>
       <label class="switch"><input type="checkbox" id="batterySaver"><span class="slider"></span></label>
     </div>
@@ -404,7 +406,7 @@
     <div class="row">
       <div>
         <div class="lbl">Bandwidth cap</div>
-        <div class="hint">GX's network limiter. Downloads are paused and resumed to hold the average - Electron gives no byte-rate hook, so this is a duty cycle, not a hard ceiling.</div>
+        <div class="hint">The bandwidth cap. Downloads are paused and resumed to hold the average - Electron gives no byte-rate hook, so this is a duty cycle, not a hard ceiling.</div>
       </div>
       <select id="netLimit">
         <option value="0">No cap</option>
@@ -429,11 +431,11 @@
     <div class="row">
       <div>
         <div class="lbl">Accent colour</div>
-        <div class="hint">The GX "mod" colour, applied to the whole UI. Private windows stay violet.</div>
+        <div class="hint">The accent colour, applied to the whole UI. Private windows stay violet.</div>
       </div>
       <select id="accent">
         <option value="cyan">Neon blue</option>
-        <option value="red">GX red</option>
+        <option value="red">PsychoVault red</option>
         <option value="purple">Purple</option>
         <option value="green">Green</option>
         <option value="orange">Orange</option>
@@ -455,14 +457,14 @@
     <h2>Enhance &amp; personality</h2>
     <div class="row">
       <div>
-        <div class="lbl">Enhance videos (RGX)</div>
-        <div class="hint">Contrast, saturation and brightness lifted on every video element, the way GX does it.</div>
+        <div class="lbl">Enhance videos</div>
+        <div class="hint">Contrast, saturation and brightness lifted on every video element.</div>
       </div>
       <label class="switch"><input type="checkbox" id="enhanceVideo"><span class="slider"></span></label>
     </div>
     <div class="row">
       <div>
-        <div class="lbl">Enhance images (RGX)</div>
+        <div class="lbl">Enhance images</div>
         <div class="hint">Same treatment for images on the page.</div>
       </div>
       <label class="switch"><input type="checkbox" id="enhanceImages"><span class="slider"></span></label>
@@ -491,7 +493,7 @@
     <div class="row">
       <div>
         <div class="lbl">Pause music when other media starts</div>
-        <div class="hint">GX's mini-player behaviour, polled every couple of seconds.</div>
+        <div class="hint">The mini-player behaviour, polled every couple of seconds.</div>
       </div>
       <label class="switch"><input type="checkbox" id="mediaAutoPause"><span class="slider"></span></label>
     </div>
@@ -831,6 +833,35 @@
         if (!result || !result.ok) flag('Could not open the Proton VPN Chrome extension page')
       } catch { flag('Could not open the Proton VPN Chrome extension page') }
     }
+    const paintBuiltinStatus = async () => {
+      let st = null
+      try { st = await window.pv.extensions.status() } catch (e) {
+        s('protonVpnState').textContent = 'Could not read the extension status: ' + ((e && e.message) || e)
+        return
+      }
+      if (!st || !Array.isArray(st.builtins)) { s('protonVpnState').textContent = 'No status available.'; return }
+      const b = st.builtins.find((x) => x.key === 'proton-vpn')
+      if (!b) { s('protonVpnState').textContent = 'Proton VPN is not listed as a bundled extension in this build.'; return }
+      const why = {
+        'removed-by-user': 'you removed it - use Restore above to bring it back',
+        'not-shipped': 'the bundled copy is MISSING from this install',
+        'unreadable': 'its bundled manifest could not be read',
+        'copy-failed': 'it could not be copied into your profile',
+        'copied': 'copied into your profile',
+        'updated': 'updated in your profile',
+        'already-present': 'already in your profile',
+        'not-run': 'the install step has not run yet'
+      }[b.state] || b.state
+      const lines = [
+        'Bundled ' + b.bundledVersion + ' \u00b7 in profile ' + (b.installedVersion || 'nothing') + ' \u00b7 ' + why + '.',
+        b.listed ? (b.enabled ? 'Listed and enabled.' : 'Listed but disabled.') : 'NOT listed in the extension list.',
+        b.id ? 'Loaded with id ' + b.id + '.' : 'Not loaded by the engine.',
+        b.loadError ? 'Engine said: ' + b.loadError : '',
+        b.error || ''
+      ].filter(Boolean)
+      s('protonVpnState').textContent = lines.join(' ')
+    }
+    if (s('protonVpnStatus')) s('protonVpnStatus').onclick = paintBuiltinStatus
     if (s('protonVpnRestore')) s('protonVpnRestore').onclick = async () => {
       s('extMsg').textContent = 'restoring Proton VPN\u2026'
       const r = await window.pv.extensions.restorebuiltin('proton-vpn')
@@ -1037,8 +1068,12 @@
         b.onclick = async () => { await fn() }
         acts.appendChild(b)
       }
-      if (x.popup) mkBtn('Open its window', async () => { await window.pv.extensions.openpage({ dir: x.dir, page: x.popup }) })
-      if (x.options) mkBtn('Options', async () => { await window.pv.extensions.openpage({ dir: x.dir, page: x.options }) })
+      const openPage = async (page) => {
+        const r = await window.pv.extensions.openpage({ dir: x.dir, page })
+        if (!r || !r.ok) s('extMsg').textContent = 'could not open ' + page + ': ' + ((r && r.error) || 'no reason given')
+      }
+      if (x.popup) mkBtn('Open its window', () => openPage(x.popup))
+      if (x.options) mkBtn('Options', () => openPage(x.options))
       mkBtn(x.enabled ? 'Disable' : 'Enable', async () => {
         await window.pv.extensions.toggle({ dir: x.dir, enabled: !x.enabled })
         paintExtensions()

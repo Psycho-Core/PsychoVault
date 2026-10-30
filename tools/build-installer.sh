@@ -61,7 +61,11 @@ for f in resources/app/main.js resources/app/download-save.js resources/app/tran
          resources/app/update-manifest.js resources/app/update-public-key.pem resources/app/auto-updater.js \
          resources/app/spell-page.js resources/app/spell-words.txt resources/app/preload.js \
          resources/app/page-preload.js resources/app/ui/renderer.js resources/app/ui/style.css \
-         resources/app/ui/settings.html; do
+         resources/app/ui/settings.html \
+         resources/app/ext-shim.js resources/app/ext-proxy.js \
+         resources/app/builtin/README.md resources/app/builtin/proton-vpn/LICENSE \
+         resources/app/builtin/proton-vpn/manifest.json resources/app/builtin/proton-vpn/js/service.js \
+         resources/app/builtin/proton-vpn/popup.html; do
   rel="${f#resources/app/}"
   found="$V/resources/app/$rel"
   if [ -f "$found" ] && cmp -s "$found" "app/$rel"; then echo "  identical in installer:  $f"

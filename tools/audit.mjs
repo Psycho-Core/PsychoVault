@@ -55,6 +55,25 @@ if (/event\.channel/.test(main.replace(/\/\/[^\n]*/g, ''))) {
   defects.push('main.js reads event.channel, which IpcMainInvokeEvent does not provide; bind the channel name instead')
 }
 
+// A bundled extension that is not in the tree, or not staged by the build, ships as a
+// browser with no VPN and no error anywhere. Check the tree here and the installer in
+// tools/build-installer.sh.
+const builtinManifests = [...main.matchAll(/source:\s*path\.join\(__dirname,\s*'builtin',\s*'([^']+)'\)/g)].map((m) => m[1])
+for (const dir of builtinManifests) {
+  const manifestPath = path.join(ROOT, 'app', 'builtin', dir, 'manifest.json')
+  if (!fs.existsSync(manifestPath)) defects.push(`bundled extension "${dir}" has no manifest.json at ${manifestPath}`)
+  else {
+    try {
+      const m = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+      if (!m.version || !m.name) defects.push(`bundled extension "${dir}" manifest has no name or version`)
+    } catch (e) { defects.push(`bundled extension "${dir}" manifest is not valid JSON: ${e.message}`) }
+  }
+  const staged = fs.readFileSync(path.join(ROOT, 'tools/build-installer.sh'), 'utf8')
+  if (!staged.includes(`resources/app/builtin/${dir}/manifest.json`)) {
+    defects.push(`bundled extension "${dir}" is not verified inside the installer by tools/build-installer.sh`)
+  }
+}
+
 // ---------------------------------------------------------------- 2. settings
 const defBlock = main.match(/const DEFAULT_SETTINGS = \{([\s\S]*?)\n\}/)[1]
 const keys = uniq([...defBlock.matchAll(/^\s{2}([a-zA-Z][a-zA-Z0-9]*)\s*:/gm)].map((m) => m[1]))

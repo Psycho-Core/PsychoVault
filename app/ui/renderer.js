@@ -162,7 +162,7 @@ function renderTabs() {
       e.preventDefault()
       window.pv.tab.menu({ id: t.id, x: Math.round(e.clientX), y: Math.round(e.clientY) })
     }
-    // double-click pins, the way it does in GX
+    // double-click pins, the way it does in Opera GX
     el.ondblclick = (e) => { e.preventDefault(); window.pv.tab.pin({ id: t.id, pinned: !t.pinned }) }
 
     // drag to reorder. Pointer events, not HTML5 drag and drop: the strip lives inside a
@@ -871,11 +871,11 @@ const COMMANDS = [
   { id: 'ws3',      title: 'Switch to workspace 3', keys: 'Ctrl+3',    run: () => window.pv.ws.switch(2) },
   { id: 'ws4',      title: 'Switch to workspace 4', keys: 'Ctrl+4',    run: () => window.pv.ws.switch(3) },
   { id: 'vaultlock',title: 'Lock the password vault', keys: '',        run: () => window.pv.vault.lock().then(() => toast('Vault locked')) },
-  { id: 'hottabs',  title: 'Hot tabs: memory and CPU per tab', keys: '', run: () => openPanel('hot', null) },
+  { id: 'hottabs',  title: 'Performance: hot tabs, memory and CPU per tab', keys: '', run: () => openPanel('hot', null) },
   { id: 'snap',     title: 'Snapshot: capture this page as PNG', keys: 'Ctrl+Shift+5', run: () => window.pv.gx.snapshot('png').then((r) => toast(r.ok ? 'Saved ' + r.file : 'Snapshot failed')) },
   { id: 'pdf',      title: 'Save this page as PDF', keys: '',          run: () => window.pv.gx.snapshot('pdf').then((r) => toast(r.ok ? 'Saved ' + r.file : 'PDF failed: ' + (r.reason || ''))) },
-  { id: 'rgxv',     title: 'RGX mode: enhance videos', keys: '',        run: () => window.pv.settings.get().then((st) => window.pv.settings.set({ enhanceVideo: !st.enhanceVideo })) },
-  { id: 'rgxi',     title: 'RGX mode: enhance images', keys: '',        run: () => window.pv.settings.get().then((st) => window.pv.settings.set({ enhanceImages: !st.enhanceImages })) },
+  { id: 'rgxv',     title: 'Enhance videos: contrast, saturation, brightness', keys: '',        run: () => window.pv.settings.get().then((st) => window.pv.settings.set({ enhanceVideo: !st.enhanceVideo })) },
+  { id: 'rgxi',     title: 'Enhance images: contrast, saturation, brightness', keys: '',        run: () => window.pv.settings.get().then((st) => window.pv.settings.set({ enhanceImages: !st.enhanceImages })) },
   { id: 'panic',    title: 'Panic button: hide everything', keys: 'F12', run: () => window.pv.gx.panic(true) },
   { id: 'unpanic',  title: 'Panic button: bring the tabs back', keys: 'F11', run: () => window.pv.gx.panic(false) },
   { id: 'medpa',    title: 'Media: play or pause', keys: '',           run: () => window.pv.gx.media('toggle') },
@@ -1029,7 +1029,7 @@ function toast(msg) {
   toastTimer = setTimeout(() => t.classList.add('hidden'), 2000)
 }
 
-// one more rail button: GX Control (CPU/RAM/bandwidth), the speedometer slot
+// one more rail button: Performance (CPU/RAM/bandwidth), the speedometer slot
 
 (function addGxButton() {
   const rail = document.getElementById('rail')
@@ -1037,7 +1037,8 @@ function toast(msg) {
   const b = document.createElement('button')
   b.className = 'rail-btn'
   b.dataset.panel = 'hot'
-  b.title = 'GX Control: hot tabs, memory, bandwidth cap'
+  b.title = 'Performance: hot tabs, memory, bandwidth cap'
+  b.setAttribute('aria-label', 'Performance')
   b.innerHTML = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 20a8 8 0 1 1 8-8"/><path d="M12 12l5-3"/></svg>'
   b.onclick = () => openPanel('hot', b)
   rail.appendChild(b)

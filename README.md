@@ -24,7 +24,7 @@ Dark navy, cyan accents, everything in a rail down the left. Fast enough to forg
 | ![The download folder and notification controls in Settings](docs/screenshot-settings-downloads.png) | ![Downloads](docs/screenshot-downloads.png) |
 
 Every one of those is a capture of the running app, not a mock-up. The workspace chips
-sit at the right end of the tab row. The first image in the last row is the GX Control panel
+sit at the right end of the tab row. The first image in the last row is the Performance panel
 open over four real pages - per-process memory and CPU next to a Sleep button for each tab,
 the services rail down the left, and a tab pinned in a container at the head of the strip.
 The three new ones are the round's work: a typo underlined in a real page with the right-click
@@ -80,7 +80,7 @@ it were restored in the same way.
 | Accessibility | High-contrast browser controls, less animation in PsychoVault and pages that honor reduced-motion CSS, visible keyboard focus, arrow/Home/End tab navigation with screen-reader tab names, and an option to keep tab-close buttons visible. Find these in **Settings → Accessibility & language**. |
 | Downloads | A Save As dialog is mandatory for every file, opened in your chosen starting folder with the suggested name - choose the exact destination, and cancel to stop the download. Live percentage in the rail badge, a message when a file starts (naming the folder) and when it finishes, a system notification if the window is behind something, and a panel that states where files go with a **Change** button |
 | Settings | Nineteen sections in ten navigable categories: General, Privacy & security, Downloads, Extensions, Performance, Appearance, Spelling, Passwords, Accessibility & language, and About. Includes search engine, blocking, cookies, tracking signals, autoplay, history, governor, Save As downloads, delete-on-exit, profile cleanup, vault, extensions, browser appearance, translation language, and accessibility controls |
-| GX Control | Live per-tab memory and CPU (`Ctrl+Shift+H` or the speedometer in the rail), sleep any tab from the panel, CPU priority limiter, RAM governor, bandwidth cap on downloads, battery saver that switches itself on when you unplug |
+| Performance | Live per-tab memory and CPU (`Ctrl+Shift+H` or the speedometer in the rail), sleep any tab from the panel, CPU priority limiter, RAM governor, bandwidth cap on downloads, battery saver that switches itself on when you unplug |
 | Tab islands | A tab opened from a page joins that page's island; the group gets a collapse control in the strip, and the tab you are reading is never hidden by a collapse |
 | Containers | Named cookie jar + localStorage + cache per tab (Work, Shopping, Social, Banking, or your own), assigned from the tab menu, dot in the strip, so two identities on one site never touch |
 | Snapshot | `Ctrl+Shift+5` or the tab menu: capture the page to a PNG, or save it as a PDF, straight to your Downloads folder |
@@ -103,7 +103,7 @@ Ctrl+Shift+P  private      Ctrl+\  split view
 Ctrl+R  reload             F5      reload
 Ctrl++/-/0  zoom           Ctrl+1..9  jump to a workspace
 Ctrl+[ / ]  back, forward  Ctrl+K  then "lock the password vault"
-Ctrl+Shift+H  GX Control   Ctrl+Shift+5  snapshot the page to a PNG
+Ctrl+Shift+H  Performance   Ctrl+Shift+5  snapshot the page to a PNG
 F12  panic (hide everything)  F11  bring the tabs back
 ```
 
@@ -301,14 +301,14 @@ deliberately not here, and why.
 | --- | --- | --- |
 | GX Control - CPU limiter | **yes** - `app.setPriority`, off / balanced / low | Settings - Governor |
 | GX Control - RAM limiter | **yes** - idle tabs are unloaded and reload on click; pinned tabs never sleep | Settings - Governor |
-| GX Control - network limiter | **yes** - a cap in KB/s on downloads, implemented as a duty cycle on the transfer (Electron gives no bytes-per-second hook). It measurably slows a download; fine-grained values bind less tightly on a fat local link than over a WAN | Settings - GX Control |
+| GX Control - network limiter | **yes** - a cap in KB/s on downloads, implemented as a duty cycle on the transfer (Electron gives no bytes-per-second hook). It measurably slows a download; fine-grained values bind less tightly on a fat local link than over a WAN | Settings - Performance |
 | GX Control - live stats | **yes** - per-tab process memory and CPU with a Sleep button for each | `Ctrl+Shift+H`, or the speedometer in the rail |
 | Tab Islands | **yes** - a tab opened from a page joins that page's island, the group gets a collapse control, the tab you are reading is never hidden | `main.js: island`, `renderer.js: renderTabs` |
 | Hot Tabs Killer | **yes** - the same panel, sorted by cost | `main.js: hotTabs()` |
 | Snapshot | **yes** - `Ctrl+Shift+5` or the tab menu writes a real PNG, and "Save page as PDF" writes a real PDF, both to Downloads. No annotation editor on top | `main.js: capturePage()` |
 | Panic Button | **yes** - `F12` hides every tab and shows the escape page you configured, `F11` brings them back; nothing is written to disk while panicked | Settings - Enhance & personality |
 | Battery Saver (+ auto on unplug) | **yes** - saturation drop, tabs sleep after 3 min instead of your setting, and it switches itself on when the power source leaves AC | Settings - Governor |
-| RGX Mode - enhance video / images | **yes** - two switches, contrast/saturation/brightness filters applied to `video` and `img` | Settings - Enhance & personality |
+| RGX Mode (Opera's name; PsychoVault calls the two switches Enhance videos / Enhance images) | **yes** - two switches, contrast/saturation/brightness filters applied to `video` and `img` | Settings - Enhance & personality |
 | Mods - colours, sounds, custom CSS | **yes** - six accents, synthesised keyboard sounds (no audio files shipped) and a stylesheet box that repaints the chrome. CSS only, capped in length, never injected into pages | Settings - Appearance, Enhance |
 | Mods - shaders | **no** - deliberately. Shader mods are arbitrary code over the compositor, and Opera's mod pipeline had a disclosed vulnerability in July 2026 | - |
 | Workspaces | **yes** - chips in the tab row with a visible `x` and a right-click menu, own tab set per workspace, `Ctrl+1..9`. Not capped at five like GX | `main.js: wsSwitch / wsClose / wsMenuItems` |

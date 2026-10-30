@@ -646,6 +646,16 @@ function extManifestVersion(dir) {
   try { return String(extReadManifest(dir).version || '') } catch (e) { return '' }
 }
 
+// What happened to each bundled extension at startup. This exists because "the extension is
+// not there" was previously indistinguishable from "the folder was missing", "the copy failed"
+// and "the user removed it" - every one of those was a silent `continue`. Settings reports this
+// verbatim, so a failure can be read instead of guessed at.
+const extBuiltinReport = new Map()
+
+function extBuiltinNote(key, report) {
+  extBuiltinReport.set(key, report)
+}
+
 // Copy a bundled extension into the profile when it is missing or a different version, so a
 // browser update that ships a newer extension replaces the one on disk. A user who removed
 // it stays removed: that choice is written to builtin-removed.json and respected here.
@@ -654,19 +664,51 @@ async function extInstallBuiltins() {
   const records = extRecords()
   let changed = false
   for (const b of EXT_BUILTIN) {
-    if (gone.includes(b.key)) continue
-    if (!fs.existsSync(path.join(b.source, 'manifest.json'))) continue
     const dest = path.join(EXT_ROOT, b.key)
+    const manifest = path.join(b.source, 'manifest.json')
+    const report = { key: b.key, label: b.label, source: b.source, dest, state: '', error: '' }
+
+    if (gone.includes(b.key)) {
+      // Only a removal the user made counts. A removal cannot be inferred from a missing
+      // folder and a missing folder must not be mistaken for one.
+      report.state = 'removed-by-user'
+      extBuiltinNote(b.key, report)
+      continue
+    }
+    if (!fs.existsSync(manifest)) {
+      report.state = 'not-shipped'
+      report.error = 'the bundled copy is missing from this install: ' + manifest
+      extBuiltinNote(b.key, report)
+      logMainError(new Error('bundled extension missing: ' + manifest))
+      continue
+    }
     const want = extManifestVersion(b.source)
     const have = extManifestVersion(dest)
-    if (!want) continue
+    report.bundledVersion = want
+    report.installedVersion = have
+    if (!want) {
+      report.state = 'unreadable'
+      report.error = 'its bundled manifest.json could not be read'
+      extBuiltinNote(b.key, report)
+      logMainError(new Error('bundled extension manifest unreadable: ' + manifest))
+      continue
+    }
     if (want !== have) {
       try {
         fs.mkdirSync(EXT_ROOT, { recursive: true })
         extUnloadOne(dest)
         fs.rmSync(dest, { recursive: true, force: true })
         fs.cpSync(b.source, dest, { recursive: true })
-      } catch (e) { logMainError(e); continue }
+        report.state = have ? 'updated' : 'copied'
+      } catch (e) {
+        report.state = 'copy-failed'
+        report.error = 'could not copy it into your profile: ' + String((e && e.message) || e)
+        extBuiltinNote(b.key, report)
+        logMainError(e)
+        continue
+      }
+    } else if (!report.state) {
+      report.state = 'already-present'
     }
     const existing = records.find((r) => r.dir === dest)
     if (!existing) {
@@ -676,6 +718,7 @@ async function extInstallBuiltins() {
       existing.builtin = b.key
       changed = true
     }
+    extBuiltinNote(b.key, report)
   }
   if (changed) extSave(records)
   return changed
@@ -909,6 +952,28 @@ ipcMain.handle('ext:remove', async (e, dir) => {
   await extPublish()
   return { ok: true, items: await extList() }
 })
+ipcMain.handle('ext:status', () => {
+  const records = extRecords()
+  const builtins = EXT_BUILTIN.map((b) => {
+    const report = Object.assign({ key: b.key, label: b.label }, extBuiltinReport.get(b.key) || { state: 'not-run' })
+    const rec = records.find((r) => r.builtin === b.key || r.dir === path.join(EXT_ROOT, b.key))
+    return {
+      key: b.key,
+      label: b.label,
+      state: report.state,
+      error: report.error || '',
+      source: report.source || b.source,
+      dest: report.dest || path.join(EXT_ROOT, b.key),
+      bundledVersion: report.bundledVersion || '',
+      installedVersion: report.installedVersion || '',
+      listed: !!rec,
+      enabled: !!(rec && rec.enabled),
+      id: (rec && rec.id) || '',
+      loadError: (rec && rec.error) || ''
+    }
+  })
+  return { profile: USER, extensionsRoot: EXT_ROOT, shim: EXT_SHIM, builtins }
+})
 ipcMain.handle('ext:restorebuiltin', async (e, key) => {
   const b = EXT_BUILTIN.find((x) => x.key === key)
   if (!b) return { ok: false, error: 'no such built-in extension' }
@@ -941,9 +1006,13 @@ ipcMain.handle('ext:toggle', async (e, o) => {
 ipcMain.handle('ext:openpage', (e, o) => {
   const w = findWin(e)
   const rec = extRecords().find((x) => x.dir === (o && o.dir))
-  if (!w || !rec || !rec.id) return { ok: false }
+  // Every one of these used to return a bare {ok:false}, so the button looked dead with no
+  // explanation anywhere. Say which step failed.
+  if (!w) return { ok: false, error: 'no window to open it in' }
+  if (!rec) return { ok: false, error: 'that extension is not installed any more' }
+  if (!rec.id) return { ok: false, error: 'it never finished loading, so it has no page to open: ' + (rec.error || 'the engine gave no reason') }
   const page = String((o && o.page) || '').replace(/^\/+/, '')
-  if (!page) return { ok: false }
+  if (!page) return { ok: false, error: 'it has no window to open' }
   const href = 'chrome-extension://' + rec.id + '/' + page
   w.createTab(href)
   return { ok: true, url: href }

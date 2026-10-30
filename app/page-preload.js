@@ -49,7 +49,8 @@ if (isInternal) {
       remove: (dir) => invoke('ext:remove', dir),
       toggle: (o) => invoke('ext:toggle', o),
       openpage: (o) => invoke('ext:openpage', o),
-      restorebuiltin: (key) => invoke('ext:restorebuiltin', key)
+      restorebuiltin: (key) => invoke('ext:restorebuiltin', key),
+      status: () => invoke('ext:status')
     },
     gx: {
       switches: () => invoke('gx:switches'),

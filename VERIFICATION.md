@@ -1262,3 +1262,67 @@ patch.
 SmartScreen reports the publisher from the Authenticode signature attached to the executable.
 Setup is unsigned, so the field reads "Unknown publisher" and SmartScreen blocks the first run.
 No change to PsychoVault's source affects it; a code-signing certificate does.
+
+## Round 37 - the blank where the VPN should be, and a name that was not ours
+
+Two reports: the rail button says "GX Control", and the bundled extension does not appear.
+
+### The label
+
+The rail button was added with the Opera GX parity work and kept Opera's name for the panel -
+`renderer.js` hardcoded `'GX Control: hot tabs, memory, bandwidth cap'`. Renamed to
+**Performance** in the rail tooltip, its aria-label and the command palette, and the other
+Opera-facing strings in Settings ("GX power save", "GX red", "RGX") now say what they do
+instead of whose feature they mirror. The "Opera GX parity" table in the README keeps Opera's
+column headings, because there it is a comparison and the names are Opera's. No setting, id or
+behaviour changed - this is a label.
+
+### The missing extension
+
+"It does not appear" had four different causes behind one silent `continue` in
+`extInstallBuiltins()`, and none of them wrote anything the user could read:
+
+| Cause | Before |
+| --- | --- |
+| the bundled folder is missing from the install | silent `continue` |
+| `cpSync` failed (permissions, AV lock, disk) | `logMainError` only |
+| the bundled manifest is unreadable | silent `continue` |
+| the user removed it earlier | silent `continue` - indistinguishable from the three above |
+
+Now each stage records what it did, `ext:status` returns it, and **Settings - Extensions - Check
+install** prints it in plain words: bundled version, version in the profile, which of the above
+happened, whether it is listed, whether the engine loaded it, and the engine's own words if it
+refused. A removal is only ever inferred from `builtin-removed.json`, never from a missing
+folder.
+
+`ext:openpage` also stopped returning a bare `{ok:false}`. Every failure now names the step -
+no window, extension gone, or "it never finished loading, so it has no page to open" plus the
+engine's reason - and the button reports it instead of looking dead.
+
+### Packaging: the build could not have caught this
+
+`tools/build-installer.sh` verifies the packed installer with 7z against a **hardcoded file
+list**, and when the bundled extension was added that list was not extended. A build that
+silently left `app/builtin/` or `ext-shim.js` out of the package would have passed green. Added
+to the list: `ext-shim.js`, `ext-proxy.js`, and the bundled extension's `manifest.json`,
+`js/service.js`, `popup.html`, `LICENSE` and `README.md`.
+
+`tools/audit.mjs` gained a second guard: every `source: path.join(__dirname, 'builtin', ...)` in
+`main.js` must have a readable `manifest.json` in the tree **and** must appear in the build's
+installer verification. Verified by moving the manifest away - the audit reports a defect - and
+restoring it.
+
+### Checks
+
+| | |
+| --- | --- |
+| `node --test tools/*.test.cjs` | 22 pass |
+| `node tools/audit.mjs` | no defects |
+| bundled manifest via `extAnalyse()` | 1.3.6, MV3, 0 blockers |
+
+### Still not proven
+
+Whether the extension appears on a Windows box is still untested from here - no display, no
+Electron runtime, and the Electron binary download is blocked in this container. This round does
+not claim to have fixed the cause; it makes the cause *readable*, and it closes the packaging gap
+that could have been hiding it. The next report should be one sentence from **Check install**.
