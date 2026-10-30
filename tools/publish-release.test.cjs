@@ -77,3 +77,24 @@ test('a signing key kept out of Git lets a local build sign the manifest', () =>
   assert.match(sign, /function localKeyFile\(\)/)
   assert.match(sign, /process\.env\.UPDATE_SIGNING_PRIVATE_KEY_B64 \|\| localKeyFile\(\)/)
 })
+
+test('--check refuses to run without a token, like publishing does', () => {
+  const r = run(['--check'])
+  assert.notStrictEqual(r.status, 0)
+  assert.match(r.stderr, /no token/)
+})
+
+test('--check never prints the token, and reports a network failure as a sentence', () => {
+  // These consoles get pasted into chat, so the value must not appear even in part.
+  const secret = 'github_pat_' + 'x'.repeat(40)
+  const r = run(['--check'], { GITHUB_TOKEN: secret })
+  const output = (r.stdout || '') + (r.stderr || '')
+  assert.ok(!output.includes(secret), 'the token was printed')
+  assert.ok(!output.includes('xxxxxxxxxxxxxxxx'), 'part of the token was printed')
+  assert.match(output, /Token source: GITHUB_TOKEN/)
+  // Either GitHub answered and refused it, or it could not be reached. Both must read as
+  // sentences, never as an unhandled rejection with a stack trace.
+  assert.ok(/GitHub (could not be reached|answered|was not found)|token (was refused|is not allowed)/.test(output),
+    'the failure was not explained: ' + output)
+  assert.ok(!/at async|node:internal|TypeError/.test(output), 'a stack trace leaked into the output')
+})
