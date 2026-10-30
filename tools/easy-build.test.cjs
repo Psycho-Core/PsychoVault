@@ -1,0 +1,287 @@
+'use strict'
+// Static checks for PsychoVault_easy_build.bat.
+//
+// The batch file cannot be executed on the CI runner, so this verifies the
+// things that actually break a .bat before anyone runs it: the file encoding
+// and line endings cmd expects, labels that resolve, balanced quoting and
+// parentheses, destructive commands that point at the wrong directory, the
+// repo paths it references, and the NSIS contract between the script and
+// installer.nsi. A failure here is a real defect, not a style opinion.
+
+const test = require('node:test')
+const assert = require('node:assert')
+const fs = require('node:fs')
+const path = require('node:path')
+
+const ROOT = path.join(__dirname, '..')
+const BAT_PATH = path.join(ROOT, 'PsychoVault_easy_build.bat')
+const raw = fs.readFileSync(BAT_PATH, 'latin1')
+
+// cmd is happiest with CRLF and hostile to anything outside the ANSI range.
+const lines = raw.split('\r\n')
+const text = lines.join('\n')
+
+// Strip a line's rem/:: comment tail for the parser checks. Quoted text is
+// dropped too, so `echo "see (this)"` cannot be mistaken for a block opener.
+function code(line) {
+  return line.replace(/"(?:[^"]*)"/g, '""').replace(/^\s*rem\b.*$/i, '')
+}
+
+test('encoding: ASCII only', () => {
+  const bad = [...text].filter((c) => c.charCodeAt(0) > 126)
+  assert.deepStrictEqual(bad, [], `non-ASCII characters: ${JSON.stringify([...new Set(bad)])}`)
+})
+
+test('line endings: every line ends CRLF, no lone LF', () => {
+  assert.ok(raw.endsWith('\r\n'), 'file must end with CRLF')
+  const loneLf = raw.split('\r\n').filter((l) => l.includes('\n'))
+  assert.deepStrictEqual(loneLf, [], 'found a bare LF - cmd can mis-parse multi-line blocks')
+  assert.ok(!raw.includes('\r\r'), 'found a stray CR')
+})
+
+test('a first line that is @echo off, so the script is silent off the top', () => {
+  assert.match(lines[0], /^@echo off$/i)
+})
+
+test('delayed expansion is enabled before the first !VAR! use', () => {
+  const enable = lines.findIndex((l) => /setlocal/i.test(l) && /enabledelayedexpansion/i.test(l))
+  const firstUse = lines.findIndex((l) => /![A-Za-z_]\w*!/.test(l))
+  assert.ok(enable !== -1, 'setlocal EnableDelayedExpansion is missing')
+  assert.ok(firstUse === -1 || enable < firstUse, '!VAR! used before delayed expansion is on')
+})
+
+test('every goto resolves to a label, and every label is reachable', () => {
+  const gotos = new Set()
+  for (const line of lines) {
+    for (const m of line.matchAll(/goto\s+:(\w+)/gi)) gotos.add(m[1].toLowerCase())
+  }
+  const labels = new Set()
+  for (const line of lines) {
+    const m = /^:(\w+)\s*$/.exec(line.trim())
+    if (m) labels.add(m[1].toLowerCase())
+  }
+  const missing = [...gotos].filter((g) => !labels.has(g))
+  assert.deepStrictEqual(missing, [], `goto without a label: ${missing.join(', ')}`)
+  const unused = [...labels].filter((l) => !gotos.has(l))
+  assert.deepStrictEqual(unused, [], `label nothing jumps to: ${unused.join(', ')}`)
+})
+
+test('no duplicate labels', () => {
+  const seen = new Map()
+  lines.forEach((line, i) => {
+    const m = /^:(\w+)\s*$/.exec(line.trim())
+    if (!m) return
+    const key = m[1].toLowerCase()
+    assert.ok(!seen.has(key), `duplicate label :${m[1]} on lines ${seen.get(key) + 1} and ${i + 1}`)
+    seen.set(key, i)
+  })
+})
+
+test('double quotes are balanced on every line', () => {
+  const bad = []
+  lines.forEach((line, i) => {
+    const n = (code(line).match(/"/g) || []).length
+    if (n % 2 !== 0) bad.push(`line ${i + 1}: ${line.trim()}`)
+  })
+  assert.deepStrictEqual(bad, [], `odd number of quotes:\n${bad.join('\n')}`)
+})
+
+// A `(` inside a block that is not the block itself breaks cmd. Track depth and
+// require the closing paren to be alone on its line, which is how this file is
+// written throughout.
+test('parenthesised blocks open and close cleanly', () => {
+  let depth = 0
+  const problems = []
+  lines.forEach((line, i) => {
+    const c = code(line).trim()
+    if (!c) return
+    const opens = (c.match(/\(/g) || []).length
+    const closes = (c.match(/\)/g) || []).length
+    if (depth > 0 && c !== ')' && (opens !== closes)) {
+      problems.push(`line ${i + 1} inside a block has unbalanced parens: ${line.trim()}`)
+    }
+    depth += opens - closes
+    if (depth < 0) problems.push(`line ${i + 1} closes a block that was never opened`)
+  })
+  assert.deepStrictEqual(problems, [], problems.join('\n'))
+  assert.strictEqual(depth, 0, 'a block is still open at the end of the file')
+})
+
+test('no destructive command points at the repo root or a drive root', () => {
+  const bad = []
+  lines.forEach((line, i) => {
+    const t = line.trim()
+    if (!/^(del|rmdir|rd|erase)\b/i.test(t)) return
+    const targetsRoot = /"%(ROOT|BUILD)%\\?"|"%ROOT%"|%SystemDrive%\\?"/i.test(t)
+    const wildcardRoot = /"%~?[A-Za-z:]*\\?\*\.?\*?"$/i.test(t) && !/%PAYLOAD%|%BUILD%/i.test(t)
+    if (targetsRoot || wildcardRoot) bad.push(`line ${i + 1}: ${t}`)
+  })
+  assert.deepStrictEqual(bad, [], `destructive command with too wide a target:\n${bad.join('\n')}`)
+})
+
+test('the build steps the guide promises are all present', () => {
+  const required = [
+    ['node presence check', /where node\b/i],
+    ['electron install', /npm install\b/i],
+    ['runtime staging', /robocopy .*electron\\dist/i],
+    ['exe rebrand', /ren .*electron\.exe"?\s+PsychoVault\.exe/i],
+    ['icon and version stamp', /tools\\patch-exe\.mjs/i],
+    ['app source copy', /robocopy .*"%ROOT%\\app"/i],
+    ['documents for the installer', /README\.md"\s+"%PAYLOAD%\\README\.txt"/i],
+    ['NSIS lookup', /where makensis/i],
+    ['NSIS run', /installer\.nsi"?\s*$/m],
+    ['portable fallback when NSIS is absent', /if not defined MAKENSIS goto/i]
+  ]
+  const missing = required.filter(([, re]) => !re.test(text)).map(([name]) => name)
+  assert.deepStrictEqual(missing, [], `missing step: ${missing.join(', ')}`)
+})
+
+test('the app copy excludes node_modules and the dead wireproxy binary', () => {
+  const copy = lines.find((l) => /robocopy .*"%ROOT%\\app"\s+"%PAYLOAD%\\resources\\app"/i.test(l))
+  assert.ok(copy, 'no robocopy of app\\ into resources\\app')
+  assert.match(copy, /\/XD\s+node_modules/i, 'node_modules would be packaged into the browser')
+  assert.match(copy, /\/XD\s+[^\r\n]*\btools\b/i, 'the 10 MB unused app\\tools\\wireproxy.exe is packaged')
+})
+
+test('step labels are sequential and agree on the total', () => {
+  const marks = [...text.matchAll(/\[(\d+)\/(\d+)\]/g)].map((m) => [Number(m[1]), Number(m[2])])
+  assert.ok(marks.length >= 6, 'step labels are missing')
+  const totals = new Set(marks.map(([, total]) => total))
+  assert.strictEqual(totals.size, 1, `inconsistent step totals: ${[...totals].join(', ')}`)
+  const total = [...totals][0]
+  const steps = marks.map(([n]) => n)
+  assert.deepStrictEqual(steps, steps.map((_, i) => i + 1), `steps out of order: ${steps.join(',')}`)
+  assert.strictEqual(steps.length, total, `${steps.length} steps but the labels say /${total}`)
+})
+
+test('the payload is verified before anything is packaged', () => {
+  assert.match(text, /for %%. in \(%VERIFY%\) do if not exist/i, 'no existence check over the verify list')
+  assert.match(text, /%%~zf EQU 0/i, 'no empty-file check')
+  const verifyLine = lines.find((l) => /^set "VERIFY=PsychoVault\.exe/i.test(l))
+  assert.ok(verifyLine, 'verify list is not defined')
+  for (const file of ['main.js', 'preload.js', 'auto-updater.js', 'update-public-key.pem', 'ui\\renderer.js']) {
+    assert.ok(text.includes(file), `verify list does not cover ${file}`)
+  }
+  const verifyAt = lines.findIndex((l) => /\[\d+\/\d+\] Checking the staged payload/i.test(l))
+  const nsisAt = lines.findIndex((l) => /installer\.nsi"?\s*$/m.test(l))
+  assert.ok(verifyAt > 0 && nsisAt > verifyAt, 'verification must run before makensis, not after')
+})
+
+test('release notes are written with both hashes and the change list', () => {
+  assert.match(text, /Release-Notes-%VERSION%\.txt/)
+  assert.match(text, /certutil -hashfile/i, 'no SHA-256 of the built exe')
+  assert.match(text, /log -10 --oneline/i, 'no commit list')
+  for (const heading of ['WHAT IS IN THIS BUILD', 'WHAT CHANGED', 'HOW TO USE IT', 'NOTES']) {
+    assert.ok(text.includes(heading), `release notes are missing the ${heading} section`)
+  }
+  const notesAt = lines.findIndex((l) => /Writing release notes/i.test(l))
+  const nsisAt = lines.findIndex((l) => /installer\.nsi"?\s*$/m.test(l))
+  assert.ok(notesAt > nsisAt, 'notes must be written after the installer so its hash can be included')
+})
+
+test('a token in app\\update-token.json is checked against .gitignore', () => {
+  assert.match(text, /findstr \/c:"update-token\.json"/i)
+  assert.match(text, /update-token\.json" "%ROOT%\\\.gitignore"/i)
+})
+
+test('every %ROOT%-relative path the script touches exists in the repo', () => {
+  const refs = new Set()
+  for (const m of text.matchAll(/%ROOT%\\([A-Za-z0-9_.\-\\]+)/g)) refs.add(m[1])
+  const missing = []
+  for (const ref of refs) {
+    const rel = ref.replace(/\\+$/, '')
+    if (!rel) continue
+    if (/%/.test(rel)) continue
+    const abs = path.join(ROOT, ...rel.split('\\').filter(Boolean))
+    if (fs.existsSync(abs)) continue
+    // outputs and copies the script creates itself are expected to be absent
+    if (/^(build|PsychoVault-Setup-)/i.test(rel)) continue
+    if (/^app\\node_modules\\|^app\\update-token\.json$/i.test(rel)) continue
+    if (/\.(md|txt)$/i.test(rel) || /^assets\\psychovault\.ico$|^installer\.nsi$|^tools\\|^app\\/i.test(rel)) {
+      missing.push(rel)
+    }
+  }
+  assert.deepStrictEqual(missing, [], `referenced but not in the repo: ${missing.join(', ')}`)
+})
+
+test('NSIS is given every define installer.nsi requires', () => {
+  const nsi = fs.readFileSync(path.join(ROOT, 'installer.nsi'), 'latin1')
+  const needed = [...nsi.matchAll(/!ifndef\s+([A-Z_]+)/g)].map((m) => m[1])
+  // !define MUI_ICON ... at the top has no !ifndef guard, but the build script
+  // passes it anyway; VERSION/PAYLOADDIR/OUTFILE are guarded.
+  assert.ok(needed.length >= 3, 'installer.nsi changed shape - re-check the defines')
+  const missing = needed.filter((name) => !new RegExp(`/D${name}=`, 'i').test(text))
+  assert.deepStrictEqual(missing, [], `NSIS define never passed: ${missing.join(', ')}`)
+})
+
+test('payload files that installer.nsi reads at build time are created', () => {
+  const nsi = fs.readFileSync(path.join(ROOT, 'installer.nsi'), 'latin1')
+  const refs = [...nsi.matchAll(/\$\{PAYLOADDIR\}[\\/]([A-Za-z0-9_.\-]+)/g)].map((m) => m[1])
+  assert.ok(refs.length > 0, 'installer.nsi references no payload files - re-check')
+  for (const file of refs) {
+    assert.ok(
+      new RegExp(`%PAYLOAD%\\\\${file.replace(/\./g, '\\.')}"`, 'i').test(text),
+      `installer.nsi needs ${file} in the payload but the script never writes it`
+    )
+  }
+})
+
+test('the payload exe the installer packages is the one that gets patched', () => {
+  const patchLine = lines.find((l) => /patch-exe\.mjs/i.test(l))
+  assert.ok(patchLine, 'no patch-exe call')
+  assert.match(patchLine, /"%PAYLOAD%\\PsychoVault\.exe"/i)
+  assert.match(patchLine, /%ROOT%\\assets\\psychovault\.ico/i)
+  assert.match(patchLine, /%VERSION%/, 'patch-exe is not given the version')
+})
+
+test('no literal ! inside echoed text (delayed expansion would swallow it)', () => {
+  const bad = []
+  lines.forEach((line, i) => {
+    const t = line.trim()
+    if (!/^echo\b/i.test(t)) return
+    if (/![A-Za-z_]\w*!/.test(t)) return // purposeful expansion
+    if (t.includes('!')) bad.push(`line ${i + 1}: ${t}`)
+  })
+  assert.deepStrictEqual(bad, [], `bare ! in echo:\n${bad.join('\n')}`)
+})
+
+test('it pauses before closing, so a double-click user can read the result', () => {
+  assert.match(text, /\bpause\b/i)
+})
+
+test('no code path falls off the end without exiting', () => {
+  assert.match(text, /exit \/b 0/i)
+})
+
+test('the SHA-256 capture keeps the first certutil line and ignores the status line', () => {
+  // "if not defined X" is the whole mechanism: seeding X with a placeholder in
+  // front of the loop silently turns the hash into that placeholder.
+  assert.ok(!/set "EXEHASH=unknown"/.test(text), 'EXEHASH is seeded, so the real hash is never kept')
+  assert.ok(!/set "SETUPHASH=unknown"/.test(text), 'SETUPHASH is seeded, so the real hash is never kept')
+  assert.match(text, /set "EXEHASH="\r?\n/)
+  assert.match(text, /do if not defined EXEHASH set "EXEHASH=%%h"/)
+  assert.match(text, /do if not defined SETUPHASH set "SETUPHASH=%%h"/)
+  assert.match(text, /if defined EXEHASH goto :notes_setup_hash/, 'no fallback when the hash cannot be read')
+})
+
+test('the version is validated before it reaches patch-exe and NSIS', () => {
+  const guard = lines.find((l) => /findstr \/r \/c:"\^\[0-9\]/.test(l))
+  assert.ok(guard, 'no three-part version check')
+  assert.match(guard, /\$/, 'the version pattern is not anchored at both ends')
+  const after = lines[lines.indexOf(guard) + 1]
+  assert.match(after, /goto :fail_version/i)
+})
+
+test('a folder path batch cannot handle is refused with an explanation', () => {
+  assert.match(text, /findstr \/c:"\(" \/c:"&"/, 'no bracket or ampersand check on the repo path')
+  assert.match(text, /goto :bad_path/i)
+  assert.match(text, /:bad_path/)
+})
+
+test('percent signs in note text are doubled, or cmd eats them', () => {
+  const noteLines = lines.filter((l) => /echo   %%APPDATA%%|%APPDATA%/.test(l))
+  assert.ok(noteLines.length > 0, 'the profile path is not mentioned in the notes')
+  for (const line of noteLines) {
+    assert.ok(!/(?<!%)%APPDATA%/.test(line), `single %%APPDATA%% will not survive cmd: ${line.trim()}`)
+  }
+})

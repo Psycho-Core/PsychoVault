@@ -6,3 +6,4 @@ update-manifest.json
 update-manifest.sig
 app/update-token.json
 build/
+Release-Notes-*.txt
