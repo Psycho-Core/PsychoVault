@@ -2122,3 +2122,43 @@ always antivirus quarantine...
 | `node --test tools/*.test.cjs` | **106 pass** (4 new: the probe location, the recount before makensis, the vanished-payload cause, notes still written on NSIS failure) |
 | `node tools/audit.mjs` | no defects |
 | version | 1.0.16 |
+
+## Round 53 - NSIS read the path, not the files
+
+Third transcript: step 6 clean, step 7 counted **20 files** at the top level, and makensis still
+said
+
+```
+File: "D:\Blakes_SHIT\#Psycho-core_REPOS\PsychoVault\build\payload/*.*" -> no files found.
+```
+
+So the payload was not missing and antivirus was not the cause. The difference between the two
+paths makensis was given is the shape of the argument, not the files: the script itself
+(`.../installer.nsi`, same `#` folder) opened fine, but the payload reached the script through
+`/DPAYLOADDIR=<absolute path>`, and a `#` inside a value NSIS expands at the point of use is read
+as the start of a comment. The message prints the unexpanded string, which is why it showed the
+full path while the search ran against a truncated one.
+
+`-DPAYLOADDIR` no longer receives a path containing `#`:
+
+1. makensis runs from the repo root with `-DPAYLOADDIR=build\payload`, `-DOUTFILE`, `-DMUI_ICON`
+   all relative - no `#` in any define.
+2. If that is still refused, the payload is copied to `%TEMP%\PsychoVault-stage` (and
+   `C:\PsychoVault-stage` if the temp path has its own `#`), the script and icon are copied
+   alongside it, the build runs there, and the finished Setup exe is moved back to the repo root.
+
+Both attempts report which one produced the installer. A copy that cannot be made is a named
+failure, not a generic one.
+
+### Checks
+
+| | |
+| --- | --- |
+| `node --test tools/*.test.cjs` | **108 pass** (2 new: no absolute path reaches makensis, the fallback stage path is hash-checked) |
+| `node tools/audit.mjs` | no defects |
+| version | 1.0.17 |
+
+### What this means for the release
+
+The portable browser from the 1.0.16 run is complete and runs - the missing piece was only the
+Setup wrapper. 1.0.17 should produce `PsychoVault-Setup-1.0.17.exe`.

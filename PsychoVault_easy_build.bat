@@ -51,9 +51,9 @@ rem A ( or & in the folder name would break the unquoted echo lines further down
 echo "%ROOT%"| findstr /c:"(" /c:"&" >nul
 if not errorlevel 1 goto :bad_path
 echo "%ROOT%"| findstr /c:"#" >nul
-if not errorlevel 1 echo       NOTE: this path contains #, which NSIS reads as a comment marker in some
-if not errorlevel 1 echo       builds. If the installer step reports "no files found" while the payload
-if not errorlevel 1 echo       is clearly not empty, move the folder somewhere without # and retry.
+if not errorlevel 1 echo       NOTE: this path contains #, which NSIS reads as a comment marker. Step 7
+if not errorlevel 1 echo       handles that by using relative paths, and retries from a copy in %%TEMP%%
+if not errorlevel 1 echo       if that is still refused.
 
 echo ============================================================
 echo   PsychoVault easy build
@@ -231,12 +231,56 @@ set "PAYLOADCOUNT=0"
 for /f %%c in ('dir /a-d /b "%PAYLOAD%" 2^>nul ^| find /c /v ""') do set "PAYLOADCOUNT=%%c"
 if "%PAYLOADCOUNT%"=="0" goto :fail_vanished
 echo       Payload still has %PAYLOADCOUNT% files at the top level.
-"%MAKENSIS%" /V2 /DWANT_UNINSTALLER "/DVERSION=%VERSION%" "/DMUI_ICON=%ROOT%\assets\psychovault.ico" "/DPAYLOADDIR=%PAYLOAD%" "/DOUTFILE=%SETUP%" "%ROOT%\installer.nsi"
-if errorlevel 1 goto :fail_nsis
-if not exist "%SETUP%" goto :fail_nsis
+rem NSIS reads # as a comment marker and this repo path contains one. Handing it the
+rem absolute path made makensis report "no files found" for a folder that had just
+rem been counted as full, so it never gets a # now: first it runs from the repo root
+rem with relative paths, and if that is still refused the payload is copied to a
+rem plain folder in the temp directory and built there.
+pushd "%ROOT%"
+echo       Building with relative paths...
+"%MAKENSIS%" /V2 /DWANT_UNINSTALLER "/DVERSION=%VERSION%" "/DMUI_ICON=assets\psychovault.ico" "/DPAYLOADDIR=build\payload" "/DOUTFILE=PsychoVault-Setup-%VERSION%.exe" "installer.nsi"
+if errorlevel 1 goto :nsis_try_copy
+if not exist "%SETUP%" goto :nsis_try_copy
+popd
 echo       Installer written.
 echo.
 goto :notes
+
+:nsis_try_copy
+popd
+echo       NSIS could not read the payload from this folder.
+echo       Copying it to a plain folder and building from there...
+set "STAGE=%TEMP%\PsychoVault-stage"
+echo %STAGE%| findstr /c:"#" >nul
+if not errorlevel 1 set "STAGE=C:\PsychoVault-stage"
+if exist "%STAGE%" rd /s /q "%STAGE%" >nul 2>nul
+mkdir "%STAGE%\payload" >nul 2>nul
+robocopy "%PAYLOAD%" "%STAGE%\payload" /e /nfl /ndl /njh /njs /nc /ns /np >nul 2>nul
+if not exist "%STAGE%\payload\PsychoVault.exe" xcopy "%PAYLOAD%" "%STAGE%\payload\" /e /i /q /y >nul 2>nul
+if not exist "%STAGE%\payload\PsychoVault.exe" goto :fail_stage_copy
+copy /y "%ROOT%\installer.nsi" "%STAGE%\installer.nsi" >nul 2>nul
+copy /y "%ROOT%\assets\psychovault.ico" "%STAGE%\psychovault.ico" >nul 2>nul
+pushd "%STAGE%"
+"%MAKENSIS%" /V2 /DWANT_UNINSTALLER "/DVERSION=%VERSION%" "/DMUI_ICON=psychovault.ico" "/DPAYLOADDIR=payload" "/DOUTFILE=PsychoVault-Setup-%VERSION%.exe" "installer.nsi"
+if errorlevel 1 goto :fail_stage_build
+popd
+if not exist "%STAGE%\PsychoVault-Setup-%VERSION%.exe" goto :fail_stage_build
+move /y "%STAGE%\PsychoVault-Setup-%VERSION%.exe" "%SETUP%" >nul 2>nul
+rd /s /q "%STAGE%" >nul 2>nul
+echo       Installer written, built from the copy.
+echo.
+goto :notes
+
+:fail_stage_build
+popd
+goto :fail_nsis
+
+:fail_stage_copy
+echo.
+echo   FAILED: could not copy the payload to %STAGE%.
+echo   The portable browser at %PAYLOAD%\PsychoVault.exe still runs without an
+echo   installer. Delete the build folder and run this file again.
+goto :end
 
 rem ------------------------------------------------------ 8. Release notes
 :notes
