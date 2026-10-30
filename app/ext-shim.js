@@ -41,6 +41,19 @@ if (isExtension) {
     proxyGet: () => ipcRenderer.invoke('extshim:proxy:get', { id }),
     proxySet: (value, scope) => ipcRenderer.invoke('extshim:proxy:set', { id, value, scope: scope || 'regular' }),
     proxyClear: (scope) => ipcRenderer.invoke('extshim:proxy:clear', { id, scope: scope || 'regular' }),
+    // chrome.tabs is how an extension opens a page of the browser's own - the sign-in page,
+    // a help article. Chromium's renderer-side stub has no tabs object at all in Electron, and
+    // Proton treats that as a broken install: pressing Sign in threw
+    //   "Some permissions for the extension are missing, please try to re-install"
+    // and the login page never opened. These calls reach the real tab list in main.
+    tabsQuery: (query) => ipcRenderer.invoke('extshim:tabs:query', { id, query: query || {} }),
+    tabsCreate: (details) => ipcRenderer.invoke('extshim:tabs:create', { id, details: details || {} }),
+    tabsUpdate: (tabId, details) => ipcRenderer.invoke('extshim:tabs:update', { id, tabId, details: details || {} }),
+    tabsRemove: (tabId) => ipcRenderer.invoke('extshim:tabs:remove', { id, tabId }),
+    // Fires when a tab is closed, so an extension that opened a sign-in page can notice it.
+    onTabsRemoved: (fn) => {
+      ipcRenderer.on('extshim:tabs:removed', (_e, tabId) => { try { fn(tabId) } catch (e) { /* extension threw */ } })
+    },
     webrtcGet: () => ipcRenderer.invoke('extshim:webrtc:get', { id }),
     webrtcSet: (value) => ipcRenderer.invoke('extshim:webrtc:set', { id, value }),
     // Tells the main process whether the APIs actually went in. Without this a failed
@@ -154,9 +167,73 @@ if (isExtension) {
       privacyInstalled = override('privacy', { network: { webRTCIPHandlingPolicy: webRTC } })
     }
 
+    // Chrome's callbacks take an optional last argument; the webextension polyfill Proton
+    // uses converts these into promises and reads lastError. Answer through the callback.
+    let tabsInstalled = false
+    {
+      const onRemoved = makeEvent()
+      const onCreated = makeEvent()
+      const onUpdated = makeEvent()
+      // update() is overloaded: update(tabId, props) and update(props).
+      const splitUpdate = (a, bArg) => (typeof a === 'number' ? [a, bArg || {}] : [null, a || {}])
+      const tabsApi = {
+        query: (q, cb) => {
+          Promise.resolve(b.tabsQuery(q))
+            .then((r) => safeCall(cb, (r && r.tabs) || []))
+            .catch(() => safeCall(cb, []))
+        },
+        get: (tabId, cb) => {
+          Promise.resolve(b.tabsQuery({}))
+            .then((r) => {
+              const hit = ((r && r.tabs) || []).find((t) => t.id === tabId)
+              if (hit) return safeCall(cb, hit)
+              throw new Error('no tab with id ' + tabId)
+            })
+            .catch(() => safeCall(cb, undefined))
+        },
+        create: (details, cb) => {
+          Promise.resolve(b.tabsCreate(details))
+            .then((r) => {
+              if (!r || !r.ok) throw new Error((r && r.error) || 'the tab could not be opened')
+              onCreated.__emit(r.tab)
+              safeCall(cb, r.tab)
+            })
+            .catch((e) => safeCall(cb, undefined))
+        },
+        update: (a, bArg, cb) => {
+          const pair = splitUpdate(a, bArg)
+          const done = typeof bArg === 'function' ? bArg : cb
+          Promise.resolve(b.tabsUpdate(pair[0], pair[1]))
+            .then((r) => {
+              if (r && r.tab) onUpdated.__emit(r.tab.id, { url: r.tab.url }, r.tab)
+              safeCall(done, r && r.tab)
+            })
+            .catch(() => safeCall(done, undefined))
+        },
+        remove: (tabId, cb) => {
+          Promise.resolve(b.tabsRemove(tabId))
+            .then((r) => safeCall(cb))
+            .catch(() => safeCall(cb))
+        },
+        onRemoved,
+        onCreated,
+        onUpdated
+      }
+      try { b.onTabsRemoved((tabId) => onRemoved.__emit(tabId, { windowId: 1, isWindowClosing: false })) } catch (e) { /* no bridge */ }
+      tabsInstalled = override('tabs', tabsApi)
+
+      // Proton calls chrome.action.openPopup() after a sign-in tab closes. There is no
+      // toolbar here, so nothing can pop up - answer cleanly instead of throwing.
+      try {
+        if (chromeObj.action && typeof chromeObj.action.openPopup !== 'function') {
+          chromeObj.action.openPopup = () => Promise.resolve()
+        }
+      } catch (e) { /* action is not ours to change */ }
+    }
+
     // Report what actually happened, so Settings can show whether the shim is live rather
     // than the user guessing from a VPN that never connects.
-    try { b.report({ proxy: proxyInstalled, privacy: privacyInstalled }) } catch (e) { /* bridge gone */ }
+    try { b.report({ proxy: proxyInstalled, privacy: privacyInstalled, tabs: tabsInstalled }) } catch (e) { /* bridge gone */ }
   }
 
   if (isServiceWorker) {

@@ -528,7 +528,8 @@ function extReadManifest(dir) {
 const EXT_SHIM = path.join(__dirname, 'ext-shim.js')
 const EXT_SHIM_CHANNELS = [
   'extshim:proxy:get', 'extshim:proxy:set', 'extshim:proxy:clear',
-  'extshim:webrtc:get', 'extshim:webrtc:set', 'extshim:report'
+  'extshim:webrtc:get', 'extshim:webrtc:set', 'extshim:report',
+  'extshim:tabs:query', 'extshim:tabs:create', 'extshim:tabs:update', 'extshim:tabs:remove'
 ]
 const shimSessions = new WeakSet()
 const shimWorkers = new WeakSet()
@@ -597,6 +598,44 @@ function shimSenderId(event) {
   return ''
 }
 
+// A tab as chrome.tabs describes one. Electron has no tab model of its own, so this is
+// PsychoVault's tab list wearing the shape an extension expects.
+function shimTabInfo(w, id) {
+  const t = w.tabs.get(id)
+  if (!t) return null
+  const index = w.order.indexOf(id)
+  return {
+    id,
+    index: index < 0 ? 0 : index,
+    windowId: 1,
+    url: t.url || '',
+    title: t.title || '',
+    active: w.activeId === id,
+    highlighted: w.activeId === id,
+    pinned: !!t.pinned,
+    incognito: !!w.private,
+    status: t.loading ? 'loading' : 'complete'
+  }
+}
+
+function shimWindow() {
+  for (const w of mainWindows) {
+    try { if (w.win && !w.win.isDestroyed()) return w } catch (e) { /* closed mid-iteration */ }
+  }
+  return null
+}
+
+// Tell any open extension page that a tab went away. Proton uses that event to reopen its
+// popup once the sign-in tab is closed.
+function shimAnnounceTabRemoved(w, id) {
+  if (!w) return
+  for (const other of w.tabs.values()) {
+    const u = String(other.url || '')
+    if (!u.startsWith('chrome-extension://')) continue
+    try { other.view.webContents.send('extshim:tabs:removed', id) } catch (e) { logMainError(e) }
+  }
+}
+
 // The channel has to be passed in, not read off the event: Electron's IpcMainInvokeEvent
 // carries type, processId, frameId, sender and senderFrame - and no channel property at all.
 // Reading event.channel made every one of these calls fail as "unknown channel", which left
@@ -661,6 +700,57 @@ async function onShimCall(event, payload, channel) {
         at: Date.now()
       }
       if (!extShimReport.proxy) logMainError(new Error('the chrome.proxy shim could not be installed in ' + real))
+      return { ok: true }
+    }
+
+    if (channel === 'extshim:tabs:query') {
+      const w = shimWindow()
+      if (!w) return { ok: true, tabs: [] }
+      const q = (payload && payload.query) || {}
+      let list = w.order.map((id) => shimTabInfo(w, id)).filter(Boolean)
+      if (q.active) list = list.filter((t) => t.active)
+      if (q.currentWindow) { /* there is one window per w, already scoped */ }
+      if (typeof q.url === 'string') list = list.filter((t) => t.url === q.url)
+      return { ok: true, tabs: list }
+    }
+
+    if (channel === 'extshim:tabs:create') {
+      const w = shimWindow()
+      if (!w) return { ok: false, error: 'no window is open to put a tab in' }
+      const d = (payload && payload.details) || {}
+      const target = String(d.url || 'psychovault://newtab')
+      // Only schemes this browser can actually navigate to. A chrome:// or javascript: url
+      // from extension code is refused rather than half-opened.
+      if (!/^(https?|ftp|file|about|psychovault|chrome-extension):/i.test(target)) {
+        return { ok: false, error: 'that url cannot be opened: ' + target }
+      }
+      const tab = w.createTab(target, { activate: d.active !== false })
+      return { ok: true, tab: shimTabInfo(w, tab.id) }
+    }
+
+    if (channel === 'extshim:tabs:update') {
+      const w = shimWindow()
+      if (!w) return { ok: false, error: 'no window is open' }
+      const tabId = payload && payload.tabId
+      const d = (payload && payload.details) || {}
+      const tab = w.tabs.get(tabId)
+      if (!tab) return { ok: false, error: 'no tab with id ' + tabId }
+      if (typeof d.url === 'string') {
+        if (!/^(https?|ftp|file|about|psychovault|chrome-extension):/i.test(d.url)) {
+          return { ok: false, error: 'that url cannot be opened: ' + d.url }
+        }
+        w.go(tab, d.url)
+      }
+      if (d.active === true) w.activate(tabId)
+      return { ok: true, tab: shimTabInfo(w, tabId) }
+    }
+
+    if (channel === 'extshim:tabs:remove') {
+      const w = shimWindow()
+      if (!w) return { ok: false, error: 'no window is open' }
+      const tabId = payload && payload.tabId
+      if (!w.tabs.has(tabId)) return { ok: false, error: 'no tab with id ' + tabId }
+      w.closeTab(tabId)
       return { ok: true }
     }
 
@@ -2241,6 +2331,7 @@ class TabWindow {
     }
     this.order = this.order.filter(x => x !== id)
     this.tabs.delete(id)
+    shimAnnounceTabRemoved(this, id)
     wcTabs.delete(tab.wcId)
     try { this.win.contentView.removeChildView(tab.view) } catch { /* view may already be detached */ }
     try { tab.view.webContents.close() } catch { /* contents may already be destroyed */ }

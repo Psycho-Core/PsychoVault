@@ -131,7 +131,7 @@ Short version - install [Node.js LTS](https://nodejs.org/en/download), extract t
 `C:\PsychoVault`, then double-click **`PsychoVault_easy_build.bat`**. You get
 `build\payload\PsychoVault.exe` (a portable browser you can just run), a
 `Release-Notes-<version>.txt` with the changes and the SHA-256 of what it built, and, if
-[NSIS](https://nsis.sourceforge.io/Download) is installed, `PsychoVault-Setup-1.0.17.exe`.
+[NSIS](https://nsis.sourceforge.io/Download) is installed, `PsychoVault-Setup-1.0.18.exe`.
 
 Feature and extension ideas for what to build next are in [IDEAS.md](IDEAS.md).
 

@@ -316,6 +316,15 @@ set "SETUPHASH=unavailable"
 >> "%NOTES%" echo   Installer SHA-256: %SETUPHASH%
 >> "%NOTES%" echo.
 >> "%NOTES%" echo WHAT CHANGED
+rem A per-version file beats the ten most recent commits: it says what this build does,
+rem in the words the work was described in, and it still exists when the folder is a
+rem ZIP download with no git history.
+set "CHANGES=%ROOT%\release-notes\%VERSION%.txt"
+if not exist "%CHANGES%" goto :notes_git
+for /f "usebackq delims=" %%l in ("%CHANGES%") do >> "%NOTES%" echo   %%l
+>> "%NOTES%" echo.
+>> "%NOTES%" echo   Also in this build, the last commits:
+:notes_git
 where git >nul 2>nul
 if errorlevel 1 goto :notes_no_git
 git -C "%ROOT%" rev-parse --git-dir >nul 2>nul

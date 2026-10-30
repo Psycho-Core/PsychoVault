@@ -2162,3 +2162,58 @@ failure, not a generic one.
 
 The portable browser from the 1.0.16 run is complete and runs - the missing piece was only the
 Setup wrapper. 1.0.17 should produce `PsychoVault-Setup-1.0.17.exe`.
+
+## Round 54 - "it does not even let me go to the login page"
+
+Electron's own support table is the answer: `chrome.tabs` lists only `sendMessage`, `reload`,
+`executeScript`, a partial `query` and a partial `update`. **`tabs.create` does not exist.**
+
+Proton's popup reaches for it the moment Sign in is pressed:
+
+```js
+sl = () => { const t = cs().tabs; if (!t) throw new Error("Some permissions for the extension are missing, please try to re-install"); return t }
+...
+return yield sl().create(n)          // the login page
+sl().query({ active: true, currentWindow: true })
+sl().onRemoved.addListener(...)      // reopen the popup once sign-in closes
+```
+
+So the button threw before any request was made. That is the third instance of the same class of
+bug - an API Electron does not implement, assumed to exist.
+
+### Fixed
+
+`chrome.tabs` is now supplied by the same shim, backed by the real tab list:
+
+| call | does |
+| --- | --- |
+| `query` | the open tabs, as `{id, index, url, title, active, pinned, status}` |
+| `create` | `w.createTab(url)` in the live window; returns the tab |
+| `get` / `update` / `remove` | the same tab by id |
+| `onCreated` / `onUpdated` / `onRemoved` | fired from main; removal is announced to open extension pages |
+
+Only `http(s)`, `ftp`, `file`, `about`, `psychovault` and `chrome-extension` urls can be opened -
+extension code cannot reach `javascript:` or `chrome://`. `chrome.action.openPopup()` is answered
+instead of throwing, since there is no toolbar here. The install report now carries `tabs` as well,
+and Settings shows a warning when it is false.
+
+### Still true, and said in the answer
+
+- Proton VPN has no anonymous mode. A Proton account is required, free tier included.
+- The sign-in *handshake* is `chrome.runtime.onMessageExternal` from `account.proton.me`, which
+  Electron does not list as supported. The page will open now; whether the token comes back is the
+  next question, and the Settings readout will say if it does not.
+
+### Release notes
+
+`release-notes/<version>.txt` is read into step 8 when the file exists, ahead of the commit list,
+so the notes describe the build rather than the last ten commits - and they survive a ZIP download
+with no git history. `release-notes/1.0.18.txt` is the first one.
+
+### Checks
+
+| | |
+| --- | --- |
+| `node --test tools/*.test.cjs` | **114 pass** (6 new: tabs supplied, events separate, channels allow-listed and handled, real tab created, removals announced, unsafe urls refused) |
+| `node tools/audit.mjs` | no defects |
+| version | 1.0.18 |
