@@ -1826,3 +1826,52 @@ Whether this is the *only* reason the address did not change on the user's machi
 cannot run Electron, and Proton's default path (fixed rule) was already translating correctly. The
 new status readout answers it directly - if it still says `DIRECT` after connecting, the extension
 is not applying a proxy at all and the next step is its own sign-in/connection flow, not this shim.
+
+## Round 47 - the build script's first real field report
+
+First run on a real Windows machine, 1.0.13 source:
+
+```
+[2/8] Installing the Electron runtime (first run downloads ~120 MB)...
+up to date in 634ms
+  FAILED: npm finished but there is no Electron runtime at ...\app\node_modules\electron\dist\electron.exe
+```
+
+That output is a defect in step 2, not in the user's machine. `npm install` prints "up to date"
+whenever `node_modules/electron` already exists, even when the post-install download that fetches
+the 120 MB runtime never finished - so a half-installed runtime looks installed, and the script
+gave up with advice (`npm install --force`) that changes nothing, because npm still considers the
+package present.
+
+The same failure had already been observed in the agent container: `npm install` in `app/` exits 0
+here and leaves no `dist/`, which is exactly why the audit checks for `dist\electron.exe` rather
+than trusting npm's exit code. The check was right; the recovery was missing.
+
+### Fixed
+
+Step 2 now has a three-step ladder, each attempt printing what it did:
+
+1. `npm install` (as before)
+2. `node node_modules\electron\install.js` - the downloader itself, which is the thing that
+   actually fetches the runtime and reports the real error
+3. `npm rebuild electron`, then removing `node_modules\electron` entirely and reinstalling
+
+Only after all three does it stop, and the message now names the three causes instead of guessing:
+
+- `npm config get ignore-scripts` printing `true` (the download is an install script)
+- the network or an antivirus blocking GitHub's release servers, with a `curl -I` command to test
+  it and `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/` as the way around it
+- an older half-finished install, with the two commands that clear it
+
+### Checks
+
+| | |
+| --- | --- |
+| `node --test tools/*.test.cjs` | **86 pass** (2 new: the ladder and its ordering, and the failure text naming all three causes) |
+| `node tools/audit.mjs` | no defects |
+
+### Worth noting for next time
+
+The script reported a precise, actionable failure and stopped before packaging anything, which is
+the behaviour the round-44 audit was for. What it lacked was knowing that "up to date" from npm
+does not mean "installed".

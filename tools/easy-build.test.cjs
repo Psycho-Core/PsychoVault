@@ -285,3 +285,30 @@ test('percent signs in note text are doubled, or cmd eats them', () => {
     assert.ok(!/(?<!%)%APPDATA%/.test(line), `single %%APPDATA%% will not survive cmd: ${line.trim()}`)
   }
 })
+
+test('a missing runtime is retried three ways before the build is given up', () => {
+  // Field report: npm printed "up to date in 634ms" while dist\electron.exe was absent,
+  // because the package folder existed but the post-install download had never finished.
+  // "npm install --force" does not fix that; re-running the downloader does.
+  assert.match(text, /node "node_modules.{1,2}electron.{1,2}install\.js"/, 'the downloader is never re-run')
+  assert.match(text, /npm rebuild electron/, 'the package is never rebuilt')
+  assert.match(text, /rmdir \/s \/q "%ROOT%.{1,2}app.{1,2}node_modules.{1,2}electron"/, 'the half-install is never removed')
+
+  const retries = [
+    lines.findIndex((l) => /node "node_modules.{1,2}electron.{1,2}install\.js"/.test(l)),
+    lines.findIndex((l) => /npm rebuild electron/.test(l)),
+    lines.findIndex((l) => /rmdir \/s \/q "%ROOT%.{1,2}app.{1,2}node_modules.{1,2}electron"/.test(l))
+  ]
+  const giveUp = lines.findIndex((l) => /^:no_electron/.test(l))
+  const jump = lines.findIndex((l) => /goto :no_electron/.test(l))
+  assert.ok(jump > Math.max(...retries), 'it gives up before trying the retries')
+  assert.ok(giveUp > 0)
+})
+
+test('the runtime failure names the three causes and how to test each', () => {
+  const block = lines.slice(lines.findIndex((l) => /^:no_electron/.test(l))).join('\n')
+  assert.match(block, /npm config get ignore-scripts/, 'no check for skipped install scripts')
+  assert.match(block, /ELECTRON_MIRROR/, 'no mirror fallback offered')
+  assert.match(block, /npmmirror\.com/, 'the mirror hint has no working URL')
+  assert.match(block, /curl -I https:\/\/github\.com\/electron/, 'no way to test whether the download host is reachable')
+})
