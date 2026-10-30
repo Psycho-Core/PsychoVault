@@ -1,0 +1,24 @@
+The build can post the release itself
+  Step 9 of PsychoVault_easy_build.bat asks whether to publish. Answer y and it
+  creates or updates release v<version> with the installer, the signed update
+  manifest when a signing key is present, and the same notes this file holds -
+  plus the size and SHA-256 of what it just built. The release body is generated
+  from files on disk, so it cannot describe a build other than the one published.
+
+  It asks every time and N is the default. A failed publish never fails a build
+  that already produced an installer; it prints what GitHub said instead.
+
+  Publishing needs a token with Contents read and write on the repository. That
+  is not the read-only token the updater uses: put the write one in
+  publish-token.json at the repo root, which is git-ignored. Everything in app\
+  is copied into the build and shipped, so a write token must never live there.
+
+Signing from a local build
+  The in-app updater only trusts a release whose update-manifest.json is signed
+  with the key matching app\update-public-key.pem. Previously only the GitHub
+  workflow could sign. Now a local build signs too if update-private-key.pem is
+  sitting next to the build script - that file is git-ignored as well.
+
+Check before you publish
+  node tools\publish-release.mjs --dry-run prints the exact release body and the
+  assets it would upload, without contacting GitHub. --draft creates a draft.

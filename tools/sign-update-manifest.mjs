@@ -14,14 +14,25 @@ const installerPath = path.resolve(process.argv[2] || '')
 const assetName = `${PRODUCT}-Setup-${version}.exe`
 const expectedInstaller = path.join(ROOT, assetName)
 const repository = process.env.GITHUB_REPOSITORY || REPOSITORY
-const rawSecret = String(process.env.UPDATE_SIGNING_PRIVATE_KEY_B64 || '').trim().replace(/^["']|["']$/g, '')
+// A local build can sign with the same key the workflow uses, from a file kept out of Git:
+// update-private-key.pem (a PEM, or a base64 private key) next to this script's parent folder.
+function localKeyFile() {
+  for (const name of ['update-private-key.pem', 'update-private-key.b64', 'update-private-key']) {
+    const file = path.join(ROOT, name)
+    try {
+      if (fs.existsSync(file)) return fs.readFileSync(file, 'utf8').trim()
+    } catch { /* unreadable, try the next name */ }
+  }
+  return ''
+}
+const rawSecret = String(process.env.UPDATE_SIGNING_PRIVATE_KEY_B64 || localKeyFile()).trim().replace(/^["']|["']$/g, '')
 
 if (repository !== REPOSITORY) throw new Error(`Refusing to sign for unexpected repository: ${repository}`)
 if (!process.argv[2] || installerPath !== expectedInstaller) {
   throw new Error(`Usage: node tools/sign-update-manifest.mjs ${assetName}`)
 }
 if (!fs.existsSync(installerPath) || !fs.statSync(installerPath).isFile()) throw new Error(`Installer not found: ${installerPath}`)
-if (!rawSecret) throw new Error('Missing UPDATE_SIGNING_PRIVATE_KEY_B64. Add the Ed25519 private key as a GitHub Actions repository secret.')
+if (!rawSecret) throw new Error('Missing UPDATE_SIGNING_PRIVATE_KEY_B64, and no update-private-key.pem beside the repo. Add the Ed25519 private key as a GitHub Actions secret, or keep it locally in that file (it is gitignored).')
 
 // Accept a raw PEM, base64-wrapped PEM, base64 PKCS#8 DER, or a base64 32-byte Ed25519 seed.
 function parsePrivateKey(value) {

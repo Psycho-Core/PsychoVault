@@ -2453,3 +2453,42 @@ Settings prints the last twenty lines in a scrollable box instead of six joined 
 | `node --test tools/*.test.cjs` | **125 pass** (3 new: leftovers are merged, query excludes the extension page, console capture is limited to extension pages) |
 | `node tools/audit.mjs` | no defects |
 | version | 1.0.24 |
+
+## Round 61 - the build publishes its own release
+
+`tools/publish-release.mjs` turns a finished build into a GitHub release, and step 9 of the
+build script asks whether to run it.
+
+What it publishes matters as much as that it publishes: the in-app updater reads
+`/releases/latest` and then two assets **by name** - `update-manifest.json`,
+`update-manifest.sig` and `PsychoVault-Setup-<version>.exe`. A release missing them looks
+correct on GitHub and is invisible to the updater.
+
+| | |
+| --- | --- |
+| body | `release-notes/<version>.txt`, then the real file size and SHA-256 it computed |
+| assets | the installer, plus the signed manifest when one exists |
+| existing tag | updated in place, and same-named assets replaced, not duplicated |
+| no token | exits with where the token goes, never a silent no-op |
+| `--dry-run` | prints the body and the asset list, contacts nothing |
+
+### Security decision
+
+The write token lives in `publish-token.json` at the **repo root**, not beside `update-token.json`
+in `app/`. Everything in `app/` is copied into the payload and shipped to users, so a token with
+`contents:write` must never be in that folder. It is git-ignored, and the failure text says so.
+
+### Signing without the workflow
+
+`tools/sign-update-manifest.mjs` now falls back to `update-private-key.pem` beside the repo when
+`UPDATE_SIGNING_PRIVATE_KEY_B64` is not set, so a local build can produce a manifest the shipped
+public key verifies - which is what makes the update banner willing to offer the release.
+
+### Checks
+
+| | |
+| --- | --- |
+| `node --test tools/*.test.cjs` | **130 pass** (5 new: no token, nothing built, body carries notes + hash + asset name, the script asks and never fails the build, the signing key can come from a file) |
+| `node tools/audit.mjs` | no defects |
+| `--dry-run` against a stub installer | body and asset list as expected |
+| version | 1.0.25 |

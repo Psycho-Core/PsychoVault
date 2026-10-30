@@ -63,7 +63,7 @@ echo ============================================================
 echo.
 
 rem ---------------------------------------------------------------- 1. Node.js
-echo [1/8] Checking for Node.js...
+echo [1/9] Checking for Node.js...
 where node >nul 2>nul
 if errorlevel 1 goto :no_node
 for /f "delims=" %%v in ('node -p "process.versions.node"') do set "NODEV=%%v"
@@ -79,7 +79,7 @@ echo       PsychoVault version: %VERSION%
 echo.
 
 rem ------------------------------------------------------- 2. Electron runtime
-echo [2/8] Installing the Electron runtime (first run downloads ~120 MB)...
+echo [2/9] Installing the Electron runtime (first run downloads ~120 MB)...
 pushd "%ROOT%\app"
 call npm install --no-audit --no-fund
 if errorlevel 1 (
@@ -137,7 +137,7 @@ echo       Runtime is in place.
 echo.
 
 rem ------------------------------------------------------------ 3. Staging
-echo [3/8] Staging the runtime into build\payload...
+echo [3/9] Staging the runtime into build\payload...
 if not exist "%BUILD%" mkdir "%BUILD%" >nul 2>nul
 robocopy "%ROOT%\app\node_modules\electron\dist" "%PAYLOAD%" /MIR /NFL /NDL /NJH /NJS /NP /R:2 /W:1 >nul
 if errorlevel 8 goto :fail_copy
@@ -151,7 +151,7 @@ echo       PsychoVault.exe staged.
 echo.
 
 rem ------------------------------------------------------- 4. Brand the exe
-echo [4/8] Setting the PsychoVault icon and version number...
+echo [4/9] Setting the PsychoVault icon and version number...
 pushd "%ROOT%\tools"
 call npm ci --no-audit --no-fund
 if errorlevel 1 (
@@ -165,7 +165,7 @@ if errorlevel 1 goto :fail_patch
 echo.
 
 rem --------------------------------------------------------- 5. The app itself
-echo [5/8] Copying the browser source into the build...
+echo [5/9] Copying the browser source into the build...
 rem app\tools holds a 10 MB legacy wireproxy.exe that the browser never starts
 rem (see app\tools\README.md), so it is left out of the package on purpose.
 robocopy "%ROOT%\app" "%PAYLOAD%\resources\app" /E /XD node_modules tools /NFL /NDL /NJH /NJS /NP /R:2 /W:1 >nul
@@ -189,7 +189,7 @@ echo       See BUILD-WINDOWS.md, section "Making the update banner work".
 echo.
 
 rem ------------------------------------------------------------- 6. Verify
-echo [6/8] Checking the staged payload...
+echo [6/9] Checking the staged payload...
 rem Only a payload that cannot start is fatal. Everything else is listed and the
 rem build carries on: stopping over an optional file is worse than shipping it.
 set "MISSING="
@@ -214,7 +214,7 @@ echo       Payload complete: the browser can start.
 echo.
 
 rem ---------------------------------------------------------- 7. Installer
-echo [7/8] Looking for NSIS to build the installer...
+echo [7/9] Looking for NSIS to build the installer...
 set "MAKENSIS="
 where makensis >nul 2>nul
 if not errorlevel 1 set "MAKENSIS=makensis"
@@ -302,7 +302,7 @@ goto :end
 
 rem ------------------------------------------------------ 8. Release notes
 :notes
-echo [8/8] Writing release notes...
+echo [8/9] Writing release notes...
 set "NOTES=%ROOT%\Release-Notes-%VERSION%.txt"
 rem Deliberately left undefined: "if not defined" is how the first output line
 rem of certutil is kept and the trailing status line is ignored. Seeding it with
@@ -367,6 +367,49 @@ goto :notes_from_source
 echo       Release notes: %NOTES%
 echo.
 
+rem ------------------------------------------------------- 9. Publish (optional)
+rem Publishing needs a token with contents:write on the repository, and nothing else in the
+rem build touches the network beyond the Electron download. So it asks, every time, and a
+rem refusal or a failure here never fails a build that already produced an installer.
+echo [9/9] Publishing the release to GitHub...
+if not exist "%SETUP%" goto :publish_skipped
+if defined PV_PUBLISH goto :publish_decided
+set "PUBLISH_ANSWER="
+set /p "PUBLISH_ANSWER=      Post this build as release v%VERSION% on GitHub? [y/N] "
+set "PV_PUBLISH=%PUBLISH_ANSWER%"
+:publish_decided
+if /i "%PV_PUBLISH%"=="y" goto :publish_do
+if /i "%PV_PUBLISH%"=="yes" goto :publish_do
+if /i "%PV_PUBLISH%"=="1" goto :publish_do
+echo       Not published. The installer and the notes are on disk either way.
+goto :done
+
+:publish_skipped
+echo       Skipped: there is no installer to publish.
+goto :done
+
+:publish_do
+rem A signing key in the repo folder (gitignored) lets the local build produce the same signed
+rem manifest the release workflow makes, which is what the in-app updater checks.
+if not exist "%ROOT%\update-private-key.pem" goto :publish_nosign
+echo       Signing the update manifest...
+node "%ROOT%\tools\sign-update-manifest.mjs" "PsychoVault-Setup-%VERSION%.exe"
+if errorlevel 1 echo       WARNING: signing failed. Publishing without the signed manifest.
+:publish_nosign
+node "%ROOT%\tools\publish-release.mjs"
+if errorlevel 1 goto :publish_failed
+echo.
+goto :done
+
+:publish_failed
+echo.
+echo   The build itself is fine - the installer and the notes are on disk. Publishing did not
+echo   happen, and the reason is printed above by tools\publish-release.mjs. The usual ones:
+echo     - no token: set GITHUB_TOKEN, or put {"token":"..."} in publish-token.json
+echo       at the repo root. It needs Contents read and write on this repository.
+echo       Keep it out of app\ - everything in that folder ships to users.
+echo     - the token has no write access: publishing needs contents:write
+echo     - the repository is private and the token cannot see it
 goto :done
 
 rem ===========================================================================
