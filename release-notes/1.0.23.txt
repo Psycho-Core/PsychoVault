@@ -1,0 +1,15 @@
+The build stops on one line in installer.nsi - my bug, not your machine
+  SetCompressor expects the compressor LAST:
+    SetCompressor [/SOLID] [/FINAL] (zlib|bzip2|lzma)
+  1.0.21 had "SetCompressor /SOLID lzma /FINAL", which is four parameters, so
+  makensis stopped on line 38 before compressing anything. My test checked that
+  /FINAL was there and never checked the order it has to be in. It does now.
+
+  Nothing else in 1.0.22 was affected: the portable browser in build\payload is
+  complete and includes the shim fix from that version.
+
+Failure messages tell the two causes apart
+  "error in script ... on line N" now reads as a fault in installer.nsi and asks
+  for the message, instead of blaming antivirus. "no files found" keeps the
+  quarantine explanation and the exclusion command. Blaming the wrong thing
+  cost several rounds of this already.

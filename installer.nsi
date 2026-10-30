@@ -35,7 +35,11 @@ InstallDirRegKey HKCU "Software\PsychoVault" "InstallDir"
 ; /FINAL matters. Without it NSIS compresses the whole payload to measure it, discards that
 ; result, then compresses all 380 MB again at the end - twice the work, and not a single line of
 ; output during either pass. With /FINAL there is one pass.
-SetCompressor /SOLID lzma /FINAL
+;
+; Order is fixed by NSIS and it is not forgiving: switches first, compressor LAST.
+;   SetCompressor [/SOLID] [/FINAL] (zlib|bzip2|lzma)
+; "lzma /FINAL" is a four-parameter SetCompressor and the build stops on it.
+SetCompressor /SOLID /FINAL lzma
 ; 32 MB dictionary over a 380 MB payload is the slow part of this build. 8 MB would be quicker
 ; and roughly 10-15 MB larger; this is the setting that trades a few minutes for a smaller
 ; download, and it is a one-line change if that trade ever stops being the right one.
