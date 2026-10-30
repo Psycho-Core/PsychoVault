@@ -1,7 +1,7 @@
 'use strict'
-// Preload half of the extension shim. Registered on every PsychoVault session as BOTH a frame
-// preload and a service-worker preload, so it runs inside extension pages (popup.html,
-// onboarding) and inside Manifest V3 background service workers.
+// Extension API shim. Registered on every PsychoVault session as BOTH a frame preload and a
+// service-worker preload, so it runs inside extension pages (popup.html, onboarding) and inside
+// Manifest V3 background service workers.
 //
 // Why this file exists
 // --------------------
@@ -11,21 +11,24 @@
 //   Unknown Extension API - types.ChromeSetting.set
 // so an extension that uses them believes it has a tunnel it does not have.
 //
-// This preload carries a bridge into an extension's own world, and app/ext-main-world.js -
-// a plain script with no imports - replaces those three APIs on top of it. Every call reaches
-// the main process, and from there the real network stack: chrome.proxy.settings.set becomes
-// session.setProxy, chrome.privacy becomes setWebRTCIPHandlingPolicy, chrome.tabs reaches the
-// real tab list. Nothing is faked, and every failure is reported rather than swallowed.
+// This preload carries a bridge into an extension's own world and replaces those three APIs on
+// top of it. Every call reaches the main process, and from there the real network stack:
+// chrome.proxy.settings.set becomes session.setProxy, chrome.privacy becomes
+// setWebRTCIPHandlingPolicy, chrome.tabs reaches the real tab list. Nothing is faked, and every
+// failure is reported rather than swallowed.
 //
-// Getting the installer INTO that world is the part that went wrong repeatedly: it is done
-// three different ways here, and each one records what it did in the shim log so the next
-// field report carries evidence instead of a guess.
+// CONSTRAINTS THAT BIT US
+// -----------------------
+// An extension preload is SANDBOXED. `require` there is limited to 'electron' and a couple of
+// built-ins: requiring 'fs' or 'path' does not throw a warning, it fails the whole preload with
+//   Unable to load preload script: ... ext-shim.js
+//   Error: module not found: fs
+// and then nothing runs at all - no bridge, no log, no APIs. That is why the installer below is
+// a function in this file and is delivered with Function.prototype.toString() rather than being
+// read from a second file.
 const { contextBridge, ipcRenderer, webFrame } = require('electron')
-const fs = require('fs')
-const path = require('path')
 
 const BRIDGE_NAME = '__pvExtensionBridge'
-const INSTALLER = path.join(__dirname, 'ext-main-world.js')
 const isServiceWorker = process.type === 'service-worker'
 
 function currentURL() {
@@ -36,12 +39,171 @@ function currentURL() {
   return ''
 }
 
+// Runs inside an extension's OWN JavaScript world, where `chrome` lives. It is stringified and
+// evaluated in that world, so it must not close over anything: every value it needs is either a
+// parameter or read from the global object.
+function installExtensionAPIs(g, bridgeName) {
+  var b = g && g[bridgeName]
+  var chromeObj = g && g.chrome
+  var where = typeof window !== 'undefined' ? 'page' : 'worker'
+  if (!b || !chromeObj) {
+    try { if (b) b.report({ proxy: false, privacy: false, tabs: false, where: where, why: !b ? 'no bridge' : 'no chrome object' }) } catch (e) { /* nothing to report to */ }
+    return false
+  }
+
+  var makeEvent = function () {
+    var listeners = new Set()
+    return {
+      addListener: function (fn) { if (typeof fn === 'function') listeners.add(fn) },
+      removeListener: function (fn) { listeners.delete(fn) },
+      hasListener: function (fn) { return listeners.has(fn) },
+      hasListeners: function () { return listeners.size > 0 },
+      __emit: function (arg, arg2) { listeners.forEach(function (fn) { try { fn(arg, arg2) } catch (e) { /* extension threw */ } }) }
+    }
+  }
+  var safeCall = function (fn, arg) { try { if (typeof fn === 'function') fn(arg) } catch (e) { /* extension threw */ } }
+
+  // Chromium already exposes chrome.proxy, chrome.privacy and chrome.tabs, wired to an extension
+  // function dispatcher Electron does not implement. "The API exists" is therefore true and
+  // useless: settings.set reaches Chromium and is refused. Each one is replaced outright.
+  var override = function (name, value) {
+    try {
+      Object.defineProperty(chromeObj, name, { value: value, configurable: true, enumerable: true, writable: true })
+      return chromeObj[name] === value
+    } catch (e) {
+      try {
+        chromeObj[name] = value
+        return chromeObj[name] === value
+      } catch (e2) {
+        return false
+      }
+    }
+  }
+
+  // chrome.proxy
+  var onChange = makeEvent()
+  var onProxyError = makeEvent()
+  var proxyInstalled = override('proxy', {
+    settings: {
+      get: function (details, cb) {
+        Promise.resolve(b.proxyGet()).then(function (result) { safeCall(cb, result) })
+          .catch(function () { safeCall(cb, { value: { mode: 'system' }, levelOfControl: 'not_controllable' }) })
+      },
+      set: function (details, cb) {
+        var value = details && details.value
+        var scope = (details && details.scope) || 'regular'
+        Promise.resolve(b.proxySet(value, scope)).then(function (result) {
+          if (result && result.ok) onChange.__emit({ value: value, levelOfControl: 'controlled_by_this_extension' })
+          else onProxyError.__emit({ details: (result && result.error) || 'proxy could not be applied', error: 'proxy_connection_failed' })
+          safeCall(cb)
+        }).catch(function (e) {
+          onProxyError.__emit({ details: String(e), error: 'proxy_connection_failed' })
+          safeCall(cb)
+        })
+      },
+      clear: function (details, cb) {
+        var scope = (details && details.scope) || 'regular'
+        Promise.resolve(b.proxyClear(scope)).then(function () {
+          onChange.__emit({ value: { mode: 'system' }, levelOfControl: 'controllable_by_this_extension' })
+          safeCall(cb, true)
+        }).catch(function () { safeCall(cb, false) })
+      },
+      onChange: onChange
+    },
+    onProxyError: onProxyError,
+    onRequest: undefined
+  })
+
+  // chrome.privacy
+  var privacyChange = makeEvent()
+  var privacyInstalled = override('privacy', {
+    network: {
+      webRTCIPHandlingPolicy: {
+        get: function (details, cb) {
+          Promise.resolve(b.webrtcGet()).then(function (v) { safeCall(cb, { value: v, levelOfControl: 'controlled_by_this_extension' }) })
+            .catch(function () { safeCall(cb, { value: 'default', levelOfControl: 'not_controllable' }) })
+        },
+        set: function (details, cb) {
+          Promise.resolve(b.webrtcSet(details && details.value)).then(function () {
+            privacyChange.__emit({ value: details && details.value })
+            safeCall(cb)
+          }).catch(function () { safeCall(cb) })
+        },
+        clear: function (details, cb) {
+          Promise.resolve(b.webrtcSet('default')).then(function () {
+            privacyChange.__emit({ value: 'default' })
+            safeCall(cb)
+          }).catch(function () { safeCall(cb) })
+        },
+        onChange: privacyChange
+      }
+    }
+  })
+
+  // chrome.tabs - Electron has only sendMessage, reload, executeScript and partial query/update,
+  // and no tabs.create at all. Proton reads a missing tabs object as a broken install:
+  //   "Some permissions for the extension are missing, please try to re-install"
+  // so pressing Sign in threw before the login page was ever opened.
+  var tabRemoved = makeEvent()
+  var tabCreated = makeEvent()
+  var tabUpdated = makeEvent()
+  var tabsInstalled = override('tabs', {
+    query: function (q, cb) {
+      Promise.resolve(b.tabsQuery(q)).then(function (r) { safeCall(cb, (r && r.tabs) || []) })
+        .catch(function () { safeCall(cb, []) })
+    },
+    get: function (tabId, cb) {
+      Promise.resolve(b.tabsQuery({})).then(function (r) {
+        var hit = ((r && r.tabs) || []).filter(function (t) { return t.id === tabId })[0]
+        if (hit) return safeCall(cb, hit)
+        throw new Error('no tab with id ' + tabId)
+      }).catch(function () { safeCall(cb, undefined) })
+    },
+    create: function (details, cb) {
+      Promise.resolve(b.tabsCreate(details)).then(function (r) {
+        if (!r || !r.ok) throw new Error((r && r.error) || 'the tab could not be opened')
+        tabCreated.__emit(r.tab)
+        safeCall(cb, r.tab)
+      }).catch(function () { safeCall(cb, undefined) })
+    },
+    // update() is overloaded: update(tabId, props) and update(props).
+    update: function (a, bArg, cb) {
+      var tabId = typeof a === 'number' ? a : null
+      var props = typeof a === 'number' ? (bArg || {}) : (a || {})
+      var done = typeof bArg === 'function' ? bArg : cb
+      Promise.resolve(b.tabsUpdate(tabId, props)).then(function (r) {
+        if (r && r.tab) tabUpdated.__emit(r.tab.id, { url: r.tab.url }, r.tab)
+        safeCall(done, r && r.tab)
+      }).catch(function () { safeCall(done, undefined) })
+    },
+    remove: function (tabId, cb) {
+      Promise.resolve(b.tabsRemove(tabId)).then(function () { safeCall(cb) }).catch(function () { safeCall(cb) })
+    },
+    onRemoved: tabRemoved,
+    onCreated: tabCreated,
+    onUpdated: tabUpdated
+  })
+  try { b.onTabsRemoved(function (tabId) { tabRemoved.__emit(tabId, { windowId: 1, isWindowClosing: false }) }) } catch (e) { /* no bridge */ }
+
+  // Proton calls chrome.action.openPopup() once a sign-in tab closes. There is no toolbar here,
+  // so nothing can pop up - answer cleanly instead of throwing.
+  try {
+    if (chromeObj.action && typeof chromeObj.action.openPopup !== 'function') {
+      chromeObj.action.openPopup = function () { return Promise.resolve() }
+    }
+  } catch (e) { /* action is not ours to change */ }
+
+  var result = { proxy: proxyInstalled, privacy: privacyInstalled, tabs: tabsInstalled, where: where }
+  try { g.__pvShimInstalled = result } catch (e) { /* frozen global */ }
+  try { b.report(result) } catch (e) { /* bridge gone */ }
+  return proxyInstalled && tabsInstalled
+}
+
 const url = currentURL()
 if (url.startsWith('chrome-extension://')) {
   const id = url.slice('chrome-extension://'.length).split('/')[0]
 
-  // Every line the shim writes goes to a file in the profile, so a report like the one that
-  // came with this round ("Unknown Extension API" from a page and a worker) can be answered
+  // Every line the shim writes goes to a file in the profile, so a field report can be answered
   // with what actually happened instead of another rebuild.
   const note = (line) => {
     try { ipcRenderer.invoke('extshim:log', { id, line }) } catch (e) { /* nothing to log to */ }
@@ -69,35 +231,11 @@ if (url.startsWith('chrome-extension://')) {
     log: (line) => note(line)
   }
 
-  let source = ''
-  try {
-    source = fs.readFileSync(INSTALLER, 'utf8')
-  } catch (e) {
-    note('ext-main-world.js could not be read: ' + e.message)
-  }
-
-  const inject = (how) => {
-    try {
-      // Indirect eval runs the installer in the global scope, so its assignments land on the
-      // same `chrome` the extension sees. A service-worker preload shares that scope.
-      if (how === 'eval') { (0, eval)(source); return true }
-      if (how === 'newFunction') { new Function(source)(); return true }
-      if (how === 'webFrame') { webFrame.executeJavaScript(source); return true }
-      if (how === 'executeInMainWorld' && typeof contextBridge.executeInMainWorld === 'function') {
-        contextBridge.executeInMainWorld({ func: new Function('src', 'bridgeName', src => src), args: [source, BRIDGE_NAME] })
-        return true
-      }
-    } catch (e) {
-      note('inject via ' + how + ' failed: ' + e.message)
-    }
-    return false
-  }
-
   if (isServiceWorker) {
     // A service worker has no separate "main world" for executeInMainWorld to reach, which is
     // why the first fix installed nothing for Proton: its background is js/service.js, an MV3
-    // service worker. A service-worker preload shares the worker's global scope, so the bridge
-    // and the installer both belong right here.
+    // service worker. A service-worker preload shares the worker's global scope, so this can
+    // simply call the installer.
     let onGlobal = false
     try {
       Object.defineProperty(globalThis, BRIDGE_NAME, { value: bridge, configurable: true, enumerable: false })
@@ -106,10 +244,15 @@ if (url.startsWith('chrome-extension://')) {
       try { globalThis[BRIDGE_NAME] = bridge; onGlobal = true } catch (e2) { /* nothing else to try */ }
     }
     note('service-worker preload ran: ' + url + ' (bridge on globalThis: ' + onGlobal + ')')
-    if (!onGlobal) note('the worker refused the bridge; the APIs cannot be installed')
-    else if (source) {
-      const done = inject('eval') || inject('newFunction')
-      note('installer in the worker: ' + (done ? 'injected' : 'failed'))
+    if (onGlobal) {
+      try {
+        const ok = installExtensionAPIs(globalThis, BRIDGE_NAME)
+        note('installer in the worker: ' + (ok ? 'proxy and tabs installed' : 'ran, but the overrides did not take'))
+      } catch (e) {
+        note('installer in the worker threw: ' + (e && e.message))
+      }
+    } else {
+      note('the worker refused the bridge; the APIs cannot be installed')
     }
   } else {
     try {
@@ -118,12 +261,33 @@ if (url.startsWith('chrome-extension://')) {
       // Already exposed in this realm - harmless on re-injection.
     }
     note('extension page preload ran: ' + url)
-    if (source) {
-      // webFrame.executeJavaScript runs in the page's MAIN world, which is the world that has
-      // `chrome` and the world the extension's own scripts run in. executeInMainWorld is kept
-      // as a second attempt because it was the only path here for three versions.
-      const done = inject('webFrame') || inject('executeInMainWorld')
-      note('installer in the page: ' + (done ? 'injected' : 'failed'))
+
+    // The extension's own scripts run in the page's MAIN world, so that is where the APIs have
+    // to exist. webFrame.executeJavaScript evaluates there; executeInMainWorld is kept as a
+    // second attempt because it was the only path for three versions.
+    const source = '(' + installExtensionAPIs.toString() + ')(typeof globalThis !== "undefined" ? globalThis : self, ' + JSON.stringify(BRIDGE_NAME) + ')'
+    let delivered = false
+    try {
+      const ran = webFrame.executeJavaScript(source)
+      delivered = true
+      // Read it back from that world: "I ran some code" is not the same as "chrome.proxy is now
+      // mine", and only the second one tells the truth.
+      Promise.resolve(ran)
+        .then(() => webFrame.executeJavaScript('!!(globalThis.__pvShimInstalled && globalThis.__pvShimInstalled.proxy && globalThis.__pvShimInstalled.tabs)'))
+        .then((ok) => note('installer in the page main world: ' + (ok ? 'proxy and tabs are installed' : 'RAN BUT DID NOT TAKE')))
+        .catch((e) => note('could not read back the page main world: ' + (e && e.message)))
+    } catch (e) {
+      note('webFrame.executeJavaScript failed: ' + (e && e.message))
+    }
+    if (!delivered && typeof contextBridge.executeInMainWorld === 'function') {
+      try {
+        // The function is serialised into the other world, so it cannot close over anything:
+        // it takes the source and evaluates it there.
+        contextBridge.executeInMainWorld({ func: (src) => { (0, eval)(src) }, args: [source] })
+        note('installer delivered through executeInMainWorld (fallback)')
+      } catch (e) {
+        note('executeInMainWorld fallback failed: ' + (e && e.message))
+      }
     }
   }
 }

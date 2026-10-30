@@ -2344,3 +2344,42 @@ next to the line so it can be changed without re-deriving it.
 | `node --test tools/*.test.cjs` | **123 pass** (2 new: every SetCompressor line carries /FINAL, makensis runs at /V3) |
 | `node tools/audit.mjs` | no defects |
 | version | 1.0.21 |
+
+## Round 58 - the preload never loaded. My 1.0.20 refactor caused it.
+
+```
+Unable to load preload script: D:\...\resources\app\ext-shim.js
+Error: module not found: fs
+```
+
+Extension preload scripts are **sandboxed**. `require` there reaches `electron` and a couple of
+built-ins, and nothing else. In 1.0.20 I split the shim in two and had the preload read the
+installer with `fs.readFileSync` - so the preload threw while loading, before a single line of it
+ran. No bridge, no log, no APIs. Which is why the console still said `Unknown Extension API`, and
+why no `ext-shim.log` existed to look at.
+
+The lesson is not "fs is missing": it is that a failure in the preload itself produced exactly the
+same symptom as a failure in the install. Both are now distinguished.
+
+### Fixed
+
+- `app/ext-shim.js` requires `electron` and nothing else. A test now fails on any other require.
+- The installer is a plain function in the same file, delivered with
+  `Function.prototype.toString()`: no second file, nothing to resolve, nothing to copy wrong.
+- `app/ext-main-world.js` is gone, along with its two build-list entries.
+- After injecting, the shim **reads the result back** from the page's world
+  (`__pvShimInstalled`) and logs either "proxy and tabs are installed" or "RAN BUT DID NOT TAKE".
+  Those are different failures and were previously indistinguishable.
+
+### Settings
+
+`proxy:status` now returns the shim log path and the last six lines, and Settings prints them
+next to the API status - so the evidence is on screen instead of in a file the user has to find.
+
+### Checks
+
+| | |
+| --- | --- |
+| `node --test tools/*.test.cjs` | **122 pass** - including "an extension preload requires nothing but electron" and "the installer can be stringified into another world" (which rejects closing over the preload's variables) |
+| `node tools/audit.mjs` | no defects |
+| version | 1.0.22 |

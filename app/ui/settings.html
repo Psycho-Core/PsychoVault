@@ -932,7 +932,10 @@
       // The shim writes what it did to a file in the profile. Naming it turns "the VPN does
       // nothing" into something you can open and read.
       if (s('extShimLog') && r.shimLog) {
-        s('extShimLog').textContent = 'Shim log: ' + r.shimLog
+        // The last lines matter more than the path: they say whether the preload ran at all,
+        // whether the installer landed, and whether the result was read back as installed.
+        const tail = (r.shimLogTail || []).map((l) => l.replace(/^\[[^\]]*\]\s*/, ''))
+        s('extShimLog').textContent = 'Shim log: ' + r.shimLog + (tail.length ? ' | ' + tail.join(' | ') : ' | nothing written yet')
         s('extShimLog').title = r.shimLog
       }
     }
