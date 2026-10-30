@@ -34,6 +34,11 @@ set "VERIFY=%VERIFY% resources\app\blocklist.json resources\app\spell-words.txt 
 set "VERIFY=%VERIFY% resources\app\ui\renderer.js resources\app\ui\style.css resources\app\ui\settings.html"
 set "VERIFY=%VERIFY% resources\app\builtin\proton-vpn\manifest.json"
 
+rem A complete Electron runtime, not just the exe. A dist holding only electron.exe
+rem unpacks to a browser that cannot start, and npm still calls that install "up to date".
+set "RUNTIME=PsychoVault.exe icudtl.dat resources.pak snapshot_blob.bin v8_context_snapshot.bin"
+set "RUNTIME=%RUNTIME% ffmpeg.dll locales resources"
+
 rem A ( or & in the folder name would break the unquoted echo lines further down.
 echo "%ROOT%"| findstr /c:"(" /c:"&" >nul
 if not errorlevel 1 goto :bad_path
@@ -173,10 +178,19 @@ echo.
 
 rem ------------------------------------------------------------- 6. Verify
 echo [6/8] Checking the staged payload...
-for %%f in (%VERIFY%) do if not exist "%PAYLOAD%\%%f" goto :fail_verify
-for %%f in (%VERIFY%) do if %%~zf EQU 0 goto :fail_verify
-if exist "%PAYLOAD%\resources\default_app.asar" goto :fail_verify
-echo       Payload complete: every file the browser needs is there.
+rem Collect everything that is wrong before stopping, and name it. Failing on the
+rem first missing file with no filename is what made the first field report
+rem unactionable, and a dist holding only the exe passed the old check.
+set "MISSING="
+for %%f in (%RUNTIME%) do if not exist "%PAYLOAD%\%%f" set "MISSING=!MISSING! %%f"
+for %%f in (%VERIFY%) do if not exist "%PAYLOAD%\%%f" set "MISSING=!MISSING! %%f"
+if defined MISSING goto :fail_verify
+
+set "EMPTY="
+for %%f in (%VERIFY%) do if exist "%PAYLOAD%\%%f" if %%~zf EQU 0 set "EMPTY=!EMPTY! %%f"
+if defined EMPTY goto :fail_empty
+if exist "%PAYLOAD%\resources\default_app.asar" goto :fail_stale
+echo       Payload complete: the runtime and all app files are there.
 echo.
 
 rem ---------------------------------------------------------- 7. Installer
@@ -381,10 +395,35 @@ goto :end
 
 :fail_verify
 echo.
-echo   FAILED: the staged payload is missing files the browser needs,
-echo   so the build was stopped before anything was packaged.
-echo   Delete the build folder, then run this file again; if it keeps
-echo   failing, check that app\ in the repo is complete.
+echo   FAILED: the staged payload is missing these files:
+echo      %MISSING%
+echo.
+echo   Nothing was packaged, so nothing broken was produced.
+echo.
+echo   %MISSING%| findstr /c:"resources\app" >nul
+if not errorlevel 1 echo   Entries under resources\app come from this repo. Check that app\ holds them,
+if not errorlevel 1 echo   and that antivirus is not deleting them during the copy.
+echo   %MISSING%| findstr /c:"resources\app" >nul
+if errorlevel 1 echo   The other entries come from the Electron runtime in app\node_modules\electron\dist,
+if errorlevel 1 echo   or from the LICENSE, README and VERIFICATION copies. Delete the build folder
+if errorlevel 1 echo   and run this file again; if the same names come back, the runtime unpack is
+if errorlevel 1 echo   incomplete - see "Runtime is incomplete" in BUILD-WINDOWS.md.
+goto :end
+
+:fail_empty
+echo.
+echo   FAILED: these staged files exist but are empty:
+echo      %EMPTY%
+echo.
+echo   Usually a copy interrupted mid-file. Delete the build folder and run this
+echo   file again.
+goto :end
+
+:fail_stale
+echo.
+echo   FAILED: resources\default_app.asar is still in the payload, so Electron would
+echo   start its own default app instead of PsychoVault. Delete the build folder and
+echo   run this file again.
 goto :end
 
 :no_nsis

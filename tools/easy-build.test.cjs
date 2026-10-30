@@ -330,3 +330,29 @@ test('the antivirus case is named in the failure text with a way to fix it', () 
   assert.match(block, /electron\.exe.*quarantine|quarantine.*electron\.exe/s, 'quarantine is not connected to the missing exe')
   assert.match(block, /electron.{1,2}Cache/, 'the download cache location is not mentioned')
 })
+
+test('a payload is checked for a whole runtime, not just the exe', () => {
+  // Field report: dist held electron.exe and nothing else (no DLLs, no locales, no
+  // resources, no version file) and the old check passed it, producing a browser that
+  // cannot start. A complete win32-x64 runtime has all of the below.
+  const runtimeLine = lines.find((l) => /^set "RUNTIME=/.test(l))
+  assert.ok(runtimeLine, 'no runtime completeness list')
+  for (const part of ['icudtl.dat', 'resources.pak', 'snapshot_blob.bin', 'ffmpeg.dll', 'locales', 'resources']) {
+    assert.ok(text.includes(part), `the runtime list does not require ${part}`)
+  }
+})
+
+test('the missing-file failure names the files', () => {
+  assert.match(text, /set "MISSING="\r?\n/)
+  assert.match(text, /set "MISSING=!MISSING! %%f"/)
+  assert.match(text, /if defined MISSING goto :fail_verify/)
+  const block = lines.slice(lines.findIndex((l) => /^:fail_verify/.test(l))).join('\n')
+  assert.match(block, /echo      %MISSING%/, 'the failure does not print which files are missing')
+})
+
+test('empty files and a stale default_app.asar have their own messages', () => {
+  assert.match(text, /if defined EMPTY goto :fail_empty/)
+  assert.match(text, /if exist "%PAYLOAD%.{1,2}resources.{1,2}default_app\.asar" goto :fail_stale/)
+  assert.match(text, /^:fail_empty$/m)
+  assert.match(text, /^:fail_stale$/m)
+})
