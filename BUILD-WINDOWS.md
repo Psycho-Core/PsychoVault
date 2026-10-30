@@ -113,6 +113,46 @@ so instead of inventing a change list.
 
 The script offers to start the browser for you at the end.
 
+### Runtime is incomplete
+
+`app\node_modules\electron\dist` must contain a whole Electron runtime, not just
+`electron.exe`. A complete win32-x64 tree has ~17 files plus `locales\`, `resources\` and
+`version`:
+
+```
+electron.exe  chrome_100_percent.pak  chrome_200_percent.pak  d3dcompiler_47.dll
+dxcompiler.dll  electron_wer.dll  ffmpeg.dll  icudtl.dat  resources.pak
+snapshot_blob.bin  v8_context_snapshot.bin  vk_swiftshader.dll
+vk_swiftshader_icd.json  vulkan-1.dll  version  LICENSE  LICENSES.chromium.html
+locales\  resources\
+```
+
+If only the exe is there, unpacking stopped early - usually antivirus quarantining the
+libraries mid-extract. Skip npm entirely and take the archive directly:
+
+```
+cd /d C:\PsychoVault
+curl -L -o "%TEMP%\electron45.zip" https://github.com/electron/electron/releases/download/v45.1.0/electron-v45.1.0-win32-x64.zip
+certutil -hashfile "%TEMP%\electron45.zip" SHA256
+```
+
+The middle line must be `55eaba17abff7b5bba6c3bbc85068967379024fe742fe9c7fdba9118922ccbe2` - the same
+value CI pins. Then:
+
+```
+rmdir /s /q "app\node_modules\electron\dist"
+mkdir "app\node_modules\electron\dist"
+tar -xf "%TEMP%\electron45.zip" -C "app\node_modules\electron\dist"
+```
+
+`dir "app\node_modules\electron\dist"` should now show 17 files and 3 folders. If they vanish
+again on a second `dir`, antivirus is removing them: restore from **Windows Security -> Virus &
+threat protection -> Protection history**, then from an administrator PowerShell:
+
+```
+Add-MpPreference -ExclusionPath "C:\PsychoVault"
+```
+
 ### What Windows will say
 
 - **"Windows protected your PC" / SmartScreen** — expected for any unsigned executable. Click

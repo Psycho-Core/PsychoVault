@@ -1921,3 +1921,41 @@ a failed build. The one thing that explains extract-then-vanish is antivirus qua
 The user's `install.js` run may simply have succeeded. The first thing to do is
 `dir app\node_modules\electron\dist\electron.exe` - if it is there, the build proceeds and none of
 the above applies.
+
+## Round 49 - step 6 failed without saying which file
+
+Third field report. Steps 2-5 all passed after the runtime was unpacked by hand with
+`curl` + `tar` (17 files, all five DLLs, `locales\`, `resources\`, `version`), then:
+
+```
+[6/8] Checking the staged payload...
+  FAILED: the staged payload is missing files the browser needs
+```
+
+Every one of the fourteen files in that check exists in `app\` - replayed the staging here with
+`tar --exclude=node_modules --exclude=tools` and all fourteen are present and non-empty - so this
+is a copy-side problem on that machine, not a missing source file. The defect in the script is that
+it could not say so: it jumped to a generic message on the first miss and named nothing.
+
+### Fixed
+
+- **Every miss is collected and printed.** `MISSING` accumulates across the runtime list and the
+  app-file list, and the failure echoes the names. It also says which group they came from, since
+  the two have different causes: `resources\app\*` comes from the repo copy (source incomplete, or
+  antivirus deleting during copy), everything else comes from `dist` or the LICENSE/README/
+  VERIFICATION copies.
+- **The payload is now checked for a whole runtime, not one file.** `RUNTIME` requires
+  `icudtl.dat`, `resources.pak`, `snapshot_blob.bin`, `v8_context_snapshot.bin`, `ffmpeg.dll`,
+  `locales` and `resources` - the one-file `dist` from round 48 would have passed the old check and
+  produced a browser that cannot start.
+- **Empty files and a stale `default_app.asar` get their own messages** instead of sharing the
+  generic failure.
+- `BUILD-WINDOWS.md` gains **Runtime is incomplete**: the full file list, the `curl` + `tar`
+  recipe with the pinned SHA-256, and the antivirus recovery.
+
+### Checks
+
+| | |
+| --- | --- |
+| `node --test tools/*.test.cjs` | **91 pass** (3 new: the runtime list, the missing-file reporting, the split failure labels) |
+| `node tools/audit.mjs` | no defects |
