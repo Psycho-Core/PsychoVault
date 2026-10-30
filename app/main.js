@@ -33,7 +33,7 @@ const PANEL_W = 330
 const USER = app.getPath('userData')
 fs.mkdirSync(USER, { recursive: true })
 
-const { toElectronProxy, getResult, toWebRTCPolicy } = require('./ext-proxy')
+const { toElectronProxy, getResult, toWebRTCPolicy, proxyOutcome } = require('./ext-proxy')
 const { findWindowFor } = require('./window-lookup')
 
 // An uncaught throw in the main process used to pop Electron's modal "A JavaScript
@@ -495,11 +495,24 @@ const EXT_MISSING = {
   sidePanel: 'the side panel UI, which this browser has no room for'
 }
 
-function extSessions() {
-  const out = [session.defaultSession]
-  const parts = ['persist:psychovault'].concat((settings.containers || []).map((c) => 'persist:pv-c-' + String(c.name).toLowerCase()))
-  for (const p of parts) { try { out.push(session.fromPartition(p)) } catch (e) { logMainError(e) } }
+// Partitions whose traffic is browsing traffic, so a proxy an extension sets must reach all
+// of them. Private windows are included: a VPN that covers normal windows and not private
+// ones is the most dangerous kind of leak, because private windows are where people expect
+// the most protection.
+const privatePartitions = new Set()
+
+function extPartitions() {
+  const parts = ['persist:psychovault']
+    .concat((settings.containers || []).map((c) => 'persist:pv-c-' + String(c.name).toLowerCase()))
+  const out = [{ name: 'default', ses: session.defaultSession }]
+  for (const p of parts.concat([...privatePartitions])) {
+    try { out.push({ name: p, ses: session.fromPartition(p) }) } catch (e) { logMainError(e) }
+  }
   return out
+}
+
+function extSessions() {
+  return extPartitions().map((x) => x.ses)
 }
 
 function extReadManifest(dir) {
@@ -518,6 +531,13 @@ const shimSessions = new WeakSet()
 const shimWorkers = new WeakSet()
 // What each extension last asked for, so a chrome.proxy settings read can answer honestly.
 const extProxyValues = new Map()
+// What happened the last time an extension asked for a proxy, so Settings can answer
+// "is this browser actually proxied right now" instead of guessing.
+let extProxyState = { value: null, at: 0, applied: 0, leaks: [] }
+// Resolving this tells us what the session would do for ordinary browsing. It is never
+// fetched - resolveProxy() only asks the proxy resolver.
+const PROXY_PROBE_URL = 'https://account.proton.me/'
+
 let extWebRTCPolicy = 'default'
 
 function shimRegister(ses) {
@@ -590,12 +610,30 @@ async function onShimCall(event, payload, channel) {
       // Throws on a malformed config rather than quietly going DIRECT.
       const config = toElectronProxy(payload && payload.value)
       const applied = []
+      const leaks = []
       for (const ses of extSessions()) {
-        try { await ses.setProxy(config); applied.push(ses) } catch (e) { logMainError(e) }
+        try {
+          await ses.setProxy(config)
+          // setProxy resolving only means Chromium accepted the object. Ask the session what
+          // it will actually do; a DIRECT answer here is the silent leak, and the extension
+          // must be told rather than shown a green toggle.
+          const resolved = await ses.resolveProxy(PROXY_PROBE_URL)
+          const outcome = proxyOutcome(config, resolved)
+          if (outcome.ok) applied.push(ses)
+          else leaks.push({ partition: 'a session', resolved, reason: outcome.reason })
+        } catch (e) {
+          logMainError(e)
+          leaks.push({ partition: 'unknown', error: String((e && e.message) || e) })
+        }
       }
-      if (!applied.length) return { ok: false, error: 'no session accepted the proxy configuration' }
+      extProxyState = { value: (payload && payload.value) || null, at: Date.now(), applied: applied.length, leaks }
+      if (!applied.length) {
+        const why = leaks[0] ? (leaks[0].reason || leaks[0].error || 'unknown') : 'no session accepted the proxy configuration'
+        logMainError(new Error('proxy not applied: ' + why))
+        return { ok: false, error: why, leaks }
+      }
       extProxyValues.set(real, (payload && payload.value) || { mode: 'system' })
-      return { ok: true, applied: applied.length }
+      return { ok: true, applied: applied.length, leaks }
     }
 
     if (channel === 'extshim:proxy:clear') {
@@ -603,6 +641,7 @@ async function onShimCall(event, payload, channel) {
         try { await ses.setProxy({ mode: 'system' }) } catch (e) { logMainError(e) }
       }
       extProxyValues.delete(real)
+      extProxyState = { value: null, at: Date.now(), applied: 0, leaks: [] }
       return { ok: true }
     }
 
@@ -1563,6 +1602,7 @@ class TabWindow {
   newSession(container) {
     const partition = this.private ? `pv-private-${Date.now()}`
       : (container ? `persist:pv-c-${container.toLowerCase()}` : 'persist:psychovault')
+    if (this.private) privatePartitions.add(partition)
     const ses = session.fromPartition(partition)
     this.installBlocking(ses)
     applySessionPolicy(ses)
@@ -3342,6 +3382,21 @@ ipcMain.handle('app:info', () => ({
 // request made through that session arrives on that server, Chromium really is routing
 // through the configuration PsychoVault's shim hands it. The user's real sessions are not
 // touched.
+// What the browser is actually doing right now, per partition. This is the question the
+// self-test cannot answer: the self-test proves the plumbing works, this reports whether an
+// extension has a working proxy in place, and what Chromium resolves for real traffic.
+ipcMain.handle('proxy:status', async () => {
+  const rows = []
+  for (const { name, ses } of extPartitions()) {
+    let resolved = ''
+    try { resolved = String(await ses.resolveProxy(PROXY_PROBE_URL)) } catch (e) { resolved = 'unavailable (' + String((e && e.message) || e) + ')' }
+    rows.push({ partition: name, resolved })
+  }
+  const setBy = []
+  for (const [id, value] of extProxyValues) setBy.push({ id, mode: String((value && value.mode) || 'system') })
+  return { ok: true, probe: PROXY_PROBE_URL, rows, setBy, last: extProxyState }
+})
+
 ipcMain.handle('proxy:selftest', async () => {
   const http = require('node:http')
   const hits = { count: 0, firstLine: '' }
@@ -3368,10 +3423,8 @@ ipcMain.handle('proxy:selftest', async () => {
 
   try {
     ses = session.fromPartition('pv-proxy-test-' + Date.now())
-    const config = toElectronProxy({ mode: 'fixed_servers', rules: { singleProxy: { scheme: 'http', host: '127.0.0.1', port }, bypassList: [] } })
-    await ses.setProxy(config)
 
-    const body = await new Promise((resolve, reject) => {
+    const probe = () => new Promise((resolve, reject) => {
       let req
       const timer = setTimeout(() => { try { req && req.abort() } catch { /* closed */ } ; reject(new Error('no answer within 8 seconds')) }, 8000)
       try {
@@ -3388,16 +3441,41 @@ ipcMain.handle('proxy:selftest', async () => {
       req.end()
     })
 
+    // Path one: a fixed rule, which is what Proton uses unless split tunnelling is on.
+    await ses.setProxy(toElectronProxy({
+      mode: 'fixed_servers',
+      rules: { singleProxy: { scheme: 'http', host: '127.0.0.1', port }, bypassList: [] }
+    }))
+    const fixedBody = await probe()
+
+    // Path two: a PAC script, which Proton switches to when split tunnelling is on. This is
+    // the stage that would have caught the raw-source bug - PAC source has to reach Chromium
+    // as a URL, and handing it the source made Chromium fall back to DIRECT.
+    const pacSource = 'function FindProxyForURL(url, host) { return "PROXY 127.0.0.1:' + port + '"; }'
+    await ses.setProxy(toElectronProxy({ mode: 'pac_script', pacScript: { data: pacSource } }))
+    const pacBody = await probe()
+
     const took = Date.now() - started
-    if (hits.count > 0 && body.data.includes('psychovault-proxy-ok')) {
+    const MARK = 'psychovault-proxy-ok'
+    const fixedOk = String(fixedBody.data).includes(MARK)
+    const pacOk = String(pacBody.data).includes(MARK)
+    if (fixedOk && pacOk) {
       return {
-        ok: true, stage: 'done', ms: took, port,
-        detail: 'Chromium sent the request through the proxy configuration PsychoVault gave it (' + hits.firstLine + '). The chrome.proxy shim works in this build, so an extension that sets a proxy really is routed.'
+        ok: true, stage: 'done', ms: took, port, fixed: true, pac: true,
+        detail: 'Both proxy paths work: Chromium sent a request through a fixed proxy rule and through a PAC script (' + hits.firstLine + '), so the chrome.proxy shim in this build really does route traffic.'
+      }
+    }
+    if (!fixedOk && !pacOk) {
+      return {
+        ok: false, stage: 'not-routed', ms: took, port, fixed: false, pac: false,
+        error: 'Neither a fixed proxy rule nor a PAC script was honoured, so Chromium ignored the proxy configuration and traffic goes out unproxied in this build.'
       }
     }
     return {
-      ok: false, stage: 'not-routed', ms: took, port,
-      error: 'The request completed but did not go through the test proxy, so Chromium ignored the proxy setting.'
+      ok: false, stage: fixedOk ? 'pac' : 'fixed', ms: took, port, fixed: fixedOk, pac: pacOk,
+      error: fixedOk
+        ? 'A fixed proxy rule works, but a PAC script was ignored. PAC source is sent to Chromium as a data: URL; if it is ignored, every extension that uses a PAC routes DIRECT.'
+        : 'A PAC script works, but a fixed proxy rule was ignored, which is the form Proton uses by default.'
     }
   } catch (e) {
     return {

@@ -88,7 +88,7 @@ it were restored in the same way.
 | RGX | Contrast/saturation/brightness filters on `video` and `img` elements, two switches, off by default |
 | Sidebar services | Up to 14 services in the rail, each with the site's own favicon and brand colour (a picker has Discord, Twitch, YouTube, YouTube Music, X, Reddit, GitHub, WhatsApp, Telegram, Spotify, Slack, Messenger, ICQ and more; anything else you can add by URL), opened as ordinary tabs, so logins and video players keep working; global media keys route to them and auto-pause the music when another tab starts making sound; right-click a button for open / new window / reload / copy / remove |
 | Spelling | Red wavy underlines in every text field you type in, suggestions and "Add to dictionary" in the right-click menu, and a "your words" box in Settings you can edit in bulk. It is PsychoVault's own checker - a 15,000-word frequency list plus your words, run in the page - because an Electron build cannot load or download dictionaries (tested: no `downloadDictionary`, `<profile>/Dictionaries` is not read, the download URL is never fetched) |
-| Extensions | Chrome-style extensions, installed from an unpacked folder or **.crx** (unpacked here because Electron refuses crx files), loaded into every session including containers, and managed with enable / disable / remove. **`chrome.proxy` and `chrome.privacy` are supplied by PsychoVault's own shim**, so browser VPN extensions can actually set a proxy and harden WebRTC instead of failing silently. Everything else an extension asks for that this engine lacks is named in its card |
+| Extensions | Chrome-style extensions, installed from an unpacked folder or **.crx** (unpacked here because Electron refuses crx files), loaded into every session including containers, and managed with enable / disable / remove. **`chrome.proxy` and `chrome.privacy` are supplied by PsychoVault's own shim**, so browser VPN extensions can actually set a proxy and harden WebRTC instead of failing silently. Everything else an extension asks for that this engine lacks is named in its card. **Settings - Extensions - Check what proxy is in use** reports what each profile would really do with your traffic, so a VPN that says connected but changes nothing can be told apart from one that is not connected |
 | Personality | Synthesised keyboard sounds (no audio files in the repo), six accent colours, and a custom stylesheet box that repaints the chrome
 | Governor | CPU priority limiter and tab sleeping, so background tabs stop costing RAM |
 | Context menus | Right-click a tab, a link, an image, selected text, or a text field (Cut / Copy / Paste / Select all all the way through) |
@@ -131,7 +131,7 @@ Short version - install [Node.js LTS](https://nodejs.org/en/download), extract t
 `C:\PsychoVault`, then double-click **`PsychoVault_easy_build.bat`**. You get
 `build\payload\PsychoVault.exe` (a portable browser you can just run), a
 `Release-Notes-<version>.txt` with the changes and the SHA-256 of what it built, and, if
-[NSIS](https://nsis.sourceforge.io/Download) is installed, `PsychoVault-Setup-1.0.12.exe`.
+[NSIS](https://nsis.sourceforge.io/Download) is installed, `PsychoVault-Setup-1.0.13.exe`.
 
 Feature and extension ideas for what to build next are in [IDEAS.md](IDEAS.md).
 

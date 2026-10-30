@@ -5,7 +5,7 @@
 // back to DIRECT while the extension believes it is protected.
 const test = require('node:test')
 const assert = require('node:assert')
-const { toElectronProxy, getResult, toWebRTCPolicy, proxyServerToRule } = require('../app/ext-proxy.js')
+const { toElectronProxy, getResult, toWebRTCPolicy, proxyServerToRule, proxyOutcome } = require('../app/ext-proxy.js')
 
 test('system, direct and auto_detect pass through as themselves', () => {
   assert.deepStrictEqual(toElectronProxy({ mode: 'system' }), { mode: 'system' })
@@ -15,11 +15,16 @@ test('system, direct and auto_detect pass through as themselves', () => {
   assert.deepStrictEqual(toElectronProxy(undefined), { mode: 'system' })
 })
 
-test('a PAC script from Proton-style settings becomes Electron pacScript', () => {
+test('PAC source becomes a data: URL, because Electron pacScript is a URL', () => {
+  // Electron's docs describe pacScript as "the URL associated with the PAC file". Handing it
+  // the source made Chromium fail to load the PAC and fall back to DIRECT - the silent leak,
+  // where the extension showed "connected" and the public address never changed.
   const pac = 'function FindProxyForURL(url, host) { return "HTTPS proxy.example:4443"; }'
   const out = toElectronProxy({ mode: 'pac_script', pacScript: { data: pac } })
   assert.strictEqual(out.mode, 'pac_script')
-  assert.strictEqual(out.pacScript, pac)
+  assert.match(out.pacScript, /^data:application\/x-ns-proxy-autoconfig;base64,/)
+  assert.strictEqual(Buffer.from(out.pacScript.split(',')[1], 'base64').toString('utf8'), pac)
+  assert.notStrictEqual(out.pacScript, pac, 'raw PAC source was handed over as if it were a URL')
 })
 
 test('a PAC URL is accepted as well as inline data', () => {
@@ -91,4 +96,33 @@ test('WebRTC policies are limited to the names Chromium accepts', () => {
   assert.strictEqual(toWebRTCPolicy('disable_non_proxied_udp'), 'disable_non_proxied_udp')
   assert.strictEqual(toWebRTCPolicy(undefined), 'default')
   assert.throws(() => toWebRTCPolicy('protect_everything'), /unsupported webRTCIPHandlingPolicy/)
+})
+
+test('a proxy that resolves to DIRECT is reported as not applied', () => {
+  const config = toElectronProxy({ mode: 'fixed_servers', rules: { singleProxy: { scheme: 'https', host: 'nl-1.protonvpn.net', port: 4443 } } })
+  const out = proxyOutcome(config, 'DIRECT')
+  assert.strictEqual(out.ok, false)
+  assert.match(out.reason, /DIRECT/)
+})
+
+test('a proxy that resolves to the requested server is accepted', () => {
+  const fixed = toElectronProxy({ mode: 'fixed_servers', rules: { singleProxy: { scheme: 'https', host: 'nl-1.protonvpn.net', port: 4443 } } })
+  assert.strictEqual(proxyOutcome(fixed, 'HTTPS nl-1.protonvpn.net:4443').ok, true)
+  const http = toElectronProxy({ mode: 'fixed_servers', rules: { singleProxy: { scheme: 'http', host: 'proxy.local', port: 8080 } } })
+  assert.strictEqual(proxyOutcome(http, 'PROXY proxy.local:8080').ok, true)
+})
+
+test('a different proxy than the one asked for is rejected', () => {
+  const config = toElectronProxy({ mode: 'fixed_servers', rules: { singleProxy: { host: 'wanted.example', port: 1 } } })
+  assert.strictEqual(proxyOutcome(config, 'PROXY other.example:8080').ok, false)
+})
+
+test('direct and system modes are not leaks', () => {
+  assert.strictEqual(proxyOutcome({ mode: 'direct' }, 'DIRECT').ok, true)
+  assert.strictEqual(proxyOutcome({ mode: 'system' }, 'DIRECT').ok, true)
+})
+
+test('an empty resolution is a failure, not a pass', () => {
+  const config = toElectronProxy({ mode: 'pac_script', pacScript: { data: 'x' } })
+  assert.strictEqual(proxyOutcome(config, '').ok, false)
 })
