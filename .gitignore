@@ -21,6 +21,7 @@ electron*.zip
 
 # --- secrets: never commit any of these
 update-token.json
+publish-token.json
 app/update-token.json
 *-signing-key.pem
 update-private-key*

@@ -9,7 +9,7 @@ There are three levels. Pick the one you want — you can always do more later.
 |---|---|---|---|
 | **A. Just run it** | The real browser, straight from the source folder | 3 min | Node.js |
 | **B. Portable exe** | `build\payload\PsychoVault.exe` — a rebranded, double-clickable browser | 5 min | Node.js |
-| **C. Full installer** | `PsychoVault-Setup-1.0.24.exe` — shortcuts, uninstall entry | 8 min | Node.js + NSIS |
+| **C. Full installer** | `PsychoVault-Setup-1.0.25.exe` — shortcuts, uninstall entry | 8 min | Node.js + NSIS |
 
 The script does levels A→C automatically. If NSIS is missing it simply stops after level B and
 tells you.
@@ -95,14 +95,14 @@ Electron. What it is doing:
    the unused 10 MB `app\tools\wireproxy.exe`
 6. checks the payload before packaging anything: every file the browser needs is present and
    non-empty, and the old `default_app.asar` is gone. If that check fails the build stops there
-7. if NSIS is installed, builds `PsychoVault-Setup-1.0.24.exe` in the repo root
+7. if NSIS is installed, builds `PsychoVault-Setup-1.0.25.exe` in the repo root
 8. writes `Release-Notes-1.0.12.txt` next to the script
 
 When it finishes you get:
 
 ```
 C:\PsychoVault\build\payload\PsychoVault.exe     <- just run this
-C:\PsychoVault\PsychoVault-Setup-1.0.24.exe      <- only if NSIS was installed
+C:\PsychoVault\PsychoVault-Setup-1.0.25.exe      <- only if NSIS was installed
 C:\PsychoVault\Release-Notes-1.0.12.txt         <- what changed, and the SHA-256 of both
 ```
 
@@ -207,6 +207,49 @@ It is already git-ignored, so it can never be committed. Re-run the build script
 can then see new versions.
 
 If you skip this, the browser itself works fine — only the update check is unavailable.
+
+---
+
+## Publishing the build as a release
+
+Step 9 of `PsychoVault_easy_build.bat` asks whether to post the build to GitHub. Answer `y` and it
+creates (or updates) release `v<version>` with:
+
+- the installer, `PsychoVault-Setup-<version>.exe`
+- `update-manifest.json` and `update-manifest.sig`, if a signing key is present
+- the release notes from `release-notes/<version>.txt`, plus the size and SHA-256 of what it built
+
+It needs a token with **Contents: read and write** on this repository — the read-only token in
+`app\update-token.json` is not enough, and must not be reused. Put the write token in
+`publish-token.json` at the repo root:
+
+```json
+{"token":"github_pat_PASTE_YOURS_HERE"}
+```
+
+That file is git-ignored. Keep it out of `app\`, because everything in `app\` is copied into the
+build and shipped to users. `GITHUB_TOKEN` in the environment works too, and takes priority.
+
+Publishing is never automatic: it asks every time, `N` is the default answer, and a failed publish
+never fails a build that already produced an installer. To skip the question, set `PV_PUBLISH=y`
+or `PV_PUBLISH=n` before running the script.
+
+### Signing, so the in-app updater accepts the release
+
+The updater only trusts a release whose `update-manifest.json` is signed with the key matching
+`app\update-public-key.pem`. Put the private key next to the script as `update-private-key.pem`
+(it is git-ignored), and step 9 signs the manifest before uploading. Without it the release is
+still published, but the banner will not offer it — the release body says which of the two
+happened.
+
+### Checking before it goes public
+
+```
+node tools\publish-release.mjs --dry-run
+```
+
+prints the exact release body and the assets it would upload, without contacting GitHub. Add
+`--draft` to create a draft instead of a published release.
 
 ---
 
