@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "PsychoVault Proxy Switch",
+  "version": "1.0.0",
+  "description": "Sends browser traffic through a proxy or VPN endpoint you supply, using the same chrome.proxy path a VPN extension uses. A test you can see working.",
+  "permissions": ["proxy", "storage"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Proxy Switch",
+    "default_popup": "popup.html"
+  }
+}

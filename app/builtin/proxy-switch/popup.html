@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Proxy Switch</title>
+<style>
+  body { font: 13px/1.45 system-ui, sans-serif; margin: 0; padding: 14px; width: 320px;
+         background: #101a2b; color: #e6eefc; }
+  h1 { font-size: 14px; margin: 0 0 8px; }
+  p { margin: 0 0 10px; color: #9fb3d1; }
+  label { display: block; margin: 8px 0 3px; color: #9fb3d1; }
+  input, select { width: 100%; box-sizing: border-box; padding: 6px; border-radius: 6px;
+                  border: 1px solid #2a3c58; background: #0b1320; color: #e6eefc; }
+  .row { display: flex; gap: 8px; }
+  button { margin-top: 10px; padding: 7px 10px; border-radius: 6px; border: 1px solid #2a3c58;
+           background: #17a2b8; color: #04121a; font-weight: 600; cursor: pointer; }
+  button.plain { background: transparent; color: #9fb3d1; }
+  #status { margin-top: 10px; white-space: pre-wrap; color: #7ee0c0; }
+</style>
+</head>
+<body>
+  <h1>Proxy Switch</h1>
+  <p>Sends this browser's traffic through a proxy. Use the host and port your VPN gives you.</p>
+  <label for="scheme">Type</label>
+  <select id="scheme">
+    <option value="http">HTTP</option>
+    <option value="https">HTTPS</option>
+    <option value="socks5">SOCKS5</option>
+  </select>
+  <label for="host">Host</label>
+  <input id="host" placeholder="127.0.0.1" spellcheck="false">
+  <label for="port">Port</label>
+  <input id="port" placeholder="8080" inputmode="numeric" spellcheck="false">
+  <button id="apply">Use this proxy</button>
+  <button id="clear" class="plain">Back to direct</button>
+  <div id="status"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

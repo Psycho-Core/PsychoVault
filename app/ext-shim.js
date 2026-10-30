@@ -48,12 +48,6 @@ if (isExtension) {
     report: (info) => ipcRenderer.invoke('extshim:report', { id, info })
   }
 
-  try {
-    contextBridge.exposeInMainWorld(BRIDGE_NAME, bridge)
-  } catch (e) {
-    // Already exposed in this realm - harmless on re-injection.
-  }
-
   // Runs in the extension's own JavaScript world, where `chrome` lives.
   const installAPIs = (bridgeName) => {
     const g = typeof globalThis !== 'undefined' ? globalThis : self
@@ -165,12 +159,31 @@ if (isExtension) {
     try { b.report({ proxy: proxyInstalled, privacy: privacyInstalled }) } catch (e) { /* bridge gone */ }
   }
 
-  try {
-    if (typeof contextBridge.executeInMainWorld === 'function') {
-      contextBridge.executeInMainWorld({ func: installAPIs, args: [BRIDGE_NAME] })
+  if (isServiceWorker) {
+    // A service worker has no separate "main world" for executeInMainWorld to reach, which
+    // is why this never installed anything for Proton: its background is js/service.js, an
+    // MV3 service worker, and every proxy call it made hit Chromium's stub instead.
+    // A service-worker preload shares the worker's global scope, so assigning here is seen
+    // by background code directly - no bridge hop needed.
+    try {
+      Object.defineProperty(globalThis, BRIDGE_NAME, { value: bridge, configurable: true, enumerable: false })
+    } catch (e) {
+      try { globalThis[BRIDGE_NAME] = bridge } catch (e2) { /* nothing else to try */ }
     }
-  } catch (e) {
-    // If the injection fails the extension will report that chrome.proxy is missing, which
-    // is the honest outcome - no half-installed API is left behind.
+    try { installAPIs(BRIDGE_NAME) } catch (e) { /* report channel stays silent */ }
+  } else {
+    try {
+      contextBridge.exposeInMainWorld(BRIDGE_NAME, bridge)
+    } catch (e) {
+      // Already exposed in this realm - harmless on re-injection.
+    }
+    try {
+      if (typeof contextBridge.executeInMainWorld === 'function') {
+        contextBridge.executeInMainWorld({ func: installAPIs, args: [BRIDGE_NAME] })
+      }
+    } catch (e) {
+      // If the injection fails the extension will report that chrome.proxy is missing, which
+      // is the honest outcome - no half-installed API is left behind.
+    }
   }
 }

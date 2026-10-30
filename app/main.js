@@ -471,7 +471,10 @@ const EXT_ROOT = path.join(USER, 'extensions')
 // it is built from a pinned commit and written to the profile on first run. The user can turn
 // it off or remove it like any other extension; a removal is remembered and not re-added.
 const EXT_BUILTIN = [
-  { key: 'proton-vpn', label: 'Proton VPN', source: path.join(__dirname, 'builtin', 'proton-vpn') }
+  { key: 'proton-vpn', label: 'Proton VPN', source: path.join(__dirname, 'builtin', 'proton-vpn') },
+  // A deliberately small extension that sets a proxy through chrome.proxy and shows the
+  // result, so the same path a VPN extension uses can be seen working - or seen failing.
+  { key: 'proxy-switch', label: 'Proxy Switch', source: path.join(__dirname, 'builtin', 'proxy-switch') }
 ]
 
 // Permissions this engine implements. Anything outside the list is either unknown to it or
