@@ -1420,3 +1420,63 @@ An authenticated round trip. This container cannot reach `api.github.com` unauth
 private repository in the way a user's machine would, and there is no token to test with - the
 owner has to create it. What is proven is the decision logic, the wiring, and that the build
 carries the credential only into a gitignored file inside the installer.
+
+## Round 40 - the window lookup that could not see the window, and a proxy self-test
+
+Reported from a screenshot: **"could not open popup.html: no window to open it in"** - a message
+added in round 37 to stop the button failing silently. It named the failing step, and the step
+was `findWin`.
+
+### The bug
+
+    function findWin(e) { return [...mainWindows].find(w => w.win.webContents === e.sender) }
+
+That matches only the **chrome UI** - the window's own webContents. Settings is not the chrome UI:
+it is a `WebContentsView` owned by a *tab* (recall `go()` loads `ui/settings.html` into a tab).
+So every IPC message sent from Settings resolved to no window at all. "Open its window" could
+never have worked from Settings in any shipped version, and neither could anything else in
+Settings that needs a window.
+
+Fixed by extracting the lookup into `app/window-lookup.js`, which checks the window's own
+webContents *and* every tab's view, tolerant of destroyed windows (reading `.tabs` from a closed
+window throws, so even the property access is guarded). `ext:openpage` additionally falls back to
+any live window, because opening a tab needs *a* window, not the sender's.
+
+Seven tests in `tools/window-lookup.test.cjs`, and writing them caught two real defects:
+
+- the destroyed-window case threw instead of being skipped - the property access itself was
+  unguarded, so a closed window could break a lookup made for an open one;
+- (in the test itself) object identity was assumed where the code compares by identity, which is
+  worth knowing before trusting the same comparison elsewhere.
+
+### The proxy self-test
+
+"The VPN does not change my IP" conflates two failures: the extension never got a proxy applied,
+or the extension is not connected. **Settings - Extensions - Test proxy support** separates them
+without a debugger. It starts a throwaway HTTP server on 127.0.0.1, creates an in-memory
+session, applies a `fixed_servers` proxy pointing at that server *through the same
+`toElectronProxy()` the shim uses*, requests `http://psychovault-proxy-test.invalid/` through
+that session, and reports whether the request arrived.
+
+- **PASS** means Chromium honoured the configuration PsychoVault hands to extensions, so a VPN
+  extension that sets a proxy really is routed, and any remaining failure is the extension's
+  own connection.
+- **FAIL** means the shim is not reaching the network stack, and no extension of this kind can
+  work until that is fixed.
+
+The user's real sessions are untouched: the test uses its own partition, then clears the proxy
+and storage.
+
+### Checks
+
+| | |
+| --- | --- |
+| `node --test tools/*.test.cjs` | **39 pass** (7 new) |
+| `node tools/audit.mjs` | no defects |
+| IPC parity | `proxy:selftest` registered, bridged in `page-preload.js`, called from Settings |
+
+### Not fixed by this round
+
+Whether Proton VPN's tunnel comes up. If the self-test passes and the extension still does not
+connect, the next suspect is `chrome.webRequest.onAuthRequired` supplying the proxy credentials -
+still unverified on a real Windows run.
