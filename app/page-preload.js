@@ -46,7 +46,9 @@ if (isInternal) {
       info: () => invoke('app:info')
     },
     updates: {
-      check: () => invoke('update:check')
+      check: () => invoke('update:check'),
+      tokenstate: () => invoke('update:tokenstate'),
+      settoken: (token) => invoke('update:settoken', token)
     },
     extensions: {
       list: () => invoke('ext:list'),

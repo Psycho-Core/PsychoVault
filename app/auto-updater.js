@@ -4,7 +4,8 @@ const fs = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
 const { spawn } = require('node:child_process')
-const { app, BrowserWindow, dialog, net } = require('electron')
+const { app, BrowserWindow, dialog, net, safeStorage } = require('electron')
+const { shouldKeepAuthorization, authHeader, tokenSource, apiAssetUrl } = require('./update-auth')
 const {
   REPOSITORY,
   PLATFORM,
@@ -21,6 +22,68 @@ const MAX_API_BYTES = 4 * 1024 * 1024
 const MAX_MANIFEST_BYTES = 64 * 1024
 const REQUEST_TIMEOUT_MS = 20000
 const DOWNLOAD_TIMEOUT_MS = 20 * 60 * 1000
+// Bundled at build time from the UPDATE_READ_TOKEN Actions secret; the file is gitignored and
+// only ever exists inside a packaged build. A user can override it from Settings, and the
+// override is encrypted with the OS keychain where one exists.
+const BUNDLED_TOKEN_PATH = path.join(__dirname, 'update-token.json')
+const OVERRIDE_TOKEN_FILE = 'update-token.bin'
+let cachedToken
+
+function readBundledToken() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(BUNDLED_TOKEN_PATH, 'utf8'))
+    return typeof parsed.token === 'string' ? parsed.token.trim() : ''
+  } catch { return '' }
+}
+
+function readOverrideToken() {
+  try {
+    const file = path.join(app.getPath('userData'), OVERRIDE_TOKEN_FILE)
+    const raw = fs.readFileSync(file)
+    if (safeStorage.isEncryptionAvailable()) return safeStorage.decryptString(raw).trim()
+    // No OS keychain: the file is ours, mode 0600, and the user was told in Settings.
+    return raw.toString('utf8').trim()
+  } catch { return '' }
+}
+
+function updateToken() {
+  if (cachedToken !== undefined) return cachedToken
+  cachedToken = readOverrideToken() || readBundledToken()
+  return cachedToken
+}
+
+function forgetToken() { cachedToken = undefined }
+
+function tokenState() {
+  const bundled = readBundledToken()
+  const override = readOverrideToken()
+  return {
+    source: tokenSource(bundled, !!override),
+    hasToken: !!(override || bundled),
+    bundled: !!bundled,
+    override: !!override,
+    encryption: safeStorage.isEncryptionAvailable() ? 'os-keychain' : 'plain'
+  }
+}
+
+function setOverrideToken(token) {
+  const value = String(token || '').trim()
+  const file = path.join(app.getPath('userData'), OVERRIDE_TOKEN_FILE)
+  if (!value) {
+    try { fs.rmSync(file, { force: true }) } catch { /* already gone */ }
+    forgetToken()
+    return { ok: true, removed: true }
+  }
+  if (!authHeader(value)) return { ok: false, error: 'That does not look like a valid token (it must be printable with no spaces).' }
+  try {
+    const payload = safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(value) : Buffer.from(value, 'utf8')
+    fs.writeFileSync(file, payload, { mode: 0o600 })
+    forgetToken()
+    return { ok: true, encryption: safeStorage.isEncryptionAvailable() ? 'os-keychain' : 'plain' }
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) }
+  }
+}
 
 function safeProgress(callback, payload) {
   try { callback(payload) } catch { /* update progress must never break the browser */ }
@@ -39,7 +102,7 @@ class UpdateCheckError extends Error {
   }
 }
 
-function requestBuffer(url, { maxBytes = MAX_API_BYTES, timeoutMs = REQUEST_TIMEOUT_MS, headers = {} } = {}) {
+function requestBuffer(url, { maxBytes = MAX_API_BYTES, timeoutMs = REQUEST_TIMEOUT_MS, headers = {}, allowRedirectHeaderDrop = true } = {}) {
   return new Promise((resolve, reject) => {
     let request
     let response
@@ -59,10 +122,30 @@ function requestBuffer(url, { maxBytes = MAX_API_BYTES, timeoutMs = REQUEST_TIME
     }, timeoutMs)
 
     try {
-      request = net.request({ url, method: 'GET', redirects: 'follow', useSessionCookies: false })
+      request = net.request({ url, method: 'GET', redirects: 'manual', useSessionCookies: false })
     } catch (error) {
       finish(error)
       return
+    }
+    // Redirects are followed by hand so the credential can be dropped the moment the target
+    // host changes. net.request's 'follow' would carry Authorization to the CDN host.
+    // Fail closed: if the credential cannot be dropped before the target host changes, the
+    // redirect is abandoned rather than followed with the token still attached.
+    const dropCredential = () => {
+      try {
+        request.removeHeader('Authorization')
+        return !request.getHeader('Authorization')
+      } catch { return false }
+    }
+    if (allowRedirectHeaderDrop) {
+      request.on('redirect', (_status, _method, redirectUrl) => {
+        if (!shouldKeepAuthorization(url, redirectUrl) && !dropCredential()) {
+          finish(new Error('Refused a redirect that would have carried the release token to another host.'))
+          try { request.abort() } catch { /* already closed */ }
+          return
+        }
+        request.followRedirect()
+      })
     }
     request.on('response', (res) => {
       response = res
@@ -86,6 +169,8 @@ function requestBuffer(url, { maxBytes = MAX_API_BYTES, timeoutMs = REQUEST_TIME
     })
     request.on('error', finish)
     request.setHeader('User-Agent', USER_AGENT)
+    const auth = authHeader(updateToken())
+    if (auth) request.setHeader('Authorization', auth.Authorization)
     for (const [name, value] of Object.entries(headers)) request.setHeader(name, value)
     request.end()
   })
@@ -160,11 +245,26 @@ function downloadInstaller(url, destination, manifest, onProgress) {
     }
 
     try {
-      request = net.request({ url, method: 'GET', redirects: 'follow', useSessionCookies: false })
+      request = net.request({ url, method: 'GET', redirects: 'manual', useSessionCookies: false })
     } catch (error) {
       fail(error)
       return
     }
+    request.on('redirect', (_status, _method, redirectUrl) => {
+      if (!shouldKeepAuthorization(url, redirectUrl)) {
+        let dropped = false
+        try {
+          request.removeHeader('Authorization')
+          dropped = !request.getHeader('Authorization')
+        } catch { dropped = false }
+        if (!dropped) {
+          fail(new Error('Refused a redirect that would have carried the release token to another host.'))
+          try { request.abort() } catch { /* already closed */ }
+          return
+        }
+      }
+      request.followRedirect()
+    })
     request.on('response', (res) => {
       response = res
       if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
@@ -207,6 +307,8 @@ function downloadInstaller(url, destination, manifest, onProgress) {
     request.on('error', fail)
     request.setHeader('User-Agent', USER_AGENT)
     request.setHeader('Accept', 'application/octet-stream')
+    const auth = authHeader(updateToken())
+    if (auth) request.setHeader('Authorization', auth.Authorization)
     request.end()
   })
 }
@@ -249,10 +351,15 @@ async function checkForUpdates({ onProgress = () => {}, onError = () => {} } = {
     const status = e && e.status ? e.status : 0
     const classified = classifyCheckFailure(status, e && e.message)
     if (classified.reason === 'repository-private') {
+      const state = tokenState()
       const error = new Error(
-        `The update check was refused with HTTP 404 for ${REPOSITORY}. That is what GitHub answers ` +
-        'to an unauthenticated request for a private repository, so automatic updates cannot work ' +
-        'while it stays private. Nothing was downloaded and nothing was changed.'
+        `The update check was refused with HTTP 404 for ${REPOSITORY}. GitHub answers that to a ` +
+        'request it cannot authorise, so this repository is private and the check arrived without ' +
+        'a usable token. ' +
+        (state.hasToken
+          ? `A token is configured (from ${state.source}) but GitHub still refused it - it may have expired or been revoked. Replace it in Settings - About.`
+          : 'Add a read-only token in Settings - About, or ship one in the build with the UPDATE_READ_TOKEN secret. ') +
+        'Nothing was downloaded and nothing was changed.'
       )
       try { onError(error) } catch { /* diagnostics are best effort */ }
       return { skipped: true, reason: 'repository-private', status }
@@ -388,4 +495,4 @@ function checkOnStartup(options = {}) {
   return timer
 }
 
-module.exports = { checkForUpdates, checkOnStartup }
+module.exports = { checkForUpdates, checkOnStartup, tokenState, setOverrideToken, apiAssetUrl }
