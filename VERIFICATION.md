@@ -1649,3 +1649,57 @@ failure it hits will print a labelled message rather than a silent exit.
 links for Node.js, NSIS, Git, GitHub CLI and 7-Zip, plus the `update-token.json` recipe for making
 the update banner work in a self-built copy. `IDEAS.md` collects the feature and extension
 suggestions.
+
+## Round 44 - auditing the easy build script
+
+`PsychoVault_easy_build.bat` was shipped in round 43 without ever being run, because this
+container has no Windows and no `cmd`. This round it was audited instead: everything that can be
+checked mechanically now is, and the defects that check found were fixed.
+
+### What was verified, and how
+
+| Check | Method | Result |
+| --- | --- | --- |
+| Electron unpack layout | read `electron@45.1.0`'s own `install.js` from the npm registry: it extracts the platform zip into `node_modules/electron/dist` and writes `path.txt` | `dist\electron.exe` is the right path - confirmed |
+| `npm ci` in `tools\` | ran it here | exit 0, `resedit` + `pe-library` installed |
+| icon and version stamping | ran `tools/patch-exe.mjs` against a real PE with resources (a copy of `distlib`'s `t64.exe`) | `patched ... PsychoVault 1.0.12, 4 icon sizes`, exit 0 |
+| steps 3-5 end to end | reproduced them on a fake Electron tree (exe at root, `resources/default_app.asar`, `locales`, `version`) | payload had `PsychoVault.exe`, no `electron.exe`, no `default_app.asar`, no `node_modules`, and a byte-identical `resources/app/main.js` |
+| NSIS contract | parsed `installer.nsi` for `!ifndef` defines and `${PAYLOADDIR}` files, compared against the script | all four defines passed, `LICENSE.txt` copied |
+
+### Defects found by the audit, and fixed
+
+1. **The SHA-256 never appeared.** `EXEHASH` was seeded with the literal `unknown` and then
+   guarded with `if not defined EXEHASH`, which can never be true once it is seeded. The notes
+   would always have printed `unknown`. Now the variable starts empty, the first `certutil` line
+   is kept, and there is an `unavailable` fallback.
+2. **Nothing checked the payload.** The shell build byte-compares against source; the batch file
+   trusted the copy. Step 6 now checks 14 files exist and are non-empty, and that
+   `default_app.asar` is gone, before NSIS is allowed to package anything.
+3. **An unreadable version failed at the wrong step.** A malformed `app\package.json` version
+   used to surface as "could not set the icon", which is misleading. There is now a three-part
+   version check before it reaches `patch-exe` or NSIS.
+4. **`app\tools\wireproxy.exe` was being packaged.** 10.6 MB of dead binary, described in
+   `app\tools\README.md` as never launched. It is now excluded from the payload copy.
+5. **A token could be packaged without a warning.** If `app/update-token.json` exists but is not
+   in `.gitignore`, the script now says so (the shell build refuses outright).
+6. **Paths cmd cannot parse.** A repo folder containing `(` or `&` broke the unquoted echo lines
+   halfway through the build. That is now detected up front with an explanation.
+7. A multi-line `echo` with an unmatched quote, and an `echo All ... files accounted for` that
+   read as nonsense. Both reworded.
+
+### New: the script is now checked by the test suite
+
+`tools/easy-build.test.cjs` adds **26 assertions** to `node --test tools/*.test.cjs`:
+ASCII-only and CRLF-only encoding, `goto` targets that all resolve, no duplicate labels, balanced
+quotes and parentheses, no destructive command aimed at the repo root, the eight step labels being
+sequential and agreeing on the total, `node_modules` and `app\tools` excluded, payload verification
+running before `makensis`, release notes written after the installer, the hash-capture idiom, the
+version guard, the path guard, doubled `%%APPDATA%%` in note text, and every `%ROOT%`-relative path
+existing in the repo. It caught one of my own edits during this round - a label duplicated by a
+bad string replacement - which is the reason it exists.
+
+### Still not verified
+
+The batch file has still never been executed by `cmd.exe`. What is proven is its structure, its
+encoding, the tools it calls, and the layout it produces; what cannot be proven here is Windows'
+own command parsing. Every failure path prints a labelled message rather than dying silently.

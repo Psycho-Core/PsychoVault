@@ -84,22 +84,32 @@ In that folder, **double-click `PsychoVault_easy_build.bat`**.
 (If Windows asks how to open it, choose Command Prompt. If you prefer a terminal:
 `cd /d C:\PsychoVault` then `PsychoVault_easy_build.bat`.)
 
-It prints six numbered steps and takes 3–6 minutes the first time, mostly downloading Electron.
-What it is doing:
+It prints eight numbered steps and takes 3–6 minutes the first time, mostly downloading
+Electron. What it is doing:
 
-1. finds Node.js and reads the version from `app\package.json`
+1. finds Node.js and reads the three-part version from `app\package.json`
 2. `npm install` in `app\` → downloads the Electron 45 Windows runtime
 3. copies that runtime to `build\payload\` and renames `electron.exe` → `PsychoVault.exe`
 4. `npm ci` in `tools\` → downloads `resedit`, which stamps your icon and version onto the exe
-5. copies the browser source into `build\payload\resources\app` (excluding `node_modules`)
-6. if NSIS is installed, builds `PsychoVault-Setup-1.0.12.exe` in the repo root
+5. copies the browser source into `build\payload\resources\app`, skipping `node_modules` and
+   the unused 10 MB `app\tools\wireproxy.exe`
+6. checks the payload before packaging anything: every file the browser needs is present and
+   non-empty, and the old `default_app.asar` is gone. If that check fails the build stops there
+7. if NSIS is installed, builds `PsychoVault-Setup-1.0.12.exe` in the repo root
+8. writes `Release-Notes-1.0.12.txt` next to the script
 
 When it finishes you get:
 
 ```
 C:\PsychoVault\build\payload\PsychoVault.exe     <- just run this
 C:\PsychoVault\PsychoVault-Setup-1.0.12.exe      <- only if NSIS was installed
+C:\PsychoVault\Release-Notes-1.0.12.txt         <- what changed, and the SHA-256 of both
 ```
+
+The release notes list the version, the Electron runtime, the SHA-256 of the portable exe and of
+the installer (when one was built), the last ten commit subjects if you cloned with Git, how to
+run each build, and the unsigned-build warning. If you extracted a ZIP instead of cloning, it says
+so instead of inventing a change list.
 
 The script offers to start the browser for you at the end.
 
