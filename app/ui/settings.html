@@ -359,8 +359,10 @@
       <button class="mini" id="protonVpnRestore" type="button">Restore / reinstall Proton VPN</button>
       <button class="mini" id="protonVpnStatus" type="button">Check install</button>
       <button class="mini" id="proxySelfTest" type="button">Test proxy support</button>
+      <button class="mini" id="proxyStatus" type="button">Check what proxy is in use</button>
     </div>
     <div class="hint" id="proxySelfTestResult"></div>
+    <div class="hint" id="proxyStatusResult">If the VPN says connected but your IP does not change, press <b>Check what proxy is in use</b>. It reports what Chromium would really do with your traffic, per profile.</div>
     <div class="hint" id="protonVpnState">Press <b>Check install</b> to see what the bundled extension did at startup.</div>
     <div id="extList" class="ext-list"></div>
     <div class="btnrow">
@@ -892,6 +894,28 @@
       s('proxySelfTestResult').textContent = r && r.ok
         ? 'PASS - ' + (r.detail || 'the proxy configuration was applied.') + (r.ms ? ' (' + r.ms + ' ms)' : '')
         : 'FAIL - ' + ((r && r.error) || 'no reason given') + (r && r.stage ? ' [stage: ' + r.stage + ']' : '')
+    }
+    if (s('proxyStatus')) s('proxyStatus').onclick = async () => {
+      s('proxyStatus').disabled = true
+      s('proxyStatusResult').textContent = 'Asking each profile what it would do with your traffic\u2026'
+      let r = null
+      try { r = await window.pv.proxy.status() } catch (e) { r = { ok: false, error: String((e && e.message) || e) } }
+      s('proxyStatus').disabled = false
+      if (!r || !r.ok) {
+        s('proxyStatusResult').textContent = 'Could not read the proxy state: ' + ((r && r.error) || 'no reason given')
+        return
+      }
+      const parts = []
+      for (const row of r.rows || []) {
+        const direct = /^direct\b/i.test(String(row.resolved || ''))
+        parts.push(row.partition + ': ' + (row.resolved || 'no answer') + (direct ? '  <- not proxied' : ''))
+      }
+      const who = (r.setBy || []).length
+        ? 'Set by ' + r.setBy.map((x) => x.id + ' (' + x.mode + ')').join(', ') + '.'
+        : 'No extension has set a proxy.'
+      const leaks = (r.last && r.last.leaks) || []
+      const warn = leaks.length ? ' Last attempt was refused: ' + leaks[0].reason : ''
+      s('proxyStatusResult').textContent = parts.join(' | ') + ' \u2014 ' + who + warn
     }
     if (s('protonVpnStatus')) s('protonVpnStatus').onclick = paintBuiltinStatus
     if (s('protonVpnRestore')) s('protonVpnRestore').onclick = async () => {

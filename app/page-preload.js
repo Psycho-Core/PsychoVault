@@ -46,7 +46,8 @@ if (isInternal) {
       info: () => invoke('app:info')
     },
     proxy: {
-      selftest: () => invoke('proxy:selftest')
+      selftest: () => invoke('proxy:selftest'),
+      status: () => invoke('proxy:status')
     },
     updates: {
       check: () => invoke('update:check'),

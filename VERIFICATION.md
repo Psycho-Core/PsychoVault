@@ -1756,3 +1756,73 @@ Whether the scheduled run actually starts: that depends on the quota having rese
 billing page can confirm, and scheduled runs may be delayed by GitHub under load. The merge that
 adds this file also triggers a push build, which will fail at job start for the same billing reason
 - that is expected, and it is not the schedule failing.
+
+## Round 46 - why the Proton tunnel did not change the IP
+
+Reported after 1.0.11: the extension says connected, the public address is unchanged. Reading
+Proton's bundled background script shows it calls `chrome.proxy.settings.set` with one of two
+payloads, and that the popup sets its own "connected" state *before* awaiting the proxy call - so
+a failed proxy application still shows a green toggle. Both payloads were replayed through
+`app/ext-proxy.js`.
+
+### The defect, against Electron's own documentation
+
+```js
+// Proton, when split tunnelling is on:
+{ mode: 'pac_script', pacScript: { data: '<PAC source>' } }
+```
+
+Electron's `ProxyConfig` says, of `pacScript`: **"The URL associated with the PAC file."** The shim
+was passing the *source* straight through, so Chromium had no URL to fetch, failed to load the PAC
+and fell back to DIRECT - the extension was told the tunnel was up while every request went out
+unproxied. `tools/ext-proxy.test.cjs` asserted that behaviour (`assert.strictEqual(out.pacScript,
+pac)`), so the bug was pinned in place by a test that described it rather than by what Chromium
+requires.
+
+Fixed: `pacDataUrl()` wraps the source as
+`data:application/x-ns-proxy-autoconfig;base64,...`, which is a URL, so the PAC is actually loaded.
+The test now decodes the data URL and asserts the source round-trips byte for byte.
+
+### The second defect: success was never checked
+
+`session.setProxy()` resolving means Chromium accepted the object - not that the session uses a
+proxy. An unloadable PAC, an empty rule or a rejected config all resolve to DIRECT, and the shim
+reported `ok: true` regardless. For a VPN that is the dangerous failure, because nothing anywhere
+says traffic is unprotected.
+
+Fixed: every apply is followed by `session.resolveProxy()`, and `proxyOutcome()` decides from that
+answer. A DIRECT answer, a different proxy than the one requested, or no answer at all now returns
+`ok: false` with the reason, which the shim turns into `chrome.proxy.onProxyError` - so the
+extension sees the failure instead of believing it succeeded - and logs it.
+
+### New: a way to see it without a debugger
+
+- **Settings - Extensions - Check what proxy is in use** (`proxy:status`): resolves a real URL per
+  partition and prints `persist:psychovault: DIRECT <- not proxied`, plus which extension set a
+  proxy and why the last attempt was refused. This distinguishes the three cases that used to look
+  identical: not connected, connected but not applied, applied to the wrong profile.
+- **Test proxy support** now exercises **both** paths, fixed rule and PAC, and names the one that
+  failed. Before, it only tested a fixed rule - which would have passed while Proton's PAC path
+  stayed broken.
+
+### Also fixed while in there
+
+Private windows (`pv-private-*`) were missing from `extSessions()`, so an extension's proxy would
+have covered normal windows and left private ones unproxied. Private partitions are now registered
+when created and included.
+
+### Checks
+
+| | |
+| --- | --- |
+| `node --test tools/*.test.cjs` | **84 pass** (7 new proxy cases, 12 before) |
+| `node tools/audit.mjs` | no defects |
+| `proxyOutcome` matrix | 8/8 - DIRECT, wrong proxy, empty answer, direct/system modes, fixed and PAC |
+| version | 1.0.13 |
+
+### Still unproven here
+
+Whether this is the *only* reason the address did not change on the user's machine: this container
+cannot run Electron, and Proton's default path (fixed rule) was already translating correctly. The
+new status readout answers it directly - if it still says `DIRECT` after connecting, the extension
+is not applying a proxy at all and the next step is its own sign-in/connection flow, not this shim.
