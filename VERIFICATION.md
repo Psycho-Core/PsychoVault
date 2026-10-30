@@ -1875,3 +1875,49 @@ Only after all three does it stop, and the message now names the three causes in
 The script reported a precise, actionable failure and stopped before packaging anything, which is
 the behaviour the round-44 audit was for. What it lacked was knowing that "up to date" from npm
 does not mean "installed".
+
+## Round 48 - the second field report: a silent downloader
+
+```
+> node node_modules\electron\install.js
+> (no output, prompt returned immediately)
+> curl -I .../electron-v45.1.0-win32-x64.zip
+HTTP/1.1 302 Found
+```
+
+Two facts matter. The download host is reachable from that machine (`302` to
+`release-assets.githubusercontent.com`), so this is not the network block that this container has.
+And `electron/install.js` prints **nothing on success** - its only output paths are
+`.catch(err => console.error(err.stack))` and silence otherwise, plus a silent `process.exit(0)`
+when `isInstalled()` passes. So "no output" means either it downloaded and unpacked, or it decided
+the runtime was already there.
+
+`isInstalled()` requires `dist\version` to match, `path.txt` to match **and** `dist\electron.exe`
+to exist, so a missing exe alone cannot cause the early exit - but a *stale* `dist` with a correct
+`path.txt` and a correct `dist\version` and a file that is then deleted can leave the appearance of
+a failed build. The one thing that explains extract-then-vanish is antivirus quarantine: a 45.x
+`electron.exe` is a fresh, unsigned executable.
+
+### Added to the script
+
+- **Stale-dist detection.** After the direct downloader run, if `dist\version` exists but
+  `electron.exe` does not, the script now says so, deletes `dist` and `path.txt`, and re-runs the
+  downloader - which re-extracts from `%LOCALAPPDATA%\electron\Cache` with no network use. If the
+  exe disappears again, that is the answer, and the script says as much instead of guessing.
+- **The antivirus case is now cause 3 of 4** in the failure text, with the Protection history path
+  and the `Add-MpPreference -ExclusionPath` command.
+- The failure text points at `%LOCALAPPDATA%\electron\Cache`, so a rebuild after clearing `dist`
+  is understood to be offline and fast.
+
+### Checks
+
+| | |
+| --- | --- |
+| `node --test tools/*.test.cjs` | **88 pass** (2 new: stale-dist handling and its re-extract ordering; the antivirus text) |
+| `node tools/audit.mjs` | no defects |
+
+### Note
+
+The user's `install.js` run may simply have succeeded. The first thing to do is
+`dir app\node_modules\electron\dist\electron.exe` - if it is there, the build proceeds and none of
+the above applies.

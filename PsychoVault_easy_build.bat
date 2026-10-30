@@ -84,7 +84,25 @@ node "node_modules\electron\install.js"
 popd
 if exist "%ROOT%\app\node_modules\electron\dist\electron.exe" goto :runtime_ok
 
-echo       That did not produce the runtime either. Rebuilding the package...
+if not exist "%ROOT%\app\node_modules\electron\dist\version" goto :runtime_rebuild
+rem dist\version is written at the end of a successful unpack, so its presence with no
+rem electron.exe means the files were extracted and the executable then disappeared - which
+rem in practice is antivirus quarantine, not a download problem. Re-extract from the cached
+rem zip (fast, no network) so the difference shows up instead of being guessed at.
+echo       The runtime was unpacked but electron.exe is gone.
+echo       That is usually antivirus quarantine. Re-extracting from the cached
+echo       download to confirm...
+rmdir /s /q "%ROOT%\app\node_modules\electron\dist"
+if exist "%ROOT%\app\node_modules\electron\path.txt" del /f /q "%ROOT%\app\node_modules\electron\path.txt"
+pushd "%ROOT%\app"
+node "node_modules\electron\install.js"
+popd
+if exist "%ROOT%\app\node_modules\electron\dist\electron.exe" goto :runtime_ok
+echo       electron.exe is still not there after re-extracting, so almost certainly
+echo       something is deleting it. Read the antivirus note in the failure message.
+
+:runtime_rebuild
+echo       Rebuilding the package...
 pushd "%ROOT%\app"
 call npm rebuild electron --no-audit --no-fund
 popd
@@ -317,11 +335,23 @@ echo      If that does not print HTTP/2 302, use a mirror and try again:
 echo        set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
 echo        node node_modules\electron\install.js
 echo.
-echo   3. An older half-finished install. Delete it and start again:
+echo   3. Antivirus removing electron.exe. It is a fresh, unsigned executable, so
+echo      Defender and others sometimes quarantine it the moment it is unpacked -
+echo      which looks exactly like a failed download. In Windows Security, open
+echo      Virus and threat protection, then Protection history, and look for
+echo      electron.exe. Restore it and allow it, or exclude this folder:
+echo        Add-MpPreference -ExclusionPath "%ROOT%"
+echo      run from an administrator PowerShell.
+echo.
+echo   4. An older half-finished install. Delete it and start again:
 echo        rmdir /s /q app\node_modules\electron
 echo        cd app   then   npm install
 echo.
 echo   Everything above is typed in the app folder, for example:  cd /d "%ROOT%\app"
+echo.
+echo   The downloaded zip is cached in %%LOCALAPPDATA%%\electron\Cache, so deleting
+echo   node_modules\electron\dist and re-running install.js re-extracts it without
+echo   using the network at all.
 goto :end
 
 :fail_npm
