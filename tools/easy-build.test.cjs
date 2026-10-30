@@ -350,9 +350,18 @@ test('the missing-file failure names the files', () => {
   assert.match(block, /echo      %MISSING%/, 'the failure does not print which files are missing')
 })
 
-test('empty files and a stale default_app.asar have their own messages', () => {
-  assert.match(text, /if defined EMPTY goto :fail_empty/)
-  assert.match(text, /if exist "%PAYLOAD%.{1,2}resources.{1,2}default_app\.asar" goto :fail_stale/)
-  assert.match(text, /^:fail_empty$/m)
-  assert.match(text, /^:fail_stale$/m)
+test('only a payload that cannot start is fatal; the rest warns and carries on', () => {
+  // Field report: a complete, working payload was refused by this check, costing the user
+  // a build. Only HARD failures stop it now.
+  assert.match(text, /set "HARD=PsychoVault\.exe/)
+  assert.match(text, /for %%. in \(%HARD%\) do if not exist .* set "MISSING=!/)
+  assert.match(text, /if defined MISSING goto :fail_verify/)
+
+  // the advisory list is printed but does not stop the build
+  assert.match(text, /set "WARNED="/)
+  assert.match(text, /if defined WARNED echo       WARNING: missing or empty, continuing anyway/)
+  assert.ok(!/if defined WARNED goto/.test(text), 'the advisory list still stops the build')
+
+  // a stale default_app.asar is removed rather than fatal
+  assert.match(text, /del \/f \/q "%PAYLOAD%.{1,2}resources.{1,2}default_app\.asar"/)
 })

@@ -1959,3 +1959,66 @@ it could not say so: it jumped to a generic message on the first miss and named 
 | --- | --- |
 | `node --test tools/*.test.cjs` | **91 pass** (3 new: the runtime list, the missing-file reporting, the split failure labels) |
 | `node tools/audit.mjs` | no defects |
+
+## Round 50 - the VPN bug, from the field logs
+
+The user's console output from a packaged 1.0.13 build settles what round 46 could not:
+
+```
+Unknown Extension API - types.ChromeSetting.set
+Unchecked runtime.lastError: Access to extension API denied.
+(managed" is not available in this instance of Chrome
+```
+
+`types.ChromeSetting.set` is Chromium's internal name for `chrome.proxy.settings.set`. Those calls
+reached **Chromium's own stub**, which Electron leaves wired to an extension function dispatcher it
+does not implement - so every proxy call Proton made was refused before it could reach
+`ext-shim.js`, and nothing was ever applied to the network stack. That is why the address never
+changed, and why the self-test could pass while the VPN still leaked: the self-test exercises the
+main-process path directly and never goes through the extension.
+
+### The cause
+
+```js
+if (!chromeObj.proxy) {   // Chromium already defines chrome.proxy, so this was never true
+  chromeObj.proxy = { ... }
+}
+```
+
+Guarding on existence is correct for a missing API and wrong for a stub. Both `chrome.proxy` and
+`chrome.privacy` are now installed **unconditionally** through an `override()` helper that uses
+`Object.defineProperty` with `configurable: true` (falling back to assignment if the property
+cannot be redefined), and the result is reported to the main process.
+
+### Observable now
+
+- `extshim:report` records whether `proxy` and `privacy` were installed for that extension id.
+- **Settings - Extensions - Check what proxy is in use** prints either
+  "The chrome.proxy API is supplied by PsychoVault for this extension." or a warning that it could
+  not be supplied - which is the state the user's build was silently in.
+- A failed injection is logged rather than swallowed.
+
+### Easy build
+
+`resources\` held only `app` - no `default_app.asar` - and every file the check lists was present,
+yet step 6 refused the payload. The check was too strict and, in the older copy the user ran, could
+not say why. It now separates:
+
+- **HARD** (`PsychoVault.exe`, `icudtl.dat`, `resources.pak`, `locales`, `resources`,
+  `resources\app\main.js`, `resources\app\ui\index.html`) - missing these stops the build, named.
+- **everything else** - printed as one WARNING line and the build continues, because refusing a
+  payload that demonstrably starts is worse than shipping it.
+- a stale `default_app.asar` is deleted rather than fatal.
+
+`.gitignore` now also covers `app/package-lock.json` (which the user's build showed being staged),
+root-level `update-token.json`, `*.key`, `*-signing-key.pem`, `electron*.zip`, `*.log`, `.vscode/`,
+`Thumbs.db`, `dist/` and `payload/` - while deliberately not ignoring `*.pem`, `*.exe`,
+`tools/package-lock.json` or `SHA256SUMS.txt`, which must stay tracked.
+
+### Checks
+
+| | |
+| --- | --- |
+| `node --test tools/*.test.cjs` | **96 pass** (5 new shim-install guards, 1 rewritten step-6 guard) |
+| `node tools/audit.mjs` | no defects |
+| version | 1.0.14 |

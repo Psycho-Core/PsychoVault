@@ -525,7 +525,7 @@ function extReadManifest(dir) {
 const EXT_SHIM = path.join(__dirname, 'ext-shim.js')
 const EXT_SHIM_CHANNELS = [
   'extshim:proxy:get', 'extshim:proxy:set', 'extshim:proxy:clear',
-  'extshim:webrtc:get', 'extshim:webrtc:set'
+  'extshim:webrtc:get', 'extshim:webrtc:set', 'extshim:report'
 ]
 const shimSessions = new WeakSet()
 const shimWorkers = new WeakSet()
@@ -534,6 +534,10 @@ const extProxyValues = new Map()
 // What happened the last time an extension asked for a proxy, so Settings can answer
 // "is this browser actually proxied right now" instead of guessing.
 let extProxyState = { value: null, at: 0, applied: 0, leaks: [] }
+// What the shim managed to install inside the extension's world. Chromium exposes its own
+// chrome.proxy stub, so injection can legitimately fail - and if it does, every proxy call
+// the extension makes is refused by Chromium instead of reaching this process.
+let extShimReport = null
 // Resolving this tells us what the session would do for ordinary browsing. It is never
 // fetched - resolveProxy() only asks the proxy resolver.
 const PROXY_PROBE_URL = 'https://account.proton.me/'
@@ -642,6 +646,18 @@ async function onShimCall(event, payload, channel) {
       }
       extProxyValues.delete(real)
       extProxyState = { value: null, at: Date.now(), applied: 0, leaks: [] }
+      return { ok: true }
+    }
+
+    if (channel === 'extshim:report') {
+      const info = (payload && payload.info) || {}
+      extShimReport = {
+        id: real,
+        proxy: info.proxy === true,
+        privacy: info.privacy === true,
+        at: Date.now()
+      }
+      if (!extShimReport.proxy) logMainError(new Error('the chrome.proxy shim could not be installed in ' + real))
       return { ok: true }
     }
 
@@ -3394,7 +3410,7 @@ ipcMain.handle('proxy:status', async () => {
   }
   const setBy = []
   for (const [id, value] of extProxyValues) setBy.push({ id, mode: String((value && value.mode) || 'system') })
-  return { ok: true, probe: PROXY_PROBE_URL, rows, setBy, last: extProxyState }
+  return { ok: true, probe: PROXY_PROBE_URL, rows, setBy, last: extProxyState, shim: extShimReport }
 })
 
 ipcMain.handle('proxy:selftest', async () => {

@@ -915,7 +915,13 @@
         : 'No extension has set a proxy.'
       const leaks = (r.last && r.last.leaks) || []
       const warn = leaks.length ? ' Last attempt was refused: ' + leaks[0].reason : ''
-      s('proxyStatusResult').textContent = parts.join(' | ') + ' \u2014 ' + who + warn
+      let shim = ''
+      if (r.shim) {
+        shim = r.shim.proxy
+          ? ' The chrome.proxy API is supplied by PsychoVault for this extension.'
+          : ' WARNING: the chrome.proxy API could not be supplied to this extension, so it cannot route traffic - Chromium refuses its proxy calls.'
+      }
+      s('proxyStatusResult').textContent = parts.join(' | ') + ' \u2014 ' + who + warn + shim
     }
     if (s('protonVpnStatus')) s('protonVpnStatus').onclick = paintBuiltinStatus
     if (s('protonVpnRestore')) s('protonVpnRestore').onclick = async () => {
