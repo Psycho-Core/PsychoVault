@@ -1326,3 +1326,40 @@ Whether the extension appears on a Windows box is still untested from here - no 
 Electron runtime, and the Electron binary download is blocked in this container. This round does
 not claim to have fixed the cause; it makes the cause *readable*, and it closes the packaging gap
 that could have been hiding it. The next report should be one sentence from **Check install**.
+
+## Round 38 - the updater says why it failed, and can be asked on demand
+
+The updater's defect was not that it broke. It was that it could not be *interrogated*: every
+failure collapsed into `return { skipped: true, reason: 'release-check-unavailable' }`, the reason
+never reached the user, and `onError` only ever wrote to `errors.log`.
+
+### What changed
+
+- `requestBuffer` now throws an `UpdateCheckError` carrying the HTTP status, so a refusal is no
+  longer indistinguishable from a timeout.
+- `classifyCheckFailure(status, message)` lives in `app/update-manifest.js` - pure, so it is
+  tested - and answers `repository-private` (404, not retryable), `offline` (no status,
+  retryable) or `release-check-unavailable` (retryable for 5xx and 429 only).
+- A 404 now logs a sentence naming the cause: GitHub answers 404 to an unauthenticated request
+  for a private repository, and no update can work while it stays private.
+- **Settings - About - Check now** runs the same check on demand and reports the outcome, so a
+  working updater and a broken one look different. `update:check` returns the reason, any
+  collected error text, and the current version.
+- The About pane no longer prints a hardcoded `PsychoVault 1.0.4`; it reads the real version and
+  Electron version from `app:info`.
+
+### Checks
+
+| | |
+| --- | --- |
+| `node --test tools/*.test.cjs` | **25 pass** (3 new for the classifier) |
+| `node tools/audit.mjs` | no defects |
+| new bridges | `update:check`, `app:info` registered and called - audit's parity rule is satisfied |
+
+### The one thing code cannot fix
+
+`gh repo view` still reports `private=true`, and the repository stores no secrets: a scan of the
+whole history finds no private key material, no token, and no credential file - only
+`app/update-public-key.pem`, which is public by design. So the blocker is a visibility setting,
+not a defect, and it stays a decision for the owner. Until it changes, **Check now** will say
+`repository-private` and be right.

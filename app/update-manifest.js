@@ -77,6 +77,16 @@ function verifyUpdateManifest(rawManifest, signatureText, publicKeyPem, expected
   return { ok: true, manifest }
 }
 
+// Why an update check failed, in terms the user can act on. A 404 from the releases API is
+// what GitHub answers to an unauthenticated caller when the repository is private, and no
+// amount of retrying changes that; a timeout is a different problem with a different fix.
+function classifyCheckFailure(status, message) {
+  const code = Number(status) || 0
+  if (code === 404) return { reason: 'repository-private', status: code, retryable: false }
+  if (!code) return { reason: 'offline', status: 0, retryable: true, message: String(message || '') }
+  return { reason: 'release-check-unavailable', status: code, retryable: code >= 500 || code === 429 }
+}
+
 function installerDownloadUrl(manifest) {
   if (!manifest || !stableVersionParts(manifest.version) || manifest.tag !== `v${manifest.version}` ||
       manifest.assetName !== `${PRODUCT}-Setup-${manifest.version}.exe`) return null
@@ -85,6 +95,7 @@ function installerDownloadUrl(manifest) {
 
 module.exports = {
   PRODUCT,
+  classifyCheckFailure,
   REPOSITORY,
   PLATFORM,
   stableVersionParts,

@@ -704,12 +704,20 @@
   <section>
     <h2>About</h2>
     <div class="about">
-      <b>PsychoVault 1.0.4</b><br>
+      <b id="appVersion">PsychoVault</b><br>
       Browser application (this UI, tabs, bookmarks, history, downloads, blocking): written for this project.<br>
-      Rendering engine: Chromium, via Electron 45.1.0.<br>
+      Rendering engine: Chromium, via Electron <span id="appElectron">45</span>.<br>
       Bookmark, history and settings files live in your user data folder.<br>
       Licensed MIT. Chromium components under their own licences - see THIRD-PARTY-NOTICES.md.
     </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Automatic updates</div>
+        <div class="hint">Checked quietly once at startup, and only on packaged Windows x64 builds. This runs the same check and tells you the answer even when it fails.</div>
+      </div>
+      <button class="mini" id="updateCheckNow" type="button">Check now</button>
+    </div>
+    <div class="hint" id="updateCheckResult"></div>
   </section>
       </div>
     </main>
@@ -872,6 +880,40 @@
           ? 'restored, but the engine refused to load it: ' + item.error
           : 'Proton VPN is installed and enabled'
       paintExtensions()
+    }
+    if (s('updateCheckNow')) s('updateCheckNow').onclick = async () => {
+      s('updateCheckNow').disabled = true
+      s('updateCheckResult').textContent = 'Checking\u2026'
+      let r = null
+      try { r = await window.pv.updates.check() } catch (e) { r = { ok: false, message: String((e && e.message) || e) } }
+      s('updateCheckNow').disabled = false
+      if (!r) { s('updateCheckResult').textContent = 'The check returned nothing.'; return }
+      if (!r.ok) { s('updateCheckResult').textContent = 'The check could not run: ' + (r.message || r.reason || 'no reason given'); return }
+      const why = {
+        'already-current': 'You are on the newest release.',
+        'repository-private': 'REFUSED: GitHub answered 404, which is what an unauthenticated request gets for a private repository. Automatic updates cannot work while the repository stays private.',
+        'offline': 'Could not reach GitHub. Check your connection.',
+        'release-check-unavailable': 'GitHub returned an error for the release lookup.',
+        'unsupported-runtime': 'Automatic updates only run on packaged Windows x64 builds.',
+        'not-packaged': 'This is not a packaged build, so there is nothing to update.',
+        'no-stable-release': 'No published stable release was found.',
+        'user-deferred': 'An update is available - you chose Later.',
+        'missing-signature': 'The release has no signed update manifest, so the update was blocked.',
+        'save-as-cancelled': 'You cancelled the Save As dialog.'
+      }[r.result && r.result.reason]
+      const parts = ['Current version ' + (r.version || '?') + '.']
+      if (r.result && r.result.reason) parts.push(why || ('Check finished: ' + r.result.reason + (r.result.status ? ' (HTTP ' + r.result.status + ')' : '')) + '')
+      if (r.result && r.result.ok) parts.push('Update ' + r.result.version + ' was downloaded, verified and its installer opened.')
+      if (r.result && r.result.error) parts.push('Failed: ' + r.result.error)
+      for (const f of (r.failures || [])) parts.push(f)
+      s('updateCheckResult').textContent = parts.join(' ')
+    }
+    if (s('appVersion') || s('appElectron')) {
+      window.pv.app.info().then((info) => {
+        if (!info) return
+        if (s('appVersion')) s('appVersion').textContent = 'PsychoVault ' + info.version
+        if (s('appElectron')) s('appElectron').textContent = info.electron || '45'
+      }).catch(() => {})
     }
     s('clear').onclick = async () => {
       await window.pv.data.clear({ history: true })
