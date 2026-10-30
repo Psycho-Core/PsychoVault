@@ -42,7 +42,10 @@ if (isExtension) {
     proxySet: (value, scope) => ipcRenderer.invoke('extshim:proxy:set', { id, value, scope: scope || 'regular' }),
     proxyClear: (scope) => ipcRenderer.invoke('extshim:proxy:clear', { id, scope: scope || 'regular' }),
     webrtcGet: () => ipcRenderer.invoke('extshim:webrtc:get', { id }),
-    webrtcSet: (value) => ipcRenderer.invoke('extshim:webrtc:set', { id, value })
+    webrtcSet: (value) => ipcRenderer.invoke('extshim:webrtc:set', { id, value }),
+    // Tells the main process whether the APIs actually went in. Without this a failed
+    // injection looks identical to a working one from the outside.
+    report: (info) => ipcRenderer.invoke('extshim:report', { id, info })
   }
 
   try {
@@ -72,10 +75,36 @@ if (isExtension) {
 
     const safeCall = (fn, arg) => { try { if (typeof fn === 'function') fn(arg) } catch (e) { /* extension threw */ } }
 
-    if (!chromeObj.proxy) {
+    // Chromium already exposes chrome.proxy and chrome.privacy, wired to an extension
+    // function dispatcher Electron does not implement. So "the API exists" is true and
+    // useless: Proton's chrome.proxy.settings.set hits Chromium's stub, which logs
+    //   Unknown Extension API - types.ChromeSetting.set
+    // and refuses. Guarding on existence therefore never installed anything, and the
+    // extension reported a tunnel it never had. Both APIs are now always defined, and the
+    // existing stub is replaced.
+    const override = (name, value) => {
+      try {
+        Object.defineProperty(chromeObj, name, {
+          value, configurable: true, enumerable: true, writable: true
+        })
+        return chromeObj[name] === value
+      } catch (e) {
+        try {
+          chromeObj[name] = value
+          return chromeObj[name] === value
+        } catch (e2) {
+          return false
+        }
+      }
+    }
+
+    let proxyInstalled = false
+    let privacyInstalled = false
+
+    {
       const onChange = makeEvent()
       const onProxyError = makeEvent()
-      chromeObj.proxy = {
+      proxyInstalled = override('proxy', {
         settings: {
           get: (details, cb) => {
             Promise.resolve(b.proxyGet()).then((result) => safeCall(cb, result)).catch(() => safeCall(cb, { value: { mode: 'system' }, levelOfControl: 'not_controllable' }))
@@ -106,10 +135,10 @@ if (isExtension) {
         // chrome.proxy.onRequest is Firefox-only. Deliberately left undefined: extension code
         // feature-detects it and takes its Chrome path when it is absent.
         onRequest: undefined
-      }
+      })
     }
 
-    if (!chromeObj.privacy) {
+    {
       const onChange = makeEvent()
       const webRTC = {
         get: (details, cb) => {
@@ -128,8 +157,12 @@ if (isExtension) {
         },
         onChange
       }
-      chromeObj.privacy = { network: { webRTCIPHandlingPolicy: webRTC } }
+      privacyInstalled = override('privacy', { network: { webRTCIPHandlingPolicy: webRTC } })
     }
+
+    // Report what actually happened, so Settings can show whether the shim is live rather
+    // than the user guessing from a VPN that never connects.
+    try { b.report({ proxy: proxyInstalled, privacy: privacyInstalled }) } catch (e) { /* bridge gone */ }
   }
 
   try {

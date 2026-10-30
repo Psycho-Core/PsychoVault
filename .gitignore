@@ -14,7 +14,7 @@ Release-Notes-*.txt
 update-manifest.json
 update-manifest.sig
 
-# --- Electron runtime downloads (the 150 MB archive)
+# --- Electron runtime archives (about 150 MB each)
 electron-v*.zip
 electron*.zip
 *.7z
@@ -41,5 +41,5 @@ Thumbs.db
 desktop.ini
 *.lnk
 
-# --- npm lockfiles for the app; Electron and its deps are pinned in package.json
+# --- the app's npm lockfile; Electron is pinned in package.json, and npm rewrites this
 app/package-lock.json
