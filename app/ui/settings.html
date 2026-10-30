@@ -358,7 +358,9 @@
       <p>Want the store listing instead? <button class="mini" id="protonVpnDownload" type="button">Open Proton's extension page</button></p>
       <button class="mini" id="protonVpnRestore" type="button">Restore / reinstall Proton VPN</button>
       <button class="mini" id="protonVpnStatus" type="button">Check install</button>
+      <button class="mini" id="proxySelfTest" type="button">Test proxy support</button>
     </div>
+    <div class="hint" id="proxySelfTestResult"></div>
     <div class="hint" id="protonVpnState">Press <b>Check install</b> to see what the bundled extension did at startup.</div>
     <div id="extList" class="ext-list"></div>
     <div class="btnrow">
@@ -880,6 +882,16 @@
         b.error || ''
       ].filter(Boolean)
       s('protonVpnState').textContent = lines.join(' ')
+    }
+    if (s('proxySelfTest')) s('proxySelfTest').onclick = async () => {
+      s('proxySelfTest').disabled = true
+      s('proxySelfTestResult').textContent = 'Testing whether Chromium honours a proxy set by PsychoVault\u2026'
+      let r = null
+      try { r = await window.pv.proxy.selftest() } catch (e) { r = { ok: false, error: String((e && e.message) || e) } }
+      s('proxySelfTest').disabled = false
+      s('proxySelfTestResult').textContent = r && r.ok
+        ? 'PASS - ' + (r.detail || 'the proxy configuration was applied.') + (r.ms ? ' (' + r.ms + ' ms)' : '')
+        : 'FAIL - ' + ((r && r.error) || 'no reason given') + (r && r.stage ? ' [stage: ' + r.stage + ']' : '')
     }
     if (s('protonVpnStatus')) s('protonVpnStatus').onclick = paintBuiltinStatus
     if (s('protonVpnRestore')) s('protonVpnRestore').onclick = async () => {

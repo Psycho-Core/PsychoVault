@@ -45,6 +45,9 @@ if (isInternal) {
     app: {
       info: () => invoke('app:info')
     },
+    proxy: {
+      selftest: () => invoke('proxy:selftest')
+    },
     updates: {
       check: () => invoke('update:check'),
       tokenstate: () => invoke('update:tokenstate'),

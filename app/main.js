@@ -31,6 +31,7 @@ const USER = app.getPath('userData')
 fs.mkdirSync(USER, { recursive: true })
 
 const { toElectronProxy, getResult, toWebRTCPolicy } = require('./ext-proxy')
+const { findWindowFor } = require('./window-lookup')
 
 // An uncaught throw in the main process used to pop Electron's modal "A JavaScript
 // error occurred in the main process" box - on a browser that is a wall between you and
@@ -1010,11 +1011,13 @@ ipcMain.handle('ext:toggle', async (e, o) => {
   return { ok: true, items: await extList() }
 })
 ipcMain.handle('ext:openpage', (e, o) => {
-  const w = findWin(e)
   const rec = extRecords().find((x) => x.dir === (o && o.dir))
+  // Settings is a tab, not the window's own contents, so the sender may not resolve to a
+  // window even though one is open. Opening a tab needs any live window, not a specific one.
+  const w = findWin(e) || [...mainWindows].find((x) => { try { return x.win && !x.win.isDestroyed() } catch { return false } })
   // Every one of these used to return a bare {ok:false}, so the button looked dead with no
   // explanation anywhere. Say which step failed.
-  if (!w) return { ok: false, error: 'no window to open it in' }
+  if (!w) return { ok: false, error: 'no window is open to put a tab in' }
   if (!rec) return { ok: false, error: 'that extension is not installed any more' }
   if (!rec.id) return { ok: false, error: 'it never finished loading, so it has no page to open: ' + (rec.error || 'the engine gave no reason') }
   const page = String((o && o.page) || '').replace(/^\/+/, '')
@@ -2689,7 +2692,7 @@ setInterval(() => {
 }, 2500)
 
 function findWin(e) {
-  return [...mainWindows].find(w => w.win.webContents === e.sender)
+  return findWindowFor(e && e.sender, mainWindows)
 }
 
 ipcMain.handle('ui:layout', (e, o) => {
@@ -3328,6 +3331,82 @@ ipcMain.handle('app:info', () => ({
   arch: process.arch,
   packaged: app.isPackaged
 }))
+// --- proxy self-test ---------------------------------------------------------
+// "The VPN does not change my IP" has two very different causes: the extension never got a
+// proxy applied, or the extension itself is not connected. This tells the two apart without
+// a debugger. A throwaway in-memory session gets a proxy pointing at a local server; if a
+// request made through that session arrives on that server, Chromium really is routing
+// through the configuration PsychoVault's shim hands it. The user's real sessions are not
+// touched.
+ipcMain.handle('proxy:selftest', async () => {
+  const http = require('node:http')
+  const hits = { count: 0, firstLine: '' }
+  const server = http.createServer((req, res) => {
+    hits.count++
+    if (!hits.firstLine) hits.firstLine = String(req.method) + ' ' + String(req.url)
+    res.writeHead(200, { 'content-type': 'text/plain' })
+    res.end('psychovault-proxy-ok')
+  })
+
+  const listen = () => new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => resolve(server.address().port))
+  })
+
+  let port
+  let ses
+  const started = Date.now()
+  try {
+    port = await listen()
+  } catch (e) {
+    return { ok: false, stage: 'server', error: 'could not start a local test proxy: ' + String((e && e.message) || e) }
+  }
+
+  try {
+    ses = session.fromPartition('pv-proxy-test-' + Date.now())
+    const config = toElectronProxy({ mode: 'fixed_servers', rules: { singleProxy: { scheme: 'http', host: '127.0.0.1', port }, bypassList: [] } })
+    await ses.setProxy(config)
+
+    const body = await new Promise((resolve, reject) => {
+      let req
+      const timer = setTimeout(() => { try { req && req.abort() } catch { /* closed */ } ; reject(new Error('no answer within 8 seconds')) }, 8000)
+      try {
+        // `net` in this file is node:net, so Electron's HTTP client is named explicitly here.
+        req = require('electron').net.request({ url: 'http://psychovault-proxy-test.invalid/', method: 'GET', session: ses, useSessionCookies: false, redirects: 'manual' })
+      } catch (e) { clearTimeout(timer); reject(e); return }
+      let data = ''
+      req.on('response', (res) => {
+        res.on('data', (c) => { data += c })
+        res.on('end', () => { clearTimeout(timer); resolve({ status: res.statusCode, data }) })
+        res.on('error', (e) => { clearTimeout(timer); reject(e) })
+      })
+      req.on('error', (e) => { clearTimeout(timer); reject(e) })
+      req.end()
+    })
+
+    const took = Date.now() - started
+    if (hits.count > 0 && body.data.includes('psychovault-proxy-ok')) {
+      return {
+        ok: true, stage: 'done', ms: took, port,
+        detail: 'Chromium sent the request through the proxy configuration PsychoVault gave it (' + hits.firstLine + '). The chrome.proxy shim works in this build, so an extension that sets a proxy really is routed.'
+      }
+    }
+    return {
+      ok: false, stage: 'not-routed', ms: took, port,
+      error: 'The request completed but did not go through the test proxy, so Chromium ignored the proxy setting.'
+    }
+  } catch (e) {
+    return {
+      ok: false, stage: 'request', port,
+      error: String((e && e.message) || e) + (hits.count ? ' (the test proxy did see ' + hits.count + ' request(s))' : ' (the test proxy saw nothing, so traffic bypassed it)')
+    }
+  } finally {
+    try { server.close() } catch { /* already closed */ }
+    try { if (ses) await ses.setProxy({ mode: 'system' }) } catch { /* test session only */ }
+    try { if (ses) await ses.clearStorageData() } catch { /* best effort */ }
+  }
+})
+
 ipcMain.handle('update:tokenstate', () => updateTokenState())
 ipcMain.handle('update:settoken', (e, token) => {
   const r = setUpdateToken(token)
