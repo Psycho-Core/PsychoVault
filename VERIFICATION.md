@@ -2217,3 +2217,44 @@ with no git history. `release-notes/1.0.18.txt` is the first one.
 | `node --test tools/*.test.cjs` | **114 pass** (6 new: tabs supplied, events separate, channels allow-listed and handled, real tab created, removals announced, unsafe urls refused) |
 | `node tools/audit.mjs` | no defects |
 | version | 1.0.18 |
+
+## Round 55 - it was the wildcard, not the path
+
+Fourth transcript, and it settles the question: **both** attempts failed identically.
+
+```
+Building with relative paths...     File: "build\payload/*.*" -> no files found.
+Copying it to a plain folder...     File: "payload/*.*"      -> no files found.
+```
+
+The second path is `%TEMP%\PsychoVault-stage\payload` - no `#`, no long name, a copy made
+seconds earlier. If the `#` were the cause, that one would have worked. The real signal is
+earlier in the same log: `MUI_PAGE_LICENSE "build\payload/LICENSE.txt"` resolved (NSIS got past
+it to line 76), so makensis can open a payload file **by name** and cannot enumerate the payload
+**by wildcard**. `File /r "dir/*.*"` is the broken part, not the folder and not the path.
+
+### Fixed: nothing is enumerated any more
+
+`tools/gen-filelist.mjs` walks the staged payload and writes an NSIS include with one
+`SetOutPath` + `File` pair per file, paths relative to the build root:
+
+```
+SetOutPath "$INSTDIR"
+File "build\payload\PsychoVault.exe"
+SetOutPath "$INSTDIR\resources\app"
+File "build\payload\resources\app\main.js"
+```
+
+`installer.nsi` `!include`s it instead of running `File /r`, and `!error`s if `FILELIST` is not
+defined or the file is missing - silently packing nothing is the failure mode being removed.
+The build prints the count and the size it listed, so an empty list is visible before NSIS runs.
+The `%TEMP%` retry builds its own list against its own payload copy.
+
+### Checks
+
+| | |
+| --- | --- |
+| `node --test tools/*.test.cjs` | **118 pass** (4 new: one line per file, parent folder before file, empty payload fails, build passes FILELIST) |
+| `node tools/audit.mjs` | no defects; it caught the label my patch had displaced |
+| generator on a path containing `#` | 3 files listed correctly, relative paths only |
+| version | 1.0.19 |

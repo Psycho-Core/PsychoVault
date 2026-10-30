@@ -52,8 +52,7 @@ echo "%ROOT%"| findstr /c:"(" /c:"&" >nul
 if not errorlevel 1 goto :bad_path
 echo "%ROOT%"| findstr /c:"#" >nul
 if not errorlevel 1 echo       NOTE: this path contains #, which NSIS reads as a comment marker. Step 7
-if not errorlevel 1 echo       handles that by using relative paths, and retries from a copy in %%TEMP%%
-if not errorlevel 1 echo       if that is still refused.
+if not errorlevel 1 echo       never gives it an absolute path, so that is handled.
 
 echo ============================================================
 echo   PsychoVault easy build
@@ -231,14 +230,19 @@ set "PAYLOADCOUNT=0"
 for /f %%c in ('dir /a-d /b "%PAYLOAD%" 2^>nul ^| find /c /v ""') do set "PAYLOADCOUNT=%%c"
 if "%PAYLOADCOUNT%"=="0" goto :fail_vanished
 echo       Payload still has %PAYLOADCOUNT% files at the top level.
-rem NSIS reads # as a comment marker and this repo path contains one. Handing it the
-rem absolute path made makensis report "no files found" for a folder that had just
-rem been counted as full, so it never gets a # now: first it runs from the repo root
-rem with relative paths, and if that is still refused the payload is copied to a
-rem plain folder in the temp directory and built there.
+rem The installer no longer lets NSIS enumerate the payload. File /r "dir/*.*" reported
+rem "no files found" on a folder whose LICENSE.txt the same script read a few lines earlier,
+rem so every file is listed explicitly instead - one SetOutPath + File per file, written here
+rem from what is actually on disk. That also keeps paths relative, which avoids the # in this
+rem repo path being read as a comment marker.
+echo       Listing the payload files...
+node "%ROOT%\tools\gen-filelist.mjs" "%PAYLOAD%" "%BUILD%\payload-files.nsh" "%ROOT%"
+if errorlevel 1 goto :fail_filelist
+if not exist "%BUILD%\payload-files.nsh" goto :fail_filelist
+
 pushd "%ROOT%"
-echo       Building with relative paths...
-"%MAKENSIS%" /V2 /DWANT_UNINSTALLER "/DVERSION=%VERSION%" "/DMUI_ICON=assets\psychovault.ico" "/DPAYLOADDIR=build\payload" "/DOUTFILE=PsychoVault-Setup-%VERSION%.exe" "installer.nsi"
+echo       Building the installer...
+"%MAKENSIS%" /V2 /DWANT_UNINSTALLER "/DVERSION=%VERSION%" "/DMUI_ICON=assets\psychovault.ico" "/DPAYLOADDIR=build\payload" "/DFILELIST=build\payload-files.nsh" "/DOUTFILE=PsychoVault-Setup-%VERSION%.exe" "installer.nsi"
 if errorlevel 1 goto :nsis_try_copy
 if not exist "%SETUP%" goto :nsis_try_copy
 popd
@@ -260,8 +264,10 @@ if not exist "%STAGE%\payload\PsychoVault.exe" xcopy "%PAYLOAD%" "%STAGE%\payloa
 if not exist "%STAGE%\payload\PsychoVault.exe" goto :fail_stage_copy
 copy /y "%ROOT%\installer.nsi" "%STAGE%\installer.nsi" >nul 2>nul
 copy /y "%ROOT%\assets\psychovault.ico" "%STAGE%\psychovault.ico" >nul 2>nul
+node "%ROOT%\tools\gen-filelist.mjs" "%STAGE%\payload" "%STAGE%\payload-files.nsh" "%STAGE%"
+if errorlevel 1 goto :fail_filelist
 pushd "%STAGE%"
-"%MAKENSIS%" /V2 /DWANT_UNINSTALLER "/DVERSION=%VERSION%" "/DMUI_ICON=psychovault.ico" "/DPAYLOADDIR=payload" "/DOUTFILE=PsychoVault-Setup-%VERSION%.exe" "installer.nsi"
+"%MAKENSIS%" /V2 /DWANT_UNINSTALLER "/DVERSION=%VERSION%" "/DMUI_ICON=psychovault.ico" "/DPAYLOADDIR=payload" "/DFILELIST=payload-files.nsh" "/DOUTFILE=PsychoVault-Setup-%VERSION%.exe" "installer.nsi"
 if errorlevel 1 goto :fail_stage_build
 popd
 if not exist "%STAGE%\PsychoVault-Setup-%VERSION%.exe" goto :fail_stage_build
@@ -274,6 +280,13 @@ goto :notes
 :fail_stage_build
 popd
 goto :fail_nsis
+
+:fail_filelist
+echo.
+echo   FAILED: could not write the list of files the installer should pack.
+echo   That step runs tools\gen-filelist.mjs over the staged payload and prints its
+echo   reason above. The portable browser at %PAYLOAD%\PsychoVault.exe still runs.
+goto :end
 
 :fail_stage_copy
 echo.
