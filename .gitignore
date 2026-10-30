@@ -44,3 +44,4 @@ desktop.ini
 
 # --- the app's npm lockfile; Electron is pinned in package.json, and npm rewrites this
 app/package-lock.json
+1.txt
