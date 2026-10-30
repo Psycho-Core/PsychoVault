@@ -2258,3 +2258,60 @@ The `%TEMP%` retry builds its own list against its own payload copy.
 | `node tools/audit.mjs` | no defects; it caught the label my patch had displaced |
 | generator on a path containing `#` | 3 files listed correctly, relative paths only |
 | version | 1.0.19 |
+
+## Round 56 - the shim was never installing, and the screenshot proves it
+
+The 1.0.18 console from the field is unambiguous, and it contradicts what the last three rounds
+assumed:
+
+```
+ExtensionLoadWarning: Permission 'notifications' is unknown. Permission 'privacy' is unknown.
+Unknown Extension API - types.ChromeSetting.get   (x many, from the extension)
+Unchecked runtime.lastError: Access to extension API denied.
+```
+
+`extension_function_dispatcher.cc` is **Chromium's** side. Those calls left the extension, crossed
+into the browser and were refused there - so the extension was talking to Chromium's stub, not to
+the shim. And the screenshots show the popup rendered in a tab with its Sign in button visible,
+which means the page loaded fine and only the API was missing.
+
+So: the preload either never ran in that context, or ran and its install did not reach the page's
+main world. `contextBridge.executeInMainWorld` was the single delivery path, and a rendered page
+that still hits Chromium's stub is exactly what it looks like when that path does nothing.
+
+### Changed: the installer is separate from the preload, and delivered three ways
+
+| file | role |
+| --- | --- |
+| `app/ext-shim.js` | preload: builds the bridge, reports, delivers the installer, writes the log |
+| `app/ext-main-world.js` | the APIs; no `require`, no `import` - it is a plain script on purpose |
+
+Delivery, in order, each attempt logged:
+
+1. service worker: `(0, eval)(source)` - indirect eval, so assignments land in the worker's own
+   global scope; `new Function` as a fallback.
+2. extension page: `webFrame.executeJavaScript(source)` - Electron runs this in the page's
+   **main world**, which is the world that has `chrome`.
+3. extension page: `contextBridge.executeInMainWorld` kept as the last attempt.
+
+### New: evidence on disk
+
+`%APPDATA%\PsychoVault\ext-shim.log` receives one line per step, so the next field report
+contains the answer instead of needing another build:
+
+```
+[02:29:17.498] jplgfhpmjnbigmhklmmbgecoobifkmpa extension page preload ran: chrome-extension://.../popup.html
+[02:29:17.501] jplgfhpmjnbigmhklmmbgecoobifkmpa installer in the page: injected
+[02:29:17.545] jplgfhpmjnbigmhklmmbgecoobifkmpa report: proxy=true privacy=true tabs=true where=page
+```
+
+Settings - Extensions prints the path. The channel is in the shim allow-list, the previous log is
+kept as `.1`, and `ext-main-world.js` is verified by both build paths and copied by `robocopy /E`.
+
+### Checks
+
+| | |
+| --- | --- |
+| `node --test tools/*.test.cjs` | **121 pass** (the shim suite rewritten for two files: delivery paths, no imports in the installer, log wiring in the allow-list) |
+| `node tools/audit.mjs` | no defects |
+| version | 1.0.20 |

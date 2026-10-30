@@ -529,7 +529,8 @@ const EXT_SHIM = path.join(__dirname, 'ext-shim.js')
 const EXT_SHIM_CHANNELS = [
   'extshim:proxy:get', 'extshim:proxy:set', 'extshim:proxy:clear',
   'extshim:webrtc:get', 'extshim:webrtc:set', 'extshim:report',
-  'extshim:tabs:query', 'extshim:tabs:create', 'extshim:tabs:update', 'extshim:tabs:remove'
+  'extshim:tabs:query', 'extshim:tabs:create', 'extshim:tabs:update', 'extshim:tabs:remove',
+  'extshim:log'
 ]
 const shimSessions = new WeakSet()
 const shimWorkers = new WeakSet()
@@ -538,6 +539,26 @@ const extProxyValues = new Map()
 // What happened the last time an extension asked for a proxy, so Settings can answer
 // "is this browser actually proxied right now" instead of guessing.
 let extProxyState = { value: null, at: 0, applied: 0, leaks: [] }
+// Every line the shim writes about what it managed to do, on disk. A field report that says
+// "Unknown Extension API - types.ChromeSetting.set" is ambiguous between the preload never
+// running, the bridge being refused and the install being refused; this answers which.
+const EXT_SHIM_LOG = path.join(USER, 'ext-shim.log')
+let extShimLogReady = false
+function shimLog(id, line) {
+  try {
+    if (!extShimLogReady) {
+      fs.writeFileSync(EXT_SHIM_LOG, 'PsychoVault extension shim log - ' + new Date().toISOString() + '\n')
+      extShimLogReady = true
+    }
+    fs.appendFileSync(EXT_SHIM_LOG, '[' + new Date().toISOString().slice(11, 23) + '] ' + (id || '-') + ' ' + line + '\n')
+  } catch (e) { /* the log is a convenience, never a place to fail */ }
+}
+// A new run starts a new log; the previous one is kept as .1 so a second launch after a crash
+// does not throw away the evidence.
+try {
+  if (fs.existsSync(EXT_SHIM_LOG)) fs.renameSync(EXT_SHIM_LOG, EXT_SHIM_LOG + '.1')
+} catch (e) { /* first run */ }
+
 // What the shim managed to install inside the extension's world. Chromium exposes its own
 // chrome.proxy stub, so injection can legitimately fail - and if it does, every proxy call
 // the extension makes is refused by Chromium instead of reaching this process.
@@ -691,14 +712,23 @@ async function onShimCall(event, payload, channel) {
       return { ok: true }
     }
 
+    if (channel === 'extshim:log') {
+      shimLog(real, String((payload && payload.line) || ''))
+      return { ok: true }
+    }
+
     if (channel === 'extshim:report') {
       const info = (payload && payload.info) || {}
       extShimReport = {
         id: real,
         proxy: info.proxy === true,
         privacy: info.privacy === true,
+        tabs: info.tabs === true,
+        where: info.where || '',
         at: Date.now()
       }
+      shimLog(real, 'report: proxy=' + extShimReport.proxy + ' privacy=' + extShimReport.privacy +
+        ' tabs=' + extShimReport.tabs + ' where=' + extShimReport.where)
       if (!extShimReport.proxy) logMainError(new Error('the chrome.proxy shim could not be installed in ' + real))
       return { ok: true }
     }
@@ -1131,7 +1161,7 @@ ipcMain.handle('ext:status', () => {
       loadError: (rec && rec.error) || ''
     }
   })
-  return { profile: USER, extensionsRoot: EXT_ROOT, shim: EXT_SHIM, builtins }
+  return { profile: USER, extensionsRoot: EXT_ROOT, shimLog: EXT_SHIM_LOG, shim: EXT_SHIM, builtins }
 })
 ipcMain.handle('ext:restorebuiltin', async (e, key) => {
   const b = EXT_BUILTIN.find((x) => x.key === key)

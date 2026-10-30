@@ -363,6 +363,7 @@
     </div>
     <div class="hint" id="proxySelfTestResult"></div>
     <div class="hint" id="proxyStatusResult">If the VPN says connected but your IP does not change, press <b>Check what proxy is in use</b>. It reports what Chromium would really do with your traffic, per profile.</div>
+    <div class="hint" id="extShimLog"></div>
     <div class="hint" id="protonVpnState">Press <b>Check install</b> to see what the bundled extension did at startup.</div>
     <div id="extList" class="ext-list"></div>
     <div class="btnrow">
@@ -926,7 +927,14 @@
           shim += ' WARNING: chrome.tabs could not be supplied either, so buttons that open a page - Proton VPN\'s Sign in included - will do nothing.'
         }
       }
+      if (r.shim && r.shim.where) shim += ' (installed in the ' + r.shim.where + ')'
       s('proxyStatusResult').textContent = parts.join(' | ') + ' \u2014 ' + who + warn + shim
+      // The shim writes what it did to a file in the profile. Naming it turns "the VPN does
+      // nothing" into something you can open and read.
+      if (s('extShimLog') && r.shimLog) {
+        s('extShimLog').textContent = 'Shim log: ' + r.shimLog
+        s('extShimLog').title = r.shimLog
+      }
     }
     if (s('protonVpnStatus')) s('protonVpnStatus').onclick = paintBuiltinStatus
     if (s('protonVpnRestore')) s('protonVpnRestore').onclick = async () => {

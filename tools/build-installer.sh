@@ -38,7 +38,7 @@ mkdir -p "$STAGE/resources/app"
 cp -a app/. "$STAGE/resources/app/"
 for f in main.js download-save.js translation.js update-manifest.js update-public-key.pem auto-updater.js \
          preload.js page-preload.js spell-page.js spell-words.txt ui/renderer.js ui/style.css ui/settings.html \
-         ext-proxy.js ext-shim.js builtin/proton-vpn/manifest.json builtin/proton-vpn/js/service.js \
+         ext-proxy.js ext-shim.js ext-main-world.js builtin/proton-vpn/manifest.json builtin/proton-vpn/js/service.js \
          builtin/README.md builtin/proton-vpn/LICENSE \
          builtin/proxy-switch/manifest.json builtin/proxy-switch/background.js \
          builtin/proxy-switch/popup.html builtin/proxy-switch/popup.js; do
@@ -71,7 +71,7 @@ for f in resources/app/main.js resources/app/download-save.js resources/app/tran
          resources/app/spell-page.js resources/app/spell-words.txt resources/app/preload.js \
          resources/app/page-preload.js resources/app/ui/renderer.js resources/app/ui/style.css \
          resources/app/ui/settings.html \
-         resources/app/ext-shim.js resources/app/ext-proxy.js \
+         resources/app/ext-shim.js resources/app/ext-main-world.js resources/app/ext-proxy.js \
          resources/app/builtin/README.md resources/app/builtin/proton-vpn/LICENSE \
          resources/app/builtin/proton-vpn/manifest.json resources/app/builtin/proton-vpn/js/service.js \
          resources/app/builtin/proton-vpn/popup.html \
