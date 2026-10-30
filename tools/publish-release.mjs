@@ -24,6 +24,7 @@ const version = require('../app/package.json').version
 const args = process.argv.slice(2)
 const dryRun = args.includes('--dry-run')
 const draft = args.includes('--draft')
+const check = args.includes('--check')
 
 const tag = `v${version}`
 const installerName = `${PRODUCT}-Setup-${version}.exe`
@@ -94,7 +95,14 @@ async function api(method, url, { body, accept = 'application/vnd.github+json', 
     'x-github-api-version': '2022-11-28'
   }
   if (body) headers['content-type'] = contentType
-  const res = await fetch(url, { method, headers, body })
+  let res
+  try {
+    res = await fetch(url, { method, headers, body })
+  } catch (e) {
+    // No network, a proxy, or a TLS interception. A stack trace here reads like the script
+    // crashed; it is only "GitHub could not be reached", which the user can act on.
+    return { status: 0, ok: false, json: null, text: String((e && e.cause && e.cause.message) || (e && e.message) || e) }
+  }
   const text = await res.text()
   let json = null
   try { json = text ? JSON.parse(text) : null } catch { /* not JSON */ }
@@ -102,6 +110,7 @@ async function api(method, url, { body, accept = 'application/vnd.github+json', 
 }
 
 function explain(status, text) {
+  if (status === 0) return 'GitHub could not be reached: ' + text + '. Check the connection, or any proxy or antivirus that inspects HTTPS.'
   if (status === 401) return 'the token was refused (401). It may be expired, revoked, or not a token at all.'
   if (status === 403) return 'the token is not allowed to do this (403). Publishing needs contents:write on ' + REPOSITORY + '.'
   if (status === 404) return 'the repository was not found (404). For a private repository the token must have access to it.'
@@ -109,12 +118,40 @@ function explain(status, text) {
   return 'GitHub answered ' + status + ': ' + text
 }
 
-if (!fs.existsSync(installerPath)) fail('no installer to publish: ' + installerPath + ' does not exist. Build it first.')
-
 const auth = token()
+
+// --check answers "will publishing work?" without publishing anything: which token was found,
+// whether it can see the private repository at all, and whether it is allowed to write.
+// A token that can only read gets exactly as far as one that does not exist at publish time,
+// and finding that out after a 20-minute build is the wrong time to find it out.
+if (check) {
+  if (!auth.value) {
+    fail('no token. Put {"token":"..."} in publish-token.json at the repo root, or set GITHUB_TOKEN.')
+  }
+  // The value itself is never printed, not even part of it: these consoles get pasted into chats.
+  const shape = auth.value.startsWith('github_pat_') ? 'fine-grained token' : auth.value.startsWith('ghp_') ? 'classic token' : 'unrecognised token shape'
+  console.log('Token source: ' + auth.source + ' (' + shape + ', ' + auth.value.length + ' characters)')
+  const repo = await api('GET', `https://api.github.com/repos/${REPOSITORY}`)
+  if (!repo.ok) {
+    fail(explain(repo.status, repo.text))
+  }
+  const canPush = !!(repo.json && repo.json.permissions && repo.json.permissions.push)
+  console.log('Repository:  ' + REPOSITORY + (repo.json && repo.json.private ? ' (private)' : ' (public) - check that, it should be private'))
+  console.log('Read access: yes')
+  console.log('Write access: ' + (canPush ? 'yes - publishing will work' : 'NO - this token needs Contents: Read and write'))
+  const releases = await api('GET', `https://api.github.com/repos/${REPOSITORY}/releases?per_page=1`)
+  console.log('Releases:    ' + (releases.ok ? 'readable' : 'not readable (' + releases.status + ')'))
+  if (!canPush) {
+    console.log('\nEdit the token at https://github.com/settings/tokens?type=beta and add')
+    console.log('Repository permissions -> Contents: Read and write, then save.')
+  }
+  process.exit(canPush ? 0 : 1)
+}
+
 if (!auth.value) {
   fail('no token. Set GITHUB_TOKEN, or put {"token":"..."} in publish-token.json at the repo root (contents:write on ' + REPOSITORY + ').')
 }
+if (!fs.existsSync(installerPath)) fail('no installer to publish: ' + installerPath + ' does not exist. Build it first.')
 
 const assets = [{ file: installerPath, name: installerName }]
 const manifestPath = path.join(ROOT, 'update-manifest.json')

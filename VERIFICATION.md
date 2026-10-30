@@ -2492,3 +2492,36 @@ public key verifies - which is what makes the update banner willing to offer the
 | `node tools/audit.mjs` | no defects |
 | `--dry-run` against a stub installer | body and asset list as expected |
 | version | 1.0.25 |
+
+## Round 62 - a token that only reads fails at the worst moment
+
+`--check` added to `tools/publish-release.mjs`. It resolves the token exactly as publishing does,
+asks GitHub for the repository, and prints four facts:
+
+```
+Token source: publish-token.json (fine-grained token, 93 characters)
+Repository:  Psycho-Core/PsychoVault (private)
+Read access: yes
+Write access: yes - publishing will work
+Releases:    readable
+```
+
+It exits non-zero when the token is missing or lacks `push`, and prints the one edit that fixes it.
+A read-only token behaves identically to a missing one *at publish time*, which is after the build
+- which is why this is worth running first.
+
+### Also
+
+- The token value is never printed, not even a prefix: these consoles get pasted into chats. The
+  line reports the shape (`fine-grained token`) and the length instead.
+- `api()` catches a failed `fetch`. A connection problem, a proxy or HTTPS inspection used to end
+  in an unhandled rejection and a stack trace; it is now one sentence naming the likely cause.
+
+### Checks
+
+| | |
+| --- | --- |
+| `node --test tools/*.test.cjs` | **132 pass** (2 new: `--check` without a token, and `--check` with one never echoes it and never leaks a stack trace) |
+| `node tools/audit.mjs` | no defects |
+| `--check` in this sandbox | correctly reports "GitHub could not be reached: unable to verify the first certificate" - TLS interception here, which is exactly the case the wording is for |
+| version | 1.0.26 |

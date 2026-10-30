@@ -9,7 +9,7 @@ There are three levels. Pick the one you want — you can always do more later.
 |---|---|---|---|
 | **A. Just run it** | The real browser, straight from the source folder | 3 min | Node.js |
 | **B. Portable exe** | `build\payload\PsychoVault.exe` — a rebranded, double-clickable browser | 5 min | Node.js |
-| **C. Full installer** | `PsychoVault-Setup-1.0.25.exe` — shortcuts, uninstall entry | 8 min | Node.js + NSIS |
+| **C. Full installer** | `PsychoVault-Setup-1.0.26.exe` — shortcuts, uninstall entry | 8 min | Node.js + NSIS |
 
 The script does levels A→C automatically. If NSIS is missing it simply stops after level B and
 tells you.
@@ -95,14 +95,14 @@ Electron. What it is doing:
    the unused 10 MB `app\tools\wireproxy.exe`
 6. checks the payload before packaging anything: every file the browser needs is present and
    non-empty, and the old `default_app.asar` is gone. If that check fails the build stops there
-7. if NSIS is installed, builds `PsychoVault-Setup-1.0.25.exe` in the repo root
+7. if NSIS is installed, builds `PsychoVault-Setup-1.0.26.exe` in the repo root
 8. writes `Release-Notes-1.0.12.txt` next to the script
 
 When it finishes you get:
 
 ```
 C:\PsychoVault\build\payload\PsychoVault.exe     <- just run this
-C:\PsychoVault\PsychoVault-Setup-1.0.25.exe      <- only if NSIS was installed
+C:\PsychoVault\PsychoVault-Setup-1.0.26.exe      <- only if NSIS was installed
 C:\PsychoVault\Release-Notes-1.0.12.txt         <- what changed, and the SHA-256 of both
 ```
 
@@ -263,7 +263,27 @@ The updater only trusts a release whose `update-manifest.json` is signed with th
 still published, but the banner will not offer it — the release body says which of the two
 happened.
 
-### Checking before it goes public
+### Checking the token before a build
+
+```
+node tools\publish-release.mjs --check
+```
+
+contacts GitHub and prints which token was found, whether it can see the private repository, and
+whether it is allowed to **write**. A token that can only read behaves exactly like a missing one
+at publish time, so this is worth ten seconds before a twenty-minute build:
+
+```
+Token source: publish-token.json (fine-grained token, 93 characters)
+Repository:  Psycho-Core/PsychoVault (private)
+Read access: yes
+Write access: yes - publishing will work
+Releases:    readable
+```
+
+The token's value is never printed, not even part of it.
+
+### Checking the release before it goes public
 
 ```
 node tools\publish-release.mjs --dry-run

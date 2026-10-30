@@ -1,0 +1,18 @@
+Check the publish token before a 20-minute build
+  node tools\publish-release.mjs --check contacts GitHub and says which token was
+  found, whether it can see the private repository, and whether it may write:
+    Token source: publish-token.json (fine-grained token, 93 characters)
+    Repository:  Psycho-Core/PsychoVault (private)
+    Read access: yes
+    Write access: yes - publishing will work
+  A token that can only read behaves exactly like a missing one at publish time,
+  so this is worth the ten seconds.
+
+  The token's value is never printed, not even the first and last characters: these
+  console windows get pasted into chats.
+
+A network problem is now a sentence, not a crash
+  Before, anything that stopped the script reaching GitHub - no connection, a proxy,
+  antivirus inspecting HTTPS - ended in an unhandled rejection and a stack trace.
+  It now says "GitHub could not be reached: <reason>. Check the connection, or any
+  proxy or antivirus that inspects HTTPS."
