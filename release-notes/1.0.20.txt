@@ -1,0 +1,29 @@
+The extension shim now actually installs itself
+  The 1.0.18 console showed Proton VPN, fully loaded in a tab with its Sign in button on
+  screen, still logging "Unknown Extension API - types.ChromeSetting.set". That message comes
+  from Chromium's own dispatcher, which means the extension was calling Chromium's stub and
+  not PsychoVault's shim at all - in the page and in its background worker. Nothing had ever
+  been installed; every earlier fix changed what gets installed and not whether it arrived.
+
+  The shim is now two files. app/ext-shim.js is the preload that carries the bridge, and
+  app/ext-main-world.js is the installer, a plain script with no imports that is delivered
+  into the extension's own world three ways, in order:
+    - a service-worker preload evaluates it in the worker's global scope
+    - an extension page gets it through webFrame.executeJavaScript, which runs in the page's
+      main world
+    - contextBridge.executeInMainWorld remains the last attempt, as it was the only path for
+      three versions
+
+  Each attempt records what it did.
+
+New: the shim keeps a log
+  %APPDATA%\PsychoVault\ext-shim.log now says, for every extension page and worker:
+    extension page preload ran: chrome-extension://<id>/popup.html
+    installer in the page: injected
+    report: proxy=true privacy=true tabs=true where=page
+  or exactly which step failed instead. Settings - Extensions prints the path under "Check
+  what proxy is in use". If a VPN extension does nothing after this build, that file says why
+  without another rebuild.
+
+Settings
+  The proxy readout now also reports chrome.tabs and which world the shim was installed in.

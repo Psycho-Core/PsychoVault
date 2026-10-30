@@ -9,21 +9,21 @@ const fs = require('node:fs')
 const path = require('node:path')
 
 const root = path.join(__dirname, '..')
-const shim = fs.readFileSync(path.join(root, 'app', 'ext-shim.js'), 'utf8')
+const shim = fs.readFileSync(path.join(root, 'app', 'ext-main-world.js'), 'utf8')
 const main = fs.readFileSync(path.join(root, 'app', 'main.js'), 'utf8')
 
 test('the shim supplies chrome.tabs instead of leaving Chromium stub-less', () => {
   assert.match(shim, /tabsInstalled = override\('tabs', tabsApi\)/)
   // the call Proton makes first
-  assert.match(shim, /create: \(details, cb\) =>/)
+  assert.match(shim, /create: function \(details, cb\)/)
   assert.match(shim, /b\.tabsCreate\(details\)/)
-  assert.match(shim, /query: \(q, cb\) =>/)
+  assert.match(shim, /query: function \(q, cb\)/)
   assert.match(shim, /b\.tabsQuery\(q\)/)
 })
 
 test('the events Proton listens on exist and are not shared between installs', () => {
-  assert.match(shim, /onRemoved,\n\s*onCreated,\n\s*onUpdated/)
-  assert.match(shim, /b\.onTabsRemoved\(\(tabId\) => onRemoved\.__emit/)
+  assert.match(shim, /onRemoved: tabRemoved,\n\s*onCreated: tabCreated,\n\s*onUpdated: tabUpdated/)
+  assert.match(shim, /b\.onTabsRemoved\(function \(tabId\) \{ tabRemoved\.__emit/)
 })
 
 test('every tabs channel is in the allow-list and answered in main', () => {
@@ -44,7 +44,8 @@ test('a tab opened by an extension is a real tab in the real window', () => {
 test('closing a tab tells open extension pages', () => {
   assert.match(main, /function shimAnnounceTabRemoved/)
   assert.match(main, /shimAnnounceTabRemoved\(this, id\)/)
-  assert.match(shim, /ipcRenderer\.on\('extshim:tabs:removed'/)
+  const preload = fs.readFileSync(path.join(root, 'app', 'ext-shim.js'), 'utf8')
+  assert.match(preload, /ipcRenderer\.on\('extshim:tabs:removed'/)
 })
 
 test('an extension cannot open javascript: or chrome: urls through the shim', () => {
