@@ -27,6 +27,13 @@ rm -rf "$STAGE/\$PLUGINSDIR"
 rm -rf "$STAGE/resources/app" "$STAGE/resources/app.asar"
 
 echo "[2/4] copying app source"
+# Existence only. The value must never reach a log.
+if [ -s app/update-token.json ]; then
+  echo "  release read token: PRESENT - it will be packaged into resources/app/update-token.json"
+else
+  echo "  release read token: absent - the in-app update check cannot read a private repository"
+fi
+test ! -e app/update-token.json || grep -q "app/update-token.json" .gitignore || { echo "REFUSING: update-token.json is not gitignored"; exit 1; }
 mkdir -p "$STAGE/resources/app"
 cp -a app/. "$STAGE/resources/app/"
 for f in main.js download-save.js translation.js update-manifest.js update-public-key.pem auto-updater.js \

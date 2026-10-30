@@ -1375,7 +1375,7 @@ to touch.
 
 | Source | How | Wins over |
 | --- | --- | --- |
-| Bundled at build time | Actions secret `UPDATE_READ_TOKEN` written to `app/update-token.json` (gitignored, mode 0600), staged into the installer by `tools/build-installer.sh` | - |
+| Bundled at build time | Actions secret `PsychoVault_Updater` (with `UPDATE_READ_TOKEN` as a fallback name) written to `app/update-token.json` (gitignored, mode 0600), staged into the installer by `tools/build-installer.sh` | - |
 | Saved in Settings | **Settings - About - Release access token** → `update-token.bin` in the profile, encrypted with `safeStorage` (OS keychain) where one exists | the bundled token |
 
 The value is never displayed after saving, never logged, and never written to `settings.json`.
@@ -1411,7 +1411,7 @@ still refused it - it may have expired or been revoked". Settings shows the same
 | --- | --- |
 | `node --test tools/*.test.cjs` | **32 pass** (7 new in `tools/update-auth.test.cjs`) |
 | `node tools/audit.mjs` | no defects |
-| workflow | `UPDATE_READ_TOKEN` injected before the build; a missing secret warns instead of failing, and the installer still builds |
+| workflow | the `PsychoVault_Updater` secret injected before the build; a missing secret warns instead of failing, and the installer still builds |
 | Electron APIs used | verified against the docs: `redirect: 'manual'`, `followRedirect()` called synchronously in `'redirect'`, `removeHeader()`/`getHeader()` |
 
 ### Still unproven here
