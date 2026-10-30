@@ -1,0 +1,18 @@
+The blank Proton window now explains itself
+  Since the shim started installing, Proton VPN's window renders as an empty page instead of
+  the screen with Sign in. That means the shim is now running and the extension's own code is
+  failing on what it gets - the opposite problem to before, and impossible to diagnose from a
+  screenshot.
+
+  So every console error and warning from an extension page is now written to the shim log, in
+  the same file as the shim's own steps. Settings - Extensions - "Check what proxy is in use"
+  shows the last twenty lines on screen.
+
+Two fixes made on the way
+  Replacing chrome.tabs dropped the methods Electron does implement - sendMessage, reload,
+  executeScript - so an extension using one of those broke for no reason of ours. The shim now
+  keeps everything it does not replace, for chrome.tabs, chrome.proxy and chrome.privacy.
+
+  chrome.tabs.query no longer reports the extension's own page as the active tab. Chrome asks
+  that question from a popup, which is not a tab; here the popup IS a tab, so Proton was being
+  told the active page was a chrome-extension:// url instead of the page being looked at.

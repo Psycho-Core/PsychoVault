@@ -364,6 +364,7 @@
     <div class="hint" id="proxySelfTestResult"></div>
     <div class="hint" id="proxyStatusResult">If the VPN says connected but your IP does not change, press <b>Check what proxy is in use</b>. It reports what Chromium would really do with your traffic, per profile.</div>
     <div class="hint" id="extShimLog"></div>
+    <pre id="extShimLogBody" hidden style="max-height:150px;overflow:auto;font:12px/1.45 ui-monospace,Consolas,monospace;white-space:pre-wrap;background:rgba(0,0,0,.25);border-radius:6px;padding:8px;margin:6px 0 0"></pre>
     <div class="hint" id="protonVpnState">Press <b>Check install</b> to see what the bundled extension did at startup.</div>
     <div id="extList" class="ext-list"></div>
     <div class="btnrow">
@@ -932,11 +933,17 @@
       // The shim writes what it did to a file in the profile. Naming it turns "the VPN does
       // nothing" into something you can open and read.
       if (s('extShimLog') && r.shimLog) {
-        // The last lines matter more than the path: they say whether the preload ran at all,
-        // whether the installer landed, and whether the result was read back as installed.
+        // The lines matter more than the path: they say whether the preload ran at all, whether
+        // the installer landed, whether the result was read back as installed, and - since this
+        // version - whatever the extension page itself printed to its console.
         const tail = (r.shimLogTail || []).map((l) => l.replace(/^\[[^\]]*\]\s*/, ''))
-        s('extShimLog').textContent = 'Shim log: ' + r.shimLog + (tail.length ? ' | ' + tail.join(' | ') : ' | nothing written yet')
+        s('extShimLog').textContent = 'Shim log: ' + r.shimLog + (tail.length ? '' : ' - nothing written yet')
         s('extShimLog').title = r.shimLog
+        const body = s('extShimLogBody')
+        if (body) {
+          body.textContent = tail.join('\n')
+          body.hidden = tail.length === 0
+        }
       }
     }
     if (s('protonVpnStatus')) s('protonVpnStatus').onclick = paintBuiltinStatus

@@ -553,6 +553,35 @@ function shimLog(id, line) {
     fs.appendFileSync(EXT_SHIM_LOG, '[' + new Date().toISOString().slice(11, 23) + '] ' + (id || '-') + ' ' + line + '\n')
   } catch (e) { /* the log is a convenience, never a place to fail */ }
 }
+// An extension page that renders nothing leaves no evidence: its own console is the only place
+// the real error exists, and there is no way to open devtools on it here. So every console line
+// from an extension page goes into the shim log, where Settings can show it.
+function watchExtensionConsole(wc) {
+  try {
+    if (!wc || wc._pvExtConsole) return
+    wc._pvExtConsole = true
+    wc.on('console-message', (event) => {
+      // Only extension pages. A news site's console is none of the shim log's business.
+      let pageUrl = ''
+      try { pageUrl = String(wc.getURL() || '') } catch (e) { return }
+      if (!pageUrl.startsWith('chrome-extension://')) return
+      const level = event && event.level !== undefined ? event.level : 0
+      const where = String((event && event.sourceId) || (event && event.lineNumber) || '')
+      const message = String((event && event.message) || '')
+      if (!message) return
+      // Errors and warnings only: Proton logs a lot of noise at info level.
+      if (level !== 'error' && level !== 'warning' && level !== 3 && level !== 2) return
+      shimLog('page', 'console ' + level + (where ? ' at ' + where : '') + ': ' + message)
+    })
+    wc.on('did-fail-load', (_e, code, desc, target, isMain) => {
+      if (isMain) shimLog('page', 'load failed ' + code + ' ' + desc + ' ' + target)
+    })
+    wc.on('render-process-gone', (_e, details) => {
+      shimLog('page', 'renderer gone: ' + ((details && details.reason) || 'unknown'))
+    })
+  } catch (e) { logMainError(e) }
+}
+
 // The last few lines, for Settings. Reading the file beats asking the user to find it.
 function shimLogTail(n) {
   try {
@@ -746,6 +775,10 @@ async function onShimCall(event, payload, channel) {
       if (!w) return { ok: true, tabs: [] }
       const q = (payload && payload.query) || {}
       let list = w.order.map((id) => shimTabInfo(w, id)).filter(Boolean)
+      // Chrome's tabs.query is called from a popup, which is not a tab. Here an extension page
+      // IS a tab, so without this it reports itself as the active tab and the extension then
+      // sees a chrome-extension:// url where it expected the page the user is looking at.
+      if (q.currentWindow || q.active) list = list.filter((t) => !String(t.url || '').startsWith('chrome-extension://'))
       if (q.active) list = list.filter((t) => t.active)
       if (q.currentWindow) { /* there is one window per w, already scoped */ }
       if (typeof q.url === 'string') list = list.filter((t) => t.url === q.url)
@@ -1868,6 +1901,7 @@ class TabWindow {
       emit()
     })
 
+    watchExtensionConsole(wc)
     wc.setWindowOpenHandler(({ url: target }) => {
       // remember who opened it: that is what makes a GX tab island collapsible
       if (/^http/.test(target)) { this.createTab(target, { parentId: tab.id, container: tab.container }); return }
@@ -3542,7 +3576,7 @@ ipcMain.handle('proxy:status', async () => {
   }
   const setBy = []
   for (const [id, value] of extProxyValues) setBy.push({ id, mode: String((value && value.mode) || 'system') })
-  return { ok: true, probe: PROXY_PROBE_URL, rows, setBy, last: extProxyState, shim: extShimReport, shimLog: EXT_SHIM_LOG, shimLogTail: shimLogTail(6) }
+  return { ok: true, probe: PROXY_PROBE_URL, rows, setBy, last: extProxyState, shim: extShimReport, shimLog: EXT_SHIM_LOG, shimLogTail: shimLogTail(20) }
 })
 
 ipcMain.handle('proxy:selftest', async () => {

@@ -80,10 +80,23 @@ function installExtensionAPIs(g, bridgeName) {
     }
   }
 
+  // Replacing an API wholesale would drop the methods Chromium does implement - tabs.sendMessage,
+  // tabs.reload, tabs.executeScript, the rest of privacy.network - and an extension that used one
+  // of those would break for a reason that has nothing to do with us.
+  var merge = function (target, original) {
+    if (!original) return target
+    Object.keys(original).forEach(function (k) {
+      if (target[k] === undefined) {
+        try { target[k] = original[k] } catch (e) { /* read-only */ }
+      }
+    })
+    return target
+  }
+
   // chrome.proxy
   var onChange = makeEvent()
   var onProxyError = makeEvent()
-  var proxyInstalled = override('proxy', {
+  var proxyInstalled = override('proxy', merge({
     settings: {
       get: function (details, cb) {
         Promise.resolve(b.proxyGet()).then(function (result) { safeCall(cb, result) })
@@ -112,12 +125,12 @@ function installExtensionAPIs(g, bridgeName) {
     },
     onProxyError: onProxyError,
     onRequest: undefined
-  })
+  }, chromeObj.proxy))
 
   // chrome.privacy
   var privacyChange = makeEvent()
-  var privacyInstalled = override('privacy', {
-    network: {
+  var privacyInstalled = override('privacy', merge({
+    network: merge({
       webRTCIPHandlingPolicy: {
         get: function (details, cb) {
           Promise.resolve(b.webrtcGet()).then(function (v) { safeCall(cb, { value: v, levelOfControl: 'controlled_by_this_extension' }) })
@@ -137,8 +150,8 @@ function installExtensionAPIs(g, bridgeName) {
         },
         onChange: privacyChange
       }
-    }
-  })
+    }, chromeObj.privacy && chromeObj.privacy.network)
+  }, chromeObj.privacy))
 
   // chrome.tabs - Electron has only sendMessage, reload, executeScript and partial query/update,
   // and no tabs.create at all. Proton reads a missing tabs object as a broken install:
@@ -147,7 +160,7 @@ function installExtensionAPIs(g, bridgeName) {
   var tabRemoved = makeEvent()
   var tabCreated = makeEvent()
   var tabUpdated = makeEvent()
-  var tabsInstalled = override('tabs', {
+  var tabsInstalled = override('tabs', merge({
     query: function (q, cb) {
       Promise.resolve(b.tabsQuery(q)).then(function (r) { safeCall(cb, (r && r.tabs) || []) })
         .catch(function () { safeCall(cb, []) })
@@ -182,7 +195,7 @@ function installExtensionAPIs(g, bridgeName) {
     onRemoved: tabRemoved,
     onCreated: tabCreated,
     onUpdated: tabUpdated
-  })
+  }, chromeObj.tabs))
   try { b.onTabsRemoved(function (tabId) { tabRemoved.__emit(tabId, { windowId: 1, isWindowClosing: false }) }) } catch (e) { /* no bridge */ }
 
   // Proton calls chrome.action.openPopup() once a sign-in tab closes. There is no toolbar here,
