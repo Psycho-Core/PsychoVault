@@ -5,7 +5,7 @@ const path = require('node:path')
 const crypto = require('node:crypto')
 const { spawn } = require('node:child_process')
 const { app, BrowserWindow, dialog, net, safeStorage } = require('electron')
-const { shouldKeepAuthorization, authHeader, tokenSource, apiAssetUrl } = require('./update-auth')
+const { authorizationForHop, authHeader, tokenSource, apiAssetUrl } = require('./update-auth')
 const {
   REPOSITORY,
   PLATFORM,
@@ -102,63 +102,99 @@ class UpdateCheckError extends Error {
   }
 }
 
-function requestBuffer(url, { maxBytes = MAX_API_BYTES, timeoutMs = REQUEST_TIMEOUT_MS, headers = {}, allowRedirectHeaderDrop = true } = {}) {
+// One HTTP GET, following redirects by RE-ISSUING the request at each hop rather than by
+// mutating the one already in flight.
+//
+// The obvious approach - redirects:'manual' plus removeHeader() inside the 'redirect' event -
+// does not work: removeHeader() is documented as callable "only before first write", and by
+// the time a redirect arrives the request has already been ended. It throws, so any
+// fail-closed check built on it fails closed every time. That is exactly how the 1.0.9
+// updater managed to reach GitHub, see the new release, and then fail every download with
+// 'manifest-download-failed'.
+//
+// A fresh request per hop recomputes the header set from scratch, so the credential is
+// attached only when the hop is allowed to see it, and nothing has to be removed after send.
+const MAX_REDIRECTS = 5
+
+function openWithRedirects(startUrl, { method = 'GET', headers = {}, timeoutMs = REQUEST_TIMEOUT_MS, token = '' } = {}) {
   return new Promise((resolve, reject) => {
-    let request
-    let response
     let settled = false
-    let size = 0
-    const chunks = []
+    let current = null
+    let timer = null
+    const hops = []
+
     const finish = (error, result) => {
       if (settled) return
       settled = true
-      clearTimeout(timer)
+      if (timer) clearTimeout(timer)
       if (error) reject(error)
       else resolve(result)
     }
-    const timer = setTimeout(() => {
-      try { request && request.abort() } catch { /* request may already be closed */ }
+
+    const attempt = (targetUrl) => {
+      if (settled) return
+      if (hops.length > MAX_REDIRECTS) {
+        finish(new Error(`Gave up after ${MAX_REDIRECTS} redirects.`))
+        return
+      }
+      let req
+      try {
+        req = net.request({ url: targetUrl, method, redirects: 'manual', useSessionCookies: false })
+      } catch (e) {
+        finish(e)
+        return
+      }
+      current = req
+
+      req.setHeader('User-Agent', USER_AGENT)
+      // The credential belongs to the origin that was asked, never to a host it redirects to.
+      const auth = authorizationForHop(startUrl, targetUrl, token)
+      if (auth) req.setHeader('Authorization', auth.Authorization)
+      for (const [name, value] of Object.entries(headers)) req.setHeader(name, value)
+
+      req.on('redirect', (_status, _redirectMethod, redirectUrl) => {
+        hops.push({ from: targetUrl, to: redirectUrl, sentToken: !!auth })
+        try { req.abort() } catch { /* already closing */ }
+        attempt(redirectUrl)
+      })
+      req.on('response', (res) => finish(null, { res, request: req, finalUrl: targetUrl, hops }))
+      req.on('error', (e) => { if (!settled) finish(e) })
+
+      try { req.end() } catch (e) { finish(e) }
+    }
+
+    timer = setTimeout(() => {
+      try { current && current.abort() } catch { /* already closed */ }
       finish(new Error('GitHub request timed out.'))
     }, timeoutMs)
 
-    try {
-      request = net.request({ url, method: 'GET', redirects: 'manual', useSessionCookies: false })
-    } catch (error) {
-      finish(error)
-      return
+    attempt(startUrl)
+  })
+}
+
+function requestBuffer(url, { maxBytes = MAX_API_BYTES, timeoutMs = REQUEST_TIMEOUT_MS, headers = {} } = {}) {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const finish = (error, result) => {
+      if (settled) return
+      settled = true
+      if (error) reject(error)
+      else resolve(result)
     }
-    // Redirects are followed by hand so the credential can be dropped the moment the target
-    // host changes. net.request's 'follow' would carry Authorization to the CDN host.
-    // Fail closed: if the credential cannot be dropped before the target host changes, the
-    // redirect is abandoned rather than followed with the token still attached.
-    const dropCredential = () => {
-      try {
-        request.removeHeader('Authorization')
-        return !request.getHeader('Authorization')
-      } catch { return false }
-    }
-    if (allowRedirectHeaderDrop) {
-      request.on('redirect', (_status, _method, redirectUrl) => {
-        if (!shouldKeepAuthorization(url, redirectUrl) && !dropCredential()) {
-          finish(new Error('Refused a redirect that would have carried the release token to another host.'))
-          try { request.abort() } catch { /* already closed */ }
-          return
-        }
-        request.followRedirect()
-      })
-    }
-    request.on('response', (res) => {
-      response = res
+
+    openWithRedirects(url, { headers, timeoutMs, token: updateToken() }).then(({ res }) => {
       if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
         res.resume()
-        finish(new UpdateCheckError(`GitHub returned HTTP ${res.statusCode || 'unknown'}.`, res.statusCode))
+        finish(new UpdateCheckError(`GitHub returned HTTP ${res.statusCode || 'unknown'} for ${url}.`, res.statusCode))
         return
       }
+      let size = 0
+      const chunks = []
       res.on('data', (chunk) => {
         if (settled) return
         size += chunk.length
         if (size > maxBytes) {
-          try { res.destroy() } catch { /* response may already be closed */ }
+          try { res.destroy() } catch { /* already closed */ }
           finish(new Error('GitHub response exceeded the allowed size.'))
           return
         }
@@ -166,13 +202,7 @@ function requestBuffer(url, { maxBytes = MAX_API_BYTES, timeoutMs = REQUEST_TIME
       })
       res.on('end', () => finish(null, Buffer.concat(chunks)))
       res.on('error', finish)
-    })
-    request.on('error', finish)
-    request.setHeader('User-Agent', USER_AGENT)
-    const auth = authHeader(updateToken())
-    if (auth) request.setHeader('Authorization', auth.Authorization)
-    for (const [name, value] of Object.entries(headers)) request.setHeader(name, value)
-    request.end()
+    }).catch(finish)
   })
 }
 
@@ -211,65 +241,42 @@ function setTaskbarProgress(value) {
 
 function downloadInstaller(url, destination, manifest, onProgress) {
   return new Promise((resolve, reject) => {
-    let request
-    let response
-    let output
     let settled = false
-    let finishedWriting = false
     let received = 0
     let lastReported = -10
+    let output
+    let finishedWriting = false
     const hash = crypto.createHash('sha256')
-    const timer = setTimeout(() => fail(new Error('The update download timed out.')), DOWNLOAD_TIMEOUT_MS)
 
-    function fail(error) {
+    const fail = (error) => {
       if (settled) return
       settled = true
-      clearTimeout(timer)
-      try { request && request.abort() } catch { /* request may already be closed */ }
-      try { response && response.destroy() } catch { /* response may already be closed */ }
-      try { output && output.destroy() } catch { /* output may already be closed */ }
+      try { output && output.destroy() } catch { /* already closed */ }
       fs.rm(destination, { force: true }, () => {})
       reject(error)
     }
 
-    function finishDownload() {
+    const finishDownload = () => {
       if (settled) return
       if (!finishedWriting) return fail(new Error('The update installer was not written completely.'))
       if (received !== manifest.size) return fail(new Error('The downloaded installer size does not match its signed manifest.'))
       const actualHash = hash.digest('hex')
       if (actualHash !== manifest.sha256) return fail(new Error('The downloaded installer failed its SHA-256 check.'))
       settled = true
-      clearTimeout(timer)
       safeProgress(onProgress, { phase: 'verified', percent: 100, message: 'Update downloaded and verified.' })
       resolve({ bytes: received, sha256: actualHash })
     }
 
-    try {
-      request = net.request({ url, method: 'GET', redirects: 'manual', useSessionCookies: false })
-    } catch (error) {
-      fail(error)
-      return
-    }
-    request.on('redirect', (_status, _method, redirectUrl) => {
-      if (!shouldKeepAuthorization(url, redirectUrl)) {
-        let dropped = false
-        try {
-          request.removeHeader('Authorization')
-          dropped = !request.getHeader('Authorization')
-        } catch { dropped = false }
-        if (!dropped) {
-          fail(new Error('Refused a redirect that would have carried the release token to another host.'))
-          try { request.abort() } catch { /* already closed */ }
-          return
-        }
-      }
-      request.followRedirect()
-    })
-    request.on('response', (res) => {
-      response = res
+    // Redirects are re-issued by openWithRedirects, which recomputes the header set for each
+    // hop, so the credential never travels to the download CDN.
+    openWithRedirects(url, {
+      headers: { Accept: 'application/octet-stream' },
+      timeoutMs: DOWNLOAD_TIMEOUT_MS,
+      token: updateToken()
+    }).then(({ res }) => {
       if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
         res.resume()
-        fail(new Error(`GitHub returned HTTP ${res.statusCode || 'unknown'} for the installer.`))
+        fail(new UpdateCheckError(`GitHub returned HTTP ${res.statusCode || 'unknown'} for the installer.`, res.statusCode))
         return
       }
       const contentLength = Number(res.headers['content-length'])
@@ -303,13 +310,7 @@ function downloadInstaller(url, destination, manifest, onProgress) {
       })
       res.on('error', fail)
       res.pipe(output)
-    })
-    request.on('error', fail)
-    request.setHeader('User-Agent', USER_AGENT)
-    request.setHeader('Accept', 'application/octet-stream')
-    const auth = authHeader(updateToken())
-    if (auth) request.setHeader('Authorization', auth.Authorization)
-    request.end()
+    }).catch(fail)
   })
 }
 
@@ -394,8 +395,16 @@ async function checkForUpdates({ onProgress = () => {}, onError = () => {} } = {
       requestBuffer(manifestUrl, { maxBytes: MAX_MANIFEST_BYTES, headers: { Accept: 'application/octet-stream' } }),
       requestBuffer(signatureUrl, { maxBytes: 1024, headers: { Accept: 'application/octet-stream' } })
     ])
-  } catch {
-    return { skipped: true, reason: 'manifest-download-failed' }
+  } catch (e) {
+    // Swallowing this was how the v1.0.9 updater reported 'manifest-download-failed' with no
+    // cause. Carry the status and message through so Settings can show them.
+    const status = e && e.status ? e.status : 0
+    const error = new Error(
+      `The signed update manifest for ${release.tag_name} could not be downloaded` +
+      (status ? ` (HTTP ${status})` : '') + ': ' + ((e && e.message) || 'no reason given')
+    )
+    try { onError(error) } catch { /* diagnostics are best effort */ }
+    return { skipped: true, reason: 'manifest-download-failed', status, message: String((e && e.message) || e) }
   }
 
   let publicKeyPem
