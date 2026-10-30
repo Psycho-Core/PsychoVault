@@ -1703,3 +1703,56 @@ bad string replacement - which is the reason it exists.
 The batch file has still never been executed by `cmd.exe`. What is proven is its structure, its
 encoding, the tools it calls, and the layout it produces; what cannot be proven here is Windows'
 own command parsing. Every failure path prints a labelled message rather than dying silently.
+
+## Round 45 - a monthly build, scheduled after the quota resets
+
+The 1.0.12 build cannot be produced by CI because Actions refuses to start jobs on this account
+(see rounds 42 and 44). A calendar trigger removes the need to remember to retry by hand.
+
+### What was added
+
+```yaml
+  schedule:
+    - cron: '0 11 1 * *'
+      timezone: 'Australia/Adelaide'
+```
+
+11:00 on the 1st, local time. GitHub added an IANA `timezone` key next to `cron` on 19 March 2026
+(`github.blog/changelog/2026-03-19-github-actions-late-march-2026-updates`), so this stays 11:00
+through both ACDT and ACST instead of drifting an hour at the April and October changes. The
+workflow already had `workflow_dispatch`, so a run can still be started by hand.
+
+### Why 11:00 and not earlier
+
+Included Actions minutes reset at **00:00 UTC on the 1st**, which is 10:30 in Adelaide during
+daylight saving. A schedule at, say, 09:00 local would fire *before* the reset and be refused with
+the same billing annotation - the run would be red for no useful reason. 11:00 is 30 minutes after
+the reset, and scheduled runs can only be delayed by GitHub, never started early, so the margin
+cannot be eaten.
+
+### Two changes so a recurring run stays safe
+
+1. **A release is never rewritten.** A new step reads the version and asks `gh release view`
+   whether `v<version>` already exists. If it does, the run still builds and keeps the artifact,
+   but the signing, checksum and publish steps are skipped (`steps.released.outputs.exists ==
+   'false'`). Without this, month two would either fail on `gh release create` or, worse, replace
+   `SHA256SUMS.txt` with the hash of a different binary built from the same version.
+2. **`concurrency: build-release-${{ github.ref }}`** with `cancel-in-progress: false`, so a
+   scheduled run and a push-triggered run cannot publish over each other.
+
+### Checks
+
+| | |
+| --- | --- |
+| YAML parses (`js-yaml`) | yes - `on.schedule[0]` is `{cron: '0 11 1 * *', timezone: 'Australia/Adelaide'}` |
+| cron resolves to the intended instant (`cron-parser`, tz-aware) | next fire `2026-11-01 11:00 ACDT` = `2026-11-01T00:30:00Z`, which is 30 minutes after the reset |
+| step order | the release-exists check runs immediately after the version is read, and all four write steps are gated on it |
+| `node tools/audit.mjs` | no defects |
+| `node --test tools/*.test.cjs` | 73 pass |
+
+### Still unproven
+
+Whether the scheduled run actually starts: that depends on the quota having reset, which only the
+billing page can confirm, and scheduled runs may be delayed by GitHub under load. The merge that
+adds this file also triggers a push build, which will fail at job start for the same billing reason
+- that is expected, and it is not the schedule failing.
