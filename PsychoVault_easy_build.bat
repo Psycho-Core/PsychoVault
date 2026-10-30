@@ -50,6 +50,10 @@ set "HARD=%HARD% resources\\app\\main.js resources\\app\\ui\\index.html"
 rem A ( or & in the folder name would break the unquoted echo lines further down.
 echo "%ROOT%"| findstr /c:"(" /c:"&" >nul
 if not errorlevel 1 goto :bad_path
+echo "%ROOT%"| findstr /c:"#" >nul
+if not errorlevel 1 echo       NOTE: this path contains #, which NSIS reads as a comment marker in some
+if not errorlevel 1 echo       builds. If the installer step reports "no files found" while the payload
+if not errorlevel 1 echo       is clearly not empty, move the folder somewhere without # and retry.
 
 echo ============================================================
 echo   PsychoVault easy build
@@ -195,7 +199,12 @@ if defined MISSING goto :fail_verify
 set "WARNED="
 for %%f in (%RUNTIME%) do if not exist "%PAYLOAD%\%%f" set "WARNED=!WARNED! %%f"
 for %%f in (%VERIFY%) do if not exist "%PAYLOAD%\%%f" set "WARNED=!WARNED! %%f"
+pushd "%PAYLOAD%"
+rem %%~zf only means anything for a name that can be found from here, so the payload
+rem path has to be the one measured. Asking for the bare relative name reported every
+rem file as empty, because a name that does not exist compares equal to 0.
 for %%f in (%VERIFY%) do if exist "%PAYLOAD%\%%f" if %%~zf EQU 0 set "WARNED=!WARNED! %%f (empty)"
+popd
 if defined WARNED echo       WARNING: missing or empty, continuing anyway: !WARNED!
 if not exist "%PAYLOAD%\resources\default_app.asar" goto :verify_done
 echo       WARNING: resources\default_app.asar is still there; removing it.
@@ -216,6 +225,12 @@ set "SETUP=%ROOT%\PsychoVault-Setup-%VERSION%.exe"
 if not defined MAKENSIS goto :no_nsis
 
 echo       NSIS found: %MAKENSIS%
+rem Defender can quarantine the staged runtime between the check above and this point:
+rem a second enumeration by NSIS then finds nothing. So count the payload again here.
+set "PAYLOADCOUNT=0"
+for /f %%c in ('dir /a-d /b "%PAYLOAD%" 2^>nul ^| find /c /v ""') do set "PAYLOADCOUNT=%%c"
+if "%PAYLOADCOUNT%"=="0" goto :fail_vanished
+echo       Payload still has %PAYLOADCOUNT% files at the top level.
 "%MAKENSIS%" /V2 /DWANT_UNINSTALLER "/DVERSION=%VERSION%" "/DMUI_ICON=%ROOT%\assets\psychovault.ico" "/DPAYLOADDIR=%PAYLOAD%" "/DOUTFILE=%SETUP%" "%ROOT%\installer.nsi"
 if errorlevel 1 goto :fail_nsis
 if not exist "%SETUP%" goto :fail_nsis
@@ -434,8 +449,33 @@ echo   Then run this file again.
 echo.
 goto :notes
 
+:fail_vanished
+echo.
+echo   FAILED: the staged payload was empty when NSIS looked at it, seconds
+echo   after it was checked and found complete. Something removed the files
+echo   in between, which is almost always antivirus quarantine - the runtime
+echo   is a fresh unsigned executable and Defender treats it that way.
+echo.
+echo   Restore them and stop it happening again. In an administrator
+echo   PowerShell, run:
+echo     Add-MpPreference -ExclusionPath "%ROOT%"
+echo   then check Windows Security, Virus and threat protection,
+echo   Protection history for entries naming PsychoVault.exe, and restore them.
+echo.
+echo   Then delete the build folder and run this file again.
+echo.
+echo   You do not need the installer to use the browser - but the whole
+echo   payload was removed, so there is nothing portable to run either.
+goto :end
+
 :fail_nsis
 echo.
 echo   FAILED: NSIS ran but no installer was produced.
-echo   The portable build at %PAYLOAD% is still fine.
-goto :end
+echo   The portable browser at %PAYLOAD%\PsychoVault.exe is still there and runs
+echo   without an installer - use it, and use BUILD-WINDOWS.md if you want the
+echo   Setup .exe as well.
+echo.
+echo   If NSIS reported "no files found", antivirus removed the payload mid-build.
+echo   Add an exclusion for this folder and run the file again:
+echo     Add-MpPreference -ExclusionPath "%ROOT%"
+goto :notes

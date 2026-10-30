@@ -2068,3 +2068,57 @@ Whether Electron runs a service-worker preload at all in this configuration. If 
 badge will show `X` and `Settings - Extensions - Check what proxy is in use` will say the API
 could not be supplied - which finally makes that state visible instead of a VPN that silently
 does nothing.
+
+## Round 52 - two defects in step 6 and 7, from the second easy-build transcript
+
+```
+WARNING: missing or empty, continuing anyway:  PsychoVault.exe (empty) ... (empty)
+[7/8] NSIS found: ...makensis.exe
+File: "build\payload/*.*" -> no files found.
+```
+
+### Defect one: the empty-file probe measured the wrong path
+
+```bat
+for %%f in (%VERIFY%) do if exist "%PAYLOAD%\%%f" if %%~zf EQU 0 set "WARNED=... (empty)"
+```
+
+`%%~zf` gives the size of `%%f` **relative to the current directory**, which was the repo root -
+where `resources\app\main.js` does not exist. A size that cannot be read comes back empty, and
+`if "" EQU 0` is true, so every file was reported empty including `PsychoVault.exe`. The probe now
+runs with `pushd "%PAYLOAD%"`, so the relative name resolves to the staged file.
+
+That also means the warning was never evidence of anything: the files were there, which is why the
+build continued and why step 6's hard check passed.
+
+### Defect two: nothing re-checked the payload before packaging
+
+NSIS then found the directory empty seconds later. A scanner can quarantine a freshly staged,
+unsigned runtime between one step and the next, and NSIS then reports "no files found" while the
+previous step said everything was present. Step 7 now counts the top-level files itself and stops
+with a named cause if the count is zero:
+
+```
+FAILED: the staged payload was empty when NSIS looked at it, seconds after it was
+checked and found complete. Something removed the files in between, which is almost
+always antivirus quarantine...
+  Add-MpPreference -ExclusionPath "<repo>"
+```
+
+### Also
+
+- `:fail_nsis` no longer claims "the portable build is still fine" unconditionally - it points at
+  the exe and, if NSIS said "no files found", names quarantine and the exclusion command.
+- An NSIS failure now falls through to the release-notes step instead of `:end`, so the record of
+  what was built is still written.
+- A path containing `#` prints a note: NSIS treats `#` as a comment marker in some builds, so if the
+  installer step reports "no files found" while the payload is demonstrably not empty, that is the
+  next thing to rule out. The user's path contains one.
+
+### Checks
+
+| | |
+| --- | --- |
+| `node --test tools/*.test.cjs` | **106 pass** (4 new: the probe location, the recount before makensis, the vanished-payload cause, notes still written on NSIS failure) |
+| `node tools/audit.mjs` | no defects |
+| version | 1.0.16 |
