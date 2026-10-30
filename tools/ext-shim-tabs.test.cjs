@@ -13,7 +13,7 @@ const shim = fs.readFileSync(path.join(root, 'app', 'ext-shim.js'), 'utf8')
 const main = fs.readFileSync(path.join(root, 'app', 'main.js'), 'utf8')
 
 test('the shim supplies chrome.tabs instead of leaving Chromium stub-less', () => {
-  assert.match(shim, /var tabsInstalled = override\('tabs', \{/)
+  assert.match(shim, /var tabsInstalled = override\('tabs', merge\(\{/)
   // the call Proton makes first
   assert.match(shim, /create: function \(details, cb\)/)
   assert.match(shim, /b\.tabsCreate\(details\)/)
@@ -50,4 +50,32 @@ test('closing a tab tells open extension pages', () => {
 test('an extension cannot open javascript: or chrome: urls through the shim', () => {
   const block = main.slice(main.indexOf("channel === 'extshim:tabs:create'"), main.indexOf("channel === 'extshim:tabs:update'"))
   assert.match(block, /if \(!\/\^\(https\?\|ftp\|file\|about\|psychovault\|chrome-extension\):/)
+})
+
+test('the overrides keep what Chromium already implements', () => {
+  // Replacing chrome.tabs wholesale dropped tabs.sendMessage, tabs.reload and
+  // tabs.executeScript, which Electron does implement - an extension using one of those would
+  // break for a reason that has nothing to do with the proxy.
+  assert.match(shim, /var merge = function \(target, original\)/)
+  assert.match(shim, /var tabsInstalled = override\('tabs', merge\(\{/)
+  assert.match(shim, /\}, chromeObj\.tabs\)\)/)
+  assert.match(shim, /\}, chromeObj\.proxy\)\)/)
+  assert.match(shim, /\}, chromeObj\.privacy\)\)/)
+})
+
+test('tabs.query does not report the extension page as the active tab', () => {
+  // Chrome calls tabs.query from a popup, which is not a tab. Here an extension page is a tab,
+  // so it reported itself and the extension saw a chrome-extension:// url where it expected the
+  // page the user was looking at.
+  const at = main.indexOf("channel === 'extshim:tabs:query'")
+  const block = main.slice(at, main.indexOf("channel === 'extshim:tabs:create'"))
+  assert.match(block, /list\.filter\(\(t\) => !String\(t\.url \|\| ''\)\.startsWith\('chrome-extension:\/\/'\)\)/)
+})
+
+test('an extension page console line reaches the shim log', () => {
+  // A blank popup has no other evidence: no devtools here, and nothing on disk.
+  assert.match(main, /function watchExtensionConsole\(wc\)/)
+  assert.match(main, /wc\.on\('console-message'/)
+  assert.match(main, /if \(!pageUrl\.startsWith\('chrome-extension:\/\/'\)\) return/)
+  assert.match(main, /watchExtensionConsole\(wc\)/)
 })

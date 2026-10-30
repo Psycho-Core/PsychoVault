@@ -2419,3 +2419,37 @@ several rounds, and the message was doing the misdiagnosing.
 | `node --test tools/*.test.cjs` | **122 pass** (the compressor test now matches the full accepted form) |
 | `node tools/audit.mjs` | no defects |
 | version | 1.0.23 |
+
+## Round 60 - the shim runs, and the extension now fails on what it gets
+
+The screenshot shows Proton's window rendering as an empty page. In 1.0.18 the same window
+rendered its Sign in screen because no shim was installed at all; now the shim installs and the
+extension's own code stops while building its UI. That is progress of a kind, and it is
+undiagnosable from a picture: there is no devtools for an extension page here, and nothing was
+being written down.
+
+### Changed: the page's own console is captured
+
+`watchExtensionConsole(wc)` attaches `console-message`, `did-fail-load` and
+`render-process-gone` to every tab, and records **errors and warnings only, from
+`chrome-extension://` URLs only**. A news site's console is none of the log's business.
+Settings prints the last twenty lines in a scrollable box instead of six joined by bars.
+
+### Fixed on the way, both capable of breaking a VPN extension
+
+1. **The overrides clobbered APIs Electron does implement.** `chrome.tabs.sendMessage`,
+   `.reload`, `.executeScript` and the rest of `privacy.network` were thrown away when the
+   object was replaced. `merge(target, original)` now keeps every key that is not being
+   replaced, for `chrome.tabs`, `chrome.proxy` and `chrome.privacy`.
+2. **`chrome.tabs.query` reported the extension page as the active tab.** Chrome asks that from
+   a popup, which is not a tab; here the popup is a tab in the window, so Proton was told the
+   active page was `chrome-extension://...` where it expected the page the user is on. Tabs with
+   an extension URL are now excluded when `currentWindow` or `active` is asked for.
+
+### Checks
+
+| | |
+| --- | --- |
+| `node --test tools/*.test.cjs` | **125 pass** (3 new: leftovers are merged, query excludes the extension page, console capture is limited to extension pages) |
+| `node tools/audit.mjs` | no defects |
+| version | 1.0.24 |
