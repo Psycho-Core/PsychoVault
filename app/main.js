@@ -6,6 +6,9 @@ const { buildTranslationUrl } = require('./translation')
 const {
   checkOnStartup: checkForUpdatesOnStartup,
   checkForUpdates,
+  installPending: installPendingUpdate,
+  pendingState: updatePendingState,
+  clearPending: clearPendingUpdate,
   tokenState: updateTokenState,
   setOverrideToken: setUpdateToken
 } = require('./auto-updater')
@@ -115,6 +118,7 @@ const DEFAULT_SETTINGS = {
   spellDictUrl: '',             // mirror or file:// folder holding <lang>.bdic files
   spellUserWords: [],           // what you added from a right-click menu
   // --- extensions (unpacked folders and .crx files, loaded per session) ---
+  dismissedUpdate: '',          // version of an offered update the user dismissed for good
   extensions: [],               // [{ dir, enabled, id }] - what is installed, in install order
   mediaKeys: true,
   mediaAutoPause: true,
@@ -3407,6 +3411,46 @@ ipcMain.handle('proxy:selftest', async () => {
   }
 })
 
+// --- update banner -----------------------------------------------------------
+// The startup check used to end in a modal box. A verified update is now offered in a bar
+// across the chrome instead: install, later, or dismiss this version for good. Nothing is
+// downloaded unless Install is pressed.
+function updateBannerState() {
+  const p = updatePendingState()
+  const dismissed = String(settings.dismissedUpdate || '')
+  return Object.assign({}, p, { dismissed: !!(p.version && dismissed === p.version) })
+}
+
+function broadcastUpdateBanner() {
+  try { broadcast('update-available', updateBannerState()) } catch (e) { logMainError(e) }
+}
+
+ipcMain.handle('update:banners', () => updateBannerState())
+
+ipcMain.handle('update:later', () => {
+  // Hides for this run only; it comes back on the next launch.
+  return { ok: true }
+})
+
+ipcMain.handle('update:dismiss', () => {
+  const p = updatePendingState()
+  if (!p.version) return { ok: false, error: 'nothing to dismiss' }
+  // Remembered per version, so 1.0.13 is offered even though 1.0.12 was dismissed.
+  settings = { ...settings, dismissedUpdate: p.version }
+  writeJSON('settings.json', settings)
+  return { ok: true, version: p.version }
+})
+
+ipcMain.handle('update:install', async () => {
+  const failures = []
+  const r = await installPendingUpdate({
+    onProgress: ({ message }) => { if (message) broadcast('update-progress', { message }) },
+    onError: (error) => { failures.push(String((error && error.message) || error)); logMainError(error) }
+  })
+  if (r && r.ok) clearPendingUpdate()
+  return Object.assign({ failures }, r || { ok: false, error: 'no result' })
+})
+
 ipcMain.handle('update:tokenstate', () => updateTokenState())
 ipcMain.handle('update:settoken', (e, token) => {
   const r = setUpdateToken(token)
@@ -3420,9 +3464,11 @@ ipcMain.handle('update:check', async () => {
   const failures = []
   try {
     const result = await checkForUpdates({
+      useBanner: true,
       onProgress: ({ message }) => { if (message) broadcast('update-progress', { message }) },
       onError: (error) => { failures.push(String((error && error.message) || error)); logMainError(error) }
     })
+    broadcastUpdateBanner()
     return { ok: true, result, failures, version: app.getVersion(), repository: UPDATE_REPOSITORY }
   } catch (e) {
     logMainError(e)
@@ -3461,9 +3507,12 @@ app.whenReady().then(() => {
   if (cliURL) w.win.webContents.once('did-finish-load', () => w.createTab(cliURL))
 
   checkForUpdatesOnStartup({
+    useBanner: true,
     onProgress: ({ message }) => { if (message) broadcast('update-progress', { message }) },
     onError: (error) => logMainError(error)
   })
+  // The check runs 8s after launch; show the banner as soon as a verified release turns up.
+  setTimeout(broadcastUpdateBanner, 12000)
 
   app.on('activate', () => {
     if (mainWindows.size === 0) {

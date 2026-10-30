@@ -8,6 +8,18 @@
 <body>
 <div id="app">
 
+  <!-- update banner: shows only when a verified update is waiting -->
+  <div id="updateBanner" class="update-banner hidden" role="status" aria-live="polite">
+    <span class="update-banner-dot" aria-hidden="true"></span>
+    <span class="update-banner-text" id="updateBannerText">An update is available.</span>
+    <span class="update-banner-progress" id="updateBannerProgress"></span>
+    <span class="update-banner-actions">
+      <button type="button" class="mini update-banner-install" id="updateBannerInstall">Install</button>
+      <button type="button" class="mini" id="updateBannerLater">Later</button>
+      <button type="button" class="update-banner-close" id="updateBannerClose" title="Dismiss this update" aria-label="Dismiss this update">&times;</button>
+    </span>
+  </div>
+
   <!-- left icon rail -->
   <div id="rail">
     <button class="rail-btn" data-panel="bookmarks" title="Bookmarks" aria-label="Bookmarks" aria-controls="panel" aria-expanded="false">
