@@ -1207,3 +1207,58 @@ is not bundled still arrives as a folder or a `.crx`.
 the installer cannot be downloaded by anyone else, and the in-app updater - which queries public
 GitHub Releases unauthenticated - would get a 404 for every other user. Bundling a VPN does not
 change that; making the browser shareable is a repository visibility decision, not a code one.
+
+## Round 36 - the VPN never worked, and why the updater is silent
+
+Two reports from the Windows box, one bug found in this repository and one cause found outside it.
+
+### 1. Proton VPN connected to nothing - a real bug, fixed here
+
+The first 1.0.5 build supplied `chrome.proxy`, reported success to the extension, and routed
+nothing. The shim dispatcher read the channel name off the IPC event:
+
+    const channel = String(event.channel || '')
+
+Electron's `IpcMainInvokeEvent` documents exactly five members - `type`, `processId`, `frameId`,
+`sender`, `senderFrame` - and **`channel` is not one of them**. So `channel` was the empty string
+on every call, every call fell through to `{ ok: false, error: 'unknown channel' }`, and the
+extension was told that setting the proxy had failed. Its connection state machine therefore
+never reached "connected" and no traffic ever went through Proton's proxy, which is exactly the
+observed symptom: connected-looking UI, unchanged IP, nothing in errors.log.
+
+Fixed by binding the channel when the handler is registered, for frames and for service workers:
+
+    ipcMain.handle(ch, (event, payload) => onShimCall(event, payload, ch))
+    worker.ipc.handle(ch, (event, payload) => onShimCall(event, payload, ch))
+
+A second hardening in the same commit: worker handlers were attached only on `running-status-changed`
+with status `starting`, so a worker already running when an extension was re-enabled would never get
+handlers and its calls would hang instead of failing. Handlers are now attached whenever a worker is
+retrievable, deduplicated by identity.
+
+`tools/audit.mjs` gained a rule against `event.channel`, verified by reintroducing the bug (rule
+fires) and removing it (audit clean).
+
+### 2. Auto-update does nothing - diagnosed, deliberately not changed
+
+The updater requests `https://api.github.com/repos/Psycho-Core/PsychoVault/releases/latest` with
+`net.request`, `useSessionCookies: false`, and no credential of any kind. **The repository is
+private**, and GitHub answers 404 for private resources to unauthenticated callers. The catch in
+`checkForUpdates` treats that as `release-check-unavailable` and returns silently - by design, so
+that being offline never interrupts browsing.
+
+The result is an updater that cannot work for anybody but the repository owner, and gives no sign
+that it failed. Confirmed as far as this box allows: the sandbox's egress proxy injects GitHub
+credentials into every `api.github.com` request (an unauthenticated `curl` to `/user` returns 200
+as `Psycho-Core` even with `Authorization:` stripped), so the 200 seen here is not what a user's
+machine sees.
+
+Left unfixed this round, on instruction. The options are making the repository public, publishing
+releases somewhere the updater can read anonymously, or shipping a token - each a decision, not a
+patch.
+
+### 3. "Unknown publisher" - not fixable in code
+
+SmartScreen reports the publisher from the Authenticode signature attached to the executable.
+Setup is unsigned, so the field reads "Unknown publisher" and SmartScreen blocks the first run.
+No change to PsychoVault's source affects it; a code-signing certificate does.
