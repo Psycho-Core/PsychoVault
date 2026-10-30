@@ -365,3 +365,36 @@ test('only a payload that cannot start is fatal; the rest warns and carries on',
   // a stale default_app.asar is removed rather than fatal
   assert.match(text, /del \/f \/q "%PAYLOAD%.{1,2}resources.{1,2}default_app\.asar"/)
 })
+
+test('the empty-file probe measures the file inside the payload, not a bare name', () => {
+  // Field report: every file was reported "(empty)" including PsychoVault.exe, because
+  // "if %%~zf EQU 0" was asked about a name relative to the repo root, which does not exist -
+  // and an empty value compares equal to 0. The probe must run from inside the payload.
+  const block = text.slice(text.indexOf('set "WARNED="'), text.indexOf('echo       Payload complete'))
+  const pushdAt = block.indexOf('pushd "%PAYLOAD%"')
+  const probeAt = block.indexOf('%%~zf EQU 0')
+  const popdAt = block.indexOf('popd')
+  assert.ok(pushdAt !== -1, 'the probe does not change into the payload')
+  assert.ok(probeAt > pushdAt && probeAt < popdAt, 'the size probe runs outside the payload directory')
+})
+
+test('the payload is counted again immediately before NSIS runs', () => {
+  // A scanner can remove the staged files between the check and makensis, which then reports
+  // "no files found" while the check said everything was present.
+  const nsisAt = lines.findIndex((l) => /installer\.nsi"?\s*$/m.test(l))
+  const countAt = lines.findIndex((l) => /PAYLOADCOUNT/.test(l))
+  assert.ok(countAt > 0 && countAt < nsisAt, 'there is no recount before makensis')
+  assert.match(text, /if "%PAYLOADCOUNT%"=="0" goto :fail_vanished/)
+  assert.match(text, /^:fail_vanished$/m)
+})
+
+test('a vanished payload is blamed on quarantine, with the exclusion command', () => {
+  const block = lines.slice(lines.findIndex((l) => /^:fail_vanished$/.test(l))).join('\n')
+  assert.match(block, /Add-MpPreference -ExclusionPath/)
+  assert.match(block, /Protection history/)
+})
+
+test('an NSIS failure still writes the release notes', () => {
+  const block = lines.slice(lines.findIndex((l) => /^:fail_nsis$/.test(l))).join('\n')
+  assert.match(block, /goto :notes/, 'the notes step is skipped when the installer fails')
+})
