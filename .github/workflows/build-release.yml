@@ -23,9 +23,23 @@ on:
       - 'tools/package-lock.json'
       - '.github/workflows/build-release.yml'
   workflow_dispatch:
+  schedule:
+    # 11:00 Adelaide time on the 1st of every month. The Actions minute
+    # allowance resets at 00:00 UTC on the 1st, which is 10:30 here during
+    # daylight saving, so this deliberately fires half an hour after the reset:
+    # a build that lands early would hit the quota block instead of building.
+    # GitHub supports an IANA timezone here (since 19 March 2026), so this stays
+    # 11:00 local through both ACDT and ACST rather than drifting an hour.
+    - cron: '0 11 1 * *'
+      timezone: 'Australia/Adelaide'
 
 permissions:
   contents: write
+
+# A scheduled build and a push-triggered build must not publish at the same time.
+concurrency:
+  group: build-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -48,6 +62,19 @@ jobs:
       - name: Read release version
         id: version
         run: echo "version=$(node -p 'require("./app/package.json").version')" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether this version is already released
+        id: released
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Version already released::v$version already has a release. This run builds and keeps the artifact, but does not touch the release, its signature or SHA256SUMS.txt - bump the version in app/package.json to publish a new one."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Check whether signed release publishing is configured
         id: signing-key
@@ -126,18 +153,18 @@ jobs:
         run: echo "::warning title=Build succeeded; artifact unavailable::The installer was built, but GitHub Actions could not retain a downloadable artifact. Free Actions artifact storage quota if you need the temporary installer file."
 
       - name: Sign update manifest
-        if: steps.signing-key.outputs.configured == 'true'
+        if: steps.signing-key.outputs.configured == 'true' && steps.released.outputs.exists == 'false'
         env:
           UPDATE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY_B64 }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: node tools/sign-update-manifest.mjs "PsychoVault-Setup-${{ steps.version.outputs.version }}.exe"
 
       - name: Write checksum
-        if: steps.signing-key.outputs.configured == 'true'
+        if: steps.signing-key.outputs.configured == 'true' && steps.released.outputs.exists == 'false'
         run: sha256sum "PsychoVault-Setup-${{ steps.version.outputs.version }}.exe" > SHA256SUMS.txt
 
       - name: Update the branch checksum
-        if: steps.signing-key.outputs.configured == 'true'
+        if: steps.signing-key.outputs.configured == 'true' && steps.released.outputs.exists == 'false'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -150,7 +177,7 @@ jobs:
           fi
 
       - name: Publish the signed release
-        if: steps.signing-key.outputs.configured == 'true'
+        if: steps.signing-key.outputs.configured == 'true' && steps.released.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

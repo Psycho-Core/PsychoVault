@@ -244,7 +244,14 @@ Windows Authenticode signature and does not remove the SmartScreen warning.
 ## Package for Windows
 
 Pushes that change app code, the installer script, or its build tools to the active Arena branch or
-`Master` run `.github/workflows/build-release.yml`; it can also be started manually from Actions. The
+`Master` run `.github/workflows/build-release.yml`; it can also be started manually from Actions.
+
+It also runs on a monthly schedule: **11:00 on the 1st, Adelaide time** (`cron: '0 11 1 * *'` with
+`timezone: 'Australia/Adelaide'`). That is deliberately half an hour after the monthly GitHub
+Actions minute allowance resets at 00:00 UTC, because a scheduled build that fires before the reset
+is refused instead of built. If the version in `app/package.json` is already released, the run
+still builds and keeps the artifact but does not touch the release, its signature or
+`SHA256SUMS.txt`: bump the version to publish a new one. The
 workflow runs the audit and tests, downloads the checksum-pinned Electron 45.1.0 Windows runtime,
 patches the PsychoVault icon/version, then builds and verifies the installer. It tries to retain an
 unsigned CI artifact for 14 days; a full Actions storage quota may prevent the download, but does not
