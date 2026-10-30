@@ -9,11 +9,11 @@ const fs = require('node:fs')
 const path = require('node:path')
 
 const root = path.join(__dirname, '..')
-const shim = fs.readFileSync(path.join(root, 'app', 'ext-main-world.js'), 'utf8')
+const shim = fs.readFileSync(path.join(root, 'app', 'ext-shim.js'), 'utf8')
 const main = fs.readFileSync(path.join(root, 'app', 'main.js'), 'utf8')
 
 test('the shim supplies chrome.tabs instead of leaving Chromium stub-less', () => {
-  assert.match(shim, /tabsInstalled = override\('tabs', tabsApi\)/)
+  assert.match(shim, /var tabsInstalled = override\('tabs', \{/)
   // the call Proton makes first
   assert.match(shim, /create: function \(details, cb\)/)
   assert.match(shim, /b\.tabsCreate\(details\)/)
@@ -44,8 +44,7 @@ test('a tab opened by an extension is a real tab in the real window', () => {
 test('closing a tab tells open extension pages', () => {
   assert.match(main, /function shimAnnounceTabRemoved/)
   assert.match(main, /shimAnnounceTabRemoved\(this, id\)/)
-  const preload = fs.readFileSync(path.join(root, 'app', 'ext-shim.js'), 'utf8')
-  assert.match(preload, /ipcRenderer\.on\('extshim:tabs:removed'/)
+  assert.match(shim, /ipcRenderer\.on\('extshim:tabs:removed'/)
 })
 
 test('an extension cannot open javascript: or chrome: urls through the shim', () => {

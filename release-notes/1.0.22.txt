@@ -1,0 +1,25 @@
+The preload loads again - this was my bug
+  The 1.0.20 console said it plainly and I had not seen it until now:
+    Unable to load preload script: ...\app\ext-shim.js
+    Error: module not found: fs
+  Extension preload scripts are sandboxed. require() there only reaches electron; my 1.0.20
+  refactor made ext-shim.js require fs and path, so the preload failed to load at all. No
+  bridge, no log, no chrome.proxy, no chrome.tabs - nothing ran, which is exactly what the
+  "Unknown Extension API" lines were reporting.
+
+  ext-shim.js now requires nothing but electron. The installer travels inside the same file
+  as a function, and is delivered into the page's own world with Function.prototype.toString,
+  so there is no second file to read and nothing to resolve.
+
+  A test now fails if anything but 'electron' is required, or if the installer closes over a
+  variable from the preload - because that is what broke it.
+
+The shim reads its own work back
+  After injecting, it asks the page's world whether chrome.proxy and chrome.tabs are really
+  its own and writes the answer to the shim log: "proxy and tabs are installed", or "RAN BUT
+  DID NOT TAKE" when the code ran somewhere the extension cannot see.
+
+Settings shows the log
+  Settings - Extensions - "Check what proxy is in use" now prints the last few shim log lines
+  next to the API status, so a screenshot of that one line is enough to diagnose the next
+  problem without hunting for %APPDATA%.

@@ -553,6 +553,14 @@ function shimLog(id, line) {
     fs.appendFileSync(EXT_SHIM_LOG, '[' + new Date().toISOString().slice(11, 23) + '] ' + (id || '-') + ' ' + line + '\n')
   } catch (e) { /* the log is a convenience, never a place to fail */ }
 }
+// The last few lines, for Settings. Reading the file beats asking the user to find it.
+function shimLogTail(n) {
+  try {
+    const lines = fs.readFileSync(EXT_SHIM_LOG, 'utf8').split('\n').filter(Boolean)
+    return lines.slice(-n)
+  } catch (e) { return [] }
+}
+
 // A new run starts a new log; the previous one is kept as .1 so a second launch after a crash
 // does not throw away the evidence.
 try {
@@ -3534,7 +3542,7 @@ ipcMain.handle('proxy:status', async () => {
   }
   const setBy = []
   for (const [id, value] of extProxyValues) setBy.push({ id, mode: String((value && value.mode) || 'system') })
-  return { ok: true, probe: PROXY_PROBE_URL, rows, setBy, last: extProxyState, shim: extShimReport }
+  return { ok: true, probe: PROXY_PROBE_URL, rows, setBy, last: extProxyState, shim: extShimReport, shimLog: EXT_SHIM_LOG, shimLogTail: shimLogTail(6) }
 })
 
 ipcMain.handle('proxy:selftest', async () => {

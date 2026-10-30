@@ -1,9 +1,7 @@
 'use strict'
-// Guards on the extension shim, which is now two files:
-//   app/ext-shim.js       - preload: bridge + delivery of the installer into the extension's world
-//   app/ext-main-world.js - the APIs themselves, no imports, runs in that world
-// Neither can be required here (they run inside an extension context), so the things that
-// decide whether a VPN extension can route traffic are asserted against the source.
+// Guards on app/ext-shim.js. It cannot be required here (it imports electron and runs inside an
+// extension context), so the things that decide whether a VPN extension can route traffic are
+// asserted against the source.
 
 const test = require('node:test')
 const assert = require('node:assert')
@@ -12,48 +10,64 @@ const path = require('node:path')
 
 const root = path.join(__dirname, '..', 'app')
 const src = fs.readFileSync(path.join(root, 'ext-shim.js'), 'utf8')
-const world = fs.readFileSync(path.join(root, 'ext-main-world.js'), 'utf8')
 const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8')
+
+// The installer body: from its declaration to the line after its closing brace, before the
+// delivery code that follows it.
+const installerAt = src.indexOf('function installExtensionAPIs')
+const installer = src.slice(installerAt, src.indexOf('const url = currentURL()'))
+
+test('an extension preload requires nothing but electron', () => {
+  // Field report: "Unable to load preload script: ...ext-shim.js / Error: module not found: fs".
+  // Extension preloads are sandboxed - require('fs') fails the entire preload, so no bridge, no
+  // log and no APIs were installed at all. Anything else has to arrive through ipcRenderer.
+  const requires = src.match(/require\(['"][^'"]+['"]\)/g) || []
+  assert.ok(requires.length > 0, 'no require at all - did the file become a plain script?')
+  for (const r of requires) {
+    assert.strictEqual(r, "require('electron')", 'a sandboxed extension preload cannot load ' + r)
+  }
+  assert.ok(!/\bimport\s+.*\bfrom\b/.test(src), 'ext-shim.js uses an import statement')
+})
 
 test('the shim does not skip installation when chrome.proxy already exists', () => {
   // Chromium exposes its own chrome.proxy wired to an extension function dispatcher Electron
   // does not implement, so "it exists" is true and useless: Proton's settings.set reached
   // Chromium, logged "Unknown Extension API - types.ChromeSetting.set" and was refused.
-  assert.ok(!/if\s*\(\s*!chromeObj\.proxy\s*\)/.test(world), 'chrome.proxy is still guarded on existence')
-  assert.ok(!/if\s*\(\s*!chromeObj\.privacy\s*\)/.test(world), 'chrome.privacy is still guarded on existence')
+  assert.ok(!/if\s*\(\s*!chromeObj\.proxy\s*\)/.test(installer), 'chrome.proxy is still guarded on existence')
+  assert.ok(!/if\s*\(\s*!chromeObj\.privacy\s*\)/.test(installer), 'chrome.privacy is still guarded on existence')
 })
 
-test('both APIs are installed through the override helper, unconditionally', () => {
-  assert.match(world, /proxyInstalled = override\('proxy',/)
-  assert.match(world, /privacyInstalled = override\('privacy',/)
-  assert.strictEqual((world.match(/override\('proxy'/g) || []).length, 1)
-  assert.strictEqual((world.match(/override\('privacy'/g) || []).length, 1)
+test('all three APIs are installed through the override helper, unconditionally', () => {
+  assert.match(installer, /var proxyInstalled = override\('proxy',/)
+  assert.match(installer, /var privacyInstalled = override\('privacy',/)
+  assert.match(installer, /var tabsInstalled = override\('tabs',/)
+  assert.match(installer, /Object\.defineProperty\(chromeObj, name,/)
+  assert.match(installer, /chromeObj\[name\] = value/)
+  assert.match(installer, /configurable: true/)
 })
 
-test('the override replaces the property rather than assigning over it', () => {
-  assert.match(world, /Object\.defineProperty\(chromeObj, name,/)
-  assert.match(world, /chromeObj\[name\] = value/)
-  assert.match(world, /configurable: true/)
+test('the installer can be stringified into another world', () => {
+  // It is delivered with Function.prototype.toString, so it must not close over anything -
+  // a reference to a variable from this file would be a ReferenceError in the page.
+  assert.match(src, /installExtensionAPIs\.toString\(\)/)
+  // Comments are not code: the body's own comments talk about the bridge.
+  const body = installer
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((l) => !l.trim().startsWith('//'))
+    .join('\n')
+    .slice(installer.slice(0, installer.indexOf('{')).length)
+  for (const outer of ['BRIDGE_NAME', 'isServiceWorker', 'note(', 'ipcRenderer', 'contextBridge']) {
+    assert.ok(!new RegExp('\\b' + outer.replace('(', '\\(')).test(body), 'the installer closes over ' + outer)
+  }
 })
 
-test('the result of the injection is reported to the main process', () => {
-  assert.match(world, /b\.report\(\{ proxy: proxyInstalled, privacy: privacyInstalled, tabs: tabsInstalled, where: where \}\)/)
-  assert.match(src, /report: \(info\) => ipcRenderer\.invoke\('extshim:report'/)
-})
-
-test('a failed injection is not swallowed silently', () => {
-  assert.match(main, /extshim:report/)
-  assert.match(main, /if \(!extShimReport\.proxy\) logMainError/)
-  assert.match(main, /shim: extShimReport/)
-})
-
-test('each delivery path is tried, and the installer is not tied to one of them', () => {
-  // webFrame.executeJavaScript reaches an extension page's main world - the world that has
-  // `chrome`. executeInMainWorld is kept as a second attempt because it was the only path for
-  // three versions and produced "Unknown Extension API" from a page that was fully rendered.
+test('the page path verifies the install instead of assuming it', () => {
+  // "I ran some code" is not "chrome.proxy is mine". The result is read back from that world
+  // and written to the log, which is what turns a silent no-op into a reported one.
   assert.match(src, /webFrame\.executeJavaScript\(source\)/)
-  assert.match(src, /inject\('webFrame'\) \|\| inject\('executeInMainWorld'\)/)
-  assert.match(world, /typeof window !== 'undefined' \? 'page' : 'worker'/)
+  assert.match(src, /__pvShimInstalled/)
+  assert.match(src, /RAN BUT DID NOT TAKE/)
 })
 
 test('the service worker path installs directly instead of using executeInMainWorld', () => {
@@ -65,15 +79,15 @@ test('the service worker path installs directly instead of using executeInMainWo
     .filter((line) => !line.trim().startsWith('//'))
     .join('\n')
   assert.match(swBlock, /Object\.defineProperty\(globalThis, BRIDGE_NAME,/)
-  assert.match(swBlock, /inject\('eval'\) \|\| inject\('newFunction'\)/)
+  assert.match(swBlock, /installExtensionAPIs\(globalThis, BRIDGE_NAME\)/)
   assert.ok(!/contextBridge\.executeInMainWorld/.test(swBlock), 'the service worker path still calls executeInMainWorld')
   assert.match(src, /globalThis\[BRIDGE_NAME\] = bridge/, 'no fallback when defineProperty is refused')
 })
 
-test('the installer file is plain script - no imports, nothing to resolve', () => {
-  // It is delivered as a string into another world; a require() in it would throw there.
-  assert.ok(!/^\s*(require|import)\b/m.test(world), 'ext-main-world.js imports something')
-  assert.ok(!/\bmodule\.exports\b/.test(world), 'ext-main-world.js is a module')
+test('a failed injection is not swallowed silently', () => {
+  assert.match(main, /extshim:report/)
+  assert.match(main, /if \(!extShimReport\.proxy\) logMainError/)
+  assert.match(main, /shim: extShimReport/)
 })
 
 test('what the shim did is written to a log file, not just guessed at', () => {
