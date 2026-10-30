@@ -956,6 +956,7 @@
       if (r.result && r.result.reason) parts.push(why || ('Check finished: ' + r.result.reason + (r.result.status ? ' (HTTP ' + r.result.status + ')' : '')) + '')
       if (r.result && r.result.ok) parts.push('Update ' + r.result.version + ' was downloaded, verified and its installer opened.')
       if (r.result && r.result.error) parts.push('Failed: ' + r.result.error)
+      if (r.result && r.result.message) parts.push('Detail: ' + r.result.message)
       for (const f of (r.failures || [])) parts.push(f)
       s('updateCheckResult').textContent = parts.join(' ')
     }

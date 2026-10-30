@@ -1480,3 +1480,71 @@ and storage.
 Whether Proton VPN's tunnel comes up. If the self-test passes and the extension still does not
 connect, the next suspect is `chrome.webRequest.onAuthRequired` supplying the proxy credentials -
 still unverified on a real Windows run.
+
+## Round 41 - the updater saw the release, then could not download the manifest
+
+The owner's screenshot, from 1.0.9:
+
+    Current version 1.0.9. Check finished: manifest-download-failed
+
+That is unusually informative. It proves the token works - the authenticated release lookup
+succeeded and found 1.0.10 - and it puts the failure in the *next* step, fetching
+`update-manifest.json` and `update-manifest.sig`.
+
+### The cause: a guard that could never pass
+
+Round 39 handled redirects like this:
+
+    request.on('redirect', (_s, _m, redirectUrl) => {
+      if (!shouldKeepAuthorization(url, redirectUrl)) {
+        request.removeHeader('Authorization')   // throws
+        ...
+      }
+      request.followRedirect()
+    })
+
+`ClientRequest.removeHeader()` is documented as callable **only before first write**. By the time
+a redirect event fires, `request.end()` has already been called, so it throws. The fail-closed
+branch around it therefore ran on *every* cross-host redirect - which is every release-asset
+download on a private repository - and refused it with "Refused a redirect that would have
+carried the release token to another host". The caller caught that and reported
+`manifest-download-failed`.
+
+A security control that always fires is not a security control; it is an outage. Worse, the
+catch discarded the error text, so the reason was invisible - the same mistake rounds 38 and 39
+were meant to end.
+
+### The fix
+
+Redirects are no longer followed by mutating a request already on the wire. Each hop is a
+**fresh request** whose headers are computed from the original URL:
+
+    const MAX_REDIRECTS = 5
+    attempt(redirectUrl)  // new net.request(), headers set from scratch
+
+`authorizationForHop(startUrl, hopUrl, token)` in `app/update-auth.js` decides whether the
+credential goes on a given hop, always judged against the **original** URL rather than the
+previous hop - so a chain that leaves `github.com` and returns cannot re-acquire the token
+because of where it came from. Nothing is removed after send, so nothing can throw, and the
+security property is preserved rather than abandoned.
+
+Both `requestBuffer` and `downloadInstaller` use it. The installer download keeps its streaming
+hash, size checks and progress reporting.
+
+`manifest-download-failed` now also returns the HTTP status and the underlying message, and
+Settings prints them as `Detail: ...`.
+
+### Checks
+
+| | |
+| --- | --- |
+| `node --test tools/*.test.cjs` | **42 pass** (3 new for the hop rule) |
+| `node tools/audit.mjs` | no defects |
+| new rule | judged against the original URL: token on the API/download hop, never on `release-assets.githubusercontent.com`, and not re-acquired by returning to `github.com` |
+
+### Still unproven here
+
+Whether 1.0.11's download now completes. The failure is understood precisely - a documented API
+restriction, not a guess - but the fix can only be confirmed on the owner's machine, where the
+token is configured and the redirect actually happens. If `manifest-download-failed` returns,
+the `Detail:` line will now say why.

@@ -48,4 +48,12 @@ function apiAssetUrl(assetId) {
   return `https://api.github.com/repos/${'Psycho-Core/PsychoVault'}/releases/assets/${id}`
 }
 
-module.exports = { shouldKeepAuthorization, authHeader, tokenSource, apiAssetUrl }
+// The header set for one hop of a redirect chain, decided from the ORIGINAL url rather than
+// from the previous hop: a chain that leaves github.com and comes back must not carry the
+// credential back in on the strength of the hop before it.
+function authorizationForHop(startUrl, hopUrl, token) {
+  if (!shouldKeepAuthorization(startUrl, hopUrl)) return null
+  return authHeader(token)
+}
+
+module.exports = { shouldKeepAuthorization, authorizationForHop, authHeader, tokenSource, apiAssetUrl }
