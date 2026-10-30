@@ -312,3 +312,21 @@ test('the runtime failure names the three causes and how to test each', () => {
   assert.match(block, /npmmirror\.com/, 'the mirror hint has no working URL')
   assert.match(block, /curl -I https:\/\/github\.com\/electron/, 'no way to test whether the download host is reachable')
 })
+
+test('a missing exe with a present dist\\version is treated as a deletion, not a download failure', () => {
+  // dist\version is written at the end of a successful unpack, so version-without-exe means
+  // the files were extracted and electron.exe then vanished - in practice quarantine.
+  assert.match(text, /if not exist "%ROOT%.{1,2}app.{1,2}node_modules.{1,2}electron.{1,2}dist.{1,2}version" goto :runtime_rebuild/)
+  const reExtract = lines.findIndex((line) => /rmdir \/s \/q "%ROOT%.{1,2}app.{1,2}node_modules.{1,2}electron.{1,2}dist"/.test(line))
+  assert.ok(reExtract > 0, 'the stale dist is never cleared before re-extracting')
+  assert.ok(lines.some((line) => /electron\.exe is still not there after re-extracting/.test(line)))
+  assert.ok(lines.some((line) => /^:runtime_rebuild/.test(line)), 'the rebuild branch label is missing')
+})
+
+test('the antivirus case is named in the failure text with a way to fix it', () => {
+  const block = lines.slice(lines.findIndex((line) => /^:no_electron/.test(line))).join('\n')
+  assert.match(block, /Protection history/, 'no pointer to the quarantine history')
+  assert.match(block, /Add-MpPreference -ExclusionPath/, 'no exclusion command')
+  assert.match(block, /electron\.exe.*quarantine|quarantine.*electron\.exe/s, 'quarantine is not connected to the missing exe')
+  assert.match(block, /electron.{1,2}Cache/, 'the download cache location is not mentioned')
+})
