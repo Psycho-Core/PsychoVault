@@ -122,6 +122,18 @@ electron .
 
 There is no bundler step. The files in `app/` are the app.
 
+## Build it yourself, on Windows, in about ten minutes
+
+No account, no subscription and no GitHub Actions minutes: everything runs on your own PC.
+**[BUILD-WINDOWS.md](BUILD-WINDOWS.md)** is the step-by-step guide with direct download links.
+
+Short version - install [Node.js LTS](https://nodejs.org/en/download), extract this repository to
+`C:\PsychoVault`, then double-click **`PsychoVault_easy_build.bat`**. You get
+`build\payload\PsychoVault.exe` (a portable browser you can just run) and, if
+[NSIS](https://nsis.sourceforge.io/Download) is installed, `PsychoVault-Setup-1.0.12.exe`.
+
+Feature and extension ideas for what to build next are in [IDEAS.md](IDEAS.md).
+
 ## Run from source, without an installer
 
 When a release build is unavailable - or you want to test a change before it ships - the app
@@ -239,7 +251,14 @@ fail the build. If `UPDATE_SIGNING_PRIVATE_KEY_B64` is configured, later steps s
 manifest and publish the installer, checksum, signature, and generated release notes. If not, those
 release steps are skipped and no public release is created.
 
-For a local rebuild, install NSIS and 7-Zip, then provide `$PAYLOAD` (default `/var/tmp/payload`)
+For a local rebuild on Windows there is a one-click script: **`PsychoVault_easy_build.bat`**
+(see [BUILD-WINDOWS.md](BUILD-WINDOWS.md)). It reuses the Electron runtime that `npm install`
+already placed in `app\node_modules\electron\dist`, so it needs no separate Electron download and
+no 7-Zip: it stages the payload, patches the icon/version, copies `app\` into
+`resources\app`, and runs NSIS if it is installed. Output is `build\payload\PsychoVault.exe`
+(portable) and, with NSIS present, `PsychoVault-Setup-<version>.exe`.
+
+On Linux (or in CI), install NSIS and 7-Zip, then provide `$PAYLOAD` (default `/var/tmp/payload`)
 with the unpacked Windows Electron runtime and `PsychoVault.exe`. The `patch-exe` helper sets the
 runtime icon/version; the build script stages the app, runs `makensis`, and byte-compares the
 packaged app files against source:
