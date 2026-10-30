@@ -48,6 +48,13 @@ for (const ch of sendEvents) if (!allowed.includes(ch)) defects.push(`main pushe
 const unused = handlers.filter((h) => !bridgeCalls.includes(h))
 if (unused.length) notes.push(`handlers not called from a bridge (reachable another way, or dead): ${unused.join(', ')}`)
 
+// Electron's IpcMainInvokeEvent carries type, processId, frameId, sender and senderFrame -
+// there is no channel property. A handler that reads event.channel sees undefined, so every
+// call reaches it as "unknown channel". Bind the channel name when registering instead.
+if (/event\.channel/.test(main.replace(/\/\/[^\n]*/g, ''))) {
+  defects.push('main.js reads event.channel, which IpcMainInvokeEvent does not provide; bind the channel name instead')
+}
+
 // ---------------------------------------------------------------- 2. settings
 const defBlock = main.match(/const DEFAULT_SETTINGS = \{([\s\S]*?)\n\}/)[1]
 const keys = uniq([...defBlock.matchAll(/^\s{2}([a-zA-Z][a-zA-Z0-9]*)\s*:/gm)].map((m) => m[1]))

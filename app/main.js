@@ -526,14 +526,14 @@ function shimRegister(ses) {
   // so each worker needs the handlers attaching as it comes up.
   try {
     ses.serviceWorkers.on('running-status-changed', (event) => {
-      if (!event || event.runningStatus !== 'starting') return
+      if (!event) return
       let worker
       try { worker = ses.serviceWorkers.getWorkerFromVersionID(event.versionId) } catch (e) { return }
       if (!worker || !String(worker.scope || '').startsWith('chrome-extension://')) return
       if (shimWorkers.has(worker)) return
       shimWorkers.add(worker)
       try {
-        for (const ch of EXT_SHIM_CHANNELS) worker.ipc.handle(ch, onShimCall)
+        for (const ch of EXT_SHIM_CHANNELS) worker.ipc.handle(ch, (event, payload) => onShimCall(event, payload, ch))
       } catch (e) { logMainError(e) }
     })
   } catch (e) { logMainError(e) }
@@ -559,14 +559,18 @@ function shimSenderId(event) {
   return ''
 }
 
-async function onShimCall(event, payload) {
+// The channel has to be passed in, not read off the event: Electron's IpcMainInvokeEvent
+// carries type, processId, frameId, sender and senderFrame - and no channel property at all.
+// Reading event.channel made every one of these calls fail as "unknown channel", which left
+// chrome.proxy answering a failure to the extension and the tunnel never coming up.
+async function onShimCall(event, payload, channel) {
   try {
     const claimed = String((payload && payload.id) || '')
     const real = shimSenderId(event)
     if (!real) return { ok: false, error: 'not an extension context' }
     if (claimed && claimed !== real) return { ok: false, error: 'sender does not match the extension id in the request' }
 
-    const channel = String(event.channel || '')
+    channel = String(channel || '')
     if (channel === 'extshim:proxy:get') {
       return { ok: true, ...getResult(extProxyValues.has(real), extProxyValues.get(real)) }
     }
@@ -619,7 +623,7 @@ function applyWebRTCPolicy() {
   }
 }
 
-for (const ch of EXT_SHIM_CHANNELS) ipcMain.handle(ch, onShimCall)
+for (const ch of EXT_SHIM_CHANNELS) ipcMain.handle(ch, (event, payload) => onShimCall(event, payload, ch))
 
 // --- extensions built from source and shipped in the installer ----------------
 const BUILTIN_REMOVED = 'builtin-removed.json'
