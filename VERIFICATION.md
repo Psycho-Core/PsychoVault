@@ -2562,3 +2562,37 @@ publish-release: no token. Put {"token":"..."} in publish-token.json at the repo
 | `node --test tools/*.test.cjs` | **136 pass** (4 new: UTF-16, bare token, `.json.txt` named, empty/malformed/misspelt key each named) |
 | `node tools/audit.mjs` | no defects |
 | version | 1.0.27 |
+
+## Round 64 - the file was there, the quotes were not
+
+```
+03:07  publish-token.example.json   78 bytes
+03:15  publish-token.json           97 bytes
+```
+
+The file existed, at the right path, with the right name and a plausible size - and 1.0.26 said
+"no token". 1.0.26's reader was `JSON.parse(fs.readFileSync(file, 'utf8'))` in a bare `catch`, so
+the only way to reach that message with the file present is a parse failure, and it had nothing to
+say about which.
+
+Two things changed:
+
+1. **1.0.27 reports the reason** (empty, not JSON, no `token` field, `.json.txt`, UTF-16).
+2. **1.0.28 normalises before parsing.** Typographic quotes (`“ ” ‘ ’`) and invisible characters
+   (`U+200B`-`U+200D`, `U+FEFF`, `U+00A0`) are what a file gets when a token is pasted out of a
+   web page or typed on a keyboard that produces smart quotes. Both were fatal and both are now
+   harmless:
+
+```
+{"“token”":"“github_pat_..."}      -> read as a fine-grained token, 83 characters
+{"token":"github_pat_<ZWSP>..."}   -> read as a fine-grained token, 83 characters
+```
+
+### Checks
+
+| | |
+| --- | --- |
+| `node --test tools/*.test.cjs` | **137 pass** (curly quotes and zero-width characters both accepted) |
+| `node tools/audit.mjs` | no defects |
+| verified by writing the exact malformed files and re-reading them | both now parse |
+| version | 1.0.28 |

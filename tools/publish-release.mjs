@@ -50,7 +50,15 @@ function readTokenFile(file) {
   if (raw.length >= 2 && raw[0] === 0xff && raw[1] === 0xfe) text = raw.toString('utf16le')
   else if (raw.length >= 2 && raw[1] === 0x00 && raw[0] !== 0x00) text = raw.toString('utf16le')
   else text = raw.toString('utf8')
-  text = text.replace(/^\uFEFF/, '').trim()
+  // A token pasted from a web page or typed on a keyboard that produces typographic quotes
+  // arrives as \u201C/\u201D, which is not JSON and used to read as "no token at all". Invisible
+  // characters come along for the ride too. Normalise before parsing, and only then complain.
+  text = text
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\u00A0/g, ' ')
+    .trim()
   if (!text) return { missing: false, problem: 'the file is empty' }
   // A bare token on its own line is accepted too: it is what people paste.
   if (/^(github_pat_|ghp_|gho_|ghu_|ghs_)/.test(text) && !text.startsWith('{')) return { value: text }

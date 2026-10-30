@@ -147,3 +147,15 @@ test('an empty or malformed token file says which it is', () => {
     assert.match(run(['--check']).stderr, /no "token" field/)
   })
 })
+
+test('typographic quotes and invisible characters are normalised, not rejected', () => {
+  // Pasting from a web page gives “ ” instead of " ", and a zero-width space often comes along
+  // with it. Both used to read as "no token".
+  const token = 'github_pat_' + 'd'.repeat(40)
+  withFile(tokenFile, Buffer.from('{\u201ctoken\u201d:\u201c' + token + '\u201d}\n', 'utf8'), () => {
+    assert.match(run(['--check']).stdout, /Token source: publish-token\.json/, 'curly quotes were rejected')
+  })
+  withFile(tokenFile, Buffer.from('{"token":"' + token.slice(0, 12) + '\u200b' + token.slice(12) + '"}\n', 'utf8'), () => {
+    assert.match(run(['--check']).stdout, /Token source: publish-token\.json/, 'a zero-width space was rejected')
+  })
+})
