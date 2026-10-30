@@ -176,7 +176,8 @@ If you skip this, the browser itself works fine — only the update check is una
 |---|---|
 | `node` is not recognized | New terminal window, or reboot so PATH refreshes |
 | `npm install` hangs or `ECONNRESET` | Corporate proxy/antivirus. Try `npm install --registry=https://registry.npmjs.org/` or turn off the AV web shield for 10 minutes |
-| `no Electron runtime at ...\node_modules\electron\dist` | `cd app` then `npm install --force` |
+| `npm finished but there is no Electron runtime` / `up to date in 634ms` | The package folder exists but its download never finished, so npm thinks it is installed. Run the downloader itself: `cd app` then `node node_modules\electron\install.js`. The build script now does this automatically, then `npm rebuild electron`, then removes the folder and reinstalls |
+| The downloader fails too | Almost always `npm config get ignore-scripts` printing `true` (scripts that fetch the runtime are skipped), or the network blocking GitHub's release servers. Check with `curl -I https://github.com/electron/electron/releases/download/v45.1.0/electron-v45.1.0-win32-x64.zip` - it should print `HTTP/2 302`. If it does not: `set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/` then `node node_modules\electron\install.js` |
 | Build fails while copying | PsychoVault is running and holding the exe — close it, delete `build\`, run again |
 | `makensis` not found | Optional. Install NSIS (<https://nsis.sourceforge.io/Download>), reopen the terminal, re-run |
 | Setup says *"Can't write ...PsychoVault.exe"* | The browser is open. Setup now offers to close it — accept |

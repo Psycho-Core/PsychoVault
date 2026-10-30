@@ -71,7 +71,33 @@ if errorlevel 1 (
 )
 popd
 
+if exist "%ROOT%\app\node_modules\electron\dist\electron.exe" goto :runtime_ok
+
+rem npm answers "up to date" whenever the package folder exists, even when the download
+rem that runs after install never finished - so a half-installed runtime looks installed
+rem and is never retried. The downloader is a separate script; run it directly, because
+rem that is what fetches the 120 MB and it prints the real reason when it cannot.
+echo       npm found the package already there but the runtime is not.
+echo       Running Electron's own downloader so the real error is visible...
+pushd "%ROOT%\app"
+node "node_modules\electron\install.js"
+popd
+if exist "%ROOT%\app\node_modules\electron\dist\electron.exe" goto :runtime_ok
+
+echo       That did not produce the runtime either. Rebuilding the package...
+pushd "%ROOT%\app"
+call npm rebuild electron --no-audit --no-fund
+popd
+if exist "%ROOT%\app\node_modules\electron\dist\electron.exe" goto :runtime_ok
+
+echo       Still missing. Removing the package and installing it from scratch...
+if exist "%ROOT%\app\node_modules\electron" rmdir /s /q "%ROOT%\app\node_modules\electron"
+pushd "%ROOT%\app"
+call npm install --no-audit --no-fund
+popd
 if not exist "%ROOT%\app\node_modules\electron\dist\electron.exe" goto :no_electron
+
+:runtime_ok
 echo       Runtime is in place.
 echo.
 
@@ -273,10 +299,29 @@ goto :end
 
 :no_electron
 echo.
-echo   FAILED: npm finished but there is no Electron runtime at
+echo   FAILED: the Electron runtime could not be downloaded.
+echo   Expected at:
 echo     %ROOT%\app\node_modules\electron\dist\electron.exe
-echo   Usually a proxy, antivirus, or an interrupted download.
-echo   Try:  cd app  ^&^&  npm install --force
+echo.
+echo   Three things cause this, in order of likelihood:
+echo.
+echo   1. npm is not allowed to run install scripts, which is what downloads
+echo      the runtime. Check with:   npm config get ignore-scripts
+echo      If it prints true:          npm config set ignore-scripts false
+echo.
+echo   2. Something is blocking the download - a proxy, antivirus web shield,
+echo      or a network that will not reach GitHub's release servers. Test it in
+echo      a new Command Prompt window with:
+echo        curl -I https://github.com/electron/electron/releases/download/v45.1.0/electron-v45.1.0-win32-x64.zip
+echo      If that does not print HTTP/2 302, use a mirror and try again:
+echo        set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
+echo        node node_modules\electron\install.js
+echo.
+echo   3. An older half-finished install. Delete it and start again:
+echo        rmdir /s /q app\node_modules\electron
+echo        cd app   then   npm install
+echo.
+echo   Everything above is typed in the app folder, for example:  cd /d "%ROOT%\app"
 goto :end
 
 :fail_npm
