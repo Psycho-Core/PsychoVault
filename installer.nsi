@@ -1,5 +1,9 @@
 ; PsychoVault installer
-; Build: makensis -DPAYLOADDIR=/path/to/staged -DOUTFILE=/path/out.exe installer.nsi
+; Build: makensis -DPAYLOADDIR=/path/to/staged -DFILELIST=payload-files.nsh -DOUTFILE=/path/out.exe installer.nsi
+;
+; FILELIST is the include written by tools/gen-filelist.mjs: one SetOutPath + File per file.
+; It exists because File /r "dir/*.*" reported "no files found" on a folder the script could
+; read a named file from, so the installer no longer asks NSIS to enumerate anything.
 
 Unicode true
 !include "MUI2.nsh"
@@ -55,6 +59,16 @@ VIAddVersionKey "Comments"        "Browser application built on Electron 45.1.0 
 !define MUI_FINISHPAGE_LINK "Open README.txt"
 !define MUI_FINISHPAGE_LINK_LOCATION "$INSTDIR\README.txt"
 
+; One File line per file, generated from the staged payload. Falling back to File /r would put
+; back the enumeration this was written to avoid, so a missing include is a hard error.
+!ifndef FILELIST
+  !error "FILELIST is not defined: pass -DFILELIST=<the include written by tools/gen-filelist.mjs>"
+!endif
+!if /FileExists "${FILELIST}"
+!else
+  !error "the file list does not exist: ${FILELIST}"
+!endif
+
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "${PAYLOADDIR}/LICENSE.txt"
 !insertmacro MUI_PAGE_DIRECTORY
@@ -73,7 +87,7 @@ Section "Install"
   ; your profile (bookmarks, history, vault) lives in %APPDATA% and is never touched here
   RMDir /r "$INSTDIR\locales"
   RMDir /r "$INSTDIR\resources"
-  File /r "${PAYLOADDIR}/*.*"
+  !include "${FILELIST}"
   ${If} ${Errors}
     ; something still had a handle on it - close the browser and try once more
     nsExec::ExecToLog 'taskkill /F /IM PsychoVault.exe'
@@ -81,7 +95,7 @@ Section "Install"
     ClearErrors
     RMDir /r "$INSTDIR\locales"
     RMDir /r "$INSTDIR\resources"
-    File /r "${PAYLOADDIR}/*.*"
+    !include "${FILELIST}"
     ${If} ${Errors}
       MessageBox MB_OK|MB_ICONEXCLAMATION 'Some files could not be written - they are still in use.$\r$\n$\r$\nClose any PsychoVault window and run Setup again. Nothing was removed from your profile.'
       Abort
