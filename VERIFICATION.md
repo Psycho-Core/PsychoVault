@@ -1111,3 +1111,99 @@ was generated after a subsequent signing attempt failed: the public key is in
 `/home/user/.psychovault-update-signing-private.pem` (mode 0600). A local temporary-payload
 sign/verify smoke test passed. Save this latest matching key—not an earlier value—as
 `UPDATE_SIGNING_PRIVATE_KEY_B64` before publishing.
+
+## Round 35 - Proton VPN bundled from source, and the API that was missing
+
+The request was three things at once: be able to install and use extensions, have Proton VPN
+ship with the browser as its default VPN, and still be able to hand the browser to other
+people. This round covers the first two.
+
+### What was actually blocking the extension
+
+Not the installer. Proton VPN's `.crx` unpacks correctly here - the CRX3 and zip readers were
+run directly against a synthetic CRX3 this round (deflate, nested paths, 50 KB payload: 3 files
+extracted, manifest intact, byte sizes correct). The blocks were higher up:
+
+1. There is no store-install path. `grep -rn "webstore|update2/crx|clients2.google" app/` returns
+   nothing, so clicking "Add to Chrome" on the store page does exactly nothing. That is the wall
+   the request ran into.
+2. Electron refuses `.crx` and the store no longer serves them, so "Install .crx..." needs a file
+   that is now hard to obtain by hand.
+3. Even when installed, the extension could not tunnel: it needs `chrome.proxy`, which Electron
+   documents as not implemented, and no amount of packaging changes that.
+
+### The way through: Proton's own source
+
+`github.com/ProtonVPN/proton-vpn-browser-extension` is **GPL-3.0**, not the store's
+all-rights-reserved terms. That makes redistribution lawful in a way copying the store binary
+would not be. It was cloned, pinned, and built here:
+
+| Step | Result |
+| --- | --- |
+| clone at `71d7d86f164a2ee8e50ce5a389c9e5cbe0fd6883` | 3.2 MB checkout, TypeScript/webpack |
+| `npm ci` | failed: `ts-jest@29.4.11` demands `@babel/core@^7`, upstream pins `^8` |
+| `npm ci --legacy-peer-deps` | 1371 packages |
+| `npm run build` | `distribution/`: **335 files, 6.8 MB** |
+| built manifest | `Proton VPN: Fast & Secure`, **1.3.6**, manifest v3, exactly the store's 9 permissions |
+
+The build is vendored at `app/builtin/proton-vpn/` with its GPL-3.0 text; the commit, the two
+build commands and the source offer are in `app/builtin/README.md` and `THIRD-PARTY-NOTICES.md`.
+
+### The API shim
+
+Electron 45 does support the hook this needs - `session.registerPreloadScript({ type:
+'service-worker' })` - so the missing APIs can be supplied inside the extension's own world:
+
+- `app/ext-shim.js` - runs as a frame preload *and* a service-worker preload, gated on
+  `chrome-extension://`, injects `chrome.proxy` and `chrome.privacy` through
+  `contextBridge.executeInMainWorld`.
+- `app/ext-proxy.js` - translates Chrome's `ProxyConfig` into Electron's, and refuses anything it
+  cannot express rather than falling back to DIRECT.
+- `app/main.js` - `extshim:*` handlers apply the result with `session.setProxy()` on every
+  session, verify the sender's extension id against the id it claims, and attach the same handlers
+  to each MV3 background worker as it starts (`serviceWorkers.on('running-status-changed')`).
+
+That last detail matters and is copied from a working implementation rather than guessed: a
+service worker's `ipcRenderer.invoke` does not reach `ipcMain`, it must be answered on
+`worker.ipc.handle`. The app runs with `sandbox: true` and no `--no-sandbox`, which is the one
+configuration in which service-worker preloads run at all.
+
+### What the harness proves here
+
+| Check | Result |
+| --- | --- |
+| `node --test tools/*.test.cjs` | **22 tests, 22 pass** (12 new for the proxy translation) |
+| `node tools/audit.mjs` | 83 channels handled and called, 49 settings keys, 91 controls, **no defects** |
+| bundled manifest analysed by the app's own `extAnalyse()` | name, 1.3.6, MV3, popup `popup.html`, **0 blockers** |
+| same analysis before this round | would have reported `chrome.proxy` as a blocker - "cannot work here" |
+
+Two real bugs were caught by writing the tests first, not after:
+
+- `singleProxy` was translated to `http=host:port`, which Chromium applies to **http only** - https
+  traffic would have gone direct while the extension reported a live tunnel. A bare rule is the
+  one that covers every scheme. Fixed, test pinned.
+- `proxyServerToRule` returned an empty string for a server with no host, producing a malformed
+  rule instead of an error. Now throws.
+
+### What is not proven, and will not be claimed
+
+**The tunnel has not been observed working.** This is a Linux container with no display, no
+Electron runtime and no network route to Proton, so the popup was never opened, no account was
+signed in, and no packet was seen arriving at Proton's proxy. What is proven is that the
+extension builds, that the engine accepts its manifest with no unmet API, and that the proxy
+configuration it would send is translated correctly and applied to sessions. Whether
+`chrome.webRequest.onAuthRequired` fires for proxy challenges in Electron 45 - the last link,
+which supplies Proton's per-session proxy credentials - is the specific thing to watch on a
+Windows run. If it does not fire, traffic fails closed with an auth error rather than leaking,
+but the tunnel will not come up, and that will be the next round's work.
+
+Also unchanged and worth saying plainly: nothing about this makes store installs work. Clicking
+"Add to Chrome" still does nothing, because there is still no store client. Every extension that
+is not bundled still arrives as a folder or a `.crx`.
+
+### The repository is private
+
+`gh repo view` reports `private=true`. That means the Releases page is visible only to the owner,
+the installer cannot be downloaded by anyone else, and the in-app updater - which queries public
+GitHub Releases unauthenticated - would get a 404 for every other user. Bundling a VPN does not
+change that; making the browser shareable is a repository visibility decision, not a code one.

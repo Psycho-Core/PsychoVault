@@ -19,11 +19,40 @@ The 262-domain list in `app/blocklist.json` is a hand-curated set of known adver
 and analytics hostnames, written for this project. It is not derived from EasyList or
 any other filter subscription, and it carries no licence obligation from them.
 
-## Extensions
+## Proton VPN browser extension - GPL-3.0
 
-Nothing from an extension store is bundled. `Install .crx...` unpacks a file **you** supply into
-your own profile folder (`extensions/`), and the app ships no extension code. Extension loading is
-Electron's `session.loadExtension`. No signature is verified for a `.crx` - see the Settings text.
+`app/builtin/proton-vpn/` is a build of Proton AG's browser extension, **Proton VPN: Fast &
+Secure 1.3.6**, and is licensed **GPL-3.0**, not MIT. It is redistributed here under that licence.
+
+| | |
+| --- | --- |
+| Copyright | Proton AG |
+| Upstream source | https://github.com/ProtonVPN/proton-vpn-browser-extension |
+| Commit built | `71d7d86f164a2ee8e50ce5a389c9e5cbe0fd6883` |
+| Build | `npm ci --legacy-peer-deps && npm run build`, no source changes |
+| Full licence text | `app/builtin/proton-vpn/LICENSE` |
+
+The corresponding source is the commit named above, obtainable from Proton's public repository.
+PsychoVault does not modify, patch, or add to that source; a newer upstream commit can be rebuilt
+with the same two commands and dropped into the same folder.
+
+PsychoVault's own code stays MIT. The extension is aggregated, not linked: it is a separate
+program loaded at runtime through `session.loadExtension()`, and PsychoVault runs without it.
+
+No account, subscription, credential or server list ships with it. Signing in is done by you,
+in the extension, against Proton's own API.
+
+## Other extensions
+
+Nothing else from an extension store is bundled. `Install .crx...` unpacks a file **you** supply
+into your own profile folder (`extensions/`). Extension loading is Electron's
+`session.loadExtension`. No signature is verified for a `.crx` - see the Settings text.
+
+## Extension API shim
+
+`app/ext-shim.js` and `app/ext-proxy.js` are PsychoVault's own MIT code. They implement
+`chrome.proxy` and `chrome.privacy` for extension contexts by calling Electron's
+`session.setProxy()` and Chromium's WebRTC IP handling policy. They contain no Proton code.
 
 ## Spell-check word list
 

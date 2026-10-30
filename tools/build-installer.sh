@@ -30,7 +30,9 @@ echo "[2/4] copying app source"
 mkdir -p "$STAGE/resources/app"
 cp -a app/. "$STAGE/resources/app/"
 for f in main.js download-save.js translation.js update-manifest.js update-public-key.pem auto-updater.js \
-         preload.js page-preload.js spell-page.js spell-words.txt ui/renderer.js ui/style.css ui/settings.html; do
+         preload.js page-preload.js spell-page.js spell-words.txt ui/renderer.js ui/style.css ui/settings.html \
+         ext-proxy.js ext-shim.js builtin/proton-vpn/manifest.json builtin/proton-vpn/js/service.js \
+         builtin/README.md builtin/proton-vpn/LICENSE; do
   if [ -f "app/$f" ]; then
     cmp -s "$STAGE/resources/app/$f" "app/$f" || { echo "  MISMATCH in staged $f"; exit 1; }
     echo "  ok  $f  $(stat -c %s "app/$f") bytes"

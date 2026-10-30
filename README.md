@@ -88,7 +88,7 @@ it were restored in the same way.
 | RGX | Contrast/saturation/brightness filters on `video` and `img` elements, two switches, off by default |
 | Sidebar services | Up to 14 services in the rail, each with the site's own favicon and brand colour (a picker has Discord, Twitch, YouTube, YouTube Music, X, Reddit, GitHub, WhatsApp, Telegram, Spotify, Slack, Messenger, ICQ and more; anything else you can add by URL), opened as ordinary tabs, so logins and video players keep working; global media keys route to them and auto-pause the music when another tab starts making sound; right-click a button for open / new window / reload / copy / remove |
 | Spelling | Red wavy underlines in every text field you type in, suggestions and "Add to dictionary" in the right-click menu, and a "your words" box in Settings you can edit in bulk. It is PsychoVault's own checker - a 15,000-word frequency list plus your words, run in the page - because an Electron build cannot load or download dictionaries (tested: no `downloadDictionary`, `<profile>/Dictionaries` is not read, the download URL is never fetched) |
-| Extensions | Chrome-style extensions, installed from an unpacked folder or **.crx** (unpacked here because Electron refuses crx files), loaded into every session including containers, and managed with enable / disable / remove. The settings category reports missing APIs rather than failing silently. The Proton VPN Chrome-extension button opens Proton's official extension page in a new in-app tab; its extension still cannot route traffic until this Electron build implements the required `chrome.proxy` API, and is not presented as a working VPN |
+| Extensions | Chrome-style extensions, installed from an unpacked folder or **.crx** (unpacked here because Electron refuses crx files), loaded into every session including containers, and managed with enable / disable / remove. **`chrome.proxy` and `chrome.privacy` are supplied by PsychoVault's own shim**, so browser VPN extensions can actually set a proxy and harden WebRTC instead of failing silently. Everything else an extension asks for that this engine lacks is named in its card |
 | Personality | Synthesised keyboard sounds (no audio files in the repo), six accent colours, and a custom stylesheet box that repaints the chrome
 | Governor | CPU priority limiter and tab sleeping, so background tabs stop costing RAM |
 | Context menus | Right-click a tab, a link, an image, selected text, or a text field (Cut / Copy / Paste / Select all all the way through) |
@@ -315,7 +315,7 @@ deliberately not here, and why.
 | Split-Screen | **yes** - two pages in one window, `Ctrl+\` | `main.js: splitId` |
 | Sidebar services (Discord, Twitch, messengers) | **yes** - up to 14 entries with their real favicons and brand colours, opened as ordinary tabs rather than embedded webviews, so logins, notifications and video players keep working | Settings - Sidebar services |
 | Spell check | **yes, and it works** - underlines, suggestions and your own words, from a checker this app ships rather than one it would have to borrow from a browser it is not | Settings - Spelling |
-| VPN (Opera's is a free proxy service run by Opera) | **no longer built in** - the bundled WireGuard client is removed. Browser VPN extensions including Proton VPN cannot route traffic in this Electron build because `chrome.proxy` is not implemented. Settings links to Proton's Chrome-extension page as requested but clearly marks the extension as unable to protect PsychoVault | Settings - Extensions says so per extension |
+| VPN | **Proton VPN ships with the browser.** A build of Proton's own extension (GPL-3.0, compiled from `github.com/ProtonVPN/proton-vpn-browser-extension` at a pinned commit) is installed on first run, so there is nothing to download and no store that refuses the install. Sign in with your own Proton account in its window; Chromium then routes traffic through Proton's proxy via `session.setProxy`, with the extension's proxy credentials delivered through `webRequest.onAuthRequired`. No account or credential is bundled. Opera's VPN stays absent - it was never PsychoVault's to ship |
 | Music Player / Mini Player + auto-pause | **partly** - global media keys route to the tab holding audio, and anything that starts making sound pauses the music tab after 2.5 s. No floating mini-player window | `main.js: mediaRoute` |
 | Browser player (video popout) | **no** - not built. Sites can still take Chromium's own picture-in-picture | - |
 | Password manager | **yes** - local encrypted vault, save and fill from the field menu, auto-lock, no sync | Settings - Passwords |
@@ -416,6 +416,33 @@ homepage is a matter of timing; and the request was never blocked from loading t
 page itself — news, feeds, video and database all render, and the only casualty is
 the ad slots. If a site insists, flip Shields off for it from the settings page and
 it behaves like an ordinary browser again.
+
+## Proton VPN, and how it got here
+
+Proton publishes the extension's source under GPL-3.0, which is what makes it shippable in a way the
+Chrome Web Store copy is not: the store's terms forbid redistribution, Proton's licence does not.
+`app/builtin/proton-vpn/` is that source built with `npm ci --legacy-peer-deps && npm run build` at
+commit `71d7d86f164a2ee8e50ce5a389c9e5cbe0fd6883`, copied into your profile on first launch, and
+loaded like any other unpacked extension. Version, commit and licence are recorded in
+`app/builtin/README.md` and in `THIRD-PARTY-NOTICES.md`.
+
+The reason it could not work before is one missing API. Electron implements a subset of Chrome's
+extension APIs and `chrome.proxy` is not in it - and that single call is the whole mechanism by which
+a browser VPN sends traffic through its tunnel. PsychoVault now supplies that API itself, in
+`app/ext-shim.js`, registered as both a frame and a service-worker preload script so it is present in
+the extension's popup and in its Manifest V3 background worker:
+
+| Chrome API | Backed by |
+| --- | --- |
+| `chrome.proxy.settings.set / get / clear` | `session.setProxy()` on every session, translated in `app/ext-proxy.js` |
+| `chrome.proxy.settings.onChange`, `onProxyError` | emitted from what the network stack actually did |
+| `chrome.privacy.network.webRTCIPHandlingPolicy` | `webContents.setWebRTCIPHandlingPolicy()` |
+| `chrome.webRequest.onAuthRequired` | Electron's own implementation, which does cover proxy auth |
+
+Nothing is stubbed: a configuration that cannot be applied is reported to the extension as an error
+rather than silently leaving traffic direct, and `ext-proxy.js` is unit-tested on exactly that point
+(`tools/ext-proxy.test.cjs`). Removing the extension is permanent - PsychoVault records it and does
+not reinstall on the next launch - and **Settings - Extensions - Restore** brings it back.
 
 ## What is not here yet
 

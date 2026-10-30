@@ -350,12 +350,13 @@
   <section>
     <h2>Extensions</h2>
     <div class="hint">Chrome-style extensions, loaded the way Chromium's own "load unpacked" works: install a folder, or a <b>.crx</b> file (this unpacks it, because Electron refuses crx files outright). Extensions run inside every tab and can read the pages you visit - only install ones you trust, and note that <b>no signature is verified</b> for a crx here.</div>
-    <div class="hint"><b>What actually works.</b> Content scripts, page changes, request blocking through the old <code>webRequest</code> API, storage and messaging all work. What does not exist in this engine: <b>chrome.proxy</b> (which is how a browser VPN extension redirects traffic), <b>declarativeNetRequest</b> (the MV3 rules engine), native messaging, and a toolbar to click. Every extension below is checked against that list, and anything it needs that is missing is named under it rather than left to fail silently.</div>
+    <div class="hint"><b>What actually works.</b> Content scripts, page changes, request blocking through the old <code>webRequest</code> API, storage, messaging, and - through PsychoVault's own shim - <b>chrome.proxy</b> and <b>chrome.privacy</b>, which is what a browser VPN extension needs to send traffic through a tunnel. What does not exist in this engine: <b>declarativeNetRequest</b> (the MV3 rules engine), native messaging, <code>chrome.vpnProvider</code>, and a toolbar to click. Every extension below is checked against that list, and anything it needs that is missing is named under it rather than left to fail silently.</div>
     <div class="proton-card">
-      <div class="proton-title">Proton VPN Chrome extension</div>
-      <p>Open Proton's official Chrome-extension page in a new PsychoVault tab. If you obtain a <code>.crx</code> file, use <b>Install .crx...</b> below.</p>
-      <p><b>Important:</b> this Electron build does not expose <code>chrome.proxy</code>, which Proton VPN's extension needs to route browser traffic. It may install, but it cannot currently provide VPN protection in PsychoVault.</p>
-      <button class="mini" id="protonVpnDownload" type="button">Open Proton VPN Chrome extension</button>
+      <div class="proton-title">Proton VPN</div>
+      <p><b>Installed by default.</b> PsychoVault ships a build of Proton's own browser extension, compiled from Proton's GPL-3.0 source at <code>github.com/ProtonVPN/proton-vpn-browser-extension</code>. It appears in the list below like any other extension - open its window to sign in and connect.</p>
+      <p>You need your own Proton account. Sign in with it in the extension window; PsychoVault does not see, store, or ship your Proton password, and no subscription or server list is bundled. Traffic is then routed by Chromium through Proton's proxy - the same mechanism the extension uses in Chrome.</p>
+      <p>Want the store listing instead? <button class="mini" id="protonVpnDownload" type="button">Open Proton's extension page</button></p>
+      <button class="mini" id="protonVpnRestore" type="button">Restore / reinstall Proton VPN</button>
     </div>
     <div id="extList" class="ext-list"></div>
     <div class="btnrow">
@@ -826,9 +827,20 @@
     }
     if (s('protonVpnDownload')) s('protonVpnDownload').onclick = async () => {
       try {
-        const result = await window.pv.tab.open('https://protonvpn.com/download-chrome-extension')
+        const result = await window.pv.tab.open('https://chromewebstore.google.com/detail/proton-vpn-fast-secure/jplgfhpmjnbigmhklmmbgecoobifkmpa')
         if (!result || !result.ok) flag('Could not open the Proton VPN Chrome extension page')
       } catch { flag('Could not open the Proton VPN Chrome extension page') }
+    }
+    if (s('protonVpnRestore')) s('protonVpnRestore').onclick = async () => {
+      s('extMsg').textContent = 'restoring Proton VPN\u2026'
+      const r = await window.pv.extensions.restorebuiltin('proton-vpn')
+      const item = (r && r.items || []).find((x) => x.builtin === 'proton-vpn' || /Proton VPN/.test(x.name || ''))
+      s('extMsg').textContent = !r || r.ok === false
+        ? 'could not restore: ' + ((r && r.error) || 'unknown error')
+        : item && item.error
+          ? 'restored, but the engine refused to load it: ' + item.error
+          : 'Proton VPN is installed and enabled'
+      paintExtensions()
     }
     s('clear').onclick = async () => {
       await window.pv.data.clear({ history: true })
@@ -991,7 +1003,7 @@
       nm.textContent = x.name
       const ver = document.createElement('span')
       ver.className = 'ext-ver'
-      ver.textContent = (x.version ? 'v' + x.version : '') + (x.mv ? ' \u00b7 manifest v' + x.mv : '')
+      ver.textContent = (x.version ? 'v' + x.version : '') + (x.mv ? ' \u00b7 manifest v' + x.mv : '') + (x.builtin ? ' \u00b7 bundled with PsychoVault' : '')
       const pill = document.createElement('span')
       const broken = x.blockers && x.blockers.length
       pill.className = 'ext-pill ' + (broken ? 'bad' : (x.enabled && x.loaded ? 'on' : 'off'))
