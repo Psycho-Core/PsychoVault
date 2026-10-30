@@ -2383,3 +2383,39 @@ next to the API status - so the evidence is on screen instead of in a file the u
 | `node --test tools/*.test.cjs` | **122 pass** - including "an extension preload requires nothing but electron" and "the installer can be stringified into another world" (which rejects closing over the preload's variables) |
 | `node tools/audit.mjs` | no defects |
 | version | 1.0.22 |
+
+## Round 59 - SetCompressor has a fixed argument order
+
+```
+SetCompressor expects 3 parameters, got 4.
+Usage: SetCompressor [/FINAL] [/SOLID] (zlib|bzip2|lzma)
+Error in script "installer.nsi" on line 38 -- aborting creation process
+```
+
+1.0.21 added `/FINAL` to save a compression pass and wrote it in the wrong place:
+`SetCompressor /SOLID lzma /FINAL`. The compressor is the **last** argument, so that line is
+four parameters and NSIS refuses the script before it reads a single file.
+
+The test I added alongside it asserted only that `/FINAL` was present, which is exactly the part
+that was right. It now matches the whole accepted shape:
+
+```js
+/^SetCompressor(?: \/(?:SOLID|FINAL))+ (?:zlib|bzip2|lzma)$/
+```
+
+so a future edit cannot put the compressor first, or add an argument NSIS does not take.
+
+### Also
+
+`:fail_nsis` used to explain every failure as antivirus and printed an exclusion command. It now
+separates the two cases: a script or usage error is named as a fault in `installer.nsi` and asks
+for the message; `no files found` keeps the quarantine explanation. Misdiagnosing this cost
+several rounds, and the message was doing the misdiagnosing.
+
+### Checks
+
+| | |
+| --- | --- |
+| `node --test tools/*.test.cjs` | **122 pass** (the compressor test now matches the full accepted form) |
+| `node tools/audit.mjs` | no defects |
+| version | 1.0.23 |

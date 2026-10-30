@@ -428,7 +428,12 @@ test('the installer compresses the payload once, not twice', () => {
   const lines = nsi.split('\n').filter((l) => /^\s*SetCompressor\s/.test(l))
   assert.ok(lines.length > 0, 'no compressor is set at all')
   for (const line of lines) {
-    assert.match(line, /\/FINAL/, 'a SetCompressor line will cost a second full pass: ' + line.trim())
+    const trimmed = line.trim()
+    // NSIS is strict about the order: switches, then the compressor, last.
+    // "SetCompressor /SOLID lzma /FINAL" is four parameters and aborts the build.
+    assert.match(trimmed, /^SetCompressor(?: \/(?:SOLID|FINAL))+ (?:zlib|bzip2|lzma)$/,
+      'not the shape NSIS accepts: ' + trimmed)
+    assert.match(trimmed, /\/FINAL/, 'a SetCompressor line will cost a second full pass: ' + trimmed)
   }
 })
 

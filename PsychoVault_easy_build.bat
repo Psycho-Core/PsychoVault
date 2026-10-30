@@ -257,8 +257,8 @@ goto :notes
 
 :nsis_try_copy
 popd
-echo       NSIS could not read the payload from this folder.
-echo       Copying it to a plain folder and building from there...
+echo       The installer did not build. Retrying once from a copy in the temp
+echo       folder, in case the payload and not the script was the problem.
 set "STAGE=%TEMP%\PsychoVault-stage"
 echo %STAGE%| findstr /c:"#" >nul
 if not errorlevel 1 set "STAGE=C:\PsychoVault-stage"
@@ -546,7 +546,13 @@ echo   The portable browser at %PAYLOAD%\PsychoVault.exe is still there and runs
 echo   without an installer - use it, and use BUILD-WINDOWS.md if you want the
 echo   Setup .exe as well.
 echo.
-echo   If NSIS reported "no files found", antivirus removed the payload mid-build.
-echo   Add an exclusion for this folder and run the file again:
-echo     Add-MpPreference -ExclusionPath "%ROOT%"
+echo   The reason is the makensis message above. It is one of two things:
+echo.
+echo     "error in script ... on line N", or a usage line - that is a fault in
+echo     installer.nsi, not in this machine or in the payload. Report the message.
+echo.
+echo     "no files found" - the payload vanished between the check and the
+echo     compression, which is almost always antivirus quarantine of the freshly
+echo     staged unsigned runtime:
+echo       Add-MpPreference -ExclusionPath "%ROOT%"
 goto :notes
