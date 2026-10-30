@@ -98,3 +98,52 @@ test('--check never prints the token, and reports a network failure as a sentenc
     'the failure was not explained: ' + output)
   assert.ok(!/at async|node:internal|TypeError/.test(output), 'a stack trace leaked into the output')
 })
+
+// The ways a hand-made token file goes wrong, kept as tests because each one used to look
+// exactly like "no token at all".
+const tokenFile = path.join(root, 'publish-token.json')
+const txtFile = path.join(root, 'publish-token.json.txt')
+
+function withFile(file, bytes, fn) {
+  fs.writeFileSync(file, bytes)
+  try { return fn() } finally { fs.rmSync(file, { force: true }) }
+}
+
+test('a token file saved by Notepad as UTF-16 is still read', () => {
+  const token = 'github_pat_' + 'a'.repeat(40)
+  const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(JSON.stringify({ token }), 'utf16le')])
+  withFile(tokenFile, utf16, () => {
+    const r = run(['--check'])
+    assert.match(r.stdout, /Token source: publish-token\.json/, 'a UTF-16 token file was not read')
+    assert.ok(!(r.stdout + r.stderr).includes(token), 'the token was printed')
+  })
+})
+
+test('a bare token on its own line is accepted', () => {
+  const token = 'github_pat_' + 'b'.repeat(40)
+  withFile(tokenFile, token + '\r\n', () => {
+    const r = run(['--check'])
+    assert.match(r.stdout, /Token source: publish-token\.json/)
+  })
+})
+
+test('a file called publish-token.json.txt is named as the problem', () => {
+  const token = 'github_pat_' + 'c'.repeat(40)
+  withFile(txtFile, JSON.stringify({ token }), () => {
+    const r = run(['--check'])
+    assert.notStrictEqual(r.status, 0)
+    assert.match(r.stderr, /rename it to publish-token\.json/)
+  })
+})
+
+test('an empty or malformed token file says which it is', () => {
+  withFile(tokenFile, '', () => {
+    assert.match(run(['--check']).stderr, /exists but the file is empty/)
+  })
+  withFile(tokenFile, 'not json at all', () => {
+    assert.match(run(['--check']).stderr, /exists but it is not valid JSON/)
+  })
+  withFile(tokenFile, '{"tokeny":"x"}', () => {
+    assert.match(run(['--check']).stderr, /no "token" field/)
+  })
+})

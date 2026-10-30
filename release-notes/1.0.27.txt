@@ -1,0 +1,15 @@
+"no token" now says why
+  A token file made in Notepad does not always arrive as written. Notepad's
+  default save type is Text Documents, which produces publish-token.json.txt,
+  and its Encoding menu offers UTF-16 - a UTF-16 file read as text is full of NUL
+  bytes, fails to parse, and looked exactly like no token at all.
+
+  All three are handled now:
+    - a UTF-16 file is decoded properly
+    - a file containing just the token, no JSON, is accepted
+    - publish-token.json.txt is found and named: "rename it to publish-token.json"
+
+  A file that exists but is empty, is not JSON, or has no "token" field now says
+  which of those it is instead of being skipped silently.
+
+  The failure message ends with: node tools\publish-release.mjs --check
