@@ -2525,3 +2525,40 @@ A read-only token behaves identically to a missing one *at publish time*, which 
 | `node tools/audit.mjs` | no defects |
 | `--check` in this sandbox | correctly reports "GitHub could not be reached: unable to verify the first certificate" - TLS interception here, which is exactly the case the wording is for |
 | version | 1.0.26 |
+
+## Round 63 - the token file was invisible, not missing
+
+```
+[9/9] Publishing the release to GitHub...
+publish-release: no token.
+```
+
+Every failure mode of a hand-made token file produced that one sentence, because the reader was
+`JSON.parse(fs.readFileSync(file, 'utf8'))` inside a bare `catch`:
+
+| what actually happened | what the script said |
+| --- | --- |
+| Notepad saved `publish-token.json.txt` | no token |
+| Notepad saved as UTF-16 | no token (NUL bytes break the parse) |
+| token pasted without the JSON wrapper | no token |
+| file exists and is empty | no token |
+| file is JSON but the key is misspelt | no token |
+
+`readTokenFile()` now decodes UTF-16 (BOM or NUL-pattern), accepts a bare token line, and returns
+a **reason** for anything else. `token()` collects those reasons, also looks for a
+`publish-token.json.txt` in the folder and reports the rename, and the failure message prints them:
+
+```
+publish-release: no token. Put {"token":"..."} in publish-token.json at the repo root ...
+  publish-token.json.txt looks like it was meant to be publish-token.json
+```
+
+`--check` prints the same reasons, and the build's failure text now ends by suggesting it.
+
+### Checks
+
+| | |
+| --- | --- |
+| `node --test tools/*.test.cjs` | **136 pass** (4 new: UTF-16, bare token, `.json.txt` named, empty/malformed/misspelt key each named) |
+| `node tools/audit.mjs` | no defects |
+| version | 1.0.27 |

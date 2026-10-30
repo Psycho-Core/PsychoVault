@@ -37,22 +37,61 @@ function fail(message) {
   process.exit(1)
 }
 
+// Notepad is the obvious way to make this file, and Notepad's default "Save as type" is Text
+// Documents - which quietly produces publish-token.json.txt - and its Encoding menu offers UTF-16.
+// A UTF-16 file read as utf8 is full of NUL bytes and JSON.parse throws, so the token looked
+// exactly like no token at all. Both are handled here, and anything that still fails is reported
+// with the reason instead of being skipped.
+function readTokenFile(file) {
+  let raw
+  try { raw = fs.readFileSync(file) }
+  catch (e) { return { missing: true } }
+  let text
+  if (raw.length >= 2 && raw[0] === 0xff && raw[1] === 0xfe) text = raw.toString('utf16le')
+  else if (raw.length >= 2 && raw[1] === 0x00 && raw[0] !== 0x00) text = raw.toString('utf16le')
+  else text = raw.toString('utf8')
+  text = text.replace(/^\uFEFF/, '').trim()
+  if (!text) return { missing: false, problem: 'the file is empty' }
+  // A bare token on its own line is accepted too: it is what people paste.
+  if (/^(github_pat_|ghp_|gho_|ghu_|ghs_)/.test(text) && !text.startsWith('{')) return { value: text }
+  try {
+    const parsed = JSON.parse(text)
+    const value = String((parsed && parsed.token) || '').trim()
+    if (value) return { value }
+    return { missing: false, problem: 'it is JSON but has no "token" field' }
+  } catch (e) {
+    return { missing: false, problem: 'it is not valid JSON (' + e.message + ')' }
+  }
+}
+
 function token() {
+  const notes = []
   for (const name of ['GITHUB_TOKEN', 'GH_TOKEN']) {
     const value = String(process.env[name] || '').trim()
-    if (value) return { value, source: name }
+    if (value) return { value, source: name, notes }
   }
   // publish-token.json lives at the ROOT, not in app/: everything in app/ is copied into the
   // payload and shipped to users, and a token with write access must never travel with the
   // browser. app/update-token.json is the read-only token the updater uses.
   for (const file of [path.join(ROOT, 'publish-token.json'), path.join(ROOT, 'app', 'update-token.json')]) {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(file, 'utf8'))
-      const value = String((parsed && parsed.token) || '').trim()
-      if (value) return { value, source: path.relative(ROOT, file) }
-    } catch { /* not there, try the next one */ }
+    const result = readTokenFile(file)
+    const shown = path.relative(ROOT, file)
+    if (result.value) return { value: result.value, source: shown, notes }
+    if (result.problem) notes.push(shown + ' exists but ' + result.problem)
   }
-  return { value: '', source: '' }
+  // The two ways this file goes wrong invisibly: a .txt extension from Notepad, and the right
+  // name in the wrong place.
+  try {
+    for (const name of fs.readdirSync(ROOT)) {
+      if (name === 'publish-token.json') continue
+      if (/^publish.*token.*(\.json\.txt|\.json|)$/i.test(name) && fs.statSync(path.join(ROOT, name)).isFile()) {
+        const result = readTokenFile(path.join(ROOT, name))
+        if (result.value) notes.push('found a token in "' + name + '" - rename it to publish-token.json')
+        else notes.push('"' + name + '" looks like it was meant to be publish-token.json' + (result.problem ? ' (' + result.problem + ')' : ''))
+      }
+    }
+  } catch { /* unreadable folder is not worth failing over */ }
+  return { value: '', source: '', notes }
 }
 
 function sha256(file) {
@@ -126,7 +165,8 @@ const auth = token()
 // and finding that out after a 20-minute build is the wrong time to find it out.
 if (check) {
   if (!auth.value) {
-    fail('no token. Put {"token":"..."} in publish-token.json at the repo root, or set GITHUB_TOKEN.')
+    const detail = auth.notes.length ? '\n  ' + auth.notes.join('\n  ') + '\n' : ''
+    fail('no token. Put {"token":"..."} in publish-token.json at the repo root, or set GITHUB_TOKEN.' + detail)
   }
   // The value itself is never printed, not even part of it: these consoles get pasted into chats.
   const shape = auth.value.startsWith('github_pat_') ? 'fine-grained token' : auth.value.startsWith('ghp_') ? 'classic token' : 'unrecognised token shape'
@@ -149,7 +189,8 @@ if (check) {
 }
 
 if (!auth.value) {
-  fail('no token. Set GITHUB_TOKEN, or put {"token":"..."} in publish-token.json at the repo root (contents:write on ' + REPOSITORY + ').')
+  const detail = auth.notes.length ? '\n  ' + auth.notes.join('\n  ') + '\n' : ''
+  fail('no token. Put {"token":"..."} in publish-token.json at the repo root (contents:write on ' + REPOSITORY + '), or set GITHUB_TOKEN.' + detail)
 }
 if (!fs.existsSync(installerPath)) fail('no installer to publish: ' + installerPath + ' does not exist. Build it first.')
 

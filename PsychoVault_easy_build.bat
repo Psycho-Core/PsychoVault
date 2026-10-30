@@ -408,6 +408,8 @@ echo   happen, and the reason is printed above by tools\publish-release.mjs. The
 echo     - no token: set GITHUB_TOKEN, or put {"token":"..."} in publish-token.json
 echo       at the repo root. It needs Contents read and write on this repository.
 echo       Keep it out of app\ - everything in that folder ships to users.
+echo       Run this to find out why the file is not being picked up:
+echo         node tools\publish-release.mjs --check
 echo     - the token has no write access: publishing needs contents:write
 echo     - the repository is private and the token cannot see it
 goto :done
