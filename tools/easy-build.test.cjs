@@ -398,3 +398,24 @@ test('an NSIS failure still writes the release notes', () => {
   const block = lines.slice(lines.findIndex((l) => /^:fail_nsis$/.test(l))).join('\n')
   assert.match(block, /goto :notes/, 'the notes step is skipped when the installer fails')
 })
+
+test('makensis is never handed a path that contains #', () => {
+  // Field report: the payload was counted as 20 files, then NSIS said "no files found" for
+  // the same folder. The repo path contains "#" and NSIS reads # as a comment marker.
+  const calls = lines.filter((l) => /MAKENSIS.*installer\.nsi/.test(l) && !/^rem/.test(l.trim()));
+  assert.ok(calls.length >= 2, 'the installer step no longer has a relative attempt and a fallback');
+  for (const call of calls) {
+    assert.ok(!/%ROOT%|%PAYLOAD%|%SETUP%/.test(call), `makensis is given an absolute path: ${call.trim()}`)
+    assert.match(call, /\/DPAYLOADDIR=(build\\payload|payload)/, `unexpected payload define: ${call.trim()}`)
+  }
+  assert.match(text, /pushd "%ROOT%"/, 'the relative attempt does not run from the repo root')
+})
+
+test('the fallback copy is staged somewhere without #', () => {
+  const at = lines.findIndex((l) => /:nsis_try_copy/.test(l));
+  assert.ok(at > 0, 'there is no fallback path for an NSIS build that cannot see the payload')
+  const block = lines.slice(at, at + 24).join('\n');
+  assert.match(block, /set "STAGE=%TEMP%\\PsychoVault-stage"/);
+  assert.match(block, /findstr \/c:"#"/, 'the stage path is not checked for #');
+  assert.match(block, /set "STAGE=C:\\PsychoVault-stage"/, 'there is no hash-free fallback directory');
+})
