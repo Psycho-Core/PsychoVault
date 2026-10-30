@@ -242,8 +242,12 @@ if errorlevel 1 goto :fail_filelist
 if not exist "%BUILD%\payload-files.nsh" goto :fail_filelist
 
 pushd "%ROOT%"
-echo       Building the installer...
-"%MAKENSIS%" /V2 /DWANT_UNINSTALLER "/DVERSION=%VERSION%" "/DMUI_ICON=assets\psychovault.ico" "/DPAYLOADDIR=build\payload" "/DFILELIST=build\payload-files.nsh" "/DOUTFILE=PsychoVault-Setup-%VERSION%.exe" "installer.nsi"
+echo.
+echo       Building the installer. This is the slow step: makensis compresses the whole
+echo       payload into one self-extracting .exe, and it prints one line per file as it
+echo       goes. A few minutes is normal, and nothing is wrong while it looks stuck.
+echo.
+"%MAKENSIS%" /V3 /DWANT_UNINSTALLER "/DVERSION=%VERSION%" "/DMUI_ICON=assets\psychovault.ico" "/DPAYLOADDIR=build\payload" "/DFILELIST=build\payload-files.nsh" "/DOUTFILE=PsychoVault-Setup-%VERSION%.exe" "installer.nsi"
 if errorlevel 1 goto :nsis_try_copy
 if not exist "%SETUP%" goto :nsis_try_copy
 popd
@@ -268,7 +272,7 @@ copy /y "%ROOT%\assets\psychovault.ico" "%STAGE%\psychovault.ico" >nul 2>nul
 node "%ROOT%\tools\gen-filelist.mjs" "%STAGE%\payload" "%STAGE%\payload-files.nsh" "%STAGE%"
 if errorlevel 1 goto :fail_filelist
 pushd "%STAGE%"
-"%MAKENSIS%" /V2 /DWANT_UNINSTALLER "/DVERSION=%VERSION%" "/DMUI_ICON=psychovault.ico" "/DPAYLOADDIR=payload" "/DFILELIST=payload-files.nsh" "/DOUTFILE=PsychoVault-Setup-%VERSION%.exe" "installer.nsi"
+"%MAKENSIS%" /V3 /DWANT_UNINSTALLER "/DVERSION=%VERSION%" "/DMUI_ICON=psychovault.ico" "/DPAYLOADDIR=payload" "/DFILELIST=payload-files.nsh" "/DOUTFILE=PsychoVault-Setup-%VERSION%.exe" "installer.nsi"
 if errorlevel 1 goto :fail_stage_build
 popd
 if not exist "%STAGE%\PsychoVault-Setup-%VERSION%.exe" goto :fail_stage_build

@@ -1,0 +1,15 @@
+The installer step is half as slow, and now says what it is doing
+  "Building the installer..." sat there for a long time because NSIS was compressing the
+  whole 381 MB payload TWICE. SetCompressor without /FINAL compresses everything once to
+  measure the result, throws that away, and compresses all of it again at the end. One word
+  fixes it: /FINAL. Same installer, half the waiting.
+
+  makensis is also run with /V3 now, so it prints a line per file while it works. A long
+  step that prints nothing looks frozen; this one no longer does.
+
+  Nothing was broken and nothing was lost - the previous run was working, just slowly.
+
+If you do not want to wait at all
+  The portable browser in build\payload needs no installer. Run
+  build\payload\PsychoVault.exe directly - it is the same browser, without a Start Menu
+  entry. The Setup .exe is a convenience, not a requirement.

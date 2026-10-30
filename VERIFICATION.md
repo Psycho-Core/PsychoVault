@@ -2315,3 +2315,32 @@ kept as `.1`, and `ext-main-world.js` is verified by both build paths and copied
 | `node --test tools/*.test.cjs` | **121 pass** (the shim suite rewritten for two files: delivery paths, no imports in the installer, log wiring in the allow-list) |
 | `node tools/audit.mjs` | no defects |
 | version | 1.0.20 |
+
+## Round 57 - "sitting here for awhile" was NSIS compressing twice
+
+```bat
+SetCompressor /SOLID lzma
+```
+
+Without `/FINAL`, NSIS compresses the entire payload to measure it, discards that result, then
+compresses all of it again at the end. On this payload - 442 files, **381,032,503 bytes** - that
+is minutes of work per pass, and `/V2` prints nothing during either one, so the build looks
+frozen. It was not: step 7 had already listed and read every file correctly.
+
+| | |
+| --- | --- |
+| `SetCompressor /SOLID lzma /FINAL` | one pass instead of two |
+| `makensis /V3` | one line per file, so the step visibly moves |
+| before makensis | the build now says this is the slow step and that minutes are normal |
+
+`SetCompressorDictSize 32` is kept: over 380 MB it is most of the remaining time, and dropping it
+to 8 would save a few minutes and cost roughly 10-15 MB of installer size. That trade is written
+next to the line so it can be changed without re-deriving it.
+
+### Checks
+
+| | |
+| --- | --- |
+| `node --test tools/*.test.cjs` | **123 pass** (2 new: every SetCompressor line carries /FINAL, makensis runs at /V3) |
+| `node tools/audit.mjs` | no defects |
+| version | 1.0.21 |

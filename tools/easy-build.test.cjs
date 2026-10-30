@@ -419,3 +419,23 @@ test('the fallback copy is staged somewhere without #', () => {
   assert.match(block, /findstr \/c:"#"/, 'the stage path is not checked for #');
   assert.match(block, /set "STAGE=C:\\PsychoVault-stage"/, 'there is no hash-free fallback directory');
 })
+
+test('the installer compresses the payload once, not twice', () => {
+  // Field report: the build sat at "Building the installer..." for a long time with no output.
+  // SetCompressor without /FINAL makes NSIS compress everything to measure it, throw that away,
+  // and compress the whole 380 MB again at the end. /FINAL is one pass.
+  const nsi = fs.readFileSync(path.join(__dirname, '..', 'installer.nsi'), 'utf8')
+  const lines = nsi.split('\n').filter((l) => /^\s*SetCompressor\s/.test(l))
+  assert.ok(lines.length > 0, 'no compressor is set at all')
+  for (const line of lines) {
+    assert.match(line, /\/FINAL/, 'a SetCompressor line will cost a second full pass: ' + line.trim())
+  }
+})
+
+test('makensis reports what it is doing while it works', () => {
+  const calls = lines.filter((l) => /MAKENSIS.*installer\.nsi/.test(l) && !/^rem/.test(l.trim()))
+  for (const call of calls) {
+    assert.match(call, /\/V3/, 'makensis runs quietly, so a long compression looks frozen: ' + call.trim())
+  }
+  assert.match(text, /slow step/)
+})
