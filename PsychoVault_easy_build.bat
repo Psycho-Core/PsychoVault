@@ -33,6 +33,9 @@ set "VERIFY=%VERIFY% resources\app\preload.js resources\app\auto-updater.js reso
 set "VERIFY=%VERIFY% resources\app\blocklist.json resources\app\spell-words.txt resources\app\ui\index.html"
 set "VERIFY=%VERIFY% resources\app\ui\renderer.js resources\app\ui\style.css resources\app\ui\settings.html"
 set "VERIFY=%VERIFY% resources\app\builtin\proton-vpn\manifest.json"
+set "VERIFY=%VERIFY% resources\app\builtin\proxy-switch\manifest.json"
+set "VERIFY=%VERIFY% resources\app\builtin\proxy-switch\background.js"
+set "VERIFY=%VERIFY% resources\app\builtin\proxy-switch\popup.html"
 
 rem A complete Electron runtime, not just the exe. A dist holding only electron.exe
 rem unpacks to a browser that cannot start, and npm still calls that install "up to date".

@@ -2022,3 +2022,49 @@ root-level `update-token.json`, `*.key`, `*-signing-key.pem`, `electron*.zip`, `
 | `node --test tools/*.test.cjs` | **96 pass** (5 new shim-install guards, 1 rewritten step-6 guard) |
 | `node tools/audit.mjs` | no defects |
 | version | 1.0.14 |
+
+## Round 51 - why the shim never reached Proton, and a proxy extension to prove it
+
+Proton's manifest is MV3 with `background.service_worker: js/service.js`. The shim installed
+itself only through `contextBridge.executeInMainWorld`, and a service worker has no separate main
+world to execute into - so inside the worker nothing was installed, `chrome.proxy` stayed
+Chromium's stub, and every call logged `Unknown Extension API - types.ChromeSetting.set`. That is
+the same symptom as rounds 46 and 50 from a different cause, and it explains why fixing the
+existence guard alone was not enough.
+
+### Fixed
+
+`ext-shim.js` now branches on `process.type === 'service-worker'`. A service-worker preload shares
+the worker's global scope, so the bridge is defined on `globalThis` (non-enumerable) and the APIs
+are installed directly - no `executeInMainWorld` hop. Extension pages keep the main-world path.
+
+### New: Proxy Switch, a bundled extension that is a live test
+
+`app/builtin/proxy-switch/` - MV3, two permissions (`proxy`, `storage`), no dependencies:
+
+- **background service worker** asks `chrome.proxy.settings.get` on startup and sets a badge:
+  `ON` when a proxy is active, `off` when direct, `X` when the call is refused (which means the
+  shim is not installed in that context).
+- **popup** takes an HTTP / HTTPS / SOCKS5 host and port, applies it through
+  `chrome.proxy.settings.set`, reports `fixed_servers` with the exact server, and can go back to
+  direct. Every result comes from what Chromium actually reports, not from what we hoped.
+
+Installed by default like Proton VPN, so the same code path a VPN extension uses can be watched
+working. It is also the answer to "which VPN extension works": any of them, once `chrome.proxy`
+is real - and this shows whether it is.
+
+### Checks
+
+| | |
+| --- | --- |
+| `node --test tools/*.test.cjs` | **102 pass** (5 shim-install, 5 builtin-extension guards new) |
+| `node tools/audit.mjs` | no defects - it caught the new extension not being verified in `build-installer.sh` |
+| both build paths | `proxy-switch` files added to the shell verifier and the `.bat` VERIFY list |
+| version | 1.0.15 |
+
+### Still unproven
+
+Whether Electron runs a service-worker preload at all in this configuration. If it does not, the
+badge will show `X` and `Settings - Extensions - Check what proxy is in use` will say the API
+could not be supplied - which finally makes that state visible instead of a VPN that silently
+does nothing.

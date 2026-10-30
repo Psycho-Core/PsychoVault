@@ -39,7 +39,9 @@ cp -a app/. "$STAGE/resources/app/"
 for f in main.js download-save.js translation.js update-manifest.js update-public-key.pem auto-updater.js \
          preload.js page-preload.js spell-page.js spell-words.txt ui/renderer.js ui/style.css ui/settings.html \
          ext-proxy.js ext-shim.js builtin/proton-vpn/manifest.json builtin/proton-vpn/js/service.js \
-         builtin/README.md builtin/proton-vpn/LICENSE; do
+         builtin/README.md builtin/proton-vpn/LICENSE \
+         builtin/proxy-switch/manifest.json builtin/proxy-switch/background.js \
+         builtin/proxy-switch/popup.html builtin/proxy-switch/popup.js; do
   if [ -f "app/$f" ]; then
     cmp -s "$STAGE/resources/app/$f" "app/$f" || { echo "  MISMATCH in staged $f"; exit 1; }
     echo "  ok  $f  $(stat -c %s "app/$f") bytes"
@@ -72,7 +74,9 @@ for f in resources/app/main.js resources/app/download-save.js resources/app/tran
          resources/app/ext-shim.js resources/app/ext-proxy.js \
          resources/app/builtin/README.md resources/app/builtin/proton-vpn/LICENSE \
          resources/app/builtin/proton-vpn/manifest.json resources/app/builtin/proton-vpn/js/service.js \
-         resources/app/builtin/proton-vpn/popup.html; do
+         resources/app/builtin/proton-vpn/popup.html \
+         resources/app/builtin/proxy-switch/manifest.json resources/app/builtin/proxy-switch/background.js \
+         resources/app/builtin/proxy-switch/popup.html resources/app/builtin/proxy-switch/popup.js; do
   rel="${f#resources/app/}"
   found="$V/resources/app/$rel"
   if [ -f "$found" ] && cmp -s "$found" "app/$rel"; then echo "  identical in installer:  $f"

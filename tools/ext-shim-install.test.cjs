@@ -47,3 +47,21 @@ test('a failed injection is not swallowed silently', () => {
   assert.match(main, /if \(!extShimReport\.proxy\) logMainError/)
   assert.match(main, /shim: extShimReport/)
 })
+
+test('the service worker path installs directly instead of using executeInMainWorld', () => {
+  // Proton's background is an MV3 service worker. executeInMainWorld has no main world to
+  // reach there, so the whole shim silently did nothing and every proxy call hit Chromium's
+  // stub. A service-worker preload shares the worker's global scope, so assign onto it.
+  const at = src.indexOf('if (isServiceWorker) {')
+  assert.ok(at !== -1, 'no service worker branch')
+  // Bounded window: everything from the branch to its else, which is well under 1 KB.
+  const swBlock = src
+    .slice(at, at + 900)
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('//'))
+    .join('\n')
+  assert.match(swBlock, /Object\.defineProperty\(globalThis, BRIDGE_NAME,/)
+  assert.match(swBlock, /installAPIs\(BRIDGE_NAME\)/)
+  assert.ok(!/contextBridge\.executeInMainWorld/.test(swBlock), 'the service worker path still calls executeInMainWorld')
+  assert.match(src, /globalThis\[BRIDGE_NAME\] = bridge/, 'no fallback when defineProperty is refused')
+})
