@@ -1044,6 +1044,65 @@ function toast(msg) {
   rail.appendChild(b)
 })()
 
+// ---------------------------------------------------------------- update banner
+// A verified update is offered in a bar, not a modal. "Later" hides it for this run, the
+// close button remembers this version so it is never offered again, and a newer version
+// still shows up. Nothing downloads until Install is pressed.
+const updateBanner = $('#updateBanner')
+let updateHiddenThisRun = false
+
+function paintUpdateBanner(state) {
+  if (!updateBanner) return
+  const show = !!(state && state.available && state.version && !state.dismissed && !updateHiddenThisRun)
+  updateBanner.classList.toggle('hidden', !show)
+  // The bar is an overlay, so the rail and tab strip are pushed down while it is shown.
+  const appEl = document.getElementById('app')
+  if (appEl) appEl.classList.toggle('has-update-banner', show)
+  if (!show) return
+  const text = $('#updateBannerText')
+  if (text) text.textContent = 'PsychoVault ' + state.version + ' is available' + (state.notes ? ' - ' + state.notes.slice(0, 90) + (state.notes.length > 90 ? '\u2026' : '') : '')
+  const install = $('#updateBannerInstall')
+  if (install) install.disabled = false
+  const progress = $('#updateBannerProgress')
+  if (progress) progress.textContent = ''
+}
+
+async function refreshUpdateBanner() {
+  try { paintUpdateBanner(await window.pv.updates.banner()) } catch { /* no updater on this build */ }
+}
+
+if (updateBanner) {
+  $('#updateBannerLater').onclick = async () => {
+    updateHiddenThisRun = true
+    await window.pv.updates.later()
+    paintUpdateBanner({ available: false })
+  }
+  $('#updateBannerClose').onclick = async () => {
+    const r = await window.pv.updates.dismiss()
+    if (r && r.ok) toast('Not offering ' + r.version + ' again')
+    paintUpdateBanner({ available: false })
+  }
+  $('#updateBannerInstall').onclick = async () => {
+    const install = $('#updateBannerInstall')
+    const progress = $('#updateBannerProgress')
+    if (install) install.disabled = true
+    if (progress) progress.textContent = 'starting\u2026'
+    let r = null
+    try { r = await window.pv.updates.install() } catch (e) { r = { ok: false, error: String((e && e.message) || e) } }
+    if (install) install.disabled = false
+    if (progress) progress.textContent = ''
+    if (r && r.ok) { paintUpdateBanner({ available: false }); return }
+    if (r && r.reason === 'save-as-cancelled') return
+    toast('Update not installed: ' + ((r && (r.error || r.reason)) || 'no reason given'))
+  }
+  window.pv.on('update-available', paintUpdateBanner)
+  window.pv.on('update-progress', ({ message }) => {
+    const progress = $('#updateBannerProgress')
+    if (progress && message && !updateBanner.classList.contains('hidden')) progress.textContent = message
+  })
+  refreshUpdateBanner()
+}
+
 // initial paint
 if (isPrivate) $('#private-badge').classList.remove('hidden')
 

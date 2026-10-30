@@ -91,6 +91,12 @@ contextBridge.exposeInMainWorld('pv', {
     add: (w) => invoke('spell:add', w),
     remove: (w) => invoke('spell:remove', w)
   },
+  updates: {
+    banner: () => invoke('update:banners'),
+    install: () => invoke('update:install'),
+    later: () => invoke('update:later'),
+    dismiss: () => invoke('update:dismiss')
+  },
   extensions: {
     list: () => invoke('ext:list'),
     addfolder: () => invoke('ext:addfolder'),
@@ -117,7 +123,7 @@ contextBridge.exposeInMainWorld('pv', {
   },
   openExternal: (url) => invoke('open:external', url),
   on: (channel, cb) => {
-    const allowed = ['state', 'hover', 'downloads', 'downloader', 'loadfail', 'cmd', 'vault', 'workspaces', 'spell', 'icons', 'extensions', 'update-progress']
+    const allowed = ['state', 'hover', 'downloads', 'downloader', 'loadfail', 'cmd', 'vault', 'workspaces', 'spell', 'icons', 'extensions', 'update-progress', 'update-available']
     if (!allowed.includes(channel)) return
     ipcRenderer.on(channel, (_e, payload) => cb(payload))
   }

@@ -1548,3 +1548,62 @@ Whether 1.0.11's download now completes. The failure is understood precisely - a
 restriction, not a guess - but the fix can only be confirmed on the owner's machine, where the
 token is configured and the redirect actually happens. If `manifest-download-failed` returns,
 the `Detail:` line will now say why.
+
+## Round 42 - the redirect walk is finally tested, and the update banner
+
+The owner's point stands and is worth recording: a private repository does not break automatic
+updates, and their own app proves it. The token was working - the 1.0.9 report proved that by
+reaching the release lookup and finding 1.0.10. What failed was my redirect handling, twice, and
+both times I argued for the fix instead of demonstrating it.
+
+### The redirect walk is now a tested module
+
+`app/update-http.js` takes the HTTP client as a **parameter**, so the walk can be run against a
+real server. `tools/updater-redirect.test.cjs` stands up one local server, reaches it as
+`127.0.0.1`, redirects to the same server as `localhost` - genuinely different hosts - and
+asserts:
+
+| Test | Asserts |
+| --- | --- |
+| cross-host redirect | one hop taken, `Authorization` present on hop 1 and **absent on hop 2**, body arrives intact |
+| same-host redirect | credential kept |
+| redirect loop | abandoned after `MAX_REDIRECTS`, with the count in the message |
+| refused connection | reported, not swallowed |
+| no client injected | clear error, not a hang |
+
+This is the test that did not exist when the same code failed twice. It exercises the walk, not
+just the decision function around it.
+
+`app/auto-updater.js` now delegates to it, supplying Electron's `net.request`.
+
+### The update banner
+
+The startup check no longer ends in a modal box. A verified release is offered in a bar across
+the top of the chrome:
+
+- **Install** - the existing Save As, download, SHA-256 and signature flow
+- **Later** - hides it for this run; it returns on the next launch
+- **x** - dismisses **that version** for good (`dismissedUpdate` in settings), so 1.0.13 is
+  still offered even after 1.0.12 was dismissed
+- Download progress is shown in the bar, not only in the taskbar
+
+Nothing downloads until Install is pressed, so the "ask first" property is unchanged.
+
+`#app` is a flex *row* of rail and chrome column, so the banner is an absolutely positioned
+overlay and the container takes `padding-top` while it is visible - otherwise it would have
+become a third column beside the rail. Checked against the markup rather than assumed.
+
+### Checks
+
+| | |
+| --- | --- |
+| `node --test tools/*.test.cjs` | **47 pass** (5 new, real sockets) |
+| `node tools/audit.mjs` | no defects |
+| banner markup | all six ids present in `index.html` and referenced from `renderer.js` |
+| IPC parity | `update:banners`, `update:install`, `update:later`, `update:dismiss` registered, bridged and called |
+
+### Still unproven here
+
+The authenticated download against GitHub itself: this container cannot reach
+`release-assets.githubusercontent.com`. The walk that reaches it is now demonstrated against a
+local server with the same host-change condition, which is the closest this box can get.

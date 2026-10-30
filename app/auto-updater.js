@@ -6,6 +6,7 @@ const crypto = require('node:crypto')
 const { spawn } = require('node:child_process')
 const { app, BrowserWindow, dialog, net, safeStorage } = require('electron')
 const { authorizationForHop, authHeader, tokenSource, apiAssetUrl } = require('./update-auth')
+const { followRedirects } = require('./update-http')
 const {
   REPOSITORY,
   PLATFORM,
@@ -85,6 +86,22 @@ function setOverrideToken(token) {
   }
 }
 
+// The manifest of a verified, newer release that the user has not acted on yet. The banner
+// reads this; nothing is downloaded until the user asks.
+let pendingUpdate = null
+
+function pendingState() {
+  if (!pendingUpdate) return { available: false }
+  return {
+    available: !!(app.isPackaged && process.platform === 'win32' && process.arch === 'x64'),
+    version: pendingUpdate.version,
+    notes: pendingUpdate.notes || '',
+    size: pendingUpdate.size || 0
+  }
+}
+
+function clearPending() { pendingUpdate = null }
+
 function safeProgress(callback, payload) {
   try { callback(payload) } catch { /* update progress must never break the browser */ }
 }
@@ -102,73 +119,21 @@ class UpdateCheckError extends Error {
   }
 }
 
-// One HTTP GET, following redirects by RE-ISSUING the request at each hop rather than by
-// mutating the one already in flight.
-//
-// The obvious approach - redirects:'manual' plus removeHeader() inside the 'redirect' event -
-// does not work: removeHeader() is documented as callable "only before first write", and by
-// the time a redirect arrives the request has already been ended. It throws, so any
-// fail-closed check built on it fails closed every time. That is exactly how the 1.0.9
-// updater managed to reach GitHub, see the new release, and then fail every download with
-// 'manifest-download-failed'.
-//
-// A fresh request per hop recomputes the header set from scratch, so the credential is
-// attached only when the hop is allowed to see it, and nothing has to be removed after send.
-const MAX_REDIRECTS = 5
-
+// Redirects are walked by app/update-http.js, which takes the HTTP client as a parameter so
+// the walk can be tested against a real server with two hostnames. That module is where the
+// credential decision is exercised; this wrapper only supplies Electron's client.
 function openWithRedirects(startUrl, { method = 'GET', headers = {}, timeoutMs = REQUEST_TIMEOUT_MS, token = '' } = {}) {
-  return new Promise((resolve, reject) => {
-    let settled = false
-    let current = null
-    let timer = null
-    const hops = []
-
-    const finish = (error, result) => {
-      if (settled) return
-      settled = true
-      if (timer) clearTimeout(timer)
-      if (error) reject(error)
-      else resolve(result)
-    }
-
-    const attempt = (targetUrl) => {
-      if (settled) return
-      if (hops.length > MAX_REDIRECTS) {
-        finish(new Error(`Gave up after ${MAX_REDIRECTS} redirects.`))
-        return
-      }
-      let req
-      try {
-        req = net.request({ url: targetUrl, method, redirects: 'manual', useSessionCookies: false })
-      } catch (e) {
-        finish(e)
-        return
-      }
-      current = req
-
-      req.setHeader('User-Agent', USER_AGENT)
-      // The credential belongs to the origin that was asked, never to a host it redirects to.
-      const auth = authorizationForHop(startUrl, targetUrl, token)
-      if (auth) req.setHeader('Authorization', auth.Authorization)
-      for (const [name, value] of Object.entries(headers)) req.setHeader(name, value)
-
-      req.on('redirect', (_status, _redirectMethod, redirectUrl) => {
-        hops.push({ from: targetUrl, to: redirectUrl, sentToken: !!auth })
-        try { req.abort() } catch { /* already closing */ }
-        attempt(redirectUrl)
-      })
-      req.on('response', (res) => finish(null, { res, request: req, finalUrl: targetUrl, hops }))
-      req.on('error', (e) => { if (!settled) finish(e) })
-
-      try { req.end() } catch (e) { finish(e) }
-    }
-
-    timer = setTimeout(() => {
-      try { current && current.abort() } catch { /* already closed */ }
-      finish(new Error('GitHub request timed out.'))
-    }, timeoutMs)
-
-    attempt(startUrl)
+  return followRedirects(startUrl, {
+    request: (targetUrl, opts) => net.request({
+      url: targetUrl,
+      method: opts.method || method,
+      redirects: 'manual',
+      useSessionCookies: false
+    }),
+    method,
+    headers: Object.assign({ 'User-Agent': USER_AGENT }, headers),
+    headerForHop: (hopUrl) => authorizationForHop(startUrl, hopUrl, token),
+    timeoutMs
   })
 }
 
@@ -333,7 +298,7 @@ function launchInstaller(installerPath, onProgress, onError) {
   return true
 }
 
-async function checkForUpdates({ onProgress = () => {}, onError = () => {} } = {}) {
+async function checkForUpdates({ onProgress = () => {}, onError = () => {}, useBanner = false } = {}) {
   if (!app.isPackaged || process.platform !== 'win32' || process.arch !== 'x64') {
     return { skipped: true, reason: 'unsupported-runtime' }
   }
@@ -426,6 +391,15 @@ async function checkForUpdates({ onProgress = () => {}, onError = () => {} } = {
 
   const manifest = verification.manifest
   const body = String(release.body || '').replace(/\s+/g, ' ').trim().slice(0, 1400)
+  // Hand the verified release to the caller so the UI can offer it in a banner. Nothing has
+  // been downloaded at this point - verification only reads the signed manifest.
+  pendingUpdate = { version: manifest.version, notes: body, size: manifest.size, manifest }
+
+  // With a banner in the chrome there is nothing to answer, so the verified release is
+  // reported and left waiting. The modal below is then skipped entirely.
+  if (useBanner) {
+    return { ok: true, pending: true, version: manifest.version, notes: body }
+  }
   let answer
   try {
     answer = await showMessage({
@@ -504,4 +478,54 @@ function checkOnStartup(options = {}) {
   return timer
 }
 
-module.exports = { checkForUpdates, checkOnStartup, tokenState, setOverrideToken, apiAssetUrl }
+// Called when the user clicks Install in the banner. Downloads, verifies, and opens the
+// installer. Returns the same shape as checkForUpdates' install path.
+async function installPending({ onProgress = () => {}, onError = () => {} } = {}) {
+  if (!pendingUpdate || !pendingUpdate.manifest) {
+    return { ok: false, reason: 'nothing-pending', error: 'No verified update is waiting to be installed.' }
+  }
+  const manifest = pendingUpdate.manifest
+  const url = installerDownloadUrl(manifest)
+  if (!url) return { ok: false, reason: 'installer-url', error: 'The signed update has an invalid installer URL.' }
+
+  let destination
+  let temporaryDestination
+  try {
+    const selection = await showInstallerSaveDialog(manifest)
+    if (!selection || selection.canceled || typeof selection.filePath !== 'string' || !selection.filePath) {
+      return { skipped: true, reason: 'save-as-cancelled' }
+    }
+    destination = path.resolve(selection.filePath)
+    if (!path.extname(destination)) destination += '.exe'
+    if (path.extname(destination).toLowerCase() !== '.exe') throw new Error('Choose a destination ending in .exe for the Windows installer.')
+    temporaryDestination = path.join(
+      path.dirname(destination),
+      `.${path.basename(destination)}.${crypto.randomBytes(8).toString('hex')}.download`
+    )
+    safeProgress(onProgress, { phase: 'download', percent: 0, message: 'Downloading signed update… 0%' })
+    setTaskbarProgress(0)
+    await downloadInstaller(url, temporaryDestination, manifest, onProgress)
+    await fs.promises.rename(temporaryDestination, destination)
+    temporaryDestination = null
+    setTaskbarProgress(-1)
+    safeProgress(onProgress, { phase: 'verified', percent: 100, message: 'Verified installer saved. Launching update…' })
+    if (!launchInstaller(destination, onProgress, (error) => {
+      try { dialog.showErrorBox('PsychoVault update could not start', `The signed installer is saved at:\n${destination}\n\nOpen it manually to install the update.\n\n${error.message}`) }
+      catch { /* main window may be closing */ }
+      try { onError(error) } catch { /* best effort */ }
+    })) {
+      return { ok: false, reason: 'installer-launch-failed', error: 'The verified installer could not be launched.' }
+    }
+    return { ok: true, version: manifest.version, installerPath: destination }
+  } catch (error) {
+    setTaskbarProgress(-1)
+    if (temporaryDestination) fs.rm(temporaryDestination, { force: true }, () => {})
+    try { onError(error) } catch { /* best effort */ }
+    return { ok: false, reason: 'install-failed', error: String((error && error.message) || error) }
+  }
+}
+
+module.exports = {
+  checkForUpdates, checkOnStartup, installPending, pendingState, clearPending,
+  tokenState, setOverrideToken, apiAssetUrl
+}
