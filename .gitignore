@@ -1,9 +1,45 @@
+# --- PsychoVault build projects that predate this layout
 PsychoVault/PsychoVaultExe/
 /Exe
+
+# --- dependencies
 node_modules/
+
+# --- build output
+build/
+dist/
+payload/
 PsychoVault-Setup-*.exe
+Release-Notes-*.txt
 update-manifest.json
 update-manifest.sig
+
+# --- Electron runtime downloads (the 150 MB archive)
+electron-v*.zip
+electron*.zip
+*.7z
+
+# --- secrets: never commit any of these
+update-token.json
 app/update-token.json
-build/
-Release-Notes-*.txt
+*-signing-key.pem
+update-private-key*
+*.key
+.env
+.env.*
+
+# --- logs and diagnostics
+*.log
+npm-debug.log*
+errors.log
+
+# --- editors and OS junk
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+*.lnk
+
+# --- npm lockfiles for the app; Electron and its deps are pinned in package.json
+app/package-lock.json
