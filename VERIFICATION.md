@@ -1607,3 +1607,5 @@ become a third column beside the rail. Checked against the markup rather than as
 The authenticated download against GitHub itself: this container cannot reach
 `release-assets.githubusercontent.com`. The walk that reaches it is now demonstrated against a
 local server with the same host-change condition, which is the closest this box can get.
+
+<!-- release build retrigger: the 1.0.12 run failed before any step started; the workflow is unchanged since the 1.0.11 run that succeeded. -->
