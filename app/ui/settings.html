@@ -718,6 +718,18 @@
       <button class="mini" id="updateCheckNow" type="button">Check now</button>
     </div>
     <div class="hint" id="updateCheckResult"></div>
+    <div class="row">
+      <div>
+        <div class="lbl">Release access token</div>
+        <div class="hint">Only needed when the repository is private: GitHub answers 404 to an unauthenticated release lookup. A read-only token makes the check work. It is stored in your profile, encrypted with the OS keychain where one exists, and it is never shown again after saving. It cannot make a bad update trusted - the Ed25519 signature on the manifest still decides that.</div>
+      </div>
+      <input type="text" id="updateToken" placeholder="paste a token, or leave empty" style="width:270px">
+    </div>
+    <div class="btnrow">
+      <button class="mini" id="updateTokenSave" type="button">Save token</button>
+      <button class="mini" id="updateTokenForget" type="button">Forget token</button>
+    </div>
+    <div class="hint" id="updateTokenState"></div>
   </section>
       </div>
     </main>
@@ -880,6 +892,33 @@
           ? 'restored, but the engine refused to load it: ' + item.error
           : 'Proton VPN is installed and enabled'
       paintExtensions()
+    }
+    const whySource = {
+      none: 'no token: the release lookup is anonymous',
+      bundled: 'using the token shipped in this build',
+      settings: 'using the token you saved here'
+    }
+    const paintTokenState = async () => {
+      let st = null
+      try { st = await window.pv.updates.tokenstate() } catch { return }
+      if (!st || !s('updateTokenState')) return
+      const enc = st.encryption === 'os-keychain' ? 'encrypted with the OS keychain' : 'stored unencrypted (no OS keychain on this system)'
+      s('updateTokenState').textContent = (whySource[st.source] || st.source) + (st.hasToken ? ' - ' + enc : '')
+    }
+    paintTokenState()
+    if (s('updateTokenSave')) s('updateTokenSave').onclick = async () => {
+      const value = s('updateToken').value.trim()
+      const r = await window.pv.updates.settoken(value)
+      s('updateToken').value = ''
+      s('updateTokenState').textContent = r && r.ok
+        ? (r.removed ? 'token removed' : 'token saved') + (r.encryption === 'os-keychain' ? ' (encrypted)' : '')
+        : 'could not save: ' + ((r && r.error) || 'unknown error')
+      paintTokenState()
+    }
+    if (s('updateTokenForget')) s('updateTokenForget').onclick = async () => {
+      const r = await window.pv.updates.settoken('')
+      s('updateTokenState').textContent = r && r.ok ? 'token removed' : 'could not remove: ' + ((r && r.error) || 'unknown error')
+      paintTokenState()
     }
     if (s('updateCheckNow')) s('updateCheckNow').onclick = async () => {
       s('updateCheckNow').disabled = true

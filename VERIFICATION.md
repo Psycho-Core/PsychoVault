@@ -1363,3 +1363,60 @@ whole history finds no private key material, no token, and no credential file - 
 `app/update-public-key.pem`, which is public by design. So the blocker is a visibility setting,
 not a defect, and it stays a decision for the owner. Until it changes, **Check now** will say
 `repository-private` and be right.
+
+## Round 39 - the updater authenticated, so a private repository can work
+
+The owner's correction was right: a private repository does not prevent automatic updates, it
+prevents *anonymous* ones. GitHub answers 404 to a release lookup it cannot authorise. A token
+turns that into a 200. This round adds one, and keeps it away from everything it does not need
+to touch.
+
+### Where the token comes from
+
+| Source | How | Wins over |
+| --- | --- | --- |
+| Bundled at build time | Actions secret `PsychoVault_Updater` (with `UPDATE_READ_TOKEN` as a fallback name) written to `app/update-token.json` (gitignored, mode 0600), staged into the installer by `tools/build-installer.sh` | - |
+| Saved in Settings | **Settings - About - Release access token** → `update-token.bin` in the profile, encrypted with `safeStorage` (OS keychain) where one exists | the bundled token |
+
+The value is never displayed after saving, never logged, and never written to `settings.json`.
+`update:tokenstate` reports only *which* source is in use and whether it is encrypted.
+
+### The part that had to be got right
+
+A private repository's asset downloads redirect to a signed URL on a **different host**
+(`release-assets.githubusercontent.com`). `net.request({ redirects: 'follow' })` would carry
+`Authorization` along to that host. Both request paths now use `redirects: 'manual'` and decide
+per hop:
+
+- same host and scheme → keep the header, follow
+- different host → `removeHeader('Authorization')`, verify with `getHeader`, then follow
+- if the header cannot be removed → **abort the redirect** and report it, rather than continue
+  with the credential attached
+
+`shouldKeepAuthorization()` lives in `app/update-auth.js` with no Electron or filesystem
+dependency, and is tested directly: same host kept, cross-host dropped, protocol downgrade
+dropped, unparseable URL dropped.
+
+Authentication and trust stay separate: a valid token that reads a tampered release still fails
+the Ed25519 verification, and the code paths do not share a branch.
+
+### A 404 now says which 404 it is
+
+`repository-private` distinguishes "no token at all" from "a token is configured but GitHub
+still refused it - it may have expired or been revoked". Settings shows the same distinction.
+
+### Checks
+
+| | |
+| --- | --- |
+| `node --test tools/*.test.cjs` | **32 pass** (7 new in `tools/update-auth.test.cjs`) |
+| `node tools/audit.mjs` | no defects |
+| workflow | the `PsychoVault_Updater` secret injected before the build; a missing secret warns instead of failing, and the installer still builds |
+| Electron APIs used | verified against the docs: `redirect: 'manual'`, `followRedirect()` called synchronously in `'redirect'`, `removeHeader()`/`getHeader()` |
+
+### Still unproven here
+
+An authenticated round trip. This container cannot reach `api.github.com` unauthenticated for a
+private repository in the way a user's machine would, and there is no token to test with - the
+owner has to create it. What is proven is the decision logic, the wiring, and that the build
+carries the credential only into a gitignored file inside the installer.

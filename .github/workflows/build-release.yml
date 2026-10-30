@@ -89,6 +89,21 @@ jobs:
       - name: Set PsychoVault icon and version on the runtime
         run: node tools/patch-exe.mjs /var/tmp/payload/PsychoVault.exe assets/psychovault.ico "${{ steps.version.outputs.version }}"
 
+      - name: Inject the release read token
+        env:
+          # The repository secret is named PsychoVault_Updater; UPDATE_READ_TOKEN is kept as a
+          # fallback so either name works and a rename cannot silently disable updates.
+          UPDATE_READ_TOKEN: ${{ secrets.PsychoVault_Updater || secrets.UPDATE_READ_TOKEN }}
+        run: |
+          if [ -n "$UPDATE_READ_TOKEN" ]; then
+            # Read-only credential for a private repository. Written into the staged app only:
+            # the path is gitignored, and it never appears in the repository or the logs.
+            node -e 'const fs=require("fs");fs.writeFileSync("app/update-token.json",JSON.stringify({token:process.env.UPDATE_READ_TOKEN})+"\n",{mode:0o600})'
+            echo "A release read token was injected into this build ($(printf %s "$UPDATE_READ_TOKEN" | wc -c) bytes, from the PsychoVault_Updater secret)."
+          else
+            echo "::warning title=No release read token::Neither PsychoVault_Updater nor UPDATE_READ_TOKEN is set. The installer will build and install, but the in-app update check will get HTTP 404 from GitHub while the repository is private."
+          fi
+
       - name: Build and verify the installer
         env:
           VERSION: ${{ steps.version.outputs.version }}

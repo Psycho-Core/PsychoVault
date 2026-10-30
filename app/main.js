@@ -3,7 +3,12 @@
 const { app, BrowserWindow, WebContentsView, ipcMain, session, shell, Menu, clipboard, safeStorage, dialog, globalShortcut, powerMonitor, screen, Notification } = require('electron')
 const { createSaveDialogQueue } = require('./download-save')
 const { buildTranslationUrl } = require('./translation')
-const { checkOnStartup: checkForUpdatesOnStartup, checkForUpdates } = require('./auto-updater')
+const {
+  checkOnStartup: checkForUpdatesOnStartup,
+  checkForUpdates,
+  tokenState: updateTokenState,
+  setOverrideToken: setUpdateToken
+} = require('./auto-updater')
 const { REPOSITORY: UPDATE_REPOSITORY } = require('./update-manifest')
 const path = require('node:path')
 const fs = require('node:fs')
@@ -3323,6 +3328,13 @@ ipcMain.handle('app:info', () => ({
   arch: process.arch,
   packaged: app.isPackaged
 }))
+ipcMain.handle('update:tokenstate', () => updateTokenState())
+ipcMain.handle('update:settoken', (e, token) => {
+  const r = setUpdateToken(token)
+  // Never log the value, only whether it was accepted.
+  if (!r.ok) logMainError(new Error('update token rejected: ' + r.error))
+  return r
+})
 ipcMain.handle('update:check', async () => {
   if (updateCheckRunning) return { ok: false, reason: 'already-running', message: 'An update check is already running.' }
   updateCheckRunning = true
