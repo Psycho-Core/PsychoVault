@@ -122,6 +122,32 @@ electron .
 
 There is no bundler step. The files in `app/` are the app.
 
+## Run from source, without an installer
+
+When a release build is unavailable - or you want to test a change before it ships - the app
+runs straight from a checkout. You need [Node.js](https://nodejs.org) 20 or newer; nothing else.
+
+```bash
+git clone https://github.com/Psycho-Core/PsychoVault
+cd PsychoVault/app
+npm install          # fetches Electron 45 for your platform
+npm start
+```
+
+That is the real browser, not a mock - tabs, blocking, the extension manager and the proxy shim
+all behave as they do in the installer.
+
+Two things differ from an installed copy, and both are deliberate:
+
+- **Automatic updates are off.** The updater only runs on a packaged Windows x64 build
+  (`app.isPackaged`), so the update banner will not appear here. Everything else works.
+- **Your profile is separate.** It lives under `%APPDATA%\Electron` rather than
+  `%APPDATA%\PsychoVault`, so running from source cannot disturb the profile your installed
+  copy uses.
+
+This is the quickest way to check a fix - such as **Settings - Extensions - Test proxy support** -
+without waiting for a build.
+
 ## Installing over an old copy, and what Windows says about it
 
 Setup installs into `%LOCALAPPDATA%\PsychoVault` and your profile - bookmarks, history,
