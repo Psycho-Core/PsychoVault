@@ -920,6 +920,11 @@
         shim = r.shim.proxy
           ? ' The chrome.proxy API is supplied by PsychoVault for this extension.'
           : ' WARNING: the chrome.proxy API could not be supplied to this extension, so it cannot route traffic - Chromium refuses its proxy calls.'
+        // chrome.tabs is what a VPN extension opens its sign-in page with. Electron does not
+        // implement it, so without this line a dead Sign in button has no visible cause.
+        if (r.shim.tabs === false) {
+          shim += ' WARNING: chrome.tabs could not be supplied either, so buttons that open a page - Proton VPN\'s Sign in included - will do nothing.'
+        }
       }
       s('proxyStatusResult').textContent = parts.join(' | ') + ' \u2014 ' + who + warn + shim
     }

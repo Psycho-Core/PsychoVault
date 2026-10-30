@@ -1,0 +1,18 @@
+Sign-in for VPN extensions
+  Proton VPN's Sign in button did nothing, because it opens the login page with
+  chrome.tabs.create and Electron does not implement that method. The extension read
+  its absence as a broken install and refused before showing the page.
+  chrome.tabs is now supplied by the same shim that supplies chrome.proxy:
+  query, get, create, update, remove and the onCreated / onUpdated / onRemoved events.
+  Opening the sign-in page works, and any extension that opens a page of the browser's
+  own - help, onboarding, a support article - now works too.
+
+Extension API reporting
+  Settings - Extensions - "Check what proxy is in use" now also reports whether
+  chrome.tabs was installed, next to chrome.proxy and chrome.privacy.
+
+Build
+  makensis is no longer handed a path containing "#". The installer step builds from
+  relative paths, and falls back to a copy in the temp folder if that is refused.
+  Release notes are read from release-notes/<version>.txt when that file exists,
+  so the notes describe this version instead of the last ten commits.

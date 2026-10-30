@@ -35,7 +35,7 @@ test('the override replaces the property rather than assigning over it', () => {
 })
 
 test('the result of the injection is reported to the main process', () => {
-  assert.match(src, /b\.report\(\{ proxy: proxyInstalled, privacy: privacyInstalled \}\)/)
+  assert.match(src, /b\.report\(\{ proxy: proxyInstalled, privacy: privacyInstalled, tabs: tabsInstalled \}\)/)
   assert.match(src, /report: \(info\) => ipcRenderer\.invoke\('extshim:report'/)
 })
 
