@@ -1,0 +1,12 @@
+A token file with curly quotes or a stray invisible character now works
+  "{"token":"..."}" typed on some keyboards, or copied out of a web page, arrives
+  with typographic quotes: “token” instead of "token". A zero-width space often
+  comes with it. Neither is JSON, and both read as "no token" - which is what
+  happened here, with the file present and the right size.
+
+  The reader now normalises those quotes and strips invisible characters before
+  parsing, so a file pasted together by hand works. Anything still wrong is named
+  instead of skipped: empty, not JSON, or no "token" field.
+
+  If the build still says no token after this: node tools\publish-release.mjs
+  --check prints the reason for the exact file it read.
