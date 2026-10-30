@@ -1609,3 +1609,43 @@ The authenticated download against GitHub itself: this container cannot reach
 local server with the same host-change condition, which is the closest this box can get.
 
 <!-- release build retrigger: the 1.0.12 run failed before any step started; the workflow is unchanged since the 1.0.11 run that succeeded. -->
+
+## Round 43 - building it yourself, because CI cannot
+
+No code changed this round. The build path was the problem: GitHub Actions has stopped starting
+jobs on this account (0 steps, billing annotation), so a self-build is now the way to get 1.0.12.
+Two things were added for that, plus an ideas file.
+
+### `PsychoVault_easy_build.bat`
+
+A single double-clickable script. It does what `tools/build-installer.sh` does, using only Windows
+tools, and it does **not** download the Electron zip itself - it reuses the runtime that
+`npm install` already put in `app\node_modules\electron\dist`, which removes the blocked download
+and the 7-Zip dependency in one go:
+
+1. `where node` - stops with the download link if Node.js is missing
+2. `npm install` in `app\` - fetches Electron 45.1.0 for win32-x64
+3. `robocopy /MIR` dist -> `build\payload`, rename `electron.exe` -> `PsychoVault.exe`, delete
+   `resources\default_app.asar` / `app.asar` / `app` so the packaged source is unambiguous
+4. `npm ci` in `tools\` then `node tools/patch-exe.mjs <exe> assets\psychovault.ico <version>`
+5. `robocopy /E /XD node_modules` of `app\` -> `build\payload\resources\app`, plus
+   `LICENSE.txt` / `README.txt` / `VERIFICATION.txt` that `installer.nsi` expects
+6. finds `makensis` on PATH, in `%ProgramFiles(x86)%\NSIS` or `%ProgramFiles%\NSIS`, and runs it
+   with the same `/D` defines `build-installer.sh` uses; if absent it says so and still finishes
+
+Exit paths are explicit labels rather than nested `if` blocks (paths with `)` are the usual batch
+trap), and every failure prints the fix. `build/` was added to `.gitignore`.
+
+### Not verified here
+
+The script cannot be executed in this container - there is no Windows, no NSIS and no writable
+package manager. Its logic mirrors the CI shell script line for line, and each command it calls is
+one that script already uses on a working runner, but the `.bat` itself has not been run. Any
+failure it hits will print a labelled message rather than a silent exit.
+
+### Docs
+
+`BUILD-WINDOWS.md` (three levels: run from source, portable exe, installer) with direct download
+links for Node.js, NSIS, Git, GitHub CLI and 7-Zip, plus the `update-token.json` recipe for making
+the update banner work in a self-built copy. `IDEAS.md` collects the feature and extension
+suggestions.
