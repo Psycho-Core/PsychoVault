@@ -7,7 +7,8 @@ const {
   keyIdForPublicKey,
   compareVersions,
   verifyUpdateManifest,
-  installerDownloadUrl
+  installerDownloadUrl,
+  classifyCheckFailure
 } = require('../app/update-manifest.js')
 
 test('verifies an Ed25519-signed installer manifest for a newer Windows release', () => {
@@ -68,4 +69,26 @@ test('only considers newer stable semantic versions', () => {
   assert.equal(compareVersions('1.0.2', '1.0.3'), -1)
   assert.equal(compareVersions('latest', '1.0.3'), null)
   assert.equal(installerDownloadUrl({ version: '../1.0.4', tag: 'v../1.0.4', assetName: 'evil.exe' }), null)
+})
+
+test('a 404 from the releases API is reported as a private repository, not a network problem', () => {
+  const c = classifyCheckFailure(404)
+  assert.equal(c.reason, 'repository-private')
+  assert.equal(c.status, 404)
+  assert.equal(c.retryable, false)
+})
+
+test('a failure with no status is classified as offline and is retryable', () => {
+  const c = classifyCheckFailure(0, 'fetch failed')
+  assert.equal(c.reason, 'offline')
+  assert.equal(c.retryable, true)
+  assert.equal(c.message, 'fetch failed')
+})
+
+test('server and rate-limit responses stay retryable, client errors do not', () => {
+  assert.equal(classifyCheckFailure(500).retryable, true)
+  assert.equal(classifyCheckFailure(503).retryable, true)
+  assert.equal(classifyCheckFailure(429).retryable, true)
+  assert.equal(classifyCheckFailure(403).retryable, false)
+  assert.equal(classifyCheckFailure(403).reason, 'release-check-unavailable')
 })

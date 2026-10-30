@@ -42,6 +42,12 @@ if (isInternal) {
       report: () => invoke('data:report'),
       clear: (what) => invoke('data:clear', what)
     },
+    app: {
+      info: () => invoke('app:info')
+    },
+    updates: {
+      check: () => invoke('update:check')
+    },
     extensions: {
       list: () => invoke('ext:list'),
       addfolder: () => invoke('ext:addfolder'),

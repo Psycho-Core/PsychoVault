@@ -3,7 +3,8 @@
 const { app, BrowserWindow, WebContentsView, ipcMain, session, shell, Menu, clipboard, safeStorage, dialog, globalShortcut, powerMonitor, screen, Notification } = require('electron')
 const { createSaveDialogQueue } = require('./download-save')
 const { buildTranslationUrl } = require('./translation')
-const { checkOnStartup: checkForUpdatesOnStartup } = require('./auto-updater')
+const { checkOnStartup: checkForUpdatesOnStartup, checkForUpdates } = require('./auto-updater')
+const { REPOSITORY: UPDATE_REPOSITORY } = require('./update-manifest')
 const path = require('node:path')
 const fs = require('node:fs')
 const crypto = require('node:crypto')
@@ -3310,6 +3311,35 @@ if (!gotLock) {
 
 
 
+
+// The startup check is deliberately quiet, which left no way to tell a working updater from
+// a broken one. This runs the same check on demand and always answers with the reason.
+let updateCheckRunning = false
+ipcMain.handle('app:info', () => ({
+  version: app.getVersion(),
+  electron: process.versions.electron,
+  chromium: process.versions.chrome,
+  platform: process.platform,
+  arch: process.arch,
+  packaged: app.isPackaged
+}))
+ipcMain.handle('update:check', async () => {
+  if (updateCheckRunning) return { ok: false, reason: 'already-running', message: 'An update check is already running.' }
+  updateCheckRunning = true
+  const failures = []
+  try {
+    const result = await checkForUpdates({
+      onProgress: ({ message }) => { if (message) broadcast('update-progress', { message }) },
+      onError: (error) => { failures.push(String((error && error.message) || error)); logMainError(error) }
+    })
+    return { ok: true, result, failures, version: app.getVersion(), repository: UPDATE_REPOSITORY }
+  } catch (e) {
+    logMainError(e)
+    return { ok: false, reason: 'threw', message: String((e && e.message) || e), failures }
+  } finally {
+    updateCheckRunning = false
+  }
+})
 
 app.whenReady().then(() => {
   refreshSafeStorage()

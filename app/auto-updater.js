@@ -10,7 +10,8 @@ const {
   PLATFORM,
   compareVersions,
   verifyUpdateManifest,
-  installerDownloadUrl
+  installerDownloadUrl,
+  classifyCheckFailure
 } = require('./update-manifest')
 
 const API_URL = `https://api.github.com/repos/${REPOSITORY}/releases/latest`
@@ -23,6 +24,19 @@ const DOWNLOAD_TIMEOUT_MS = 20 * 60 * 1000
 
 function safeProgress(callback, payload) {
   try { callback(payload) } catch { /* update progress must never break the browser */ }
+}
+
+// An update check that cannot reach GitHub and one that GitHub refuses are different
+// problems, and the user can only act on the second. Carry the status out of here instead
+// of flattening every failure into one silent 'unavailable'.
+class UpdateCheckError extends Error {
+  constructor(message, status) {
+    super(message)
+    this.name = 'UpdateCheckError'
+    this.status = Number.isFinite(status) ? status : 0
+    this.isPrivateRepository = this.status === 404
+    this.offline = !this.status
+  }
 }
 
 function requestBuffer(url, { maxBytes = MAX_API_BYTES, timeoutMs = REQUEST_TIMEOUT_MS, headers = {} } = {}) {
@@ -54,7 +68,7 @@ function requestBuffer(url, { maxBytes = MAX_API_BYTES, timeoutMs = REQUEST_TIME
       response = res
       if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
         res.resume()
-        finish(new Error(`GitHub returned HTTP ${res.statusCode || 'unknown'}.`))
+        finish(new UpdateCheckError(`GitHub returned HTTP ${res.statusCode || 'unknown'}.`, res.statusCode))
         return
       }
       res.on('data', (chunk) => {
@@ -228,9 +242,26 @@ async function checkForUpdates({ onProgress = () => {}, onError = () => {} } = {
       headers: { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }
     })
     release = JSON.parse(response.toString('utf8'))
-  } catch {
-    // Offline startup, rate limits, and temporary GitHub failures should not interrupt browsing.
-    return { skipped: true, reason: 'release-check-unavailable' }
+  } catch (e) {
+    // Offline startup, rate limits, and temporary GitHub failures should not interrupt browsing -
+    // but each one now has a name, and a 404 is called out for what it is. An unauthenticated
+    // release lookup against a private repository always answers 404, which no retry can fix.
+    const status = e && e.status ? e.status : 0
+    const classified = classifyCheckFailure(status, e && e.message)
+    if (classified.reason === 'repository-private') {
+      const error = new Error(
+        `The update check was refused with HTTP 404 for ${REPOSITORY}. That is what GitHub answers ` +
+        'to an unauthenticated request for a private repository, so automatic updates cannot work ' +
+        'while it stays private. Nothing was downloaded and nothing was changed.'
+      )
+      try { onError(error) } catch { /* diagnostics are best effort */ }
+      return { skipped: true, reason: 'repository-private', status }
+    }
+    if (classified.reason === 'offline') {
+      try { onError(new Error(`The update check could not reach GitHub: ${(e && e.message) || e}`)) } catch { /* best effort */ }
+      return { skipped: true, reason: 'offline', status }
+    }
+    return { skipped: true, reason: 'release-check-unavailable', status }
   }
   if (!release || release.draft || release.prerelease || typeof release.tag_name !== 'string' || !Array.isArray(release.assets)) {
     return { skipped: true, reason: 'no-stable-release' }
