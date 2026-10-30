@@ -7,7 +7,8 @@
 // so a release published without those is invisible to the updater even though it looks fine on
 // GitHub. This script uploads what exists, names what it skipped and why.
 //
-// Auth, in order: GITHUB_TOKEN / GH_TOKEN, app/publish-token.json, app/update-token.json.
+// Auth, in order: GITHUB_TOKEN / GH_TOKEN, publish-token.json at the repo root (see
+// publish-token.example.json), then the read-only app/update-token.json.
 // A read token is enough to check; publishing needs contents:write on this repository.
 //
 // Usage: node tools/publish-release.mjs [--dry-run] [--draft]

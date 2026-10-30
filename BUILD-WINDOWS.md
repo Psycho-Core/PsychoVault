@@ -206,6 +206,10 @@ The official build bakes one in from a GitHub secret; for a local build you supp
 It is already git-ignored, so it can never be committed. Re-run the build script and the banner
 can then see new versions.
 
+The file is `app\update-token.json` — one line, inside the `app` folder, named exactly that.
+Not `update-token.json.txt`: Explorer hides the extension, so turn on "File name extensions"
+in View if you are unsure.
+
 If you skip this, the browser itself works fine — only the update check is unavailable.
 
 ---
@@ -229,6 +233,23 @@ It needs a token with **Contents: read and write** on this repository — the re
 
 That file is git-ignored. Keep it out of `app\`, because everything in `app\` is copied into the
 build and shipped to users. `GITHUB_TOKEN` in the environment works too, and takes priority.
+
+It is a file of exactly one line, in the repo folder next to `PsychoVault_easy_build.bat`:
+
+```
+D:\Blakes_SHIT\#Psycho-core_REPOS\PsychoVault\publish-token.json
+```
+
+`publish-token.example.json` is in the repo as a copy of that shape. From a command prompt:
+
+```
+cd /d "D:\Blakes_SHIT\#Psycho-core_REPOS\PsychoVault"
+copy publish-token.example.json publish-token.json
+notepad publish-token.json
+```
+
+then replace the placeholder between the quotes with your `github_pat_...` value and save. There is
+no line to edit in any script: the build reads that file, and says so when the token is missing.
 
 Publishing is never automatic: it asks every time, `N` is the default answer, and a failed publish
 never fails a build that already produced an installer. To skip the question, set `PV_PUBLISH=y`
