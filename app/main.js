@@ -24,6 +24,8 @@ const PANEL_W = 330
 const USER = app.getPath('userData')
 fs.mkdirSync(USER, { recursive: true })
 
+const { toElectronProxy, getResult, toWebRTCPolicy } = require('./ext-proxy')
+
 // An uncaught throw in the main process used to pop Electron's modal "A JavaScript
 // error occurred in the main process" box - on a browser that is a wall between you and
 // your tabs. It now lands in errors.log (visible in Settings - Your data) and the app
@@ -445,22 +447,31 @@ function updateServiceIcons() {
 // ---------------------------------------------------------------- extensions
 // Electron loads unpacked extensions per session. Store extensions arrive as .crx, which
 // Electron cannot load, so this unpacks the zip payload itself and loads the folder.
-// What it cannot do is invent APIs Electron does not implement - chrome.proxy above all,
-// which is exactly how a browser VPN extension connects. So every manifest is read on
-// install and any dependency the engine cannot satisfy is reported, in the panel, before use.
+// Every manifest is read on install and any dependency the engine cannot satisfy is reported,
+// in the panel, before use.
+//
+// chrome.proxy and chrome.privacy are the two APIs a browser VPN extension needs and Electron
+// does not ship. ext-shim.js supplies both, backed by session.setProxy and the WebRTC policy
+// setter, so they are listed as implemented here rather than as missing.
 const EXT_ROOT = path.join(USER, 'extensions')
 
-// Permissions this engine implements (Electron's "Chrome Extension Support" page). Anything
-// outside the list is either unknown to it or known to be missing - the two are kept apart
-// below rather than lumped into "might not work".
+// Extensions built from source and shipped inside the installer. Proton VPN's extension is
+// GPL-3.0 and published by Proton AG at github.com/ProtonVPN/proton-vpn-browser-extension;
+// it is built from a pinned commit and written to the profile on first run. The user can turn
+// it off or remove it like any other extension; a removal is remembered and not re-added.
+const EXT_BUILTIN = [
+  { key: 'proton-vpn', label: 'Proton VPN', source: path.join(__dirname, 'builtin', 'proton-vpn') }
+]
+
+// Permissions this engine implements. Anything outside the list is either unknown to it or
+// known to be missing - the two are kept apart below rather than lumped into "might not work".
 const EXT_KNOWN = new Set([
   'storage', 'tabs', 'webRequest', 'webRequestBlocking', 'scripting', 'runtime', 'management',
-  'idle', 'notifications', 'privacy', 'webRequestAuthProvider', 'contextMenus', 'cookies',
+  'idle', 'notifications', 'privacy', 'proxy', 'webRequestAuthProvider', 'contextMenus', 'cookies',
   'unlimitedStorage', 'activeTab', 'alarms', 'i18n', 'tts', 'webNavigation', 'devtools'
 ])
 // Named with what the extension would have to be able to do, so the panel reads as a sentence.
 const EXT_MISSING = {
-  proxy: 'chrome.proxy - it has to set the browser-wide proxy, which is how a browser VPN extension connects. Electron does not implement this API',
   vpnProvider: 'chrome.vpnProvider - a browser-managed VPN tunnel, which Electron does not implement',
   declarativeNetRequest: 'declarativeNetRequest - MV3 network rules, which Electron does not implement (MV2 chrome.webRequest blocking does work)',
   declarativeNetRequestWithHostAccess: 'declarativeNetRequest - MV3 network rules, which Electron does not implement',
@@ -482,6 +493,188 @@ function extSessions() {
 
 function extReadManifest(dir) {
   return JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'))
+}
+
+// --- the extension API shim ---------------------------------------------------
+// ext-shim.js runs inside extension pages and extension service workers and supplies the two
+// APIs Electron does not implement (chrome.proxy, chrome.privacy). Those calls arrive here.
+const EXT_SHIM = path.join(__dirname, 'ext-shim.js')
+const EXT_SHIM_CHANNELS = [
+  'extshim:proxy:get', 'extshim:proxy:set', 'extshim:proxy:clear',
+  'extshim:webrtc:get', 'extshim:webrtc:set'
+]
+const shimSessions = new WeakSet()
+const shimWorkers = new WeakSet()
+// What each extension last asked for, so a chrome.proxy settings read can answer honestly.
+const extProxyValues = new Map()
+let extWebRTCPolicy = 'default'
+
+function shimRegister(ses) {
+  if (!ses || shimSessions.has(ses)) return
+  shimSessions.add(ses)
+  try {
+    if (typeof ses.registerPreloadScript === 'function') {
+      ses.registerPreloadScript({ id: 'pv-ext-frame', type: 'frame', filePath: EXT_SHIM })
+      ses.registerPreloadScript({ id: 'pv-ext-sw', type: 'service-worker', filePath: EXT_SHIM })
+    } else if (typeof ses.setPreloads === 'function') {
+      // Electron < 35. Kept for safety; the shipped runtime is 45.
+      ses.setPreloads([...ses.getPreloads(), EXT_SHIM])
+    }
+  } catch (e) { logMainError(e) }
+
+  // A Manifest V3 background worker starts after its frames and answers its own IPC channel,
+  // so each worker needs the handlers attaching as it comes up.
+  try {
+    ses.serviceWorkers.on('running-status-changed', (event) => {
+      if (!event || event.runningStatus !== 'starting') return
+      let worker
+      try { worker = ses.serviceWorkers.getWorkerFromVersionID(event.versionId) } catch (e) { return }
+      if (!worker || !String(worker.scope || '').startsWith('chrome-extension://')) return
+      if (shimWorkers.has(worker)) return
+      shimWorkers.add(worker)
+      try {
+        for (const ch of EXT_SHIM_CHANNELS) worker.ipc.handle(ch, onShimCall)
+      } catch (e) { logMainError(e) }
+    })
+  } catch (e) { logMainError(e) }
+}
+
+// The extension id a message really came from - never the id the message claims.
+function shimSenderId(event) {
+  try {
+    const frame = event.senderFrame
+    if (frame && frame.url) {
+      const u = String(frame.url)
+      if (u.startsWith('chrome-extension://')) return u.slice('chrome-extension://'.length).split('/')[0]
+    }
+  } catch (e) { /* no frame */ }
+  try {
+    const u = String(event.sender.getURL() || '')
+    if (u.startsWith('chrome-extension://')) return u.slice('chrome-extension://'.length).split('/')[0]
+  } catch (e) { /* not a webContents */ }
+  try {
+    const u = String(event.sender.scope || '')
+    if (u.startsWith('chrome-extension://')) return u.slice('chrome-extension://'.length).split('/')[0]
+  } catch (e) { /* not a service worker */ }
+  return ''
+}
+
+async function onShimCall(event, payload) {
+  try {
+    const claimed = String((payload && payload.id) || '')
+    const real = shimSenderId(event)
+    if (!real) return { ok: false, error: 'not an extension context' }
+    if (claimed && claimed !== real) return { ok: false, error: 'sender does not match the extension id in the request' }
+
+    const channel = String(event.channel || '')
+    if (channel === 'extshim:proxy:get') {
+      return { ok: true, ...getResult(extProxyValues.has(real), extProxyValues.get(real)) }
+    }
+
+    if (channel === 'extshim:proxy:set') {
+      // Throws on a malformed config rather than quietly going DIRECT.
+      const config = toElectronProxy(payload && payload.value)
+      const applied = []
+      for (const ses of extSessions()) {
+        try { await ses.setProxy(config); applied.push(ses) } catch (e) { logMainError(e) }
+      }
+      if (!applied.length) return { ok: false, error: 'no session accepted the proxy configuration' }
+      extProxyValues.set(real, (payload && payload.value) || { mode: 'system' })
+      return { ok: true, applied: applied.length }
+    }
+
+    if (channel === 'extshim:proxy:clear') {
+      for (const ses of extSessions()) {
+        try { await ses.setProxy({ mode: 'system' }) } catch (e) { logMainError(e) }
+      }
+      extProxyValues.delete(real)
+      return { ok: true }
+    }
+
+    if (channel === 'extshim:webrtc:get') return { ok: true, value: extWebRTCPolicy }
+
+    if (channel === 'extshim:webrtc:set') {
+      const policy = toWebRTCPolicy(payload && payload.value)
+      extWebRTCPolicy = policy
+      applyWebRTCPolicy()
+      return { ok: true, value: policy }
+    }
+
+    return { ok: false, error: 'unknown channel ' + channel }
+  } catch (e) {
+    logMainError(e)
+    return { ok: false, error: String((e && e.message) || e) }
+  }
+}
+
+// Only one policy can be in force at a time, as in Chrome, so the last setting wins and the
+// policy is reapplied to any tab opened afterwards.
+function applyWebRTCPolicy() {
+  for (const ses of extSessions()) {
+    let all = []
+    try { all = ses.getAllWebContents() } catch (e) { continue }
+    for (const wc of all) {
+      try { wc.setWebRTCIPHandlingPolicy(extWebRTCPolicy) } catch (e) { /* not a live page */ }
+    }
+  }
+}
+
+for (const ch of EXT_SHIM_CHANNELS) ipcMain.handle(ch, onShimCall)
+
+// --- extensions built from source and shipped in the installer ----------------
+const BUILTIN_REMOVED = 'builtin-removed.json'
+
+function builtinRemoved() {
+  const list = readJSON(BUILTIN_REMOVED, [])
+  return Array.isArray(list) ? list : []
+}
+
+function builtinMarkRemoved(key) {
+  const list = builtinRemoved()
+  if (!list.includes(key)) writeJSON(BUILTIN_REMOVED, list.concat([key]))
+}
+
+function builtinRestore(key) {
+  writeJSON(BUILTIN_REMOVED, builtinRemoved().filter((k) => k !== key))
+}
+
+function extManifestVersion(dir) {
+  try { return String(extReadManifest(dir).version || '') } catch (e) { return '' }
+}
+
+// Copy a bundled extension into the profile when it is missing or a different version, so a
+// browser update that ships a newer extension replaces the one on disk. A user who removed
+// it stays removed: that choice is written to builtin-removed.json and respected here.
+async function extInstallBuiltins() {
+  const gone = builtinRemoved()
+  const records = extRecords()
+  let changed = false
+  for (const b of EXT_BUILTIN) {
+    if (gone.includes(b.key)) continue
+    if (!fs.existsSync(path.join(b.source, 'manifest.json'))) continue
+    const dest = path.join(EXT_ROOT, b.key)
+    const want = extManifestVersion(b.source)
+    const have = extManifestVersion(dest)
+    if (!want) continue
+    if (want !== have) {
+      try {
+        fs.mkdirSync(EXT_ROOT, { recursive: true })
+        extUnloadOne(dest)
+        fs.rmSync(dest, { recursive: true, force: true })
+        fs.cpSync(b.source, dest, { recursive: true })
+      } catch (e) { logMainError(e); continue }
+    }
+    const existing = records.find((r) => r.dir === dest)
+    if (!existing) {
+      records.push({ dir: dest, enabled: true, builtin: b.key })
+      changed = true
+    } else if (existing.builtin !== b.key) {
+      existing.builtin = b.key
+      changed = true
+    }
+  }
+  if (changed) extSave(records)
+  return changed
 }
 
 // Read the zip payload out of a .crx. Electron refuses .crx by design, so the browser does
@@ -583,6 +776,9 @@ async function extLoadOne(dir) {
   const results = []
   for (const ses of extSessions()) {
     try {
+      // The shim must be registered before the extension loads, or the service worker can
+      // start before chrome.proxy exists.
+      shimRegister(ses)
       const info = await ses.loadExtension(dir, { allowFileAccess: true })
       results.push({ ok: true, id: info.id })
     } catch (e) {
@@ -628,7 +824,7 @@ async function extList() {
       info = { name: path.basename(rec.dir), version: '', mv: 0, blockers: ['its manifest.json cannot be read: ' + e.message], notes: [], popup: '', options: '' }
     }
     out.push({
-      dir: rec.dir, enabled: !!rec.enabled, id: rec.id || '',
+      dir: rec.dir, enabled: !!rec.enabled, id: rec.id || '', builtin: rec.builtin || '',
       name: info.name, version: info.version, mv: info.mv,
       blockers: info.blockers, notes: info.notes, popup: info.popup, options: info.options,
       error: rec.error || '', loaded: !!rec.enabled && !rec.error
@@ -702,8 +898,26 @@ ipcMain.handle('ext:remove', async (e, dir) => {
   const rec = extRecords().find((x) => x.dir === dir)
   if (!rec) return { ok: false, error: 'no such extension' }
   extUnloadOne(rec.dir)
+  // Removing a bundled extension is remembered, so the next launch does not put it back.
+  if (rec.builtin) builtinMarkRemoved(rec.builtin)
   try { if (rec.dir.indexOf(EXT_ROOT) === 0) fs.rmSync(rec.dir, { recursive: true, force: true }) } catch (err) { logMainError(err) }
   extSave(extRecords().filter((x) => x.dir !== dir))
+  await extPublish()
+  return { ok: true, items: await extList() }
+})
+ipcMain.handle('ext:restorebuiltin', async (e, key) => {
+  const b = EXT_BUILTIN.find((x) => x.key === key)
+  if (!b) return { ok: false, error: 'no such built-in extension' }
+  builtinRestore(b.key)
+  await extInstallBuiltins()
+  const rec = extRecords().find((x) => x.dir === path.join(EXT_ROOT, b.key))
+  if (rec) {
+    rec.enabled = true
+    delete rec.error
+    const r = await extLoadOne(rec.dir)
+    if (r.ok) rec.id = r.id; else rec.error = r.error
+    extSave(extRecords())
+  }
   await extPublish()
   return { ok: true, items: await extList() }
 })
@@ -3036,7 +3250,15 @@ app.whenReady().then(() => {
   trackSession(session.fromPartition('persist:psychovault'))
   trackSession(session.defaultSession)
   updateServiceIcons()
-  extSync().catch((e) => logMainError(e))
+  extInstallBuiltins()
+    .catch((e) => logMainError(e))
+    .then(() => extSync())
+    .catch((e) => logMainError(e))
+
+  // A WebRTC policy set by an extension applies to tabs opened afterwards too.
+  app.on('web-contents-created', (_event, contents) => {
+    try { contents.setWebRTCIPHandlingPolicy(extWebRTCPolicy) } catch (e) { /* not live yet */ }
+  })
 
   const w = new TabWindow()
   mainWindows.add(w)

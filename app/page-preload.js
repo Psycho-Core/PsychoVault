@@ -48,7 +48,8 @@ if (isInternal) {
       addcrx: () => invoke('ext:addcrx'),
       remove: (dir) => invoke('ext:remove', dir),
       toggle: (o) => invoke('ext:toggle', o),
-      openpage: (o) => invoke('ext:openpage', o)
+      openpage: (o) => invoke('ext:openpage', o),
+      restorebuiltin: (key) => invoke('ext:restorebuiltin', key)
     },
     gx: {
       switches: () => invoke('gx:switches'),
