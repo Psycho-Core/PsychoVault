@@ -411,7 +411,7 @@ echo       Keep it out of app\ - everything in that folder ships to users.
 echo       Run this to find out why the file is not being picked up:
 echo         node tools\publish-release.mjs --check
 echo     - the token has no write access: publishing needs contents:write
-echo     - the repository is private and the token cannot see it
+echo     - the token cannot see the repository: a private repo needs access
 goto :done
 
 rem ===========================================================================

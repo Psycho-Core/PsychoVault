@@ -9,7 +9,7 @@ There are three levels. Pick the one you want — you can always do more later.
 |---|---|---|---|
 | **A. Just run it** | The real browser, straight from the source folder | 3 min | Node.js |
 | **B. Portable exe** | `build\payload\PsychoVault.exe` — a rebranded, double-clickable browser | 5 min | Node.js |
-| **C. Full installer** | `PsychoVault-Setup-1.0.28.exe` — shortcuts, uninstall entry | 8 min | Node.js + NSIS |
+| **C. Full installer** | `PsychoVault-Setup-1.0.29.exe` — shortcuts, uninstall entry | 8 min | Node.js + NSIS |
 
 The script does levels A→C automatically. If NSIS is missing it simply stops after level B and
 tells you.
@@ -28,7 +28,7 @@ Optional, only if you'd rather clone than download a ZIP:
 | What | Direct link |
 |---|---|
 | Git for Windows | <https://git-scm.com/download/win> |
-| GitHub CLI (handles the private-repo login for you) | <https://cli.github.com/> → `winget install GitHub.cli` |
+| GitHub CLI (needed for GitHub release operations) | <https://cli.github.com/> → `winget install GitHub.cli` |
 | 7-Zip (for looking inside a built .exe) | <https://7-zip.org/download.html> |
 
 Electron 45.1.0 is **not** something you download by hand — the build fetches it automatically
@@ -58,9 +58,9 @@ new one (Windows only picks up new PATH entries in new windows), or reboot.
 
 <https://github.com/Psycho-Core/PsychoVault> → green **Code** button → **Download ZIP**
 
-then right-click the downloaded `PsychoVault-Master.zip` → **Extract All** → extract to a short
-path such as `C:\PsychoVault` (avoid Desktop/OneDrive: long paths and OneDrive sync both cause
-trouble).
+then right-click the downloaded `PsychoVault-Master.zip` → **Extract All** → extract it to
+`D:\Blakes_SHIT\#Psycho-core_REPOS\PsychoVault` (avoid Desktop and OneDrive: long paths and
+OneDrive sync both cause trouble).
 
 Direct ZIP link, if you are already signed in:
 <https://github.com/Psycho-Core/PsychoVault/archive/refs/heads/Master.zip>
@@ -69,7 +69,7 @@ Direct ZIP link, if you are already signed in:
 
 ```
 gh auth login
-gh repo clone Psycho-Core/PsychoVault C:\PsychoVault
+gh repo clone Psycho-Core/PsychoVault "D:\Blakes_SHIT\#Psycho-core_REPOS\PsychoVault"
 ```
 
 You should end up with a folder that contains `PsychoVault_easy_build.bat`, `installer.nsi`,
@@ -82,9 +82,9 @@ You should end up with a folder that contains `PsychoVault_easy_build.bat`, `ins
 In that folder, **double-click `PsychoVault_easy_build.bat`**.
 
 (If Windows asks how to open it, choose Command Prompt. If you prefer a terminal:
-`cd /d C:\PsychoVault` then `PsychoVault_easy_build.bat`.)
+`cd /d "D:\Blakes_SHIT\#Psycho-core_REPOS\PsychoVault"` then `PsychoVault_easy_build.bat`.)
 
-It prints eight numbered steps and takes 3–6 minutes the first time, mostly downloading
+It prints nine numbered steps and takes 3–6 minutes the first time, mostly downloading
 Electron. What it is doing:
 
 1. finds Node.js and reads the three-part version from `app\package.json`
@@ -95,15 +95,17 @@ Electron. What it is doing:
    the unused 10 MB `app\tools\wireproxy.exe`
 6. checks the payload before packaging anything: every file the browser needs is present and
    non-empty, and the old `default_app.asar` is gone. If that check fails the build stops there
-7. if NSIS is installed, builds `PsychoVault-Setup-1.0.28.exe` in the repo root
-8. writes `Release-Notes-1.0.12.txt` next to the script
+7. if NSIS is installed, builds `PsychoVault-Setup-1.0.29.exe` in the repo root
+8. writes `Release-Notes-<version>.txt` next to the script
+9. asks whether to publish the build as a GitHub release, then uploads the exe, its SHA-256 and
+   the notes if you say yes
 
 When it finishes you get:
 
 ```
-C:\PsychoVault\build\payload\PsychoVault.exe     <- just run this
-C:\PsychoVault\PsychoVault-Setup-1.0.28.exe      <- only if NSIS was installed
-C:\PsychoVault\Release-Notes-1.0.12.txt         <- what changed, and the SHA-256 of both
+build\payload\PsychoVault.exe            <- just run this
+PsychoVault-Setup-1.0.29.exe             <- only if NSIS was installed
+Release-Notes-1.0.29.txt                 <- what changed, and the SHA-256 of both
 ```
 
 The release notes list the version, the Electron runtime, the SHA-256 of the portable exe and of
@@ -131,7 +133,7 @@ If only the exe is there, unpacking stopped early - usually antivirus quarantini
 libraries mid-extract. Skip npm entirely and take the archive directly:
 
 ```
-cd /d C:\PsychoVault
+cd /d "D:\Blakes_SHIT\#Psycho-core_REPOS\PsychoVault"
 curl -L -o "%TEMP%\electron45.zip" https://github.com/electron/electron/releases/download/v45.1.0/electron-v45.1.0-win32-x64.zip
 certutil -hashfile "%TEMP%\electron45.zip" SHA256
 ```
@@ -150,7 +152,7 @@ again on a second `dir`, antivirus is removing them: restore from **Windows Secu
 threat protection -> Protection history**, then from an administrator PowerShell:
 
 ```
-Add-MpPreference -ExclusionPath "C:\PsychoVault"
+Add-MpPreference -ExclusionPath "D:\Blakes_SHIT\#Psycho-core_REPOS\PsychoVault"
 ```
 
 ### What Windows will say
@@ -173,7 +175,7 @@ folder, so rebuilding and reinstalling never touches them.
 If you just want the browser running and don't care about an exe, after Step 1 and Step 2:
 
 ```
-cd /d C:\PsychoVault\app
+cd /d "D:\Blakes_SHIT\#Psycho-core_REPOS\PsychoVault\app"
 npm install
 npm start
 ```
@@ -189,28 +191,31 @@ without rebuilding.
 
 ## Making the update banner work in your own build
 
-The in-app updater reads releases from a **private** repository, so it needs a read-only token.
-The official build bakes one in from a GitHub secret; for a local build you supply your own.
+The in-app updater reads releases over the ordinary public GitHub API, so on this repository it
+needs no read token - install a build and use **Settings - About - Check now**. Updates still need a published release with a valid signed manifest. You only need what follows if you point the updater at a **private** fork or keep
+the repository private again; then it needs a read-only token, and a local build has to supply
+its own.
 
 1. Open <https://github.com/settings/tokens?type=beta> → **Generate new token**
 2. Name: `psychovault-updater-local`. Expiration: as long as you like.
 3. Repository access: **Only select repositories** → `Psycho-Core/PsychoVault`
 4. Permissions → Repository permissions → **Contents: Read-only**. Nothing else.
 5. Generate, copy the `github_pat_...` value.
-6. In `C:\PsychoVault\app\`, create a file named `update-token.json` containing exactly:
+6. In `app\` (that is `D:\Blakes_SHIT\#Psycho-core_REPOS\PsychoVault\app\`), create a file
+   named `update-token.json` containing exactly:
 
 ```json
 {"token":"github_pat_PASTE_YOURS_HERE"}
 ```
 
-It is already git-ignored, so it can never be committed. Re-run the build script and the banner
+It is git-ignored, but can still be force-added. Never commit it. A token in app/ is included in the installer and can be extracted by anyone receiving it. Re-run the build script and the banner
 can then see new versions.
 
 The file is `app\update-token.json` — one line, inside the `app` folder, named exactly that.
 Not `update-token.json.txt`: Explorer hides the extension, so turn on "File name extensions"
 in View if you are unsure.
 
-If you skip this, the browser itself works fine — only the update check is unavailable.
+If you skip this on a public repository, nothing is missing: the check already works.
 
 ---
 
@@ -269,13 +274,13 @@ happened.
 node tools\publish-release.mjs --check
 ```
 
-contacts GitHub and prints which token was found, whether it can see the private repository, and
-whether it is allowed to **write**. A token that can only read behaves exactly like a missing one
+contacts GitHub and prints which token was found, whether it can see the repository, and
+whether it is allowed to **write**. Publishing always needs a token, public repository or not. A token that can only read behaves exactly like a missing one
 at publish time, so this is worth ten seconds before a twenty-minute build:
 
 ```
 Token source: publish-token.json (fine-grained token, 93 characters)
-Repository:  Psycho-Core/PsychoVault (private)
+Repository:  Psycho-Core/PsychoVault (public)
 Read access: yes
 Write access: yes - publishing will work
 Releases:    readable
@@ -302,12 +307,12 @@ prints the exact release body and the assets it would upload, without contacting
 | `npm install` hangs or `ECONNRESET` | Corporate proxy/antivirus. Try `npm install --registry=https://registry.npmjs.org/` or turn off the AV web shield for 10 minutes |
 | `npm finished but there is no Electron runtime` / `up to date in 634ms` | The package folder exists but its download never finished, so npm thinks it is installed. Run the downloader itself: `cd app` then `node node_modules\electron\install.js`. The build script now does this automatically, then `npm rebuild electron`, then removes the folder and reinstalls |
 | `install.js` prints nothing and returns | That is what success looks like: it only prints on failure. Check for the file: `dir app\node_modules\electron\dist\electron.exe` |
-| `dist\version` exists but `electron.exe` does not | The runtime was unpacked and the exe then deleted — in practice antivirus quarantine. Re-extract with `rmdir /s /q app\node_modules\electron\dist` then `del app\node_modules\electron\path.txt` then `node node_modules\electron\install.js` from `app`. If the exe disappears again, restore it from Windows Security → Virus & threat protection → Protection history, or run `Add-MpPreference -ExclusionPath "C:\PsychoVault"` from an administrator PowerShell |
+| `dist\version` exists but `electron.exe` does not | The runtime was unpacked and the exe then deleted — in practice antivirus quarantine. Re-extract with `rmdir /s /q app\node_modules\electron\dist` then `del app\node_modules\electron\path.txt` then `node node_modules\electron\install.js` from `app`. If the exe disappears again, restore it from Windows Security → Virus & threat protection → Protection history, or run `Add-MpPreference -ExclusionPath "D:\Blakes_SHIT\#Psycho-core_REPOS\PsychoVault"` from an administrator PowerShell |
 | The downloader fails too | Almost always `npm config get ignore-scripts` printing `true` (scripts that fetch the runtime are skipped), or the network blocking GitHub's release servers. Check with `curl -I https://github.com/electron/electron/releases/download/v45.1.0/electron-v45.1.0-win32-x64.zip` - it should print `HTTP/2 302`. If it does not: `set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/` then `node node_modules\electron\install.js` |
 | Build fails while copying | PsychoVault is running and holding the exe — close it, delete `build\`, run again |
 | `makensis` not found | Optional. Install NSIS (<https://nsis.sourceforge.io/Download>), reopen the terminal, re-run |
 | Setup says *"Can't write ...PsychoVault.exe"* | The browser is open. Setup now offers to close it — accept |
-| Long-path / `ENAMETOOLONG` errors | Move the folder to `C:\PsychoVault` |
+| Long-path / `ENAMETOOLONG` errors | The build stops at step 6 with the file it could not copy. Keep the repo out of Desktop and OneDrive, and enable long paths: `reg add HKLM\SYSTEM\CurrentControlSet\Control\FileSystem /v LongPathsEnabled /t REG_DWORD /d 1 /f` from an administrator prompt |
 | Everything fails and you want to start clean | Delete `app\node_modules`, `tools\node_modules`, `build\` and re-run |
 
 ---

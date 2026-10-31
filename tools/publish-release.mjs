@@ -184,7 +184,7 @@ if (check) {
     fail(explain(repo.status, repo.text))
   }
   const canPush = !!(repo.json && repo.json.permissions && repo.json.permissions.push)
-  console.log('Repository:  ' + REPOSITORY + (repo.json && repo.json.private ? ' (private)' : ' (public) - check that, it should be private'))
+  console.log('Repository:  ' + REPOSITORY + (repo.json && repo.json.private ? ' (private)' : ' (public)'))
   console.log('Read access: yes')
   console.log('Write access: ' + (canPush ? 'yes - publishing will work' : 'NO - this token needs Contents: Read and write'))
   const releases = await api('GET', `https://api.github.com/repos/${REPOSITORY}/releases?per_page=1`)
