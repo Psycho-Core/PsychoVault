@@ -12,6 +12,7 @@ on:
       - 'tools/build-installer.sh'
       - 'tools/gen-filelist.mjs'
       - 'tools/*.test.cjs'
+      - 'tools/*-electron-smoke.cjs'
       - 'tools/patch-exe.mjs'
       - 'tools/package*.json'
       - '.github/workflows/installer-check.yml'
