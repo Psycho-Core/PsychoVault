@@ -7,8 +7,8 @@ const os = require('node:os')
 const path = require('node:path')
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'pv-worker-smoke-'))
 app.setPath('userData', profile)
-// The synthetic worker controls this isolated profile; Proton must not reset its proxy.
-fs.writeFileSync(path.join(profile, 'builtin-removed.json'), JSON.stringify(['proton-vpn']))
+// Keep Proxy Switch to register the shim; disable Proton and Dark Reader for isolation.
+fs.writeFileSync(path.join(profile, 'builtin-removed.json'), JSON.stringify(['proton-vpn', 'dark-reader']))
 require('../app/main.js')
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 async function waitFor(label, fn, timeout = 30000) {

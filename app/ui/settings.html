@@ -349,10 +349,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
       <button class="mini" data-clear="downloads">Clear downloads</button>
       <button class="mini" data-clear="session">Forget saved tabs</button>
       <button class="mini" id="dataRefresh">Refresh</button>
-      <button class="mini" id="openErrorLog">Open error log</button>
     </div>
-    <div class="hint">Logs can contain private paths or URLs. Review and redact them before sharing.</div>
-    <div class="hint" id="errorLogResult" aria-live="polite"></div>
   </section>
       </div>
       <div class="settings-category" data-category-panel="downloads" data-title="Downloads" data-description="Choose a destination for every file before it downloads." hidden>
@@ -497,13 +494,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
         <option value="rose">Rose</option>
       </select>
     </div>
-    <div class="row">
-      <div>
-        <div class="lbl">Darken light websites</div>
-        <div class="hint">Experimental colour filter for light pages. Some sites or images may look wrong; turn it off here if needed.</div>
-      </div>
-      <label class="switch"><input type="checkbox" id="darkWebsites"><span class="slider"></span></label>
-    </div>
+    <div class="row"><div><div class="lbl">Dark Reader</div><div class="hint">Manage the bundled Dark Reader extension in Extensions. Its site access and compatibility are controlled there.</div></div></div>
     <div class="row">
       <div>
         <div class="lbl">Hide the sidebar</div>
@@ -769,6 +760,11 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
       <div class="settings-category" data-category-panel="about" data-title="About" data-description="Version and project information." hidden>
   <section>
     <h2>About</h2>
+    <div class="row"><div><div class="lbl">Error log</div><div class="hint">Logs can contain private paths or URLs. Review and redact them before sharing.</div></div><button class="mini" id="openErrorLog">Open error log</button></div>
+    <div class="hint" id="errorLogResult" aria-live="polite"></div>
+    <div class="row"><div><div class="lbl">Troubleshooting</div><div class="hint">This report contains app and runtime versions and a few on/off states. It does not include logs, paths, URLs or credentials. VPN proxy configured does not verify a connection.</div></div><button class="mini" id="diagnosticsRefresh">Refresh report</button><button class="mini" id="diagnosticsCopy">Copy report</button></div>
+    <textarea id="diagnosticsReport" rows="10" readonly aria-label="Troubleshooting report"></textarea><div class="hint" id="diagnosticsResult" aria-live="polite"></div>
+
     <div class="hint">If an update fails while Proton VPN is on, disconnect it and retry. PsychoVault does not bypass the VPN automatically. It removes an updater-downloaded installer only after the new version starts and the file is verified unchanged; older untracked installers are kept.</div>
     <div class="about">
       <b id="appVersion">PsychoVault</b><br>
@@ -850,7 +846,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     blockAds: true, blockUseBundled: true, workspacesEnabled: true, restore: true, remember: true, sendDNT: true, askSaveLocation: true,
     blockThirdPartyCookies: false, blockAutoplay: false, hideSidebar: false,
     batterySaver: false, batteryAuto: false, vaultEnabled: true,
-    enhanceVideo: false, enhanceImages: false, darkWebsites: false, uiSounds: false, mediaKeys: true,
+    enhanceVideo: false, enhanceImages: false, uiSounds: false, mediaKeys: true,
     mediaAutoPause: true, panicEnabled: true, downloadNotify: true,
     stripReferrer: true, railIcons: true, spellCheck: true, spellBuiltin: true,
     highContrast: false, reduceMotion: false, showTabCloseButtons: false
@@ -1201,6 +1197,9 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     paintExtensions()
     s('contAdd').onclick = () => { const l = containersValue(); l.push({ name: 'New', color: '#38bdf8' }); renderContainers(l) }
     s('contSave').onclick = () => { const l = containersValue().filter(x => x.name); save({ containers: l }).then(() => flag(l.length + ' containers saved - a tab picks one up from its right-click menu')) }
+    const refreshDiagnostics = async () => { const d = await window.pv.app.diagnostics(); s('diagnosticsReport').value = 'PsychoVault troubleshooting report\n' + Object.entries(d).map(([k, v]) => k + ': ' + v).join('\n') }
+    s('diagnosticsRefresh').onclick = refreshDiagnostics
+    s('diagnosticsCopy').onclick = async () => { try { s('diagnosticsReport').value = await window.pv.app.diagnosticsCopy(); s('diagnosticsResult').textContent = 'Copied.' } catch { await refreshDiagnostics(); s('diagnosticsReport').select(); s('diagnosticsResult').textContent = 'Select and copy the report above.' } }
     s('dataRefresh').onclick = refreshData
     s('openErrorLog').onclick = async () => { const r = await window.pv.data.openErrorLog(); s('errorLogResult').textContent = r.ok ? 'Opened: ' + r.path : (r.message || 'Could not open the log') }
     if (hasVault) {

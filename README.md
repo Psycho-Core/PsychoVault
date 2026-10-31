@@ -508,4 +508,6 @@ Bundled third-party software has its own licences. In particular, the Proton VPN
 GPL-3.0, not MIT. See [third-party notices](THIRD-PARTY-NOTICES.md) and the
 [extension licence](app/builtin/proton-vpn/LICENSE).
 
-Workspaces can be turned off in Settings. Saved groups stay in the profile; when turned back on, the current tabs become a new group. Bookmarks, History and Downloads are in the menu. If a recovery notification mentions errors.log, open Settings > Your data > Open error log. Review it for private paths and URLs before sharing it.
+Workspaces can be turned off in Settings. Saved groups stay in the profile; when turned back on, the current tabs become a new group. Bookmarks, History and Downloads are in the menu. If a recovery notification mentions errors.log, open Settings > About > Open error log. Review it for private paths and URLs before sharing it.
+
+The About page has a copyable troubleshooting report. It includes runtime versions and a few on/off states, not logs, URLs, paths or credentials. Dark Reader is bundled as an extension and can be managed under Settings > Extensions. It needs access to website content to change how pages look.

@@ -107,7 +107,9 @@ Section "Install"
     RMDir /r "$INSTDIR\resources"
     !include "${FILELIST}"
     ${If} ${Errors}
+      IfSilent +2 0
       MessageBox MB_OK|MB_ICONEXCLAMATION 'Some files could not be written - they are still in use.$\r$\n$\r$\nClose any PsychoVault window and run Setup again. Nothing was removed from your profile.'
+      SetErrorLevel 1
       Abort
     ${EndIf}
   ${EndIf}
@@ -149,6 +151,9 @@ Function .onInit
     ; opening a running exe for append fails with a sharing violation - that is the test
     FileOpen $9 "$INSTDIR\PsychoVault.exe" a
     ${If} ${Errors}
+      IfSilent 0 +3
+      SetErrorLevel 1
+      Abort
       MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION 'PsychoVault is running, and Windows will not let Setup overwrite the files it has open.$\r$\n$\r$\nOK closes the browser and continues updating. Cancel leaves your existing install exactly as it is.' IDOK pv_kill IDCANCEL pv_abort
       pv_abort:
         Abort

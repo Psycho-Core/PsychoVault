@@ -64,6 +64,21 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+  update-installer-windows:
+    name: Real silent installer update
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: PsychoVault-test-installer
+          path: test-installer
+      - name: Exercise the real installer through the update helper
+        shell: powershell
+        run: ./tools/update-real-installer-windows-smoke.ps1
+
   proton-smoke:
     name: Proton popup sign-in smoke test
     runs-on: ubuntu-latest
@@ -94,12 +109,18 @@ jobs:
           node-version: 24
       - name: Install Electron
         run: npm install --prefix app --no-audit --no-fund
+      - name: Test silent updater rollback on Windows
+        shell: powershell
+        run: ./tools/update-install-windows-smoke.ps1
       - name: Test proxy authentication through a local proxy
         shell: cmd
         run: app\node_modules\.bin\electron.cmd tools\proxy-auth-electron-smoke.cjs
       - name: Exercise recovery, encrypted vault transfers, and download controls
         shell: cmd
         run: app\node_modules\.bin\electron.cmd tools\features-electron-smoke.cjs
+      - name: Test bundled Dark Reader on a local page
+        shell: cmd
+        run: app\node_modules\.bin\electron.cmd tools\dark-reader-electron-smoke.cjs
       - name: Test HTTPS proxy CONNECT authentication
         shell: cmd
         run: app\node_modules\.bin\electron.cmd tools\proxy-auth-https-electron-smoke.cjs

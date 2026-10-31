@@ -36,3 +36,15 @@ test('installer welcome and finish text uses NSIS line break escapes', () => {
     assert.match(line, /\$\\r\$\\n/)
   }
 })
+test('native hamburger menu does not alter the page layout', () => {
+  assert.match(main, /ipcMain\.handle\('ui:menu'/)
+  assert.doesNotMatch(ui, /extra \+= MENU_H/)
+  assert.match(ui, /window\.pv\.ui\.menu\(\)/)
+  assert.match(read('app/preload.js'), /'menu-command'/)
+})
+test('diagnostics report only contains an explicit allowlist and log controls are in About', () => {
+  const report = main.slice(main.indexOf('function diagnosticReport()'), main.indexOf("ipcMain.handle('app:info'"))
+  assert.doesNotMatch(report, /readFile|settings\.extensions|history|url|token|password/i)
+  assert.match(settings.slice(settings.indexOf('data-category-panel="about"')), /id="openErrorLog"/)
+  assert.match(settings, /id="diagnosticsCopy"/)
+})
