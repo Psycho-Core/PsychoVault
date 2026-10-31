@@ -2596,3 +2596,16 @@ Two things changed:
 | `node tools/audit.mjs` | no defects |
 | verified by writing the exact malformed files and re-reading them | both now parse |
 | version | 1.0.28 |
+
+## GitHub Actions - NSIS file list
+
+The reported Actions error was `FILELIST is not defined` in `installer.nsi`. The Windows
+batch build generated and passed that include, but `tools/build-installer.sh` did neither.
+The Linux build now generates the include from its staged payload outside the payload tree,
+passes it to NSIS, and removes it on exit.
+
+- `node --test tools/*.test.cjs`: 138 passed, including a Linux build-script test with
+  stubbed `makensis` and `7z` that checks the generated file paths and include cleanup.
+- `node tools/audit.mjs`: no defects. `bash -n tools/build-installer.sh`: passed.
+- A real NSIS installer build has not been run here: this environment has no NSIS or
+  staged Windows Electron runtime. The stubs do not prove that NSIS can compile it.

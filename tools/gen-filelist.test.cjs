@@ -63,3 +63,47 @@ test('the build step generates the list and hands it to makensis', () => {
   assert.ok(!/File \/r "\$\{PAYLOADDIR\}/.test(nsi), 'installer.nsi still uses File /r on the payload')
   assert.match(nsi, /!include "\$\{FILELIST\}"/)
 })
+
+test('Linux installer build generates and passes a file list for the staged payload', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pv-linux-build-'))
+  const payload = path.join(root, 'payload')
+  const stage = path.join(root, 'stage')
+  const bin = path.join(root, 'bin')
+  fs.mkdirSync(payload)
+  fs.mkdirSync(bin)
+  fs.writeFileSync(path.join(payload, 'PsychoVault.exe'), 'runtime')
+  const makensis = `#!/usr/bin/env node
+const fs = require('fs'), path = require('path');
+const args = process.argv.slice(2);
+const find = name => (args.find(a => a.startsWith('-D' + name + '=')) || '').slice(name.length + 3);
+const list = find('FILELIST'), out = find('OUTFILE'), stage = find('PAYLOADDIR');
+if (!list || !fs.existsSync(list)) throw Error('FILELIST is missing');
+const lines = fs.readFileSync(list, 'utf8').split(/\\r?\\n/);
+const files = lines.filter(line => line.startsWith('File "')).map(line => line.slice(6, -1).replace(/\\\\/g, '/'));
+if (!files.some(f => f.endsWith('/PsychoVault.exe')) || !files.some(f => f.endsWith('/resources/app/main.js'))) throw Error('payload missing from file list');
+for (const file of files) if (!fs.existsSync(path.resolve(file))) throw Error('missing generated file: ' + file);
+fs.writeFileSync(out, 'fake installer');
+fs.writeFileSync(process.env.LIST_RECORD, list);
+`;
+  const sevenzip = `#!/usr/bin/env node
+const fs = require('fs'), path = require('path');
+const out = process.argv.find(a => a.startsWith('-o')).slice(2);
+fs.cpSync(process.env.STAGE, out, { recursive: true });
+`;
+  fs.writeFileSync(path.join(bin, 'makensis'), makensis, { mode: 0o755 })
+  fs.writeFileSync(path.join(bin, '7z'), sevenzip, { mode: 0o755 })
+  try {
+    const record = path.join(root, 'list-path')
+    const output = execFileSync('bash', [path.join(__dirname, 'build-installer.sh')], {
+      cwd: path.join(__dirname, '..'),
+      env: { ...process.env, PATH: bin + path.delimiter + process.env.PATH, PAYLOAD: payload,
+        STAGE: stage, OUT: path.join(root, 'setup.exe'), NSIS_TMPDIR: root, LIST_RECORD: record },
+      encoding: 'utf8'
+    })
+    assert.match(output, /file list: \d+ files/)
+    assert.match(output, /done\./)
+    assert.ok(!fs.existsSync(fs.readFileSync(record, 'utf8')), 'temporary include was not cleaned up')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})

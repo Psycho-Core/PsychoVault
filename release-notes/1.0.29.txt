@@ -4,3 +4,8 @@ Public repository tidy
 - Updated the build and update instructions for a public repository. Publishing still needs write access and signed updates still need the signing key.
 - The release token check no longer warns that the repository should be private.
 - Public GitHub Actions builds no longer embed a release read token.
+
+GitHub Actions installer build
+
+- Generate the NSIS payload file list before compiling, and pass it to makensis.
+  This fixes the FILELIST is not defined error in the Linux build script.

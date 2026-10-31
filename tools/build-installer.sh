@@ -57,9 +57,14 @@ cp VERIFICATION.md "$STAGE/VERIFICATION.txt"
 echo "[3/4] makensis"
 NSIS_TMPDIR="${NSIS_TMPDIR:-/var/tmp/nsitmp}"
 mkdir -p "$NSIS_TMPDIR"
+# Keep the generated include outside the payload, so it is not included in itself.
+FILELIST="$(mktemp "$NSIS_TMPDIR/payload-files-XXXXXXXX.nsh")"
+trap 'rm -f "$FILELIST"' EXIT
+node tools/gen-filelist.mjs "$STAGE" "$FILELIST" "$PWD"
+test -s "$FILELIST" || { echo "no payload file list produced"; exit 1; }
 TMPDIR="$NSIS_TMPDIR" makensis -V2 -DWANT_UNINSTALLER \
   -DVERSION="$VERSION" -DMUI_ICON="$MUI_ICON" \
-  -DPAYLOADDIR="$STAGE" -DOUTFILE="$OUT" installer.nsi
+  -DPAYLOADDIR="$STAGE" -DFILELIST="$FILELIST" -DOUTFILE="$OUT" installer.nsi
 test -s "$OUT" || { echo "no installer produced"; exit 1; }
 echo "  $(stat -c %s "$OUT") bytes -> $OUT"
 
