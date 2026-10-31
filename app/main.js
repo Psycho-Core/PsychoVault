@@ -5,6 +5,7 @@ const { createSaveDialogQueue } = require('./download-save')
 const { buildTranslationUrl } = require('./translation')
 const {
   checkOnStartup: checkForUpdatesOnStartup,
+  cleanupInstalledUpdate,
   checkForUpdates,
   installPending: installPendingUpdate,
   pendingState: updatePendingState,
@@ -35,6 +36,8 @@ fs.mkdirSync(USER, { recursive: true })
 
 const { toElectronProxy, getResult, toWebRTCPolicy, proxyOutcome } = require('./ext-proxy')
 const { findWindowFor } = require('./window-lookup')
+const { sitePermission } = require('./site-permissions')
+const { hostname, parseHosts, siteExcluded, isDomainBlocked } = require('./blocking-rules')
 const { matchesProxyChallenge, allowsProxyAuth } = require('./ext-proxy-auth')
 const { inspectProtonPopup, clickProtonPopup } = require('./proton-toggle')
 
@@ -68,6 +71,10 @@ let bookmarks = readJSON('bookmarks.json', [])
 let history = readJSON('history.json', [])
 const DEFAULT_SETTINGS = {
   search: 'duckduckgo',
+  sitePermissions: {},            // exact origins, explicit per-site overrides
+  blockUseBundled: true,         // bundled domain list
+  blockCustomDomains: '',        // one blocked domain per line
+  blockAllowSites: '',           // exact top-level page hostnames
   blockAds: true,
   homepage: 'psychovault://newtab',
   restore: true,
@@ -85,6 +92,7 @@ const DEFAULT_SETTINGS = {
   blockThirdPartyCookies: false,  // cross-site Cookie header stripped
   sendDNT: true,                  // DNT + Global Privacy Control headers
   cpuLimit: 'off',                // governor: off | balanced | low
+  sleepExclude: '',              // newline-separated exact hostnames
   sleepTabsMin: 0,                // 0 = never; minutes idle before a tab is dropped
   clearOnExit: 'nothing',         // nothing | cache | all
   batterySaver: false,            // GX power save: low priority + fast tab sleep
@@ -1359,15 +1367,14 @@ ipcMain.handle('proton:toggle', async (event) => {
 // Domain list shipped with the app; loaded once, matched by hostname.
 let blockSet = new Set()
 function loadBlocklist() {
-  if (!settings.blockAds) return
-  const file = path.join(__dirname, 'blocklist.json')
-  try {
-    const list = JSON.parse(fs.readFileSync(file, 'utf8'))
-    blockSet = new Set(list)
-    console.log(`blocklist: ${blockSet.size} domains`)
-  } catch (e) {
-    console.log('blocklist not loaded:', e.message)
+  const next = new Set(parseHosts(settings.blockCustomDomains))
+  if (settings.blockUseBundled !== false) {
+    try {
+      const list = JSON.parse(fs.readFileSync(path.join(__dirname, 'blocklist.json'), 'utf8'))
+      if (Array.isArray(list)) for (const h of list) for (const normalized of parseHosts(h)) next.add(normalized)
+    } catch (e) { console.log('blocklist not loaded:', e.message) }
   }
+  blockSet = next
 }
 
 function safe(fn, fallback) {
@@ -1378,16 +1385,10 @@ function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, '') } catch { return '' }
 }
 
-function isBlocked(url) {
+function isBlocked(url, pageUrl) {
   if (!settings.blockAds || blockSet.size === 0) return false
-  const h = hostOf(url)
-  if (!h) return false
-  if (blockSet.has(h)) return true
-  const parts = h.split('.')
-  for (let i = 1; i < parts.length - 1; i++) {
-    if (blockSet.has(parts.slice(i).join('.'))) return true
-  }
-  return false
+  if (siteExcluded(settings.blockAllowSites, pageUrl)) return false
+  return isDomainBlocked(blockSet, url)
 }
 
 // ---------------------------------------------------------------- GX-style extras
@@ -1748,6 +1749,9 @@ function discardIdleTabs() {
     for (const [id, t] of w.tabs) {
       if (id === w.activeId || id === w.splitId || t.pinned || t.discarded) continue
       if (!/^https?:/.test(t.url || '')) continue
+      const host = hostname(t.url)
+      const excluded = String(settings.sleepExclude || '').split(/[\n,]+/).map(x => x.trim().toLowerCase()).filter(Boolean)
+      if (excluded.includes(host) || safe(() => t.view.webContents.isCurrentlyAudible(), false) || t.loading) continue
       if (Date.now() - (t.lastActive || 0) < limit) continue
       // Electron 45 has no webContents.terminate(); unloading the page to
       // about:blank releases the same renderer memory and keeps the pill alive.
@@ -1912,17 +1916,22 @@ class TabWindow {
     if (ses._pvBlocked) return
     ses._pvBlocked = true
     ses.webRequest.onBeforeRequest((details, cb) => {
-      if (isBlocked(details.url)) {
+      // Use the top-level tab, not a subframe-controlled initiator, for site exemptions.
+      const tab = wcTabs.get(details.webContentsId)
+      const pageUrl = details.resourceType === 'mainFrame' ? details.url : (tab && tab.url)
+      if (isBlocked(details.url, pageUrl)) {
         noteBlocked(details.webContentsId)
         return cb({ cancel: true })
       }
       cb({})
     })
     ses.setPermissionRequestHandler((wc, permission, cb, details) => {
-      if (permDenied(permission)) return cb(false)
-      cb(true, details && details.requestingUrl ? { securityOrigin: details.requestingUrl } : undefined)
+      const origin = (details && (details.requestingOrigin || details.securityOrigin || details.requestingUrl)) || (wc && wc.getURL())
+      cb(sitePermission(settings, origin, permission, details))
     })
-    ses.setPermissionCheckHandler((wc, permission) => !permDenied(permission))
+    ses.setPermissionCheckHandler((wc, permission, requestingOrigin, details) => {
+      return sitePermission(settings, requestingOrigin || (details && details.securityOrigin) || (wc && wc.getURL()), permission, details)
+    })
   }
 
   createTab(url, opts = {}) {
@@ -3882,6 +3891,7 @@ ipcMain.handle('update:check', async () => {
 })
 
 app.whenReady().then(() => {
+  cleanupInstalledUpdate().catch(() => {})
   refreshSafeStorage()
   registerMediaKeys()
   watchPower()

@@ -1,0 +1,8 @@
+Work in progress - do not publish yet.
+
+- Added exact-origin controls for camera, microphone, location and notifications. Default follows the global permission settings.
+- Added a local domain list and exact site exceptions for the built-in blocker. These are not uBlock Origin filters.
+- Added custom sleeping-tab idle times and hostname exclusions. Sleeping still reloads a tab and can lose unsaved form data.
+- Added an updater VPN troubleshooting note. An installer saved by the new updater is eligible for cleanup after the updated version starts and the installer is verified unchanged. Older untracked installers are kept.
+
+The VPN check, vault backup and import improvements, selective session recovery, download controls, custom search engines and full verification are still outstanding.

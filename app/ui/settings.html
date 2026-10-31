@@ -211,6 +211,28 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     </div>
   </section>
   <section>
+    <h2>Ad-blocker lists and site exceptions</h2>
+    <div class="row"><div><div class="lbl">Use bundled domain list</div><div class="hint">This is PsychoVault's local domain list, not uBlock Origin.</div></div><label class="switch"><input type="checkbox" id="blockUseBundled"><span class="slider"></span></label></div>
+    <div class="hint">Never block on these sites - one exact top-level hostname per line. Changes affect future requests; reload the tab.</div>
+    <textarea id="blockAllowSites" rows="3" placeholder="example.com"></textarea>
+    <div class="hint">Extra blocked domains - one domain per line. Subdomains are included. This accepts domain names, not uBlock/Adblock Plus filter syntax.</div>
+    <textarea id="blockCustomDomains" rows="4" placeholder="ads.example.com"></textarea>
+    <button class="mini" id="blockSaveLists">Save blocker lists</button><div class="hint" id="blockListsMsg" aria-live="polite"></div>
+  </section>
+  <section>
+    <h2>Per-site permissions</h2>
+    <div class="hint">Rules apply only to the exact web origin and port. Default follows the global deny list. Camera and microphone access needs operating-system permission too.</div>
+    <div class="tile-row"><input id="permOrigin" type="text" placeholder="https://example.com" aria-label="Site origin"><button class="mini" id="permLoad">Load site</button></div>
+    <div id="permEditor" hidden>
+      <div class="row"><div class="lbl">Camera</div><select id="permCamera"><option value="default">Default</option><option value="allow">Allow</option><option value="deny">Deny</option></select></div>
+      <div class="row"><div class="lbl">Microphone</div><select id="permMicrophone"><option value="default">Default</option><option value="allow">Allow</option><option value="deny">Deny</option></select></div>
+      <div class="row"><div class="lbl">Location</div><select id="permLocation"><option value="default">Default</option><option value="allow">Allow</option><option value="deny">Deny</option></select></div>
+      <div class="row"><div class="lbl">Notifications</div><select id="permNotifications"><option value="default">Default</option><option value="allow">Allow</option><option value="deny">Deny</option></select></div>
+      <div class="btnrow"><button class="mini" id="permSave">Save site rules</button><button class="mini" id="permRemove">Remove site rules</button></div>
+    </div>
+    <div class="hint" id="permMsg" aria-live="polite"></div><div id="permSaved" class="hint"></div>
+  </section>
+  <section>
     <h2>Shields</h2>
     <div class="row">
       <div>
@@ -405,13 +427,12 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
         <div class="lbl">Sleep tabs after</div>
         <div class="hint">Background tabs are dropped from memory and reload when clicked. Pinned tabs never sleep.</div>
       </div>
-      <select id="sleepTabsMin">
-        <option value="0">Never</option>
-        <option value="5">5 minutes</option>
-        <option value="15">15 minutes</option>
-        <option value="30">30 minutes</option>
-        <option value="60">1 hour</option>
-      </select>
+      <input type="number" id="sleepTabsMin" min="0" max="1440" step="1" aria-label="Minutes before tabs sleep; zero means never">
+
+    </div>
+    <div class="row">
+      <div><div class="lbl">Never sleep these sites</div><div class="hint">One hostname per line, for example example.com. Exact hostnames only. Audio-playing and loading tabs are also skipped. Unsaved forms may still be lost.</div></div>
+      <textarea id="sleepExclude" rows="3" placeholder="example.com"></textarea>
     </div>
     <div class="row">
       <div>
@@ -728,6 +749,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
       <div class="settings-category" data-category-panel="about" data-title="About" data-description="Version and project information." hidden>
   <section>
     <h2>About</h2>
+    <div class="hint">If an update fails while Proton VPN is on, disconnect it and retry. PsychoVault does not bypass the VPN automatically. It removes an updater-downloaded installer only after the new version starts and the file is verified unchanged; older untracked installers are kept.</div>
     <div class="about">
       <b id="appVersion">PsychoVault</b><br>
       Browser application (this UI, tabs, bookmarks, history, downloads, blocking): written for this project.<br>
@@ -805,7 +827,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
   let settings = {}
   // every switch on this page, and how its default reads when the key is absent
   const TOGGLES = {
-    blockAds: true, restore: true, remember: true, sendDNT: true,
+    blockAds: true, blockUseBundled: true, restore: true, remember: true, sendDNT: true,
     blockThirdPartyCookies: false, blockAutoplay: false, hideSidebar: false,
     batterySaver: false, batteryAuto: false, vaultEnabled: true,
     enhanceVideo: false, enhanceImages: false, darkWebsites: false, uiSounds: false, mediaKeys: true,
@@ -815,6 +837,31 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
   }
   const hasVault = !!(window.pv && window.pv.vault)
 
+  const permFields = { camera: 'permCamera', microphone: 'permMicrophone', geolocation: 'permLocation', notifications: 'permNotifications' }
+  let editingOrigin = ''
+  function permissionOrigin(raw) {
+    try { const u = new URL(String(raw).trim()); return ['http:', 'https:'].includes(u.protocol) && !u.username && !u.password ? u.origin : '' } catch { return '' }
+  }
+  function paintPermissionSites(st) {
+    const box = s('permSaved'); box.replaceChildren()
+    const sites = Object.keys(st.sitePermissions || {}).sort()
+    if (!sites.length) { box.textContent = 'No site-specific rules saved.'; return }
+    box.append('Saved sites: ')
+    sites.forEach((site, i) => {
+      if (i) box.append(' · ')
+      const button = document.createElement('button'); button.className = 'mini'; button.textContent = site
+      button.onclick = () => { s('permOrigin').value = site; loadPermissionSite() }
+      box.appendChild(button)
+    })
+  }
+  function loadPermissionSite() {
+    const origin = permissionOrigin(s('permOrigin').value)
+    if (!origin) { s('permMsg').textContent = 'Enter a valid http or https site, such as https://example.com.'; s('permEditor').hidden = true; return }
+    editingOrigin = origin; s('permOrigin').value = origin
+    const rule = (settings.sitePermissions || {})[origin] || {}
+    for (const [key, id] of Object.entries(permFields)) s(id).value = ['allow', 'deny'].includes(rule[key]) ? rule[key] : 'default'
+    s('permEditor').hidden = false; s('permMsg').textContent = 'Editing ' + origin
+  }
   async function save(patch) {
     settings = await window.pv.settings.set(patch)
     paint(settings)
@@ -822,6 +869,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
 
   function paint(st) {
     settings = st
+    paintPermissionSites(st)
     document.body.dataset.theme = st.theme || 'midnight'
     document.body.classList.toggle('high-contrast', !!st.highContrast)
     document.body.classList.toggle('reduce-motion', !!st.reduceMotion)
@@ -852,6 +900,9 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
       s('restartNote').style.display = r.restartNeeded ? 'block' : 'none'
     }).catch(() => {})
     s('sleepTabsMin').value = String(st.sleepTabsMin || 0)
+    s('sleepExclude').value = String(st.sleepExclude || '')
+    s('blockAllowSites').value = String(st.blockAllowSites || '')
+    s('blockCustomDomains').value = String(st.blockCustomDomains || '')
     if (s('vaultLockMin')) s('vaultLockMin').value = String(st.vaultLockMin === undefined ? 5 : st.vaultLockMin)
     const c = ACCENTS[st.accent] || ACCENTS.cyan
     document.documentElement.style.setProperty('--accent', c[0])
@@ -868,6 +919,29 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     for (const id of ['search', 'cpuLimit', 'theme', 'accent', 'clearOnExit', 'sleepTabsMin', 'translateTarget']) {
       const el = s(id)
       if (el) el.onchange = () => save({ [id]: id === 'sleepTabsMin' ? Number(el.value) : el.value })
+    }
+    s('permLoad').onclick = loadPermissionSite
+    s('permSave').onclick = async () => {
+      if (!editingOrigin) return
+      const rules = { ...(settings.sitePermissions || {}) }; const rule = {}
+      for (const [key, id] of Object.entries(permFields)) if (s(id).value !== 'default') rule[key] = s(id).value
+      if (Object.keys(rule).length) rules[editingOrigin] = rule; else delete rules[editingOrigin]
+      await save({ sitePermissions: rules }); s('permMsg').textContent = 'Saved rules for ' + editingOrigin
+    }
+    s('permRemove').onclick = async () => {
+      if (!editingOrigin) return
+      const rules = { ...(settings.sitePermissions || {}) }; delete rules[editingOrigin]
+      await save({ sitePermissions: rules }); loadPermissionSite(); s('permMsg').textContent = 'Removed site-specific rules.'
+    }
+    s('blockSaveLists').onclick = async () => {
+      await save({ blockAllowSites: s('blockAllowSites').value.slice(0, 50000), blockCustomDomains: s('blockCustomDomains').value.slice(0, 50000) })
+      s('blockListsMsg').textContent = 'Lists saved. Reload a page to apply them to its requests.'
+    }
+    s('sleepExclude').onchange = () => save({ sleepExclude: s('sleepExclude').value.slice(0, 5000) })
+    s('sleepTabsMin').onchange = () => {
+      const n = Number(s('sleepTabsMin').value)
+      if (!Number.isInteger(n) || n < 0 || n > 1440) { s('sleepTabsMin').value = String(settings.sleepTabsMin || 0); return }
+      save({ sleepTabsMin: n })
     }
     s('homepage').onchange = () => save({ homepage: s('homepage').value || 'psychovault://newtab' })
     if (s('downloadDir')) s('downloadDir').onchange = () => save({ downloadDir: s('downloadDir').value.trim() })

@@ -71,7 +71,7 @@ echo "  $(stat -c %s "$OUT") bytes -> $OUT"
 echo "[4/4] verifying what actually went inside"
 V=/var/tmp/vfy-$$; mkdir -p "$V"
 7z x -y -bso0 -bse0 "$OUT" 'resources/app/*' README.txt LICENSE.txt VERIFICATION.txt -o"$V" > /dev/null 2>&1
-for f in resources/app/main.js resources/app/download-save.js resources/app/translation.js \
+for f in resources/app/main.js resources/app/download-save.js resources/app/translation.js resources/app/site-permissions.js resources/app/blocking-rules.js resources/app/update-cleanup.js \
          resources/app/update-manifest.js resources/app/update-download.js resources/app/update-public-key.pem resources/app/auto-updater.js \
          resources/app/spell-page.js resources/app/spell-words.txt resources/app/preload.js \
          resources/app/page-preload.js resources/app/ui/renderer.js resources/app/ui/style.css \

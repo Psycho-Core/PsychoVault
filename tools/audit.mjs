@@ -86,7 +86,7 @@ const ALIAS = { speedDial: 'tiles', services: 'svcList', containers: 'contList' 
 // Keys the app writes for itself: schema markers, extension inventory, the version of an
 // update the user dismissed for good, and the retired askSaveLocation preference (consumed
 // only by the one-time migration to mandatory Save As).
-const INTERNAL = ['settingsVersion', 'extensions', 'askSaveLocation', 'dismissedUpdate']
+const INTERNAL = ['settingsVersion', 'extensions', 'askSaveLocation', 'dismissedUpdate', 'sitePermissions']
 
 // The settings view must have one navigation button for every category panel, and all
 // real sections must live inside one of those panels.

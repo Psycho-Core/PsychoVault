@@ -1,0 +1,27 @@
+'use strict'
+const test = require('node:test')
+const assert = require('node:assert/strict')
+const fs = require('node:fs/promises')
+const os = require('node:os')
+const path = require('node:path')
+const crypto = require('node:crypto')
+const { rememberInstaller, cleanupInstaller } = require('../app/update-cleanup')
+test('only deletes the recorded, unchanged installer after the new version starts', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pv-cleanup-')); t.after(() => fs.rm(dir, { recursive: true, force: true }))
+  const downloads = path.join(dir, 'downloads'); const user = path.join(dir, 'user'); await fs.mkdir(downloads); await fs.mkdir(user)
+  const data = Buffer.from('test installer'); const file = path.join(downloads, 'PsychoVault-Setup-1.2.3.exe')
+  await fs.writeFile(file, data)
+  const manifest = { version: '1.2.3', sha256: crypto.createHash('sha256').update(data).digest('hex'), size: data.length }
+  await rememberInstaller(user, downloads, file, manifest)
+  assert.equal(await cleanupInstaller(user, downloads, '1.2.2'), false)
+  await fs.writeFile(file, Buffer.from('other installer'))
+  assert.equal(await cleanupInstaller(user, downloads, '1.2.3'), false)
+  await fs.writeFile(file, data)
+  assert.equal(await cleanupInstaller(user, downloads, '1.2.3'), true)
+  await assert.rejects(fs.stat(file), { code: 'ENOENT' })
+  assert.equal(await cleanupInstaller(user, downloads, '1.2.3'), false)
+})
+test('does not follow symlinks or record outside downloads', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pv-cleanup-')); t.after(() => fs.rm(dir, { recursive: true, force: true }))
+  await assert.rejects(rememberInstaller(dir, path.join(dir, 'downloads'), path.join(dir, 'PsychoVault-Setup-1.2.3.exe'), {}))
+})

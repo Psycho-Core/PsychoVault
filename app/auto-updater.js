@@ -8,6 +8,7 @@ const { app, BrowserWindow, dialog, net, safeStorage } = require('electron')
 const { authorizationForHop, authHeader, tokenSource, apiAssetUrl } = require('./update-auth')
 const { followRedirects } = require('./update-http')
 const { saveVerifiedInstaller } = require('./update-download')
+const { rememberInstaller, cleanupInstaller } = require('./update-cleanup')
 const {
   REPOSITORY,
   PLATFORM,
@@ -427,6 +428,8 @@ async function checkForUpdates({ onProgress = () => {}, onError = () => {}, useB
     await downloadInstaller(url, temporaryDestination, manifest, onProgress)
     destination = await saveVerifiedInstaller(temporaryDestination, app.getPath('downloads'), manifest.assetName)
     temporaryDestination = null
+    // Cleanup is optional; do not prevent installation if the marker cannot be saved.
+    try { await rememberInstaller(app.getPath('userData'), app.getPath('downloads'), destination, manifest) } catch { /* leave installer in Downloads */ }
     setTaskbarProgress(-1)
     safeProgress(onProgress, { phase: 'verified', percent: 100, message: 'Verified installer saved. Launching update…' })
     if (!launchInstaller(destination, onProgress, (error) => {
@@ -484,6 +487,8 @@ async function installPending({ onProgress = () => {}, onError = () => {} } = {}
     await downloadInstaller(url, temporaryDestination, manifest, onProgress)
     destination = await saveVerifiedInstaller(temporaryDestination, app.getPath('downloads'), manifest.assetName)
     temporaryDestination = null
+    // Cleanup is optional; do not prevent installation if the marker cannot be saved.
+    try { await rememberInstaller(app.getPath('userData'), app.getPath('downloads'), destination, manifest) } catch { /* leave installer in Downloads */ }
     setTaskbarProgress(-1)
     safeProgress(onProgress, { phase: 'verified', percent: 100, message: 'Verified installer saved. Launching update…' })
     if (!launchInstaller(destination, onProgress, (error) => {
@@ -504,5 +509,6 @@ async function installPending({ onProgress = () => {}, onError = () => {} } = {}
 
 module.exports = {
   checkForUpdates, checkOnStartup, installPending, pendingState, clearPending,
+  cleanupInstalledUpdate: () => app.isPackaged && process.platform === 'win32' ? cleanupInstaller(app.getPath('userData'), app.getPath('downloads'), app.getVersion()) : Promise.resolve(false),
   tokenState, setOverrideToken, apiAssetUrl
 }
