@@ -44,12 +44,13 @@ chrome.webRequest.onAuthRequired.addListener((details, callback) => {
   if (!details.isProxy) return callback({});
   callback({authCredentials:{username:'test-user',password:'test-pass'}});
 }, {urls:['<all_urls>']}, ['asyncBlocking']);
-setTimeout(() => chrome.proxy.settings.set({value:{mode:'fixed_servers',rules:{singleProxy:{scheme:'http',host:'127.0.0.1',port:${port}}}}}, () => chrome.proxy.settings.get({}, result => chrome.storage.local.set({ready: result || {error: chrome.runtime.lastError && chrome.runtime.lastError.message}}))), 1500);`)
+chrome.storage.local.set({ready:true});`)
   fs.writeFileSync(path.join(dir, 'test.html'), '<title>test extension</title>')
   const ext = await ses.extensions.loadExtension(dir)
   const win = new BrowserWindow({ show: false, webPreferences: { session: ses, contextIsolation: true, sandbox: true } })
   await win.loadURL('chrome-extension://' + ext.id + '/test.html')
   const setup = await waitFor('worker setup', () => win.webContents.executeJavaScript(`new Promise(resolve => chrome.storage.local.get('ready', r => resolve(r && r.ready)))`))
+  await ses.setProxy({mode: 'fixed_servers', proxyRules: 'http://127.0.0.1:' + port})
   const resolved = await ses.resolveProxy('http://proxy-auth-test.invalid/')
   const page = new BrowserWindow({ show: false, webPreferences: { session: ses, sandbox: true } })
   try {
