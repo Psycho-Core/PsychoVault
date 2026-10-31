@@ -8,43 +8,17 @@ way Brave uses Chromium and Vivaldi uses Chromium.
 
 Dark navy, cyan accents, everything in a rail down the left. Fast enough to forget about.
 
-![PsychoVault](docs/screenshot-split.png)
-
-| | |
-| --- | --- |
-| ![New tab](docs/screenshot-newtab.png) | ![Command palette](docs/screenshot-palette.png) |
-| ![Private window](docs/screenshot-private.png) | ![Settings, top half](docs/screenshot-settings-top.png) |
-| ![Pinned tab and restored session](docs/screenshot-pinned-tabs.png) | ![Downloads](docs/screenshot-downloads.png) |
-| ![Hardening controls](docs/screenshot-gx-hardening.png) | ![Password vault in settings](docs/screenshot-passwords.png) |
-| ![GX Control panel with hot tabs](docs/screenshot-gx-control.png) | ![Enhance and personality settings](docs/screenshot-gx-enhance.png) |
-| ![Workspace chips with their close buttons](docs/screenshot-workspaces.png) | ![Your data, read off the disk](docs/screenshot-your-data.png) |
-| ![Spelling settings](docs/screenshot-spelling.png) | ![The services rail with each site's own icon](docs/screenshot-rail-icons.png) |
-| ![Earlier Extensions screenshot: Proton VPN is marked unsupported; the old desktop-app button has since been replaced with a Chrome-extension link](docs/screenshot-extensions.png) | ![Typo underlined, with the menu open](docs/screenshot-spell-menu.png) |
-| ![A tab held mid-drag: the tab is ghosted and a caret marks where it will land](docs/screenshot-tab-drag.png) | ![The downloads panel mid-transfer: folder line with a Change button, a live 28% row, done rows, the rail badge and the start message](docs/screenshot-downloads-live.png) |
-| ![The download folder and notification controls in Settings](docs/screenshot-settings-downloads.png) | ![Downloads](docs/screenshot-downloads.png) |
-
-Every one of those is a capture of the running app, not a mock-up. The workspace chips
-sit at the right end of the tab row. The first image in the last row is the Performance panel
-open over four real pages - per-process memory and CPU next to a Sleep button for each tab,
-the services rail down the left, and a tab pinned in a container at the head of the strip.
-The three new ones are the round's work: a typo underlined in a real page with the right-click
-menu offering the fix, the rail painted with each site's own favicon, and the two new settings
-sections. The fifth row is the extension manager: Proton VPN's own Chrome extension installed from its
-`.crx`, and the panel saying in plain words which API it needs that this engine does not have. That
-screenshot predates the current Settings link: it now opens Proton's official Chrome-extension page
-in a new PsychoVault tab, not the desktop-app page, and explains that the missing API prevents the
-extension from tunnelling traffic here. The round's other pictures show a tab held mid-drag and the
-downloads panel live. Nothing here is a mock-up, and each working feature is followed by its
-assertion in `VERIFICATION.md`.
+Screenshots of the running app are in `docs/` - the new tab page, the command palette, a
+private window, Settings, the Performance panel, the extension manager, a tab held mid-drag,
+the downloads panel mid-transfer. None of them are mock-ups, and each working feature is
+followed by its assertion in `VERIFICATION.md`.
 
 Settings now has nineteen focused sections grouped into ten categories: General, Privacy & security,
 Downloads, Extensions, Performance, Appearance, Spelling, Passwords, Accessibility & language, and
 About. The category navigation keeps the long list out of your way and remembers where you left off.
-The screenshots above show the former layout; the running page is navigable by category. Every control
-still writes to disk.
+Every control still writes to disk.
 
-The pinned-tab screenshot predates the sizing fix: it shows the old favicon-only pill.
-Pinned tabs now keep the same width as regular tabs, while retaining the pin marker, omitting
+Pinned tabs keep the same width as regular tabs, while retaining the pin marker, omitting
 the close button, and restoring their pinned state after a restart. The two normal tabs beside
 it were restored in the same way.
 
@@ -68,7 +42,7 @@ it were restored in the same way.
 | Blocking | 262-domain bundled list, checked on every request, counted **per page** on the shield, resets on navigation |
 | Private windows | Separate in-memory session, violet chrome, `Ctrl+Shift+P`, nothing written to disk |
 | Split view | Two pages side by side in one window, `Ctrl+\` |
-| Command palette | `Ctrl+K`, 31 commands, fuzzy filter, falls through to a web search |
+| Command palette | `Ctrl+K`, 42 commands, fuzzy filter, falls through to a web search |
 | Workspaces | Chips in the tab row: click to switch, double-click to rename, **`x` on the chip to close it** (or right-click the chip for the menu, or middle-click), `+` for a new one, `Ctrl+1..9`; each keeps its own tab set across restarts, and the last workspace clears its tabs instead of vanishing |
 | Errors | Main-process exceptions are written to `errors.log` in the profile and the app keeps running, instead of Electron's modal error dialog |
 | Passwords | Local vault: scrypt + AES-256-GCM under a master password (or the OS keychain where one exists), save-from-the-field-menu, fill-from-the-field-menu, auto-lock, no sync |
@@ -76,7 +50,7 @@ it were restored in the same way.
 | Find in page | `Ctrl+F`, live match count |
 | Zoom | Per tab, `Ctrl+plus`, `Ctrl+minus`, `Ctrl+0` |
 | Page translation | Choose one of 20 target languages in Settings, then choose **Translate current page** from the top-right Menu button or command palette. PsychoVault asks before sending the current page URL to Google Translate; it opens a translated copy in a new tab and leaves the original alone. Google may fetch the page, and some sites may not translate correctly. |
-| Automatic updates | On Windows x64, checks GitHub Releases at startup. It asks before downloading and shows Save As for the installer, verifies an Ed25519-signed update manifest and the installer SHA-256 against a public key bundled with PsychoVault, then opens the verified installer. **A private repository needs a read-only token** (the `PsychoVault_Updater` Actions secret at build time, or paste one in Settings - About): GitHub answers 404 to an anonymous release lookup, so without one the check cannot work. The token gates *access*; the signature gates *trust* - one never substitutes for the other. **Settings - About - Check now** runs the same check on demand and reports the reason it failed. A verified update is offered in a **banner across the top of the browser** - Install, Later, or ✕ to dismiss that version for good - rather than a dialog box over your page. Nothing downloads until Install is pressed. |
+| Automatic updates | On Windows x64, checks GitHub Releases at startup. It asks before downloading and shows Save As for the installer, verifies an Ed25519-signed update manifest and the installer SHA-256 against a public key bundled with PsychoVault, then opens the verified installer. The repository is public, so release checks do not need a token; a read-only one is only needed if you point the updater at a private fork (the `PsychoVault_Updater` Actions secret at build time, or paste one in Settings - About). GitHub answers 404 to an anonymous release lookup on a private repository, so a private one needs the token. The token gates *access*; the signature gates *trust* - one never substitutes for the other. **Settings - About - Check now** runs the same check on demand and reports the reason it failed. A verified update is offered in a **banner across the top of the browser** - Install, Later, or ✕ to dismiss that version for good - rather than a dialog box over your page. Nothing downloads until Install is pressed. |
 | Accessibility | High-contrast browser controls, less animation in PsychoVault and pages that honor reduced-motion CSS, visible keyboard focus, arrow/Home/End tab navigation with screen-reader tab names, and an option to keep tab-close buttons visible. Find these in **Settings → Accessibility & language**. |
 | Downloads | A Save As dialog is mandatory for every file, opened in your chosen starting folder with the suggested name - choose the exact destination, and cancel to stop the download. Live percentage in the rail badge, a message when a file starts (naming the folder) and when it finishes, a system notification if the window is behind something, and a panel that states where files go with a **Change** button |
 | Settings | Nineteen sections in ten navigable categories: General, Privacy & security, Downloads, Extensions, Performance, Appearance, Spelling, Passwords, Accessibility & language, and About. Includes search engine, blocking, cookies, tracking signals, autoplay, history, governor, Save As downloads, delete-on-exit, profile cleanup, vault, extensions, browser appearance, translation language, and accessibility controls |
@@ -312,7 +286,7 @@ tools/
   generate-update-keypair.mjs creates an Ed25519 key pair (private key outside Git)
   update-manifest.test.cjs tests manifest signature, integrity, version, and platform checks
 installer.nsi        NSIS script, per-user install
-docs/                screenshots used above
+docs/                screenshots of the running app
 VERIFICATION.md      test log
 ```
 
@@ -450,25 +424,20 @@ save is opt-in from the right-click menu on the field, never a nag bar.
 ## A real page: wowhead.com
 
 I ran the actual build against Wowhead's homepage (no staging, no mock page). The
-site is ad-heavy, so it is a decent stress test:
+site is ad-heavy, so it is a decent stress test.
 
-![PsychoVault on wowhead.com](docs/screenshot-wowhead.png)
-
-The shield counter in the address bar is **per page** — that load cancelled 151
+The shield counter in the address bar is **per page** - that load cancelled 151
 tracker and ad requests on its own. It resets when you navigate somewhere new, so
 the number you see is the number for the page you are looking at, not a session total.
 
 Wowhead does not take kindly to that. A few seconds later it put up its
-anti-adblock wall, with the option to pay $0.75 a month:
-
-![Wowhead ad wall](docs/screenshot-wowhead-adwall.png)
-
-That is the site's own script, not the browser refusing to render. Two things worth
-saying plainly: the wall appears seconds after load, so a clean screenshot of the
-homepage is a matter of timing; and the request was never blocked from loading the
-page itself — news, feeds, video and database all render, and the only casualty is
-the ad slots. If a site insists, flip Shields off for it from the settings page and
-it behaves like an ordinary browser again.
+anti-adblock wall, with the option to pay $0.75 a month. That is the site's own
+script, not the browser refusing to render. Two things worth saying plainly: the
+wall appears seconds after load, so seeing the homepage clean is a matter of
+timing; and the page itself was never blocked from loading - news, feeds, video and
+database all render, and the only casualty is the ad slots. If a site insists, flip
+Shields off for it from the settings page and it behaves like an ordinary browser
+again.
 
 ## Proton VPN, and how it got here
 

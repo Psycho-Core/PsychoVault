@@ -1,0 +1,6 @@
+Public repository tidy
+
+- Removed the pictures from the README. The screenshots used as verification evidence remain in docs.
+- Updated the build and update instructions for a public repository. Publishing still needs write access and signed updates still need the signing key.
+- The release token check no longer warns that the repository should be private.
+- Public GitHub Actions builds no longer embed a release read token.
