@@ -1,7 +1,7 @@
 {
   "name": "psychovault",
   "productName": "PsychoVault",
-  "version": "1.0.30",
+  "version": "1.0.31",
   "description": "A private browser application built on Chromium via Electron",
   "main": "main.js",
   "author": "Psycho-Core",

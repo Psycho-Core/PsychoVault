@@ -2658,3 +2658,13 @@ rule with the account bypass and checks both ordinary and bypass resolutions wit
 network request or using credentials.
 
 Local checks: `node --test tools/*.test.cjs` - 149 pass; `node tools/audit.mjs` - no defects.
+
+## Background worker sender - 1.0.31
+
+Electron documents `IpcMainServiceWorkerInvokeEvent.serviceWorker`, not `event.sender`.
+The extension shim was looking for `event.sender.scope`, so real background worker calls
+could be rejected as not coming from an extension. It now reads the actual worker's scope,
+and the existing claimed-ID comparison still prevents impersonating another extension.
+`tools/shim-sender.test.cjs` checks worker and frame identity without trusting the payload.
+The Windows Actions worker test exercises a real MV3 worker; it does not use a real VPN
+server, account credentials, or establish that a user's traffic is protected.

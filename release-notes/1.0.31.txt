@@ -1,0 +1,8 @@
+Proton VPN background worker
+
+- Fix the extension service worker identity check. Electron supplies the worker as
+  event.serviceWorker, not event.sender, so background proxy requests were rejected.
+- The earlier 1.0.30 test also fixed the Proton account sign-in tab and made update
+  installers go directly to Downloads without a Save As prompt.
+- This does not prove that a real Proton server connects or protects traffic. Check your
+  public IP before relying on the VPN.

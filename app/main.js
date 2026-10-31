@@ -652,7 +652,9 @@ function shimSenderId(event) {
     if (u.startsWith('chrome-extension://')) return u.slice('chrome-extension://'.length).split('/')[0]
   } catch (e) { /* not a webContents */ }
   try {
-    const u = String(event.sender.scope || '')
+    // IpcMainServiceWorkerInvokeEvent exposes serviceWorker, not sender. Never use the
+    // claimed ID from the payload: the scope belongs to the actual invoking worker.
+    const u = String((event.serviceWorker && event.serviceWorker.scope) || '')
     if (u.startsWith('chrome-extension://')) return u.slice('chrome-extension://'.length).split('/')[0]
   } catch (e) { /* not a service worker */ }
   return ''
