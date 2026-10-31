@@ -91,9 +91,9 @@ jobs:
           node-version: 24
       - name: Install Electron
         run: npm install --prefix app --no-audit --no-fund
-      - name: Exercise proxy from an MV3 background worker
-        shell: cmd
-        run: app\node_modules\.bin\electron.cmd tools\worker-electron-smoke.cjs
       - name: Test proxy authentication through a local proxy
         shell: cmd
         run: app\node_modules\.bin\electron.cmd tools\proxy-auth-electron-smoke.cjs
+      - name: Exercise proxy from an MV3 background worker
+        shell: cmd
+        run: app\node_modules\.bin\electron.cmd tools\worker-electron-smoke.cjs
