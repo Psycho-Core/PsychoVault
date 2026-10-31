@@ -64,3 +64,16 @@ test('Proton permission request succeeds only for permissions Chromium already g
     assert.equal(requested, 1, 'unrelated permissions must go to the original API')
   }
 })
+
+test('cached browser polyfill permission facade also checks existing grants', async () => {
+  let nativeRequests = 0
+  const original = { contains: (_d, cb) => cb(true), request: () => { nativeRequests++ } }
+  const cachedBrowser = { permissions: { request: async () => { throw new Error('old native request') } } }
+  const g = { location: { protocol: 'chrome-extension:', hostname: 'jplgfhpmjnbigmhklmmbgecoobifkmpa', pathname: '/popup.html' },
+    close() {}, chrome: { permissions: original, runtime: {} }, browser: cachedBrowser,
+    bridge: { report() {}, onTabsRemoved() {}, log() {} }, Promise, Set }
+  vm.runInNewContext(installer + '\ninstallExtensionAPIs(globalThis, "bridge")', g)
+  const details = { permissions: ['proxy'], origins: ['http://*/*','https://*/*','ftp://*/*','ws://*/*','wss://*/*','https://account.protonvpn.com/*','https://account.proton.me/*'] }
+  assert.equal(await g.browser.permissions.request(details), true)
+  assert.equal(nativeRequests, 0)
+})

@@ -143,6 +143,30 @@ function installExtensionAPIs(g, bridgeName) {
         }
       }, originalPermissions)
       if (!override('permissions', safePermissions)) b.log('could not install the Proton permissions check')
+      // webextension-polyfill may already have cached the old permissions namespace before
+      // this preload's main-world injection ran. Patch its Promise-based facade too.
+      var patchBrowserPermissions = function (attempt) {
+        try {
+          if (!g.browser || !g.browser.permissions || typeof g.browser.permissions.request !== 'function') {
+            if (attempt < 40 && typeof g.setTimeout === 'function') g.setTimeout(function () { patchBrowserPermissions(attempt + 1) }, 25)
+            return
+          }
+          var browserPermissions = g.browser.permissions
+          var browserRequest = browserPermissions.request.bind(browserPermissions)
+          browserPermissions.request = function (details) {
+            var origins = details && Array.isArray(details.origins) ? details.origins.slice().sort().join('\n') : ''
+            var perms = details && details.permissions
+            if (!Array.isArray(perms) || perms.length !== 1 || perms[0] !== 'proxy' || origins !== expectedOrigins) {
+              return browserRequest(details)
+            }
+            return new Promise(function (resolve) { safePermissions.request(details, resolve) })
+          }
+          try { b.log('installed Proton browser permissions check') } catch (e) { /* diagnostics only */ }
+        } catch (e) {
+          try { b.log('could not install Proton browser permissions check: ' + String(e && e.message || e)) } catch (err) { /* diagnostics only */ }
+        }
+      }
+      patchBrowserPermissions(0)
     }
   } catch (e) {
     try { b.log('could not install the Proton permissions check: ' + String(e && e.message || e)) } catch (err) { /* diagnostics only */ }
