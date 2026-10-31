@@ -3481,13 +3481,15 @@
                     await removeLocalStorage(Object.keys(deprecatedDefaults));
                     const syncDeprecated =
                         await readSyncStorage(deprecatedDefaults);
-                    const syncTransformed =
-                        UserStorage.migrateSiteListsV2(syncDeprecated);
-                    await writeSyncStorage({
-                        schemeVersion: 2,
-                        ...syncTransformed
-                    });
-                    await removeSyncStorage(Object.keys(deprecatedDefaults));
+                    if (syncDeprecated) {
+                        const syncTransformed =
+                            UserStorage.migrateSiteListsV2(syncDeprecated);
+                        await writeSyncStorage({
+                            schemeVersion: 2,
+                            ...syncTransformed
+                        });
+                        await removeSyncStorage(Object.keys(deprecatedDefaults));
+                    }
                     local = await readLocalStorage(DEFAULT_SETTINGS);
                 }
             }

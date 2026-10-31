@@ -50,4 +50,4 @@ that PsychoVault loads at runtime, and PsychoVault works without it.
 
 ## Dark Reader 4.9.134 - `dark-reader/`
 
-Built from https://github.com/darkreader/darkreader at commit `d12521bb3120ecb0d796248020c497d53b300496`, with `npm ci --ignore-scripts` and `node tasks/cli.js build --release --chrome-mv3`. MIT licence in `dark-reader/LICENSE`. The extension can read and change website contents. Electron extension APIs differ from Chrome, so functionality must be tested rather than assumed.
+Built from https://github.com/darkreader/darkreader at commit `d12521bb3120ecb0d796248020c497d53b300496`, with `npm ci --ignore-scripts` and `node tasks/cli.js build --release --chrome-mv3`. The built background script has a small local patch: it skips sync-storage migration if Electron reports sync storage unavailable; settings then fall back to local storage. See `dark-reader-electron.patch`. MIT licence in `dark-reader/LICENSE`. The extension can read and change website contents. Electron extension APIs differ from Chrome, so functionality must be tested rather than assumed.
