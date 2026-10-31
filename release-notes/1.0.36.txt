@@ -7,4 +7,9 @@ Work in progress - do not publish yet.
 - Added custom sleeping-tab idle times and hostname exclusions. Sleeping still reloads a tab and can lose unsaved form data.
 - Added an updater VPN troubleshooting note. An installer saved by the new updater is eligible for cleanup after the updated version starts and the installer is verified unchanged. Older untracked installers are kept.
 
-The VPN check, vault backup and import improvements, selective session recovery, download controls, custom search engines and full verification are still outstanding.
+Windows end-to-end verification and release are still outstanding. DNS testing opens a third-party test and must be interpreted by the user.
+- Added a VPN check tab: opt-in public-IP comparison through ipapi.co, an external DNS test link and an opt-in WebRTC candidate check. None proves the absence of leaks.
+- Added encrypted password backups, CSV import with duplicate skipping, atomic vault writes and a rollback journal for interrupted encryption changes. Keep backup passwords safe; they cannot be recovered. CSV exports are plaintext.
+- Added crash snapshots of normal windows only and a choice of tabs to restore. Snapshots can be up to five seconds old.
+- Added active download progress, speed and pause/resume where Electron supports it. An interrupted transfer can only be resumed while its DownloadItem remains available; retry after restart is not supported.
+- Added custom HTTPS search shortcuts, such as gh words.

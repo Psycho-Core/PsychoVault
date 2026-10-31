@@ -74,9 +74,8 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     e.preventDefault()
     const v = document.getElementById('q').value.trim()
     if (!v) return
-    const abs = /^[a-z][a-z0-9+.-]*:\/\//i.test(v)
-    const hosty = !/\s/.test(v) && /^[^\s/]+\.[a-z]{2,}/i.test(v)
-    location.href = abs ? v : hosty ? 'https://' + v : engine[1] + enc(v)
+    if (window.pv && window.pv.nav) window.pv.nav.go(v)
+    else location.href = engine[1] + enc(v)
   }
 
   let tiles = [

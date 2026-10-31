@@ -9,7 +9,7 @@ const { contextBridge, ipcRenderer } = require('electron')
 const isInternal = (() => {
   try {
     const href = String(window.location.href || '')
-    return href.startsWith('file://') && /\/ui\/(settings|newtab)\.html(\?|#|$)/.test(href)
+    return href.startsWith('file://') && /\/ui\/(settings|newtab|vpncheck|recovery)\.html(\?|#|$)/.test(href)
   } catch {
     return false
   }
@@ -45,6 +45,8 @@ if (isInternal) {
     app: {
       info: () => invoke('app:info')
     },
+    recovery: { list: () => invoke('recovery:list'), restore: selections => invoke('recovery:restore', selections) },
+    vpncheck: { open: () => invoke('vpncheck:open'), ip: () => invoke('vpncheck:ip') },
     proxy: {
       selftest: () => invoke('proxy:selftest'),
       status: () => invoke('proxy:status')
@@ -70,6 +72,7 @@ if (isInternal) {
     },
     vault: {
       status: () => invoke('vault:status'),
+      transfer: (action, password) => invoke('vault:transfer', action, password),
       list: () => invoke('vault:list'),
       add: (entry) => invoke('vault:add', entry),
       remove: (id) => invoke('vault:delete', id),

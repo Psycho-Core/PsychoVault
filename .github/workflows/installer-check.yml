@@ -80,6 +80,8 @@ jobs:
           npm install --prefix app --no-audit --no-fund
       - name: Open Proton popup and attempt sign-in
         run: xvfb-run -a app/node_modules/.bin/electron --no-sandbox tools/proton-electron-smoke.cjs
+      - name: Exercise recovery and encrypted vault transfers
+        run: xvfb-run -a app/node_modules/.bin/electron --no-sandbox tools/features-electron-smoke.cjs
 
   worker-windows:
     name: Windows extension worker proxy test

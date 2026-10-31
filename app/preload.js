@@ -60,6 +60,7 @@ contextBridge.exposeInMainWorld('pv', {
   },
   downloads: {
     list: () => invoke('downloads:list'),
+    control: (o) => invoke('downloads:control', o),
     clear: () => invoke('downloads:clear'),
     open: (p) => invoke('downloads:open', p),
     reveal: (p) => invoke('downloads:reveal', p),

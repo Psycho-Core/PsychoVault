@@ -71,11 +71,11 @@ echo "  $(stat -c %s "$OUT") bytes -> $OUT"
 echo "[4/4] verifying what actually went inside"
 V=/var/tmp/vfy-$$; mkdir -p "$V"
 7z x -y -bso0 -bse0 "$OUT" 'resources/app/*' README.txt LICENSE.txt VERIFICATION.txt -o"$V" > /dev/null 2>&1
-for f in resources/app/main.js resources/app/download-save.js resources/app/translation.js resources/app/site-permissions.js resources/app/blocking-rules.js resources/app/update-cleanup.js \
+for f in resources/app/main.js resources/app/download-save.js resources/app/translation.js resources/app/site-permissions.js resources/app/custom-search.js resources/app/vault-transfer.js resources/app/vault-migration.js resources/app/session-recovery.js resources/app/blocking-rules.js resources/app/update-cleanup.js \
          resources/app/update-manifest.js resources/app/update-download.js resources/app/update-public-key.pem resources/app/auto-updater.js \
          resources/app/spell-page.js resources/app/spell-words.txt resources/app/preload.js \
          resources/app/page-preload.js resources/app/ui/renderer.js resources/app/ui/style.css \
-         resources/app/ui/settings.html \
+         resources/app/ui/settings.html resources/app/ui/vpncheck.html resources/app/ui/recovery.html \
          resources/app/ext-shim.js resources/app/ext-proxy.js \
          resources/app/builtin/README.md resources/app/builtin/proton-vpn/LICENSE \
          resources/app/builtin/proton-vpn/manifest.json resources/app/builtin/proton-vpn/js/service.js \

@@ -166,6 +166,9 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
         <option value="wikipedia">Wikipedia</option>
       </select>
     </div>
+    <div class="hint">Custom search shortcuts - one per line: shortcut | name | HTTPS URL with %s for the search words. Example: gh | GitHub | https://github.com/search?q=%s. Type <code>gh search words</code> in the address bar or new tab.</div>
+    <textarea id="customSearchEngines" rows="4" placeholder="gh | GitHub | https://github.com/search?q=%s"></textarea>
+    <button class="mini" id="customSearchSave">Save shortcuts</button><div class="hint" id="customSearchMsg" aria-live="polite"></div>
   </section>
   <section>
     <h2>Startup</h2>
@@ -381,6 +384,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
       <div class="proton-title">Proton VPN</div>
       <p><b>Installed by default.</b> PsychoVault ships a build of Proton's own browser extension, compiled from Proton's GPL-3.0 source at <code>github.com/ProtonVPN/proton-vpn-browser-extension</code>. It appears in the list below like any other extension - open its window to sign in and connect.</p>
       <p>Sign in with your own Proton account. Use the VPN button on the sidebar to connect or disconnect; right-click it to open Proton. A connection indicator alone does not prove there are no DNS or WebRTC leaks.</p>
+      <button class="mini" id="vpnCheckOpen" type="button">Open VPN checks</button>
       <button class="mini" id="protonVpnRestore" type="button">Restore / reinstall Proton VPN</button>
       <button class="mini" id="protonVpnStatus" type="button">Check install</button>
       <button class="mini" id="proxySelfTest" type="button">Test proxy support</button>
@@ -673,6 +677,11 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
       </div>
     </div>
 
+    <div class="note"><b>Import and encrypted backups</b> - unlock the vault first. CSV exports contain plaintext passwords: keep the file private and delete it securely when you are finished. Imports and restores merge entries and skip matching site and username; they never replace existing entries. Keep the backup password safe - it cannot be recovered.</div>
+    <div class="tile-row"><input type="password" id="vbackupPassword" autocomplete="new-password" placeholder="Backup password - at least 12 characters" aria-label="Backup password"></div>
+    <div class="btnrow"><button class="mini" id="vBackup">Save encrypted backup</button><button class="mini" id="vRestore">Restore encrypted backup</button><button class="mini" id="vImport">Import CSV export</button></div>
+    <div class="hint" id="vTransferMsg" aria-live="polite"></div>
+    <div class="hint">Vault filling is manual, HTTPS-only and limited to the same host (with www treated as equivalent). Cross-origin frames are not filled.</div>
     <div class="tiles-edit" id="vlist"></div>
 
     <div class="hint">Add an entry by hand - or right-click a password field on a real site and choose
@@ -903,6 +912,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     if (window.pv.gx) window.pv.gx.switches().then((r) => {
       s('restartNote').style.display = r.restartNeeded ? 'block' : 'none'
     }).catch(() => {})
+    s('customSearchEngines').value = (Array.isArray(st.customSearchEngines) ? st.customSearchEngines : []).map(x => [x.shortcut, x.name, x.url].join(' | ')).join('\n')
     s('sleepTabsMin').value = String(st.sleepTabsMin || 0)
     s('sleepExclude').value = String(st.sleepExclude || '')
     s('blockAllowSites').value = String(st.blockAllowSites || '')
@@ -923,6 +933,18 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     for (const id of ['search', 'cpuLimit', 'theme', 'accent', 'clearOnExit', 'sleepTabsMin', 'translateTarget']) {
       const el = s(id)
       if (el) el.onchange = () => save({ [id]: id === 'sleepTabsMin' ? Number(el.value) : el.value })
+    }
+    s('customSearchSave').onclick = async () => {
+      const lines = s('customSearchEngines').value.split('\n').map(x => x.trim()).filter(Boolean)
+      const engines = []; const seen = new Set()
+      for (const line of lines) {
+        const parts = line.split('|').map(x => x.trim())
+        let valid = parts.length === 3 && /^[a-z][a-z0-9_-]{0,19}$/i.test(parts[0]) && parts[1].length > 0 && parts[1].length <= 80 && parts[2].length <= 2048 && parts[2].includes('%s')
+        try { const a = new URL(parts[2].replaceAll('%s', 'sample')); const b = new URL(parts[2].replaceAll('%s', 'different')); valid = valid && a.protocol === 'https:' && !a.username && !a.password && a.origin === b.origin } catch { valid = false }
+        if (!valid || seen.has(parts[0].toLowerCase())) { s('customSearchMsg').textContent = 'Invalid or duplicate shortcut: ' + line; return }
+        seen.add(parts[0].toLowerCase()); engines.push({ shortcut: parts[0], name: parts[1], url: parts[2] })
+      }
+      await save({ customSearchEngines: engines }); s('customSearchMsg').textContent = 'Search shortcuts saved.'
     }
     s('permLoad').onclick = loadPermissionSite
     s('permSave').onclick = async () => {
@@ -953,6 +975,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
       const picked = await window.pv.downloads.pickdir()
       if (picked) { s('downloadDir').value = picked; save({ downloadDir: picked }) }
     }
+    s('vpnCheckOpen').onclick = () => window.pv.vpncheck.open()
     const paintBuiltinStatus = async () => {
       let st = null
       try { st = await window.pv.extensions.status() } catch (e) {
@@ -1171,6 +1194,17 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     s('contSave').onclick = () => { const l = containersValue().filter(x => x.name); save({ containers: l }).then(() => flag(l.length + ' containers saved - a tab picks one up from its right-click menu')) }
     s('dataRefresh').onclick = refreshData
     if (hasVault) {
+      const transfer = async action => {
+        const pw = s('vbackupPassword').value
+        if (action === 'backup' && (pw.length < 12 || !confirm('Keep this backup password safe. If you lose it, this backup cannot be recovered. Continue?'))) return
+        if (action === 'csv' && !confirm('CSV exports contain plaintext passwords. Import without overwriting existing entries?')) return
+        const r = await window.pv.vault.transfer(action, pw); s('vbackupPassword').value = ''
+        s('vTransferMsg').textContent = r.ok ? (action === 'backup' ? 'Encrypted backup saved (' + r.count + ' entries).' : 'Imported ' + r.count + ' entries; skipped ' + r.skipped + '.') : (r.reason || 'Transfer failed.')
+        refreshVault()
+      }
+      s('vBackup').onclick = () => transfer('backup')
+      s('vRestore').onclick = () => transfer('restore')
+      s('vImport').onclick = () => transfer('csv')
       s('vaultLockMin').onchange = () => save({ vaultLockMin: Number(s('vaultLockMin').value) })
       s('eGen').onclick = async () => {
         const pw = await window.pv.vault.generate({ mode: 'words', words: 4 })
