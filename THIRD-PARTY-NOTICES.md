@@ -1,6 +1,6 @@
 # Third-party notices
 
-PsychoVault's own code (`app/`) is MIT licensed. It runs on top of the following.
+PsychoVault's own code is MIT licensed. Bundled third-party code in `app/` has its own licences, as described below.
 
 ## Electron 45.1.0
 MIT licensed. Bundles Chromium and Node.js. https://github.com/electron/electron/blob/main/LICENSE
