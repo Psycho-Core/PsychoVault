@@ -257,6 +257,16 @@ function renderNav() {
     adblock.setAttribute('aria-label', label)
     adblock.setAttribute('aria-pressed', String(enabled))
     adblock.classList.toggle('on', enabled)
+    adblock.classList.toggle('status-on', enabled)
+    adblock.classList.toggle('status-off', !enabled)
+  }
+  const proton = $('#btn-proton')
+  if (proton) {
+    const configured = !!state.protonProxyConfigured
+    proton.classList.toggle('status-on', configured)
+    proton.classList.toggle('status-off', !configured)
+    proton.title = configured ? 'Proton proxy configured - connection not verified' : 'Proton VPN - proxy not configured'
+    proton.setAttribute('aria-label', proton.title)
   }
   const sp = $('#btn-split')
   if (sp) {
@@ -271,7 +281,11 @@ const ACCENTS = {
   purple: ['#a78bfa', '#8b5cf6'],
   green: ['#3ddc97', '#22c55e'],
   orange: ['#ffb020', '#f97316'],
-  pink: ['#f472b6', '#ec4899']
+  pink: ['#f472b6', '#ec4899'],
+  gold: ['#facc15', '#eab308'],
+  teal: ['#2dd4bf', '#0d9488'],
+  indigo: ['#818cf8', '#6366f1'],
+  rose: ['#fb7185', '#e11d48']
 }
 let lastAccent = null
 

@@ -72,6 +72,7 @@ const DEFAULT_SETTINGS = {
   restore: true,
   remember: true,               // off = history is never recorded
   // --- extras, every one of them user-controllable ---
+  darkWebsites: false,            // optional cosmetic darkening for light websites
   accent: 'cyan',                 // "mods": accent colour of the whole UI
   hideSidebar: false,             // collapse the GX rail
   highContrast: false,            // higher contrast for browser chrome and Settings
@@ -779,6 +780,8 @@ async function onShimCall(event, payload, channel) {
       if (!applied.length || leaks.length) {
         // Never report extension control when any browsing partition rejected the setting.
         extProxyValues.delete(real)
+        if (extProxyOwner === real) extProxyOwner = ''
+        for (const w of mainWindows) w.sendState()
         const why = leaks[0] ? (leaks[0].reason || leaks[0].error || 'unknown') : 'no session accepted the proxy configuration'
         logMainError(new Error('proxy not applied: ' + why))
         return { ok: false, error: why, leaks }
@@ -2238,6 +2241,21 @@ class TabWindow {
         .replace('__IMAGES__', JSON.stringify(!!settings.enhanceImages))
       wc.executeJavaScript(css).catch(() => { /* page refused; enhancement is cosmetic */ })
     }
+    // A reversible cosmetic filter only for pages with a light computed background.
+    // It is deliberately optional and is never applied to internal or extension pages.
+    const darkScript = `(() => {
+      const id = '__pv_dark_websites'; let old = document.getElementById(id); if (old) old.remove();
+      if (!${JSON.stringify(!!settings.darkWebsites)}) return;
+      const colour = el => el && getComputedStyle(el).backgroundColor;
+      let bg = colour(document.body); if (!bg || bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent') bg = colour(document.documentElement);
+      const parts = String(bg || '').match(/[0-9.]+/g);
+      const light = !parts || parts.length < 3 || (Number(parts[0]) * .2126 + Number(parts[1]) * .7152 + Number(parts[2]) * .0722) > 160;
+      if (!light) return;
+      const style = document.createElement('style'); style.id = id;
+      style.textContent = 'html { filter: invert(1) hue-rotate(180deg) !important; background: white !important; } img, video, canvas, svg, iframe { filter: invert(1) hue-rotate(180deg) !important; }';
+      (document.head || document.documentElement).appendChild(style);
+    })()`
+    wc.executeJavaScript(darkScript).catch(() => {})
     const accessibilityCss = TabWindow.ACCESSIBILITY_CSS.replace('__REDUCE__', JSON.stringify(!!settings.reduceMotion))
     wc.executeJavaScript(accessibilityCss).catch(() => { /* the page may have navigated away */ })
   }
@@ -2710,6 +2728,12 @@ class TabWindow {
       url: a ? a.url : '',
       title: a ? a.title : '',
       settings,
+      protonProxyConfigured: (() => {
+        const value = extProxyValues.get('jplgfhpmjnbigmhklmmbgecoobifkmpa')
+        const proxy = value && value.mode === 'fixed_servers' && value.rules && value.rules.singleProxy
+        const host = String(proxy && proxy.host || '').toLowerCase()
+        return extProxyOwner === 'jplgfhpmjnbigmhklmmbgecoobifkmpa' && !!host && !['localhost', '127.0.0.1', '::1'].includes(host)
+      })(),
       splitId: this.splitId,
       blockedTotal: globalBlocked,
       workspaces: wsPayload(),
@@ -3353,7 +3377,7 @@ ipcMain.handle('settings:set', (e, patch) => {
   loadBlocklist()
   applyCpuLimit()
   for (const ses of liveSessions) applySessionPolicy(ses)
-  if ('enhanceVideo' in patch || 'enhanceImages' in patch || 'reduceMotion' in patch) {
+  if ('enhanceVideo' in patch || 'enhanceImages' in patch || 'reduceMotion' in patch || 'darkWebsites' in patch) {
     for (const w of mainWindows) for (const t of w.tabs.values()) w.applyEnhancements(t)
   }
   if ('vaultLockMin' in patch || 'vaultEnabled' in patch) vaultArmLock()
