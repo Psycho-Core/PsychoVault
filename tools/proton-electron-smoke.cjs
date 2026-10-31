@@ -38,8 +38,8 @@ async function run() {
   const popup = await waitFor('Proton popup', () => webContents.getAllWebContents().find(w => w.getURL().startsWith('chrome-extension://jplgfhpmjnbigmhklmmbgecoobifkmpa/popup.html')))
   await waitFor('visible sign-in button', () => popup.executeJavaScript(`(() => { const b = document.querySelector('.sign-in-button'); return !!b && b.offsetWidth > 0 && b.textContent.trim().length > 0 })()`), 45000)
   const layout = await waitFor('centered Proton popup', () => popup.executeJavaScript(`(() => {
-    const r = document.querySelector('.main-area').getBoundingClientRect();
-    return Math.abs((r.left + r.right) / 2 - innerWidth / 2) < 3 && r.width <= 520 && innerWidth >= 520
+    const el = document.querySelector('.main-area'); const r = el.getBoundingClientRect(); if (getComputedStyle(el).borderRadius !== '16px') return false;
+    return Math.abs((r.left + r.right) / 2 - innerWidth / 2) < 3 && r.width <= 760 && innerWidth >= 760
   })()`))
   if (!layout) throw new Error('Proton popup is not centered')
   await waitFor('Proxy Switch diagnostic explanation', () => settings.executeJavaScript(`(() => { const el = document.querySelector('#proxySwitchDetails'); return el && !el.hidden && /not Proton VPN/.test(el.textContent) })()`))

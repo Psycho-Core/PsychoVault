@@ -55,3 +55,25 @@ function createSaveDialogQueue(dialog) {
 }
 
 module.exports = { createSaveDialogQueue }
+
+// Reserve a unique destination before Chromium starts writing. Exclusive creation
+// prevents simultaneous downloads from selecting the same name or replacing an
+// existing file (including a symlink). A failed transfer may leave an empty file.
+function reserveDownloadPath(directory, suggested) {
+  const fs = require('node:fs')
+  const path = require('node:path')
+  let name = String(suggested || '').replace(/[\x00-\x1f<>:"/\\|?*]/g, '_').replace(/[. ]+$/, '').slice(0, 180)
+  if (!name || name === '.' || name === '..') name = 'download'
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name)) name = '_' + name
+  const ext = path.extname(name), stem = name.slice(0, name.length - ext.length)
+  for (let n = 0; n < 10000; n++) {
+    const file = path.join(directory, n ? `${stem} (${n})${ext}` : name)
+    try {
+      const fd = fs.openSync(file, 'wx', 0o600)
+      fs.closeSync(fd)
+      return file
+    } catch (error) { if (error.code !== 'EEXIST') throw error }
+  }
+  throw new Error('Could not find an unused download filename.')
+}
+module.exports.reserveDownloadPath = reserveDownloadPath

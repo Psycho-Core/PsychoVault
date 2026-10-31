@@ -53,7 +53,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     .settings-main { width:100%; }
     .row { flex-wrap:wrap; align-items:flex-start; }
     .row > div:first-child { flex:1 1 100%; }
-    .row select, .row input[type=text] { min-width:0; max-width:100%; width:100%; }
+    .row select, .row input[type=text], .row input[type=number], .row input[type=password] { min-width:0; max-width:100%; width:100%; }
     .row > label.switch { margin-left:auto; }
     section { padding:15px; }
   }
@@ -63,11 +63,11 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
   .row:last-child { border-bottom:0; }
   .lbl { font-size:13.5px; }
   .hint { color:var(--dim); font-size:12px; }
-  select, input[type=text] {
+  select, input[type=text], input[type=password], input[type=number] {
     background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:8px;
     padding:7px 10px; font-size:13px; outline:none; min-width:180px;
   }
-  select:focus, input[type=text]:focus { border-color:var(--accent); }
+  select:focus, input[type=text]:focus, input[type=password]:focus, input[type=number]:focus { border-color:var(--accent); }
   .cat { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 4px 10px; margin: 8px 0 2px; }
   .cat-item { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--fg); cursor: pointer; }
   .cat-item input { width: auto; margin: 0; }
@@ -82,7 +82,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
   textarea { width:100%; background:var(--bg); border:1px solid var(--line2); color:var(--fg);
     border-radius:8px; padding:8px 10px; font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
   textarea:focus { border-color:var(--accent); outline:none; }
-  select:focus-visible, input[type=text]:focus-visible, textarea:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
+  select:focus-visible, input[type=text]:focus-visible, input[type=password]:focus-visible, input[type=number]:focus-visible, textarea:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
   .cdot { width:12px; height:12px; border-radius:50%; display:inline-block; flex:0 0 auto; }
   #restartNote { border-left:3px solid var(--accent); }
   .switch { position:relative; width:44px; height:24px; flex:0 0 44px; }
@@ -354,16 +354,20 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
       <div class="settings-category" data-category-panel="downloads" data-title="Downloads" data-description="Choose a destination for every file before it downloads." hidden>
   <section>
     <h2>Downloads</h2>
-    <div class="hint">Ordinary downloads open a Save As dialog so you can choose their exact name and destination. Browser updates go to Downloads automatically. Cancelling the dialog cancels the download. The folder below is the starting location.</div>
+    <div class="hint">Choose whether each download asks where to save. When asking is off, files go to the folder below with a unique name; existing files are not replaced. The Save As dialog is provided by your operating system. Browser updates use Downloads separately.</div>
     <div class="row">
       <div>
         <div class="lbl">Download folder</div>
-        <div class="hint">Starting folder for the save dialog. Empty means your system Downloads folder.</div>
+        <div class="hint">Used for automatic downloads and as the starting folder for Save As. Empty means your system Downloads folder.</div>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         <input type="text" id="downloadDir" placeholder="(system Downloads folder)" style="width:270px">
         <button class="mini" id="downloadDirPick">Browse</button>
       </div>
+    </div>
+    <div class="row">
+      <div><div class="lbl">Ask where to save each download</div><div class="hint">On: choose a name and location each time. Off: save automatically to the download folder.</div></div>
+      <label class="switch"><input type="checkbox" id="askSaveLocation"><span class="slider"></span></label>
     </div>
     <div class="row">
       <div>
@@ -433,7 +437,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     <div class="row">
       <div>
         <div class="lbl">Sleep tabs after</div>
-        <div class="hint">Background tabs are dropped from memory and reload when clicked. Pinned tabs never sleep.</div>
+        <div class="hint">Minutes before idle tabs sleep; 0 means never. Pinned tabs never sleep. Battery saver can sleep tabs sooner.</div>
       </div>
       <input type="number" id="sleepTabsMin" min="0" max="1440" step="1" aria-label="Minutes before tabs sleep; zero means never">
 
@@ -669,8 +673,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     </div>
 
     <div id="vmaster" style="display:none">
-      <div class="note">This system gave no usable keychain, so the vault will not store anything until
-      you set a master password. It is deliberate: PsychoVault never writes a plaintext password file.</div>
+      <div class="note" id="vmasterHint"></div>
       <div class="tile-row">
         <input type="password" autocomplete="new-password" id="vnew" placeholder="master password, 8 characters or more">
         <button class="mini" id="vset">Set master password</button>
@@ -840,7 +843,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
   let settings = {}
   // every switch on this page, and how its default reads when the key is absent
   const TOGGLES = {
-    blockAds: true, blockUseBundled: true, restore: true, remember: true, sendDNT: true,
+    blockAds: true, blockUseBundled: true, restore: true, remember: true, sendDNT: true, askSaveLocation: true,
     blockThirdPartyCookies: false, blockAutoplay: false, hideSidebar: false,
     batterySaver: false, batteryAuto: false, vaultEnabled: true,
     enhanceVideo: false, enhanceImages: false, darkWebsites: false, uiSounds: false, mediaKeys: true,
@@ -1472,6 +1475,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     bits.push(st.count + (st.count === 1 ? ' entry' : ' entries'))
     s('vstat').textContent = bits.join(' - ')
     s('vmaster').style.display = st.method === 'master' ? 'none' : 'block'
+    s('vmasterHint').textContent = st.method === 'keychain' ? 'The vault is currently encrypted by your operating system. You can optionally set a master password.' : 'No usable OS keychain is available. Set a master password before saving entries; the vault will not write passwords unencrypted.'
     s('vunlock').style.display = (st.locked && st.method === 'master') ? 'block' : 'none'
     s('vforget').style.display = st.method === 'master' ? '' : 'none'
     const r = await window.pv.vault.list()

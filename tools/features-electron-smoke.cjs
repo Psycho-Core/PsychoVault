@@ -4,11 +4,13 @@ const { app, webContents, dialog } = require('electron')
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path'), http = require('node:http')
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pv-features-'))
 app.setPath('userData', dir)
+fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ settingsVersion: 3, askSaveLocation: false }))
 fs.writeFileSync(path.join(dir, 'running.marker'), 'running')
 fs.writeFileSync(path.join(dir, 'crash-recovery.json'), JSON.stringify([{ tabs: [{ url: 'https://example.com/', title: 'Example', pinned: false, muted: false }] }]))
 const backup = path.join(dir, 'backup.pvbackup'), csv = path.join(dir, 'passwords.csv')
 fs.writeFileSync(csv, 'url,username,password\nhttps://example.com,alice,fromcsv\n')
-dialog.showSaveDialog = async (_w, options) => ({ canceled: false, filePath: options.title === 'Save file' ? path.join(dir, 'download.bin') : backup })
+let saveDialogs = 0
+dialog.showSaveDialog = async (_w, options) => { if (options.title === 'Save file') saveDialogs++; return { canceled: false, filePath: options.title === 'Save file' ? path.join(dir, 'download.bin') : backup } }
 dialog.showOpenDialog = async (_w, options) => ({ canceled: false, filePaths: [options.filters[0].extensions[0] === 'csv' ? csv : backup] })
 require('../app/main.js')
 const sleep = n => new Promise(resolve => setTimeout(resolve, n))
@@ -22,6 +24,8 @@ async function run() {
   const chrome = await wait('chrome', () => webContents.getAllWebContents().find(w => w.getURL().includes('/ui/index.html')))
   await chrome.executeJavaScript("document.getElementById('btn-settings').click()")
   const settings = await wait('settings', () => webContents.getAllWebContents().find(w => w.getURL().includes('/ui/settings.html')))
+  const uiCheck = await settings.executeJavaScript(`(async () => { const st = await window.pv.settings.get(); return { ask: st.askSaveLocation, password: getComputedStyle(document.querySelector('#vbackupPassword')).backgroundColor, text: getComputedStyle(document.querySelector('#downloadDir')).backgroundColor, number: getComputedStyle(document.querySelector('#sleepTabsMin')).backgroundColor } })()`)
+  if (uiCheck.ask !== true || uiCheck.password !== uiCheck.text || uiCheck.number !== uiCheck.text) throw Error('Settings migration or field styling: ' + JSON.stringify(uiCheck))
   const result = await settings.executeJavaScript(`(async () => {
     const v = window.pv.vault
     const master = await v.setMaster('test master password')
@@ -54,7 +58,14 @@ async function run() {
     if (!resumed.ok) throw Error('Resume failed: ' + JSON.stringify(resumed))
     await wait('download complete', () => chrome.executeJavaScript(`window.pv.downloads.list().then(xs => xs.find(x => x.id === ${JSON.stringify(entry.id)} && x.state === 'completed'))`))
     if (fs.statSync(path.join(dir, 'download.bin')).size !== 1024 * 1024) throw Error('download size mismatch')
+    if (saveDialogs !== 1) throw Error('Save As did not appear exactly once')
+    await settings.executeJavaScript(`window.pv.settings.set({ askSaveLocation: false, downloadDir: ${JSON.stringify(dir)} })`)
+    settings.downloadURL('http://127.0.0.1:' + server.address().port + '/download')
+    settings.downloadURL('http://127.0.0.1:' + server.address().port + '/download')
+    await wait('two automatic downloads', () => chrome.executeJavaScript("window.pv.downloads.list().then(xs => xs.filter(x => x.state === 'completed').length >= 3)"))
+    if (saveDialogs !== 1) throw Error('Automatic downloads unexpectedly opened Save As')
+    for (const name of ['download.bin', 'download (1).bin', 'download (2).bin']) if (fs.statSync(path.join(dir, name)).size !== 1024 * 1024) throw Error('Automatic download missing or overwritten: ' + name)
   } finally { server.close() }
-  console.log('PASS: crash recovery, encrypted vault transfers, VPN check page and local download pause/resume')
+  console.log('PASS: crash recovery, encrypted vault transfers, VPN check page and local download pause/resume and automatic collision-safe downloads')
 }
 run().then(() => app.exit(0)).catch(e => { console.error('::error::' + e.stack); app.exit(1) })
