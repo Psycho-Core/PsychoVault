@@ -9,7 +9,7 @@ There are three levels. Pick the one you want — you can always do more later.
 |---|---|---|---|
 | **A. Just run it** | The real browser, straight from the source folder | 3 min | Node.js |
 | **B. Portable exe** | `build\payload\PsychoVault.exe` — a rebranded, double-clickable browser | 5 min | Node.js |
-| **C. Full installer** | `PsychoVault-Setup-1.0.32.exe` — shortcuts, uninstall entry | 8 min | Node.js + NSIS |
+| **C. Full installer** | `PsychoVault-Setup-1.0.33.exe` — shortcuts, uninstall entry | 8 min | Node.js + NSIS |
 
 The script does levels A→C automatically. If NSIS is missing it simply stops after level B and
 tells you.
@@ -95,7 +95,7 @@ Electron. What it is doing:
    the unused 10 MB `app\tools\wireproxy.exe`
 6. checks the payload before packaging anything: every file the browser needs is present and
    non-empty, and the old `default_app.asar` is gone. If that check fails the build stops there
-7. if NSIS is installed, builds `PsychoVault-Setup-1.0.32.exe` in the repo root
+7. if NSIS is installed, builds `PsychoVault-Setup-1.0.33.exe` in the repo root
 8. writes `Release-Notes-<version>.txt` next to the script
 9. asks whether to publish the build as a GitHub release, then uploads the exe, its SHA-256 and
    the notes if you say yes
@@ -104,8 +104,8 @@ When it finishes you get:
 
 ```
 build\payload\PsychoVault.exe            <- just run this
-PsychoVault-Setup-1.0.32.exe             <- only if NSIS was installed
-Release-Notes-1.0.32.txt                 <- what changed, and the SHA-256 of both
+PsychoVault-Setup-1.0.33.exe             <- only if NSIS was installed
+Release-Notes-1.0.33.txt                 <- what changed, and the SHA-256 of both
 ```
 
 The release notes list the version, the Electron runtime, the SHA-256 of the portable exe and of

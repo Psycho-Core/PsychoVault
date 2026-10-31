@@ -2693,3 +2693,12 @@ it needs a real test instead of being assumed to work. `tools/ubol-electron-smok
 checks a synthetic static blocking rule in Windows Electron; it is not the real extension
 or a full compatibility test. The sidebar button currently controls PsychoVault's existing
 domain blocker only. uBlock Origin Lite is not bundled or verified.
+
+## Local vault safety checks
+
+`tools/vault-recovery.test.cjs` checks valid and damaged synthetic master-password vaults,
+keychain decode failure, unexpected file contents, locked master-password operations and
+masked inputs. It does not test a real Windows keychain, crash-safe key migration, imports,
+autofill security or provide an independent audit. A damaged vault stays locked instead
+of being treated as empty when unlocked. Keep backups of the existing encrypted vault and
+metadata; these changes do not repair corrupted data.

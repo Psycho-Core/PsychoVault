@@ -614,7 +614,7 @@
     <div id="vunlock" style="display:none">
       <div class="note">The vault is locked - the decrypted copy was wiped from memory. Open it for this session:</div>
       <div class="tile-row">
-        <input type="text" id="vpw" placeholder="master password">
+        <input type="password" autocomplete="current-password" id="vpw" placeholder="master password">
         <button class="mini" id="vgo">Unlock vault</button>
         <button class="mini" id="vforget">Stop using a master password</button>
       </div>
@@ -624,7 +624,7 @@
       <div class="note">This system gave no usable keychain, so the vault will not store anything until
       you set a master password. It is deliberate: PsychoVault never writes a plaintext password file.</div>
       <div class="tile-row">
-        <input type="text" id="vnew" placeholder="master password, 8 characters or more">
+        <input type="password" autocomplete="new-password" id="vnew" placeholder="master password, 8 characters or more">
         <button class="mini" id="vset">Set master password</button>
       </div>
     </div>
@@ -636,7 +636,7 @@
     <div class="tile-row">
       <input type="text" id="eSite" placeholder="site, e.g. github.com">
       <input type="text" id="eUser" placeholder="username or email">
-      <input type="text" id="ePass" placeholder="password">
+      <input type="password" autocomplete="new-password" id="ePass" placeholder="password">
       <button class="mini" id="eGen">Generate</button>
       <button class="mini" id="eSave">Save</button>
     </div>

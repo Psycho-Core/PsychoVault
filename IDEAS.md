@@ -64,8 +64,8 @@ Add/edit/delete search engines in Settings, select a default, and add keyword sh
 ### Performance ("Performance" rail button)
 
 **11. Tab hibernation** — *M*
-Hot tabs are already tracked. Add an adjustable idle time in Settings, plus an off switch and
-per-site exclusions. Sleep inactive tabs and restore them on click; do not discard unsaved forms,
+Settings already has idle-time choices and an off switch. Improve the feature with custom idle
+times and per-site exclusions. Sleep inactive tabs and restore them on click; do not discard unsaved forms,
 audio, downloads or private data without a clear policy and tests.
 
 **12. Live performance HUD** — *S*
@@ -115,18 +115,20 @@ Local-only crash log with "copy details" — no upload. Turns "it crashed" into 
 
 ## Part 2 — extension ideas
 
-These are the Chromium extensions that actually work under Electron 45 (MV3, no `chrome.proxy`
-beyond the shim that already exists, no `.crx` auto-install from the Web Store). Bundling means
-shipping the built/unpacked extension in `app/builtin/<name>/` and pre-enabling it, exactly the way
-Proton VPN is shipped now.
+These are extensions I want to investigate, not a list of confirmed working extensions. Electron
+45 does not implement every Chrome extension API. Bundling would mean shipping the built/unpacked
+extension and keeping its licence, but only after testing its important features in PsychoVault.
 
 ### Bundle-worthy, in order
 
 1. **Proton VPN** — already bundled. The open work is making its proxy path actually change the IP.
-2. **uBlock Origin Lite** (MV3) — the built-in blocker is a 262-domain list; uBO Lite brings real
-   filter lists and per-site switches. Big upgrade in blocking quality for one bundled folder.
-3. **Bitwarden** — the local vault covers passwords, but people want their existing ones. Works as
-   an unpacked MV3 extension; would need the popup-in-a-tab path that Proton already uses.
+2. **uBlock Origin Lite** (MV3) — test its rules and popup first. A synthetic static-rule test
+   failed in Electron, so it is not bundled or verified. The sidebar currently controls my own
+   domain blocker, not uBlock.
+3. **My password vault** - improve my existing vault instead of adding another password manager.
+   Add safe local imports from browser and password-manager exports, with a preview and duplicate
+   handling; warn that exports may contain plaintext passwords. Review encryption, recovery,
+   backups and autofill, and get independent security review before comparing it to Bitwarden.
 4. **Dark Reader** — universal dark mode for sites that ignore `prefers-color-scheme`. Fits the
    dark navy look and is the most-requested "nice" feature in any browser.
 5. **SponsorBlock** — skips sponsor segments; small, MV3-clean, and immediately noticeable.

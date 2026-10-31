@@ -1455,11 +1455,14 @@ function vaultLoad() {
   if (!fs.existsSync(f)) return []
   const method = vaultMethod()
   try {
+    let parsed
     if (method === 'master') {
       if (!vaultKey) return null
-      return JSON.parse(vaultOpen(fs.readFileSync(f), vaultKey))
+      parsed = JSON.parse(vaultOpen(fs.readFileSync(f), vaultKey))
+    } else if (method === 'keychain') {
+      parsed = JSON.parse(safeStorage.decryptString(fs.readFileSync(f)))
     }
-    if (method === 'keychain') return JSON.parse(safeStorage.decryptString(fs.readFileSync(f)))
+    return Array.isArray(parsed) ? parsed : null
   } catch { return null }
   return null
 }
@@ -1497,7 +1500,9 @@ function vaultStatus() {
 
 function vaultUnlock(pw) {
   if (vaultMethod() !== 'master') {
-    vaultCache = vaultLoad() || []
+    const loaded = vaultLoad()
+    if (!loaded) return { ok: false, reason: 'could not read the vault; the existing file was left unchanged' }
+    vaultCache = loaded
     vaultLocked = false
     vaultArmLock()
     return { ok: true }
@@ -1511,7 +1516,14 @@ function vaultUnlock(pw) {
     if (check.v !== 1) throw new Error('bad verifier')
   } catch { return { ok: false, reason: 'wrong master password' } }
   vaultKey = key
-  vaultCache = vaultLoad() || []
+  const loaded = vaultLoad()
+  if (!loaded) {
+    vaultKey = null
+    vaultCache = null
+    vaultLocked = true
+    return { ok: false, reason: 'could not read the vault; the existing file was left unchanged' }
+  }
+  vaultCache = loaded
   vaultLocked = false
   vaultArmLock()
   return { ok: true }
@@ -3255,6 +3267,7 @@ ipcMain.handle('vault:copy', (e, o) => {
 })
 ipcMain.handle('vault:generate', (e, opts) => vaultGenerate(opts))
 ipcMain.handle('vault:setMaster', (e, pw) => {
+  if (vaultLocked && fs.existsSync(path.join(USER, VAULT_FILE))) return { ok: false, reason: 'unlock the existing vault first' }
   const str = String(pw || '')
   if (str.length < 8) return { ok: false, reason: 'use at least 8 characters' }
   const salt = crypto.randomBytes(16)
@@ -3274,7 +3287,9 @@ ipcMain.handle('vault:setMaster', (e, pw) => {
   } catch (err) { return { ok: false, reason: err.message } }
 })
 ipcMain.handle('vault:forgetMaster', () => {
-  const data = vaultCache || vaultLoad() || []
+  if (vaultLocked || !vaultCache) return { ok: false, reason: 'unlock the vault first' }
+  if (!vaultSafeOk()) return { ok: false, reason: 'no secure system keychain is available' }
+  const data = vaultCache
   try { fs.unlinkSync(path.join(USER, VAULT_KEY)) } catch (e) { /* nothing set */ }
   vaultKey = null
   vaultCache = data
