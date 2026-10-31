@@ -208,6 +208,39 @@ function installExtensionAPIs(g, bridgeName) {
     onRequest: undefined
   }, chromeObj.proxy))
 
+  // Electron's proxy login event needs forwarding to the owning MV3 worker. Keep
+  // the rest of webRequest intact; this only replaces the auth event in workers.
+  if (where === 'worker' && chromeObj.webRequest && b.onProxyAuth) {
+    var authListeners = new Set()
+    var nativeAuth = chromeObj.webRequest.onAuthRequired
+    var authEvent = {
+      addListener: function (fn, filter, options) {
+        if (typeof fn === 'function') authListeners.add(fn)
+        try { if (nativeAuth) nativeAuth.addListener(fn, filter, options) } catch (e) { /* fallback bridge remains */ }
+      },
+      removeListener: function (fn) {
+        authListeners.delete(fn)
+        try { if (nativeAuth) nativeAuth.removeListener(fn) } catch (e) {}
+      },
+      hasListener: function (fn) { return authListeners.has(fn) },
+      hasListeners: function () { return authListeners.size > 0 }
+    }
+    try {
+      Object.defineProperty(chromeObj.webRequest, 'onAuthRequired', { configurable: true, value: authEvent })
+      b.onProxyAuth(function (details, respond) {
+        var answered = false
+        var reply = function (r) { if (!answered) { answered = true; respond(r || {}) } }
+        var listener = authListeners.values().next().value
+        if (!listener) return reply({ cancel: true })
+        try {
+          var result = listener(details, reply)
+          if (result && typeof result.then === 'function') result.then(reply, function () { reply({ cancel: true }) })
+          else if (result && typeof result === 'object') reply(result)
+        } catch (e) { reply({ cancel: true }) }
+      })
+    } catch (e) { try { b.log('proxy auth event installation failed') } catch (ignored) {} }
+  }
+
   // chrome.privacy
   var privacyChange = makeEvent()
   var privacyInstalled = override('privacy', merge({
@@ -337,6 +370,14 @@ if (url.startsWith('chrome-extension://')) {
     proxyClear: (scope) => ipcRenderer.invoke('extshim:proxy:clear', { id, scope: scope || 'regular' }),
     webrtcGet: () => ipcRenderer.invoke('extshim:webrtc:get', { id }),
     webrtcSet: (value) => ipcRenderer.invoke('extshim:webrtc:set', { id, value }),
+    onProxyAuth: (fn) => {
+      if (!isServiceWorker) return
+      ipcRenderer.on('extshim:auth:challenge', (_e, data) => {
+        try {
+          fn(data.details, (response) => { ipcRenderer.invoke('extshim:auth:reply', { id, requestId: data.requestId, response }).catch(() => {}) })
+        } catch (e) { ipcRenderer.invoke('extshim:auth:reply', { id, requestId: data.requestId, response: { cancel: true } }).catch(() => {}) }
+      })
+    },
     // chrome.tabs, backed by the real tab list in main.
     tabsQuery: (query) => ipcRenderer.invoke('extshim:tabs:query', { id, query: query || {} }),
     tabsCreate: (details) => ipcRenderer.invoke('extshim:tabs:create', { id, details: details || {} }),

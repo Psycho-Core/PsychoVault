@@ -35,6 +35,7 @@ fs.mkdirSync(USER, { recursive: true })
 
 const { toElectronProxy, getResult, toWebRTCPolicy, proxyOutcome } = require('./ext-proxy')
 const { findWindowFor } = require('./window-lookup')
+const { matchesProxyChallenge } = require('./ext-proxy-auth')
 
 // An uncaught throw in the main process used to pop Electron's modal "A JavaScript
 // error occurred in the main process" box - on a browser that is a wall between you and
@@ -530,12 +531,43 @@ const EXT_SHIM_CHANNELS = [
   'extshim:proxy:get', 'extshim:proxy:set', 'extshim:proxy:clear',
   'extshim:webrtc:get', 'extshim:webrtc:set', 'extshim:report',
   'extshim:tabs:query', 'extshim:tabs:create', 'extshim:tabs:update', 'extshim:tabs:remove',
-  'extshim:log'
+  'extshim:log', 'extshim:auth:reply'
 ]
 const shimSessions = new WeakSet()
 const shimWorkers = new WeakSet()
 // What each extension last asked for, so a chrome.proxy settings read can answer honestly.
 const extProxyValues = new Map()
+let extProxyOwner = ''
+const proxyAuthPending = new Map()
+
+// Route proxy challenges only to the extension that set the exact proxy endpoint.
+// Credentials are never logged, persisted, or exposed to a page.
+app.on('login', (event, _wc, details, authInfo, callback) => {
+  const owner = extProxyOwner
+  if (!owner || !matchesProxyChallenge(extProxyValues.get(owner), authInfo)) return
+  event.preventDefault()
+  const requestId = crypto.randomUUID()
+  let done = false
+  const finish = (credentials) => {
+    if (done) return
+    done = true
+    clearTimeout(timer)
+    proxyAuthPending.delete(requestId)
+    if (credentials && typeof credentials.username === 'string' && typeof credentials.password === 'string') callback(credentials.username, credentials.password)
+    else callback()
+  }
+  const timer = setTimeout(() => finish(null), 20000)
+  proxyAuthPending.set(requestId, { owner, finish })
+  const ses = session.fromPartition('persist:psychovault')
+  const scope = 'chrome-extension://' + owner + '/'
+  Promise.resolve(ses.serviceWorkers.startWorkerForScope(scope)).then(worker => {
+    if (!done && worker) worker.send('extshim:auth:challenge', { requestId, details: {
+      isProxy: true, challenger: { host: authInfo.host, port: authInfo.port },
+      scheme: authInfo.scheme || '', realm: authInfo.realm || '', url: details.url || '', requestId
+    } })
+    else if (!worker) finish(null)
+  }).catch(() => finish(null))
+})
 // What happened the last time an extension asked for a proxy, so Settings can answer
 // "is this browser actually proxied right now" instead of guessing.
 let extProxyState = { value: null, at: 0, applied: 0, leaks: [] }
@@ -710,6 +742,15 @@ async function onShimCall(event, payload, channel) {
     if (claimed && claimed !== real) return { ok: false, error: 'sender does not match the extension id in the request' }
 
     channel = String(channel || '')
+    if (channel === 'extshim:auth:reply') {
+      // Only the actual owning service worker may answer this one pending challenge.
+      const pending = proxyAuthPending.get(String(payload && payload.requestId || ''))
+      if (!event.serviceWorker || !pending || pending.owner !== real || extProxyOwner !== real) return { ok: false }
+      const response = payload && payload.response
+      pending.finish(response && response.authCredentials)
+      return { ok: true }
+    }
+
     if (channel === 'extshim:proxy:get') {
       return { ok: true, ...getResult(extProxyValues.has(real), extProxyValues.get(real)) }
     }
@@ -743,6 +784,8 @@ async function onShimCall(event, payload, channel) {
         return { ok: false, error: why, leaks }
       }
       extProxyValues.set(real, (payload && payload.value) || { mode: 'system' })
+      extProxyOwner = real
+      for (const w of mainWindows) w.sendState()
       return { ok: true, applied: applied.length, leaks }
     }
 
@@ -751,6 +794,8 @@ async function onShimCall(event, payload, channel) {
         try { await ses.setProxy({ mode: 'system' }) } catch (e) { logMainError(e) }
       }
       extProxyValues.delete(real)
+      if (extProxyOwner === real) extProxyOwner = ''
+      for (const w of mainWindows) w.sendState()
       extProxyState = { value: null, at: Date.now(), applied: 0, leaks: [] }
       return { ok: true }
     }
