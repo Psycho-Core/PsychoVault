@@ -37,7 +37,7 @@ fs.mkdirSync(USER, { recursive: true })
 const { toElectronProxy, getResult, toWebRTCPolicy, proxyOutcome } = require('./ext-proxy')
 const { findWindowFor } = require('./window-lookup')
 const { sitePermission } = require('./site-permissions')
-const { shortcutSearch } = require('./custom-search')
+const { shortcutSearch, defaultSearch } = require('./custom-search')
 const { encryptBackup, decryptBackup, parseCSV, prepareEntries } = require('./vault-transfer')
 const { captureWindows, selectWindows } = require('./session-recovery')
 const { recover: recoverVaultMigration, migrate: migrateVault } = require('./vault-migration')
@@ -1809,6 +1809,8 @@ function normalize(input) {
     if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) return s
     return 'https://' + s
   }
+  const custom = defaultSearch(s, settings.search, settings.customSearchEngines)
+  if (custom) return custom
   const eng = ENGINES[settings.search] || ENGINES.duckduckgo
   return eng.url + encodeURIComponent(s)
 }
@@ -2477,7 +2479,9 @@ class TabWindow {
   }
 
   searchSelection(text) {
-    const eng = ENGINES[settings.search] || ENGINES.duckduckgo
+    const custom = defaultSearch(s, settings.search, settings.customSearchEngines)
+  if (custom) return custom
+  const eng = ENGINES[settings.search] || ENGINES.duckduckgo
     this.createTab(eng.url + encodeURIComponent(text))
   }
 

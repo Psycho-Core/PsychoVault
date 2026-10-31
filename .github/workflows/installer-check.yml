@@ -97,6 +97,9 @@ jobs:
       - name: Test proxy authentication through a local proxy
         shell: cmd
         run: app\node_modules\.bin\electron.cmd tools\proxy-auth-electron-smoke.cjs
+      - name: Exercise recovery, encrypted vault transfers, and download controls
+        shell: cmd
+        run: app\node_modules\.bin\electron.cmd tools\features-electron-smoke.cjs
       - name: Test HTTPS proxy CONNECT authentication
         shell: cmd
         run: app\node_modules\.bin\electron.cmd tools\proxy-auth-https-electron-smoke.cjs

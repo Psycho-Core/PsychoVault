@@ -17,4 +17,10 @@ function shortcutSearch(input, engines) {
   const engine = engines.find(e => validEngine(e) && e.shortcut.toLowerCase() === match[1].toLowerCase())
   return engine ? engine.url.replaceAll('%s', encodeURIComponent(match[2])) : null
 }
-module.exports = { validEngine, shortcutSearch }
+function defaultSearch(input, key, engines) {
+  if (!String(key || '').startsWith('custom:') || !Array.isArray(engines)) return null
+  const name = String(key).slice(7).toLowerCase()
+  const engine = engines.find(e => validEngine(e) && e.shortcut.toLowerCase() === name)
+  return engine ? engine.url.replaceAll('%s', encodeURIComponent(input)) : null
+}
+module.exports = { validEngine, shortcutSearch, defaultSearch }

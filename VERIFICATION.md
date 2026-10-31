@@ -2728,3 +2728,9 @@ signed-in connect/disconnect through the new sidebar control has not been automa
 Settings opens a new tab; the ad blocker right-click opens Privacy. The existing built-in ad
 blocker remains distinct from uBlock Origin Lite. The uBlock compatibility probe is explicitly
 informational and continues to fail; it does not certify uBlock as supported.
+
+## v1.0.36 work in progress
+
+The Node test suite includes local tests for search-template validation, exact-origin permissions, domain blocking and exceptions, private-window exclusion from recovery snapshots, encrypted backup authentication, CSV quoting and duplicate handling, vault migration rollback, and tracked installer cleanup. These tests do not by themselves demonstrate a live VPN or a Windows update.
+
+A new Electron smoke test uses a throwaway profile, synthetic crash snapshot and local HTTP download. It exercises the recovery page, vault import/backup/restore and download pause/resume without real passwords. See the PR's latest CI run for its result. The IP and DNS services are third-party services; their live results and actual Proton DNS/WebRTC leak protection have not been independently verified here.

@@ -110,6 +110,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
       if (!st) return
       if (Array.isArray(st.speedDial) && st.speedDial.length) tiles = st.speedDial.map(t => [t.title, t.url])
       if (ENGINE[st.search]) engine = ENGINE[st.search]
+      else if (String(st.search || '').startsWith('custom:')) { const e = (st.customSearchEngines || []).find(x => x.shortcut === st.search.slice(7)); if (e) engine = [e.name, e.url] }
       if (!isPriv) {
         const q = document.getElementById('q')
         q.placeholder = 'Search ' + engine[0] + ' or enter an address'

@@ -892,6 +892,8 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     }
     s('homepage').value = st.homepage || 'psychovault://newtab'
     if (s('downloadDir')) s('downloadDir').value = st.downloadDir || ''
+    s('search').querySelectorAll('[data-custom]').forEach(el => el.remove())
+    for (const engine of (Array.isArray(st.customSearchEngines) ? st.customSearchEngines : [])) { const option = document.createElement('option'); option.value = 'custom:' + engine.shortcut; option.textContent = engine.name + ' (' + engine.shortcut + ')'; option.dataset.custom = '1'; s('search').append(option) }
     for (const id of ['search', 'cpuLimit', 'theme', 'accent', 'clearOnExit', 'translateTarget']) { const el = s(id); if (el) el.value = st[id] || el.options[0].value }
     s('netLimit').value = String(st.netLimit || 0)
     s('webRtc').value = st.webRtc || 'publiconly'
