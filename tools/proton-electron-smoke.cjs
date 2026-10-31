@@ -42,8 +42,7 @@ async function run() {
     return Math.abs((r.left + r.right) / 2 - innerWidth / 2) < 3 && r.width <= 520 && innerWidth >= 520
   })()`))
   if (!layout) throw new Error('Proton popup is not centered')
-  const advanced = await settings.executeJavaScript(`({ hidden: document.querySelector('#proxySwitchDetails').hidden, text: document.querySelector('#proxySwitchDetails').textContent })`)
-  if (advanced.hidden || !/not Proton VPN/.test(advanced.text)) throw new Error('Proxy Switch diagnostic explanation missing')
+  await waitFor('Proxy Switch diagnostic explanation', () => settings.executeJavaScript(`(() => { const el = document.querySelector('#proxySwitchDetails'); return el && !el.hidden && /not Proton VPN/.test(el.textContent) })()`))
   console.log('PASS: Proton popup centered and Proxy Switch labeled as an advanced diagnostic.')
   // Simulate Proton's fixed-server rule, including the deliberate account bypass. No
   // credentials are used and no request is sent to the fake proxy.
