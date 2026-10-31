@@ -2713,3 +2713,8 @@ Proxy auth responses are accepted only from the worker owning the matching proxy
 credentials are not intentionally written to logs or files by the bridge.
 The Proton sidebar indicator shows proxy configuration, not verified protection.
 The optional light-site colour filter is cosmetic and can break site appearance.
+
+Windows Actions run 41213945980 passed local HTTP and HTTPS CONNECT proxy authentication
+with a synthetic MV3 extension and fake credentials. The real Proton service was not used.
+The separate worker proxy smoke was intermittent and failed in that run; it is being isolated
+from Proton startup rather than counted as a pass. The uBlock Lite probe also still failed.

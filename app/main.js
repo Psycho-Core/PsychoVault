@@ -35,7 +35,7 @@ fs.mkdirSync(USER, { recursive: true })
 
 const { toElectronProxy, getResult, toWebRTCPolicy, proxyOutcome } = require('./ext-proxy')
 const { findWindowFor } = require('./window-lookup')
-const { matchesProxyChallenge } = require('./ext-proxy-auth')
+const { matchesProxyChallenge, allowsProxyAuth } = require('./ext-proxy-auth')
 
 // An uncaught throw in the main process used to pop Electron's modal "A JavaScript
 // error occurred in the main process" box - on a browser that is a wall between you and
@@ -547,6 +547,9 @@ const proxyAuthPending = new Map()
 app.on('login', (event, _wc, details, authInfo, callback) => {
   const owner = extProxyOwner
   if (!owner || !matchesProxyChallenge(extProxyValues.get(owner), authInfo)) return
+  const ses = session.fromPartition('persist:psychovault')
+  const extension = ses.getAllExtensions().find(item => item.id === owner)
+  if (!extension || !allowsProxyAuth(extension.manifest)) return
   event.preventDefault()
   const requestId = crypto.randomUUID()
   let done = false
@@ -560,7 +563,6 @@ app.on('login', (event, _wc, details, authInfo, callback) => {
   }
   const timer = setTimeout(() => finish(null), 20000)
   proxyAuthPending.set(requestId, { owner, finish })
-  const ses = session.fromPartition('persist:psychovault')
   const scope = 'chrome-extension://' + owner + '/'
   Promise.resolve(ses.serviceWorkers.startWorkerForScope(scope)).then(worker => {
     if (!done && worker) worker.send('extshim:auth:challenge', { requestId, details: {

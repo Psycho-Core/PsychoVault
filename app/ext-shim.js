@@ -215,7 +215,8 @@ function installExtensionAPIs(g, bridgeName) {
     var nativeAuth = chromeObj.webRequest.onAuthRequired
     var authEvent = {
       addListener: function (fn, filter, options) {
-        if (typeof fn === 'function') authListeners.add(fn)
+        // The fallback only forwards broad filters; narrower filters stay with Chromium.
+        if (typeof fn === 'function' && filter && Array.isArray(filter.urls) && filter.urls.includes('<all_urls>')) authListeners.add(fn)
         try { if (nativeAuth) nativeAuth.addListener(fn, filter, options) } catch (e) { /* fallback bridge remains */ }
       },
       removeListener: function (fn) {
