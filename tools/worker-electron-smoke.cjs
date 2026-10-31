@@ -38,6 +38,15 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   return true;
 });`)
   fs.writeFileSync(path.join(dir, 'test.html'), '<!doctype html><title>worker test</title>')
+  ses.serviceWorkers.on('console-message', (_event, info) => {
+    if (info.sourceUrl && info.sourceUrl.includes('worker.js')) console.error('::warning::worker console: ' + info.message)
+  })
+  ses.serviceWorkers.on('running-status-changed', info => {
+    try {
+      const worker = ses.serviceWorkers.getWorkerFromVersionID(info.versionId)
+      if (worker && worker.scope.includes('chrome-extension://')) console.error('::warning::worker status: ' + info.runningStatus + ' ' + worker.scope)
+    } catch {}
+  })
   const ext = await ses.extensions.loadExtension(dir)
   const win = new BrowserWindow({ show: false, webPreferences: { session: ses, contextIsolation: true, sandbox: true } })
   await win.loadURL('chrome-extension://' + ext.id + '/test.html')
