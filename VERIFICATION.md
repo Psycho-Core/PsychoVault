@@ -2673,3 +2673,14 @@ The first Windows worker smoke run failed with `Access to extension API denied`;
 not show the worker shim installing. The worker preload uses an isolated preload realm,
 so the shim now reads the worker URL and installs its bridge in the worker's main world.
 The Windows worker test must pass before treating the simulated bridge as verified.
+
+## Proxy authentication investigation - 1.0.32
+
+A Windows Actions test (`tools/proxy-auth-electron-smoke.cjs`) configured a local HTTP
+proxy, received a 407 Basic challenge, and registered an MV3 `webRequest.onAuthRequired`
+listener with synthetic credentials. Run 41207454572 reached the proxy once but the proxy
+received no authenticated request (`challenges=1`, `accepted=0`); the requested test page
+did not load. This reproduces an authentication failure in the test, but does not prove
+it is the cause of every Proton failure. It is not a real Proton connection or an HTTPS
+proxy test. The Windows proxy test remains failing and Proton is not verified as working.
+The sidebar shortcut has separate passing Node tests; the installer build succeeded.
