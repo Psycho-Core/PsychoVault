@@ -276,6 +276,32 @@ function installExtensionAPIs(g, bridgeName) {
     onUpdated: tabUpdated
   }, chromeObj.tabs))
   try { b.onTabsRemoved(function (tabId) { tabRemoved.__emit(tabId, { windowId: 1, isWindowClosing: false }) }) } catch (e) { /* no bridge */ }
+  // The webextension polyfill can cache Electron's original, incomplete tabs object before
+  // this preload installs chrome.tabs. Replace the cached create method with a Promise-based
+  // bridge as well; Proton uses browser.tabs.create to open its authorization page.
+  if (g.location && g.location.protocol === 'chrome-extension:' &&
+      g.location.hostname === 'jplgfhpmjnbigmhklmmbgecoobifkmpa' &&
+      g.location.pathname === '/popup.html') {
+    var patchBrowserTabs = function (attempt) {
+      try {
+        if (!g.browser || !g.browser.tabs) {
+          if (attempt < 40 && typeof g.setTimeout === 'function') g.setTimeout(function () { patchBrowserTabs(attempt + 1) }, 25)
+          return
+        }
+        Object.defineProperty(g.browser.tabs, 'create', { configurable: true, enumerable: true, value: function (details) {
+          return Promise.resolve(b.tabsCreate(details)).then(function (r) {
+            if (!r || !r.ok || !r.tab) throw new Error((r && r.error) || 'the tab could not be opened')
+            tabCreated.__emit(r.tab)
+            return r.tab
+          })
+        } })
+        try { b.log('installed Proton browser tabs.create') } catch (e) { /* diagnostics only */ }
+      } catch (e) {
+        try { b.log('could not install Proton browser tabs.create: ' + String(e && e.message || e)) } catch (err) { /* diagnostics only */ }
+      }
+    }
+    patchBrowserTabs(0)
+  }
 
   // Proton calls chrome.action.openPopup() once a sign-in tab closes. There is no toolbar here,
   // so nothing can pop up - answer cleanly instead of throwing.

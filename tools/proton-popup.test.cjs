@@ -77,3 +77,14 @@ test('cached browser polyfill permission facade also checks existing grants', as
   assert.equal(await g.browser.permissions.request(details), true)
   assert.equal(nativeRequests, 0)
 })
+
+test('cached browser polyfill tabs.create opens a real bridged tab and rejects failures', async () => {
+  const browser = { tabs: {} }
+  const bridge = { report() {}, onTabsRemoved() {}, log() {}, tabsCreate: async ({ url }) =>
+    url.startsWith('https:') ? { ok: true, tab: { id: 22, url } } : { ok: false, error: 'blocked' } }
+  const g = { location: { protocol: 'chrome-extension:', hostname: 'jplgfhpmjnbigmhklmmbgecoobifkmpa', pathname: '/popup.html' },
+    close() {}, chrome: {}, browser, bridge, Promise, Set }
+  vm.runInNewContext(installer + '\ninstallExtensionAPIs(globalThis, "bridge")', g)
+  assert.equal((await g.browser.tabs.create({ url: 'https://account.proton.me/authorize' })).id, 22)
+  await assert.rejects(g.browser.tabs.create({ url: 'javascript:alert(1)' }), /blocked/)
+})
