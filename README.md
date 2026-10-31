@@ -8,6 +8,10 @@ way Brave uses Chromium and Vivaldi uses Chromium.
 
 Dark navy, cyan accents, everything in a rail down the left. Fast enough to forget about.
 
+![PsychoVault new tab page](docs/screenshot-newtab.png)
+
+This is an earlier capture of the new tab page - the current interface may look different.
+
 Screenshots of the running app are in `docs/` - the new tab page, the command palette, a
 private window, Settings, the Performance panel, the extension manager, a tab held mid-drag,
 the downloads panel mid-transfer. None of them are mock-ups, and each working feature is
@@ -19,8 +23,7 @@ About. The category navigation keeps the long list out of your way and remembers
 Every control still writes to disk.
 
 Pinned tabs keep the same width as regular tabs, while retaining the pin marker, omitting
-the close button, and restoring their pinned state after a restart. The two normal tabs beside
-it were restored in the same way.
+the close button, and restoring their pinned state after a restart.
 
 ## What it is
 
@@ -481,5 +484,13 @@ a licence problem, not a code problem, and I'm not going to fake it.
 
 ## Licence
 
-MIT for the application code, © 2026 Psycho-Core. Chromium and Electron components keep
-their own licences — see `THIRD-PARTY-NOTICES.md`.
+My application code is licensed under the [MIT licence](LICENSE), copyright 2026 Psycho-Core.
+You can use, change and share it under those terms, including keeping the copyright and permission
+notice with copies or substantial portions of the code.
+
+**No warranty:** PsychoVault is provided as-is, without warranties or guarantees. The full warranty
+and liability terms are in [LICENSE](LICENSE).
+
+Bundled third-party software has its own licences. In particular, the Proton VPN extension is
+GPL-3.0, not MIT. See [third-party notices](THIRD-PARTY-NOTICES.md) and the
+[extension licence](app/builtin/proton-vpn/LICENSE).
