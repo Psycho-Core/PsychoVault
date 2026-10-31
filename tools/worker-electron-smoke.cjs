@@ -18,6 +18,7 @@ async function waitFor(label, fn, timeout = 30000) {
   throw new Error(label + ' timed out')
 }
 async function run() {
+  await app.whenReady()
   const ses = session.fromPartition('persist:psychovault')
   await waitFor('extension preload registration', () => ses.getPreloadScripts().some(p => p.id === 'pv-ext-sw'))
   const dir = path.join(profile, 'test-worker')
