@@ -40,8 +40,9 @@ built-in implementation that Electron can enable, and there is a fallback using 
 `page-preload.js`.
 
 **6. Session restore** — *M*
-Currently a crash loses your tabs. Write the open-tab list to the profile on a debounce and offer
-"Restore previous session" on next start. Small file, big perceived reliability.
+The browser already saves and restores normal tabs. Improve it with a clear restore choice after
+a crash, reliable recovery of multiple windows and workspaces, and tests that private tabs are
+never restored. Do not claim a crash loses every tab.
 
 **7. Tab search / switcher (Ctrl+Shift+A)** — *S*
 The command palette exists; a dedicated tab switcher that fuzzy-matches titles and URLs across all
@@ -52,18 +53,20 @@ Visible page / full page / selected region, copied to clipboard or saved via the
 dialog. `webContents.capturePage()` plus one UI overlay.
 
 **9. Download manager upgrades** — *M*
-Pause/resume, retry, "open containing folder" (exists), and a real speed/time readout. Downloads
-already funnel through one module, so this is contained work.
+Improve the existing downloads list with reliable pause/resume and retry where supported, a
+clear speed and time remaining display, and open containing folder. Test interrupted downloads
+and make unsupported actions clear instead of promising they always work.
 
 **10. Search engine management** — *S*
-Add/edit/delete search engines and a keyword shortcut system (`gh foo` searches GitHub). The
-omnibox parser is already there; it just needs a settings UI.
+Add/edit/delete search engines in Settings, select a default, and add keyword shortcuts
+(`gh foo` searches GitHub). Validate search URL templates and keep existing choices working.
 
 ### Performance ("Performance" rail button)
 
 **11. Tab hibernation** — *M*
-Hot tabs are already tracked. Add "sleep after N minutes idle", which unloads the renderer and
-restores it on click. The honest, measurable version of what gaming browsers advertise.
+Hot tabs are already tracked. Add an adjustable idle time in Settings, plus an off switch and
+per-site exclusions. Sleep inactive tabs and restore them on click; do not discard unsaved forms,
+audio, downloads or private data without a clear policy and tests.
 
 **12. Live performance HUD** — *S*
 Small overlay: per-tab memory, process count, GPU vs software rendering, and a network graph. Great
@@ -74,6 +77,14 @@ Current panic clears what it clears; let the user choose the exact set (cookies,
 downloads, vault lock) and show a receipt of what was erased.
 
 ### Extension system
+
+**uBlock Origin / uBlock Origin Lite integration** — *L*
+The existing sidebar button controls my built-in domain blocker, not uBlock. Start by checking the
+actual Chromium package and Electron API support: uBlock Origin Lite is the Manifest V3 build;
+the original uBlock Origin is not the same extension. Test ruleset loading, blocking and the
+popup-in-a-tab path with real pages before bundling it or saying it works. Keep its GPL licence
+and third-party notices, and avoid claiming the two blockers are equivalent.
+
 
 **14. A real install flow from a URL** — *M*
 Right now extensions come from a folder or a `.crx`. A "paste a Chrome Web Store link" box that

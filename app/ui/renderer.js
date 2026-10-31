@@ -249,6 +249,15 @@ function renderNav() {
       : pageBlocked + ' blocked on this page - ' + (state.blockedTotal || 0) + ' this session'
     shields.classList.toggle('off', !!(state.settings && state.settings.blockAds === false))
   }
+  const adblock = $('#btn-adblock')
+  if (adblock) {
+    const enabled = !state.settings || state.settings.blockAds !== false
+    const label = enabled ? 'Turn ad and tracker blocking off' : 'Turn ad and tracker blocking on'
+    adblock.title = label
+    adblock.setAttribute('aria-label', label)
+    adblock.setAttribute('aria-pressed', String(enabled))
+    adblock.classList.toggle('on', enabled)
+  }
   const sp = $('#btn-split')
   if (sp) {
     sp.classList.toggle('on', !!state.splitId)
@@ -846,6 +855,17 @@ $('#menu').addEventListener('click', async (e) => {
   else if (cmd === 'settings') window.pv.nav.go('psychovault://settings')
   else if (cmd === 'devtools') toast('Right-click any page and choose Inspect element')
 })
+
+// This controls PsychoVault's built-in domain blocker, not uBlock Origin.
+$('#btn-adblock').onclick = async () => {
+  try {
+    const enabled = !state.settings || state.settings.blockAds !== false
+    await window.pv.settings.set({ blockAds: !enabled })
+    toast(enabled ? 'Ad and tracker blocking is off' : 'Ad and tracker blocking is on')
+  } catch (error) {
+    toast('Could not change ad blocking: ' + (error.message || 'unknown error'))
+  }
+}
 
 $('#btn-proton').onclick = async () => {
   try {

@@ -2684,3 +2684,12 @@ did not load. This reproduces an authentication failure in the test, but does no
 it is the cause of every Proton failure. It is not a real Proton connection or an HTTPS
 proxy test. The Windows proxy test remains failing and Proton is not verified as working.
 The sidebar shortcut has separate passing Node tests; the installer build succeeded.
+
+## uBlock Origin Lite investigation
+
+The upstream Chromium MV3 package uses `declarative_net_request` static rules. Electron's
+extensions documentation does not list declarativeNetRequest among its supported APIs, so
+it needs a real test instead of being assumed to work. `tools/ubol-electron-smoke.cjs`
+checks a synthetic static blocking rule in Windows Electron; it is not the real extension
+or a full compatibility test. The sidebar button currently controls PsychoVault's existing
+domain blocker only. uBlock Origin Lite is not bundled or verified.

@@ -97,3 +97,18 @@ jobs:
       - name: Exercise proxy from an MV3 background worker
         shell: cmd
         run: app\node_modules\.bin\electron.cmd tools\worker-electron-smoke.cjs
+
+  ubol-api:
+    name: uBlock Lite API compatibility probe
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install Electron
+        run: npm install --prefix app --no-audit --no-fund
+      - name: Test an MV3 static blocking rule
+        shell: cmd
+        run: app\node_modules\.bin\electron.cmd tools\ubol-electron-smoke.cjs
