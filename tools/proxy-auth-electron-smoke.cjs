@@ -50,8 +50,13 @@ setTimeout(() => chrome.proxy.settings.set({value:{mode:'fixed_servers',rules:{s
   const win = new BrowserWindow({ show: false, webPreferences: { session: ses, contextIsolation: true, sandbox: true } })
   await win.loadURL('chrome-extension://' + ext.id + '/test.html')
   await waitFor('worker setup', () => win.webContents.executeJavaScript(`new Promise(resolve => chrome.storage.local.get('ready', r => resolve(r && r.ready)))`))
+  const resolved = await ses.resolveProxy('http://proxy-auth-test.invalid/')
   const page = new BrowserWindow({ show: false, webPreferences: { session: ses, sandbox: true } })
-  await Promise.race([page.loadURL('http://proxy-auth-test.invalid/'), sleep(20000).then(() => { throw new Error('proxy page load timed out') })])
+  try {
+    await Promise.race([page.loadURL('http://proxy-auth-test.invalid/'), sleep(20000).then(() => { throw new Error('proxy page load timed out') })])
+  } catch (e) {
+    throw new Error(String(e.message) + `; resolved=${resolved}; challenges=${challenges}; accepted=${accepted}`)
+  }
   const title = page.webContents.getTitle()
   if (!challenges || !accepted || title !== 'proxy auth succeeded') throw new Error(`proxy challenge failed: challenges=${challenges} accepted=${accepted} title=${title}`)
   console.log('PASS: extension supplied synthetic credentials for an actual local proxy challenge; the page loaded through that proxy.')
