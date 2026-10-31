@@ -8,5 +8,6 @@ Proton VPN sign-in
 
 - Proton's popup tries to close itself after 200 ms while it is still requesting permissions.
   PsychoVault opens that popup as a tab, so keep that specific tab alive while sign-in runs.
+- Avoid an Electron permission prompt error only when Chromium confirms Proton already has the requested permissions. No new permissions are granted.
 - This is an attempted fix for the blank popup, not a confirmed VPN connection. The Firefox
   extension linked by the user has not been tested in PsychoVault.

@@ -2638,3 +2638,11 @@ another tab request can finish after `close()`, checks the scope, and checks the
 close-before-permission ordering. This is not a real Electron/Proton login test: the user must
 try the installed build. It does not establish that authentication or VPN traffic works.
 The Mozilla XPI could not be downloaded here, so it was not installed or tested.
+
+A real Electron smoke test on GitHub Actions then reached the Proton sign-in button but
+reported `Could not find an active window` from the permission request. In the same test,
+Chromium's `permissions.contains` returned true for the exact permissions Proton requested.
+The shim now answers only that exact Proton popup request by checking Chromium's existing
+grants; it returns false if they aren't all granted, and does not grant extra permissions.
+Other permission requests go to the original API. Account sign-in and VPN connectivity are
+not proven by this check.

@@ -48,3 +48,19 @@ test('bundled Proton code schedules close before waiting for its permission requ
   const popup = fs.readFileSync(path.join(__dirname, '../app/builtin/proton-vpn/js/popup.js'), 'utf8')
   assert.match(popup, /setTimeout\(\(\)=>\{[^}]*window\.close\(\)\},200\);\(yield browser\.permissions\.request/)
 })
+
+test('Proton permission request succeeds only for permissions Chromium already granted', async () => {
+  for (const granted of [true, false]) {
+    let requested = 0
+    const original = { contains: (_d, cb) => cb(granted), request: () => { requested++ }, getAll() {} }
+    const g = { location: { protocol: 'chrome-extension:', hostname: 'jplgfhpmjnbigmhklmmbgecoobifkmpa', pathname: '/popup.html' },
+      close() {}, chrome: { permissions: original, runtime: {} }, bridge: { report() {}, onTabsRemoved() {}, log() {} }, Promise, Set }
+    vm.runInNewContext(installer + '\ninstallExtensionAPIs(globalThis, "bridge")', g)
+    const details = { permissions: ['proxy'], origins: ['http://*/*','https://*/*','ftp://*/*','ws://*/*','wss://*/*','https://account.protonvpn.com/*','https://account.proton.me/*'] }
+    const result = await new Promise(resolve => g.chrome.permissions.request(details, resolve))
+    assert.equal(result, granted)
+    assert.equal(requested, 0)
+    g.chrome.permissions.request({ permissions: ['tabs'] }, () => {})
+    assert.equal(requested, 1, 'unrelated permissions must go to the original API')
+  }
+})

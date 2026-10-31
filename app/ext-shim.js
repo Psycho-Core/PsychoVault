@@ -112,6 +112,42 @@ function installExtensionAPIs(g, bridgeName) {
     return target
   }
 
+  // Proton's popup asks for the same proxy/origin permissions it already has. In Electron
+  // permissions.request still tries to find a Chrome browser window for a prompt and fails:
+  // "Could not find an active window". For this exact request in Proton's popup only, ask
+  // Chromium whether every permission is already granted. Never grant a new permission: if
+  // contains fails or returns false, return false. Other requests use the original API.
+  try {
+    if (g.location && g.location.protocol === 'chrome-extension:' &&
+        g.location.hostname === 'jplgfhpmjnbigmhklmmbgecoobifkmpa' &&
+        g.location.pathname === '/popup.html' && chromeObj.permissions &&
+        typeof chromeObj.permissions.contains === 'function' &&
+        typeof chromeObj.permissions.request === 'function') {
+      var originalPermissions = chromeObj.permissions
+      var originalRequest = originalPermissions.request.bind(originalPermissions)
+      var expectedOrigins = ['http://*/*', 'https://*/*', 'ftp://*/*', 'ws://*/*', 'wss://*/*',
+        'https://account.protonvpn.com/*', 'https://account.proton.me/*'].sort().join('\n')
+      var safePermissions = merge({
+        request: function (details, cb) {
+          var origins = details && Array.isArray(details.origins) ? details.origins.slice().sort().join('\n') : ''
+          var perms = details && details.permissions
+          if (!Array.isArray(perms) || perms.length !== 1 || perms[0] !== 'proxy' || origins !== expectedOrigins) {
+            return originalRequest(details, cb)
+          }
+          try {
+            return originalPermissions.contains(details, function (granted) {
+              var error = chromeObj.runtime && chromeObj.runtime.lastError
+              safeCall(cb, !error && granted === true)
+            })
+          } catch (e) { safeCall(cb, false) }
+        }
+      }, originalPermissions)
+      if (!override('permissions', safePermissions)) b.log('could not install the Proton permissions check')
+    }
+  } catch (e) {
+    try { b.log('could not install the Proton permissions check: ' + String(e && e.message || e)) } catch (err) { /* diagnostics only */ }
+  }
+
   // chrome.proxy
   var onChange = makeEvent()
   var onProxyError = makeEvent()
