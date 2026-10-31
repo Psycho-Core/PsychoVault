@@ -25,18 +25,17 @@ async function run() {
   fs.mkdirSync(dir, { recursive: true })
   fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({
     manifest_version: 3, name: 'Worker proxy smoke test', version: '1.0.0',
-    permissions: ['proxy'], background: { service_worker: 'worker.js' }
+    permissions: ['proxy', 'storage'], background: { service_worker: 'worker.js' }
   }))
   fs.writeFileSync(path.join(dir, 'worker.js'), `
-chrome.runtime.onMessage.addListener((message, sender, reply) => {
-  if (message !== 'exercise') return false;
+setTimeout(() => {
   try {
     chrome.proxy.settings.set({value:{mode:'fixed_servers',rules:{singleProxy:{scheme:'https',host:'proxy.example.invalid',port:4443},bypassList:['account.proton.me']}}}, () => {
-      chrome.proxy.settings.get({}, result => reply({result, error: chrome.runtime.lastError && chrome.runtime.lastError.message}));
+      const setError = chrome.runtime.lastError && chrome.runtime.lastError.message;
+      chrome.proxy.settings.get({}, result => chrome.storage.local.set({workerResult:{result, error: setError || (chrome.runtime.lastError && chrome.runtime.lastError.message)}}));
     });
-  } catch (e) { reply({error:String(e)}); }
-  return true;
-});`)
+  } catch (e) { chrome.storage.local.set({workerResult:{error:String(e)}}); }
+}, 1500);`)
   fs.writeFileSync(path.join(dir, 'test.html'), '<!doctype html><title>worker test</title>')
   ses.serviceWorkers.on('console-message', (_event, info) => {
     if (info.sourceUrl && info.sourceUrl.includes('worker.js')) console.error('::warning::worker console: ' + info.message)
@@ -50,10 +49,8 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   const ext = await ses.extensions.loadExtension(dir)
   const win = new BrowserWindow({ show: false, webPreferences: { session: ses, contextIsolation: true, sandbox: true } })
   await win.loadURL('chrome-extension://' + ext.id + '/test.html')
-  const response = await Promise.race([
-    win.webContents.executeJavaScript(`new Promise(resolve => chrome.runtime.sendMessage('exercise', r => resolve(r || {error: chrome.runtime.lastError && chrome.runtime.lastError.message})))`),
-    sleep(15000).then(() => { throw new Error('worker proxy response timed out') })
-  ])
+  const response = await waitFor('worker proxy result', () =>
+    win.webContents.executeJavaScript(`new Promise(resolve => chrome.storage.local.get('workerResult', r => resolve(r && r.workerResult)))`), 20000)
   if (!response || response.error || !response.result || response.result.levelOfControl !== 'controlled_by_this_extension') {
     throw new Error('worker proxy result: ' + JSON.stringify(response))
   }
