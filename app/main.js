@@ -5,6 +5,7 @@ const { createSaveDialogQueue } = require('./download-save')
 const { buildTranslationUrl } = require('./translation')
 const {
   checkOnStartup: checkForUpdatesOnStartup,
+  cleanupInstalledUpdate,
   checkForUpdates,
   installPending: installPendingUpdate,
   pendingState: updatePendingState,
@@ -35,6 +36,12 @@ fs.mkdirSync(USER, { recursive: true })
 
 const { toElectronProxy, getResult, toWebRTCPolicy, proxyOutcome } = require('./ext-proxy')
 const { findWindowFor } = require('./window-lookup')
+const { sitePermission } = require('./site-permissions')
+const { shortcutSearch, defaultSearch } = require('./custom-search')
+const { encryptBackup, decryptBackup, parseCSV, prepareEntries } = require('./vault-transfer')
+const { captureWindows, selectWindows } = require('./session-recovery')
+const { recover: recoverVaultMigration, migrate: migrateVault } = require('./vault-migration')
+const { hostname, parseHosts, siteExcluded, isDomainBlocked } = require('./blocking-rules')
 const { matchesProxyChallenge, allowsProxyAuth } = require('./ext-proxy-auth')
 const { inspectProtonPopup, clickProtonPopup } = require('./proton-toggle')
 
@@ -68,6 +75,11 @@ let bookmarks = readJSON('bookmarks.json', [])
 let history = readJSON('history.json', [])
 const DEFAULT_SETTINGS = {
   search: 'duckduckgo',
+  customSearchEngines: [],       // shortcut, name, HTTPS URL with %s placeholder
+  sitePermissions: {},            // exact origins, explicit per-site overrides
+  blockUseBundled: true,         // bundled domain list
+  blockCustomDomains: '',        // one blocked domain per line
+  blockAllowSites: '',           // exact top-level page hostnames
   blockAds: true,
   homepage: 'psychovault://newtab',
   restore: true,
@@ -85,6 +97,7 @@ const DEFAULT_SETTINGS = {
   blockThirdPartyCookies: false,  // cross-site Cookie header stripped
   sendDNT: true,                  // DNT + Global Privacy Control headers
   cpuLimit: 'off',                // governor: off | balanced | low
+  sleepExclude: '',              // newline-separated exact hostnames
   sleepTabsMin: 0,                // 0 = never; minutes idle before a tab is dropped
   clearOnExit: 'nothing',         // nothing | cache | all
   batterySaver: false,            // GX power save: low priority + fast tab sleep
@@ -1089,7 +1102,7 @@ function extAnalyse(dir) {
   for (const p of perms) if (EXT_MISSING[p]) blockers.push(EXT_MISSING[p])
   const notes = []
   const action = manifest.action || manifest.browser_action
-  if (action) notes.push('it has a toolbar button, and this browser has no toolbar - use "Open its window" to reach the popup')
+  if (action) notes.push('Use Open its window to access this extension')
   if (manifest.options_ui || manifest.options_page) notes.push('it has an options page, reachable from here')
   if (manifest.background && manifest.background.service_worker) notes.push('manifest v3 background service worker (works, but fewer lifecycle events than Chrome)')
   if (manifest.background && manifest.background.scripts) notes.push('manifest v2 background page')
@@ -1359,15 +1372,14 @@ ipcMain.handle('proton:toggle', async (event) => {
 // Domain list shipped with the app; loaded once, matched by hostname.
 let blockSet = new Set()
 function loadBlocklist() {
-  if (!settings.blockAds) return
-  const file = path.join(__dirname, 'blocklist.json')
-  try {
-    const list = JSON.parse(fs.readFileSync(file, 'utf8'))
-    blockSet = new Set(list)
-    console.log(`blocklist: ${blockSet.size} domains`)
-  } catch (e) {
-    console.log('blocklist not loaded:', e.message)
+  const next = new Set(parseHosts(settings.blockCustomDomains))
+  if (settings.blockUseBundled !== false) {
+    try {
+      const list = JSON.parse(fs.readFileSync(path.join(__dirname, 'blocklist.json'), 'utf8'))
+      if (Array.isArray(list)) for (const h of list) for (const normalized of parseHosts(h)) next.add(normalized)
+    } catch (e) { console.log('blocklist not loaded:', e.message) }
   }
+  blockSet = next
 }
 
 function safe(fn, fallback) {
@@ -1378,16 +1390,10 @@ function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, '') } catch { return '' }
 }
 
-function isBlocked(url) {
+function isBlocked(url, pageUrl) {
   if (!settings.blockAds || blockSet.size === 0) return false
-  const h = hostOf(url)
-  if (!h) return false
-  if (blockSet.has(h)) return true
-  const parts = h.split('.')
-  for (let i = 1; i < parts.length - 1; i++) {
-    if (blockSet.has(parts.slice(i).join('.'))) return true
-  }
-  return false
+  if (siteExcluded(settings.blockAllowSites, pageUrl)) return false
+  return isDomainBlocked(blockSet, url)
 }
 
 // ---------------------------------------------------------------- GX-style extras
@@ -1487,6 +1493,7 @@ function permDenied(name) {
 // to write, because a plaintext password file is worse than no vault at all.
 const VAULT_FILE = 'vault.bin'
 const VAULT_KEY = 'vault.key.json'
+let vaultMigrationActive = false
 let vaultCache = null
 let vaultKey = null          // derived key, only while unlocked
 let vaultLocked = true
@@ -1533,18 +1540,23 @@ function vaultOpen(buf, key) {
   return Buffer.concat([d.update(body), d.final()]).toString('utf8')
 }
 
+function atomicWrite(file, data) {
+  const temp = file + '.' + crypto.randomBytes(8).toString('hex') + '.tmp'
+  try { fs.writeFileSync(temp, data, { mode: 0o600, flag: 'wx' }); fs.renameSync(temp, file) }
+  finally { try { fs.unlinkSync(temp) } catch { /* already renamed */ } }
+}
 function vaultWrite() {
+  if (!vaultMigrationActive && fs.existsSync(path.join(USER, 'vault-migration.json'))) return { ok: false, reason: 'Vault recovery is required before writing.' }
   const method = vaultMethod()
   const payload = JSON.stringify(vaultCache || [])
   try {
+    let data
     if (method === 'master') {
       if (!vaultKey) return { ok: false, reason: 'vault is locked' }
-      fs.writeFileSync(path.join(USER, VAULT_FILE), vaultSeal(payload, vaultKey))
-    } else if (method === 'keychain') {
-      fs.writeFileSync(path.join(USER, VAULT_FILE), safeStorage.encryptString(payload))
-    } else {
-      return { ok: false, reason: 'no encryption available - the vault will not write to disk unencrypted' }
-    }
+      data = vaultSeal(payload, vaultKey)
+    } else if (method === 'keychain') data = safeStorage.encryptString(payload)
+    else return { ok: false, reason: 'no encryption available - the vault will not write to disk unencrypted' }
+    atomicWrite(path.join(USER, VAULT_FILE), data)
     return { ok: true, method }
   } catch (e) { return { ok: false, reason: e.message } }
 }
@@ -1598,6 +1610,7 @@ function vaultStatus() {
 }
 
 function vaultUnlock(pw) {
+  if (fs.existsSync(path.join(USER, 'vault-migration.json'))) return { ok: false, reason: 'Vault recovery is required; files were left unchanged.' }
   if (vaultMethod() !== 'master') {
     const loaded = vaultLoad()
     if (!loaded) return { ok: false, reason: 'could not read the vault; the existing file was left unchanged' }
@@ -1652,12 +1665,8 @@ function vaultGenerate(opts) {
   return cap.join('-') + '-' + (10 + (buf[n] % 90))
 }
 
-// A saved entry may only be offered on its own host or a subdomain of it - and,
-// the other way round, an entry saved for www.github.com may fill github.com.
-// The previous version compared "last two labels", which meant an entry stored
-// for github.co.uk was offered on any *.co.uk site. That is a cross-site password
-// suggestion, so it is gone: equality of the registrable domain is a necessary
-// condition, a host suffix match is the sufficient one.
+// Fill only the saved hostname (www is treated as equivalent), not arbitrary
+// subdomains or registrable-domain guesses. The menu also requires HTTPS.
 function siteHost(site) {
   try { return new URL(/^https?:/.test(site) ? site : 'https://' + site).hostname.toLowerCase() }
   catch { return '' }
@@ -1669,14 +1678,14 @@ function vaultMatching(host) {
   return vaultCache.filter((e) => {
     const s = siteHost(e.site)
     if (!s || etld1(s) !== etld1(h)) return false
-    return s === h || h.endsWith('.' + s) || s.endsWith('.' + h)
+    return s.replace(/^www\./, '') === h.replace(/^www\./, '')
   })
 }
 
 // Credentials must never be offered to a page whose top-level origin differs from
 // the frame the field lives in (a login iframe on someone else's page).
 function vaultFrameAllowed(tabUrl, frameUrl) {
-  if (!frameUrl || /^about:|^data:|^file:/.test(frameUrl)) return true
+  if (!frameUrl || /^(?:about|data|file):/i.test(frameUrl)) return false
   try { return new URL(frameUrl).origin === new URL(tabUrl).origin }
   catch { return false }
 }
@@ -1705,6 +1714,7 @@ const VAULT_GRAB = `(function () {
 })()`
 
 const VAULT_FILL = `(function (payload) {
+  if (location.origin !== payload.origin || location.protocol !== 'https:') return 'page changed - nothing filled'
   const el = document.activeElement
   const form = (el && (el.form || el.closest('form'))) || document.querySelector('form') || document
   let done = []
@@ -1748,6 +1758,9 @@ function discardIdleTabs() {
     for (const [id, t] of w.tabs) {
       if (id === w.activeId || id === w.splitId || t.pinned || t.discarded) continue
       if (!/^https?:/.test(t.url || '')) continue
+      const host = hostname(t.url)
+      const excluded = String(settings.sleepExclude || '').split(/[\n,]+/).map(x => x.trim().toLowerCase()).filter(Boolean)
+      if (excluded.includes(host) || safe(() => t.view.webContents.isCurrentlyAudible(), false) || t.loading) continue
       if (Date.now() - (t.lastActive || 0) < limit) continue
       // Electron 45 has no webContents.terminate(); unloading the page to
       // about:blank releases the same renderer memory and keeps the pill alive.
@@ -1784,12 +1797,17 @@ function looksLikeURL(s) {
 function normalize(input) {
   const s = (input || '').trim()
   if (!s) return settings.homepage
+  if (s === 'psychovault://vpncheck' || s === 'psychovault://recovery') return s
   if (s === 'psychovault://newtab' || s === 'about:newtab') return 'psychovault://newtab'
   if (s === 'psychovault://settings' || s === 'about:settings') return 'psychovault://settings'
+  const shortcutUrl = shortcutSearch(s, settings.customSearchEngines)
+  if (shortcutUrl) return shortcutUrl
   if (looksLikeURL(s)) {
     if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) return s
     return 'https://' + s
   }
+  const custom = defaultSearch(s, settings.search, settings.customSearchEngines)
+  if (custom) return custom
   const eng = ENGINES[settings.search] || ENGINES.duckduckgo
   return eng.url + encodeURIComponent(s)
 }
@@ -1812,8 +1830,8 @@ class TabWindow {
     this.findActive = false
 
     const wsSet = (!this.private && settings.restore) ? workspaces.list[workspaces.active] : null
-    const saved = (wsSet && wsSet.urls && wsSet.urls.length) ? wsSet
-      : ((!this.private && settings.restore) ? readJSON('session.json', null) : null)
+    const saved = opts.saved || (opts.noRestore ? null : ((wsSet && wsSet.urls && wsSet.urls.length) ? wsSet
+      : ((!this.private && settings.restore) ? readJSON('session.json', null) : null)))
 
     this.win = new BrowserWindow({
       width: 1400,
@@ -1872,7 +1890,7 @@ class TabWindow {
       if (saved && saved.urls && saved.urls.length) {
         for (const [i, u] of saved.urls.entries()) {
           const f = (saved.flags && saved.flags[i]) || {}
-          this.createTab(u, { activate: false, pinned: !!f.pinned })
+          this.createTab(u, { activate: false, pinned: !!f.pinned, container: f.container || null })
           if (f.muted) this.setMuted(this.order[this.order.length - 1], true)
         }
         this.activate(this.order[Math.min(saved.active || 0, this.order.length - 1)])
@@ -1912,17 +1930,22 @@ class TabWindow {
     if (ses._pvBlocked) return
     ses._pvBlocked = true
     ses.webRequest.onBeforeRequest((details, cb) => {
-      if (isBlocked(details.url)) {
+      // Use the top-level tab, not a subframe-controlled initiator, for site exemptions.
+      const tab = wcTabs.get(details.webContentsId)
+      const pageUrl = details.resourceType === 'mainFrame' ? details.url : (tab && tab.url)
+      if (isBlocked(details.url, pageUrl)) {
         noteBlocked(details.webContentsId)
         return cb({ cancel: true })
       }
       cb({})
     })
     ses.setPermissionRequestHandler((wc, permission, cb, details) => {
-      if (permDenied(permission)) return cb(false)
-      cb(true, details && details.requestingUrl ? { securityOrigin: details.requestingUrl } : undefined)
+      const origin = (details && (details.requestingOrigin || details.securityOrigin || details.requestingUrl)) || (wc && wc.getURL())
+      cb(sitePermission(settings, origin, permission, details))
     })
-    ses.setPermissionCheckHandler((wc, permission) => !permDenied(permission))
+    ses.setPermissionCheckHandler((wc, permission, requestingOrigin, details) => {
+      return sitePermission(settings, requestingOrigin || (details && details.securityOrigin) || (wc && wc.getURL()), permission, details)
+    })
   }
 
   createTab(url, opts = {}) {
@@ -1970,9 +1993,23 @@ class TabWindow {
     wcTabs.set(wc.id, tab)
 
     const emit = () => this.sendState()
-    wc.on('dom-ready', () => applySpellToPage(wc))
+    wc.on('dom-ready', () => {
+      applySpellToPage(wc)
+      // Proton's popup is designed for a narrow toolbar popup. When opened in a
+      // full tab, keep its own UI intact but center and widen its content column.
+      // Scope this strictly to Proton's popup tab, not arbitrary extension pages
+      // or the hidden popup used by the sidebar connection toggle.
+      if (/^chrome-extension:\/\/jplgfhpmjnbigmhklmmbgecoobifkmpa\/popup\.html(?:[?#]|$)/.test(wc.getURL())) {
+        wc.insertCSS(`
+          body.main-modal { min-width: 0; min-height: 100vh; background: #16141c; }
+          .main-area { width: min(100%, 520px); margin-inline: auto; min-height: 100vh; }
+          .central-view { min-width: 0; }
+          .page-view { min-width: 0; max-width: none; }
+        `).catch(() => {})
+      }
+    })
     wc.on('did-start-navigation', (_e, url, isInPlace, isMainFrame) => {
-      if (isMainFrame && !isInPlace) wc._pvSpellSeeded = false
+      if (isMainFrame && !isInPlace) { wc._pvSpellSeeded = false; tab.blocked = 0 }
     })
 
     wc.on('page-title-updated', (_e, title) => {
@@ -1995,7 +2032,6 @@ class TabWindow {
       emit()
     })
     wc.on('did-navigate', (_e, u) => {
-      tab.blocked = 0
       // the unload that a sleeping tab performs is ours, not the user's
       if (u === 'about:blank' && tab.discarded) { emit(); return }
       tab.url = u
@@ -2079,6 +2115,10 @@ class TabWindow {
     tab.url = target
     if (target === 'psychovault://newtab') {
       tab.view.webContents.loadFile(path.join(__dirname, 'ui', 'newtab.html'), { query: { private: this.private ? '1' : '0' } })
+    } else if (target === 'psychovault://recovery') {
+      tab.view.webContents.loadFile(path.join(__dirname, 'ui', 'recovery.html'))
+    } else if (target === 'psychovault://vpncheck') {
+      tab.view.webContents.loadFile(path.join(__dirname, 'ui', 'vpncheck.html'))
     } else if (/^psychovault:\/\/settings(?:#[a-z-]+)?$/.test(target)) {
       const section = target.split('#')[1]
       tab.view.webContents.loadFile(path.join(__dirname, 'ui', 'settings.html'), section ? { hash: section } : {})
@@ -2208,7 +2248,8 @@ class TabWindow {
     if (settings.vaultEnabled === false) return []
     const site = /^https?:/.test(tab.url || '') ? hostOf(tab.url) : ''
     if (!site) return []
-    if (params && params.frameURL && !vaultFrameAllowed(tab.url, params.frameURL)) {
+    if (!/^https:/i.test(tab.url || '')) return [{ label: 'Vault filling is disabled on insecure HTTP pages', enabled: false }]
+    if (!params || !vaultFrameAllowed(tab.url, params.frameURL)) {
       return [{ label: 'This field is in a frame from another site - the vault will not touch it', enabled: false }]
     }
     const out = []
@@ -2216,8 +2257,9 @@ class TabWindow {
       out.push({
         label: `Fill ${m.user} @ ${m.site}`,
         click: () => {
+          if (tab.view.webContents.getURL() !== tab.url || !vaultFrameAllowed(tab.url, params.frameURL)) return
           tab.view.webContents
-            .executeJavaScript(`${VAULT_FILL}(${JSON.stringify({ user: m.user, pass: m.pass })})`)
+            .executeJavaScript(`${VAULT_FILL}(${JSON.stringify({ user: m.user, pass: m.pass, origin: new URL(tab.url).origin })})`)
             .then((how) => this.sendChrome('vault', { ...vaultStatus(), toast: 'Filled ' + how }))
             .catch(() => this.sendChrome('vault', { ...vaultStatus(), toast: 'Fill failed - this page blocked the script' }))
         }
@@ -2230,17 +2272,19 @@ class TabWindow {
     out.push({
       label: 'Save password for this site',
       click: () => {
-        tab.view.webContents.executeJavaScript(VAULT_GRAB).then((got) => {
+        if (tab.view.webContents.getURL() !== tab.url || !vaultFrameAllowed(tab.url, params.frameURL)) return
+        tab.view.webContents.executeJavaScript(`(() => { if (location.origin !== ${JSON.stringify(new URL(tab.url).origin)} || location.protocol !== 'https:') return null; return ${VAULT_GRAB} })()`).then((got) => {
           if (!got || got.error || !got.pass) {
             this.sendChrome('vault', { ...vaultStatus(), toast: (got && got.error) || 'This form has no password value to read' })
             return
           }
           const entry = { id: crypto.randomUUID(), site, user: got.user || '', pass: got.pass, note: '', at: Date.now() }
+          const before = vaultCache.slice()
           const dup = vaultCache.findIndex((e) => e.site === site && e.user === entry.user)
           if (dup >= 0) vaultCache[dup] = { ...vaultCache[dup], ...entry }
           else vaultCache.push(entry)
           const w = vaultWrite()
-          if (!w.ok) vaultCache.splice(dup >= 0 ? dup : vaultCache.length - 1, 1)
+          if (!w.ok) vaultCache = before
           vaultArmLock()
           this.sendChrome('vault', { ...vaultStatus(), toast: w.ok ? (dup >= 0 ? 'Password updated in the vault' : 'Password saved to the vault') : w.reason })
         }).catch(() => this.sendChrome('vault', { ...vaultStatus(), toast: 'This page blocked reading its form' }))
@@ -2432,7 +2476,9 @@ class TabWindow {
   }
 
   searchSelection(text) {
-    const eng = ENGINES[settings.search] || ENGINES.duckduckgo
+    const custom = defaultSearch(s, settings.search, settings.customSearchEngines)
+  if (custom) return custom
+  const eng = ENGINES[settings.search] || ENGINES.duckduckgo
     this.createTab(eng.url + encodeURIComponent(text))
   }
 
@@ -2919,6 +2965,44 @@ function noteBlocked(webContentsId) {
 }
 
 // ---------------------------------------------------------------- IPC
+let recoveryPending = null
+const recoveryFile = path.join(USER, 'crash-recovery.json')
+const runningFile = path.join(USER, 'running.marker')
+function isInternalPage(sender, name) {
+  try { return require('node:url').fileURLToPath(sender.getURL()) === path.join(__dirname, 'ui', name + '.html') } catch { return false }
+}
+ipcMain.handle('recovery:list', e => isInternalPage(e.sender, 'recovery') ? (recoveryPending || []) : [])
+ipcMain.handle('recovery:restore', (e, selections) => {
+  if (!isInternalPage(e.sender, 'recovery') || !recoveryPending) return { ok: false }
+  const selected = selectWindows(recoveryPending, selections)
+  recoveryPending = null
+  for (const win of selected) {
+    const saved = { urls: win.tabs.map(t => t.url), flags: win.tabs.map(t => ({ pinned: t.pinned, muted: t.muted, container: t.container })), active: 0 }
+    const w = new TabWindow({ saved }); mainWindows.add(w)
+  }
+  try { fs.unlinkSync(recoveryFile) } catch { /* no snapshot */ }
+  return { ok: true, windows: selected.length }
+})
+function saveRecoverySnapshot() {
+  if (recoveryPending || !settings.restore || settings.clearOnExit === 'all') return
+  try { const snapshot = captureWindows(mainWindows); if (snapshot.length) atomicWrite(recoveryFile, JSON.stringify(snapshot)) } catch (err) { logMainError(err) }
+}
+ipcMain.handle('vpncheck:open', e => {
+  const w = findWin(e); if (!w) return { ok: false }
+  w.createTab('psychovault://vpncheck'); return { ok: true }
+})
+ipcMain.handle('vpncheck:ip', async e => {
+  // Use this page's browsing session, not a direct Node request or a new proxy-less session.
+  if (!isInternalPage(e.sender, 'vpncheck')) return { ok: false, error: 'Invalid requester.' }
+  try {
+    const response = await e.sender.session.fetch('https://ipapi.co/json/', { signal: AbortSignal.timeout(15000), credentials: 'omit', cache: 'no-store' })
+    if (!response.ok) throw new Error('IP service returned HTTP ' + response.status)
+    const text = await response.text(); if (text.length > 16384) throw new Error('Unexpected response from IP service.')
+    const data = JSON.parse(text)
+    if (!net.isIP(String(data.ip || ''))) throw new Error('IP service did not return an IP address.')
+    return { ok: true, ip: String(data.ip), city: String(data.city || '').slice(0, 100), region: String(data.region || '').slice(0, 100), country: String(data.country_name || '').slice(0, 100) }
+  } catch (err) { return { ok: false, error: String(err.message || err) } }
+})
 ipcMain.handle('tab:new', (e, url) => {
   const w = [...mainWindows].find(w => w.win.webContents === e.sender)
   if (w) w.createTab(url || 'psychovault://newtab')
@@ -2995,9 +3079,10 @@ ipcMain.handle('tab:reopen', (e) => {
 })
 
 ipcMain.handle('nav:go', (e, input) => {
-  const w = [...mainWindows].find(w => w.win.webContents === e.sender)
+  const w = findWin(e)
   if (!w) return
-  const t = w.tabs.get(w.activeId)
+  const senderTab = [...w.tabs.values()].find(t => t.view.webContents === e.sender)
+  const t = senderTab || w.tabs.get(w.activeId)
   if (t) w.go(t, input)
 })
 ipcMain.handle('nav:back', (e) => { const w = findWin(e); const t = w && w.tabs.get(w.activeId); if (t) t.view.webContents.navigationHistory.goBack() })
@@ -3157,7 +3242,7 @@ ipcMain.handle('data:clear', (e, what) => {
   }))
   if (w.history) run('history', () => { history = []; writeJSON('history.json', []) })
   if (w.downloads) run('downloads', () => { downloads = []; saveDownloads(); broadcast('downloads', downloads) })
-  if (w.session) run('saved session', () => writeJSON('session.json', { urls: [], active: 0 }))
+  if (w.session) run('saved session', () => { writeJSON('session.json', { urls: [], active: 0 }); recoveryPending = null; try { fs.unlinkSync(recoveryFile) } catch { /* no snapshot */ } })
   return { done }
 })
 
@@ -3316,6 +3401,30 @@ ipcMain.handle('clipboard:write', (e, text) => {
 })
 
 // ---- password vault
+ipcMain.handle('vault:transfer', async (event, action, password) => {
+  if (settings.vaultEnabled === false || vaultLocked || !vaultCache) return { ok: false, reason: 'Enable and unlock the vault first.' }
+  const win = findWin(event); const parent = win && win.win && !win.win.isDestroyed() ? win.win : null
+  try {
+    if (action === 'backup') {
+      const count = vaultCache.length
+      const encoded = encryptBackup(vaultCache, password)
+      const selected = await dialog.showSaveDialog(parent, { title: 'Save encrypted vault backup', defaultPath: 'PsychoVault-backup.pvbackup', filters: [{ name: 'Encrypted vault backup', extensions: ['pvbackup'] }], properties: ['showOverwriteConfirmation'] })
+      if (selected.canceled || !selected.filePath) return { ok: false, reason: 'Cancelled.' }
+      atomicWrite(selected.filePath, encoded); if (!vaultLocked) vaultArmLock(); return { ok: true, count }
+    }
+    if (action !== 'restore' && action !== 'csv') return { ok: false, reason: 'Unknown transfer action.' }
+    const selected = await dialog.showOpenDialog(parent, { title: action === 'csv' ? 'Import password CSV' : 'Restore encrypted backup', properties: ['openFile'], filters: [{ name: action === 'csv' ? 'CSV password export' : 'Encrypted vault backup', extensions: [action === 'csv' ? 'csv' : 'pvbackup'] }] })
+    if (selected.canceled || !selected.filePaths[0]) return { ok: false, reason: 'Cancelled.' }
+    const file = selected.filePaths[0]; const stat = fs.statSync(file)
+    if (!stat.isFile() || stat.size > 20 * 1024 * 1024) throw new Error('File is too large or is not a regular file.')
+    const text = fs.readFileSync(file, 'utf8')
+    const incoming = action === 'csv' ? parseCSV(text) : decryptBackup(text, String(password || ''))
+    const { accepted, skipped } = prepareEntries(incoming, vaultCache)
+    const before = vaultCache; vaultCache = before.concat(accepted)
+    const result = vaultWrite(); if (!result.ok) { vaultCache = before; return result }
+    vaultArmLock(); vaultBroadcast(); return { ok: true, count: accepted.length, skipped }
+  } catch (err) { return { ok: false, reason: 'Transfer failed: ' + String(err.message || err) } }
+})
 ipcMain.handle('vault:status', () => vaultStatus())
 ipcMain.handle('vault:list', () => {
   if (settings.vaultEnabled === false) return { error: 'disabled', entries: [], status: vaultStatus() }
@@ -3349,19 +3458,22 @@ ipcMain.handle('vault:add', (e, entry) => {
     at: Date.now()
   }
   if (!clean.site || !clean.pass) return { ok: false, reason: 'site and password are both required', status: vaultStatus() }
+  const before = vaultCache.slice()
   const i = vaultCache.findIndex((x) => x.site === clean.site && x.user === clean.user)
   if (i >= 0) vaultCache[i] = { ...vaultCache[i], ...clean }
   else vaultCache.push(clean)
   const w = vaultWrite()
-  if (!w.ok) vaultCache.splice(i >= 0 ? i : vaultCache.length - 1, 1)
+  if (!w.ok) vaultCache = before
   vaultArmLock()
   vaultBroadcast()
   return { ...w, status: vaultStatus() }
 })
 ipcMain.handle('vault:delete', (e, id) => {
   if (vaultLocked) return { ok: false, reason: 'the vault is locked' }
+  const before = vaultCache
   vaultCache = (vaultCache || []).filter((x) => x.id !== id)
   const w = vaultWrite()
+  if (!w.ok) vaultCache = before
   vaultBroadcast()
   return { ...w, status: vaultStatus() }
 })
@@ -3390,35 +3502,35 @@ ipcMain.handle('vault:copy', (e, o) => {
 ipcMain.handle('vault:generate', (e, opts) => vaultGenerate(opts))
 ipcMain.handle('vault:setMaster', (e, pw) => {
   if (vaultLocked && fs.existsSync(path.join(USER, VAULT_FILE))) return { ok: false, reason: 'unlock the existing vault first' }
+  if (fs.existsSync(path.join(USER, VAULT_FILE)) && !vaultCache) return { ok: false, reason: 'existing vault is not loaded; no changes made' }
   const str = String(pw || '')
   if (str.length < 8) return { ok: false, reason: 'use at least 8 characters' }
-  const salt = crypto.randomBytes(16)
-  const key = vaultDerive(str, salt.toString('base64'))
-  const check = vaultSeal(JSON.stringify({ v: 1 }), key).toString('base64')
-  const carry = vaultCache
+  const oldKey = vaultKey, oldCache = vaultCache, oldLocked = vaultLocked
   try {
-    writeJSON(VAULT_KEY, { salt: salt.toString('base64'), check, kdf: 'scrypt-N16384-r8-p1', aead: 'aes-256-gcm' })
-    vaultKey = key
-    vaultCache = carry || vaultLoad() || []
-    const w = vaultWrite()
-    if (!w.ok) return { ok: false, reason: w.reason }
-    vaultLocked = false
-    vaultArmLock()
-    vaultBroadcast()
-    return { ok: true, status: vaultStatus() }
-  } catch (err) { return { ok: false, reason: err.message } }
+    const salt = crypto.randomBytes(16), key = vaultDerive(str, salt.toString('base64'))
+    const check = vaultSeal(JSON.stringify({ v: 1 }), key).toString('base64')
+    migrateVault(USER, () => {
+      vaultMigrationActive = true
+      atomicWrite(path.join(USER, VAULT_KEY), JSON.stringify({ salt: salt.toString('base64'), check, kdf: 'scrypt-N16384-r8-p1', aead: 'aes-256-gcm' }))
+      vaultKey = key; vaultCache = oldCache || []
+      const result = vaultWrite(); if (!result.ok) throw new Error(result.reason)
+    })
+    vaultMigrationActive = false; vaultLocked = false; vaultArmLock(); vaultBroadcast(); return { ok: true, status: vaultStatus() }
+  } catch (err) { vaultMigrationActive = false; vaultKey = oldKey; vaultCache = oldCache; vaultLocked = oldLocked; return { ok: false, reason: err.message } }
 })
 ipcMain.handle('vault:forgetMaster', () => {
   if (vaultLocked || !vaultCache) return { ok: false, reason: 'unlock the vault first' }
   if (!vaultSafeOk()) return { ok: false, reason: 'no secure system keychain is available' }
-  const data = vaultCache
-  try { fs.unlinkSync(path.join(USER, VAULT_KEY)) } catch (e) { /* nothing set */ }
-  vaultKey = null
-  vaultCache = data
-  vaultLocked = false
-  const w = vaultWrite()
-  vaultBroadcast()
-  return { ...w, status: vaultStatus() }
+  const oldKey = vaultKey
+  try {
+    migrateVault(USER, () => {
+      vaultMigrationActive = true
+      try { fs.unlinkSync(path.join(USER, VAULT_KEY)) } catch (err) { if (err.code !== 'ENOENT') throw err }
+      vaultKey = null
+      const result = vaultWrite(); if (!result.ok) throw new Error(result.reason)
+    })
+    vaultMigrationActive = false; vaultBroadcast(); return { ok: true, status: vaultStatus() }
+  } catch (err) { vaultMigrationActive = false; vaultKey = oldKey; return { ok: false, reason: err.message } }
 })
 
 ipcMain.handle('settings:get', () => settings)
@@ -3462,7 +3574,17 @@ ipcMain.handle('open:external', async (_e, rawUrl) => {
 })
 
 ipcMain.handle('downloads:list', () => downloads)
-ipcMain.handle('downloads:clear', () => { downloads = []; saveDownloads(); broadcast('downloads', downloads); return [] })
+ipcMain.handle('downloads:clear', () => { downloads = downloads.filter(d => activeDownloads.has(d.id)); saveDownloads(); broadcast('downloads', downloads); return downloads })
+ipcMain.handle('downloads:control', (_e, o) => {
+  const live = o && activeDownloads.get(o.id)
+  if (!live) return { ok: false, error: 'This download can no longer be controlled.' }
+  try {
+    if (o.action === 'pause' && live.item.getState() === 'progressing') { live.userPaused = true; live.item.pause(); live.entry.state = 'paused' }
+    else if (o.action === 'resume' && (live.item.getState() === 'progressing' || live.item.canResume())) { live.userPaused = false; live.item.resume(); live.entry.state = 'progress' }
+    else return { ok: false, error: 'That action is not available for this download.' }
+    broadcast('downloads', downloads); return { ok: true }
+  } catch (err) { return { ok: false, error: String(err.message || err) } }
+})
 ipcMain.handle('downloads:open', (e, filePath) => {
   if (typeof filePath === 'string' && filePath) shell.openPath(filePath)
 })
@@ -3506,6 +3628,9 @@ function notifyDownload(info) {
 
 // downloads
 let downloads = readJSON('downloads.json', [])
+// Electron DownloadItems exist only for the lifetime of this process.
+const activeDownloads = new Map()
+for (const d of downloads) if (['progress', 'paused'].includes(d.state)) d.state = 'interrupted'
 function saveDownloads() {
   writeJSON('downloads.json', downloads.slice(0, 50))
 }
@@ -3517,9 +3642,11 @@ setInterval(() => {
   for (const d of downloads) {
     const cur = (d.received || 0) - (d._last || 0)
     d._last = d.received || 0
+    d.speed = d.state === 'progress' ? Math.max(0, Math.round(cur / 2)) : 0
     if (cur > 0) sum += cur
   }
   downloadRate = Math.round(sum / 2)
+  if (activeDownloads.size) broadcast('downloads', downloads)
 }, 2000)
 
 function downloadDialogParent(webContents) {
@@ -3568,9 +3695,11 @@ function watchDownloads(ses) {
 }
 
 function trackDownload(item, target, suggested) {
-  const entry = { name: item.getFilename() || suggested, received: 0, total: item.getTotalBytes(), state: 'progress', path: target, at: Date.now() }
+  const entry = { id: crypto.randomUUID(), name: item.getFilename() || suggested, received: 0, total: item.getTotalBytes(), state: 'progress', path: target, at: Date.now() }
+  const live = { item, entry, userPaused: false }
+  activeDownloads.set(entry.id, live)
   downloads.unshift(entry)
-  if (downloads.length > 50) downloads.length = 50
+  if (downloads.length > 50) downloads = downloads.filter((d, i) => i < 50 || activeDownloads.has(d.id))
   saveDownloads()
   broadcast('downloads', downloads)
   notifyDownload({ kind: 'start', name: entry.name, path: target })
@@ -3583,6 +3712,8 @@ function trackDownload(item, target, suggested) {
     const total = item.getTotalBytes()
     if (total > 0) entry.total = total
     if (dlState === 'interrupted') entry.state = 'interrupted'
+    else entry.state = live.userPaused ? 'paused' : 'progress'
+    entry.canResume = safe(() => item.canResume(), false)
     const now = Date.now()
     if (now - lastBeat >= 200) { lastBeat = now; broadcast('downloads', downloads) }
   })
@@ -3597,7 +3728,7 @@ function trackDownload(item, target, suggested) {
   if (capBytes > 0) {
     item.on('updated', () => {
       const state = item.getState()
-      if (state !== 'progressing' || stallTimer) return
+      if (state !== 'progressing' || stallTimer || live.userPaused) return
       const total = item.getReceivedBytes()
       if (total <= 0) return
       const busy = (Date.now() - started) - stalled
@@ -3610,16 +3741,19 @@ function trackDownload(item, target, suggested) {
       stallTimer = setTimeout(() => {
         stallTimer = null
         stalled += Date.now() - stallFrom
-        try { if (item.getState() === 'progressing') item.resume() } catch { /* finished */ }
+        try { if (item.getState() === 'progressing' && !live.userPaused) item.resume() } catch { /* finished */ }
       }, wait)
     })
   }
-  item.once('done', (_e, state) => {
+  item.on('done', (_e, state) => {
     if (stallTimer) { clearTimeout(stallTimer); stallTimer = null }
     entry.received = item.getReceivedBytes()
     const total = item.getTotalBytes()
     if (total > 0) entry.total = total
     entry.state = state
+    entry.canResume = state === 'interrupted' && safe(() => item.canResume(), false)
+    if (!entry.canResume) activeDownloads.delete(entry.id)
+    entry.speed = 0
     entry.path = item.getSavePath() || entry.path
     saveDownloads()
     broadcast('downloads', downloads)
@@ -3882,6 +4016,8 @@ ipcMain.handle('update:check', async () => {
 })
 
 app.whenReady().then(() => {
+  cleanupInstalledUpdate().catch(() => {})
+  try { recoverVaultMigration(USER) } catch (err) { logMainError(err) }
   refreshSafeStorage()
   registerMediaKeys()
   watchPower()
@@ -3903,8 +4039,17 @@ app.whenReady().then(() => {
     try { contents.setWebRTCIPHandlingPolicy(extWebRTCPolicy) } catch (e) { /* not live yet */ }
   })
 
-  const w = new TabWindow()
+  try {
+    if (settings.restore && fs.existsSync(runningFile)) {
+      const raw = JSON.parse(fs.readFileSync(recoveryFile, 'utf8'))
+      if (Array.isArray(raw) && raw.length) recoveryPending = raw
+    }
+    atomicWrite(runningFile, 'running')
+  } catch (err) { logMainError(err) }
+  const w = new TabWindow({ noRestore: !!recoveryPending })
   mainWindows.add(w)
+  if (recoveryPending) w.win.webContents.once('did-finish-load', () => w.createTab('psychovault://recovery'))
+  setInterval(saveRecoverySnapshot, 5000)
 
   const cliURL = urlFromArgv(process.argv)
   if (cliURL) w.win.webContents.once('did-finish-load', () => w.createTab(cliURL))
@@ -3929,7 +4074,9 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
-  for (const w of mainWindows) w.saveSession()
+  if (!recoveryPending) for (const w of mainWindows) w.saveSession()
+  if (!recoveryPending) try { fs.unlinkSync(runningFile) } catch { /* not created */ }
+  if (settings.clearOnExit === 'all') try { fs.unlinkSync(recoveryFile) } catch { /* no snapshot */ }
   writeJSON('bookmarks.json', bookmarks)
   writeJSON('history.json', history)
 

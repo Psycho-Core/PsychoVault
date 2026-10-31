@@ -304,7 +304,7 @@ body.battery #tabs, body.battery #toolbar { filter: saturate(.86) }
 
 #shield {
   display: flex; align-items: center; gap: 4px;
-  color: var(--accent); cursor: default;
+  color: var(--accent); cursor: pointer; background: transparent; border: 0;
   padding: 4px; flex: 0 0 auto;
 }
 #shield svg { width: 13px; height: 13px; }

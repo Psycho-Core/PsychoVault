@@ -166,6 +166,9 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
         <option value="wikipedia">Wikipedia</option>
       </select>
     </div>
+    <div class="hint">Custom search shortcuts - one per line: shortcut | name | HTTPS URL with %s for the search words. Example: gh | GitHub | https://github.com/search?q=%s. Type <code>gh search words</code> in the address bar or new tab.</div>
+    <textarea id="customSearchEngines" rows="4" placeholder="gh | GitHub | https://github.com/search?q=%s"></textarea>
+    <button class="mini" id="customSearchSave">Save shortcuts</button><div class="hint" id="customSearchMsg" aria-live="polite"></div>
   </section>
   <section>
     <h2>Startup</h2>
@@ -209,6 +212,28 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
       </div>
       <button class="danger" id="clear">Clear history</button>
     </div>
+  </section>
+  <section>
+    <h2>Ad-blocker lists and site exceptions</h2>
+    <div class="row"><div><div class="lbl">Use bundled domain list</div><div class="hint">This is PsychoVault's local domain list, not uBlock Origin.</div></div><label class="switch"><input type="checkbox" id="blockUseBundled"><span class="slider"></span></label></div>
+    <div class="hint">Never block on these sites - one exact top-level hostname per line. Changes affect future requests; reload the tab.</div>
+    <textarea id="blockAllowSites" rows="3" placeholder="example.com"></textarea>
+    <div class="hint">Extra blocked domains - one domain per line. Subdomains are included. This accepts domain names, not uBlock/Adblock Plus filter syntax.</div>
+    <textarea id="blockCustomDomains" rows="4" placeholder="ads.example.com"></textarea>
+    <button class="mini" id="blockSaveLists">Save blocker lists</button><div class="hint" id="blockListsMsg" aria-live="polite"></div>
+  </section>
+  <section>
+    <h2>Per-site permissions</h2>
+    <div class="hint">Rules apply only to the exact web origin and port. Default follows the global deny list. Camera and microphone access needs operating-system permission too.</div>
+    <div class="tile-row"><input id="permOrigin" type="text" placeholder="https://example.com" aria-label="Site origin"><button class="mini" id="permLoad">Load site</button></div>
+    <div id="permEditor" hidden>
+      <div class="row"><div class="lbl">Camera</div><select id="permCamera"><option value="default">Default</option><option value="allow">Allow</option><option value="deny">Deny</option></select></div>
+      <div class="row"><div class="lbl">Microphone</div><select id="permMicrophone"><option value="default">Default</option><option value="allow">Allow</option><option value="deny">Deny</option></select></div>
+      <div class="row"><div class="lbl">Location</div><select id="permLocation"><option value="default">Default</option><option value="allow">Allow</option><option value="deny">Deny</option></select></div>
+      <div class="row"><div class="lbl">Notifications</div><select id="permNotifications"><option value="default">Default</option><option value="allow">Allow</option><option value="deny">Deny</option></select></div>
+      <div class="btnrow"><button class="mini" id="permSave">Save site rules</button><button class="mini" id="permRemove">Remove site rules</button></div>
+    </div>
+    <div class="hint" id="permMsg" aria-live="polite"></div><div id="permSaved" class="hint"></div>
   </section>
   <section>
     <h2>Shields</h2>
@@ -353,13 +378,13 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
       <div class="settings-category" data-category-panel="extensions" data-title="Extensions" data-description="Install and manage compatible browser extensions." hidden>
   <section>
     <h2>Extensions</h2>
-    <div class="hint">Chrome-style extensions, loaded the way Chromium's own "load unpacked" works: install a folder, or a <b>.crx</b> file (this unpacks it, because Electron refuses crx files outright). Extensions run inside every tab and can read the pages you visit - only install ones you trust, and note that <b>no signature is verified</b> for a crx here.</div>
-    <div class="hint"><b>What actually works.</b> Content scripts, page changes, request blocking through the old <code>webRequest</code> API, storage, messaging, and - through PsychoVault's own shim - <b>chrome.proxy</b> and <b>chrome.privacy</b>, which is what a browser VPN extension needs to send traffic through a tunnel. What does not exist in this engine: <b>declarativeNetRequest</b> (the MV3 rules engine), native messaging, <code>chrome.vpnProvider</code>, and a toolbar to click. Every extension below is checked against that list, and anything it needs that is missing is named under it rather than left to fail silently.</div>
+    <div class="hint">Chrome-style extensions, loaded the way Chromium's own "load unpacked" works: install an unpacked folder or a <b>.crx</b> file. Chrome Web Store one-click installation is not supported. Extensions run inside every tab and can read the pages you visit - only install ones you trust, and note that <b>no signature is verified</b> for a crx here.</div>
+    <div class="hint"><b>What actually works.</b> Content scripts, page changes, request blocking through the old <code>webRequest</code> API, storage, messaging, and - through PsychoVault's own shim - <b>chrome.proxy</b> and <b>chrome.privacy</b>, which is what a browser VPN extension needs to send traffic through a tunnel. What does not exist in this engine: <b>declarativeNetRequest</b> (the MV3 rules engine), native messaging, <code>chrome.vpnProvider</code>, and a toolbar to click. Known incompatible permissions are flagged below, but this is not a guarantee an extension will work.</div>
     <div class="proton-card">
       <div class="proton-title">Proton VPN</div>
       <p><b>Installed by default.</b> PsychoVault ships a build of Proton's own browser extension, compiled from Proton's GPL-3.0 source at <code>github.com/ProtonVPN/proton-vpn-browser-extension</code>. It appears in the list below like any other extension - open its window to sign in and connect.</p>
-      <p>You need your own Proton account. Sign in with it in the extension window; PsychoVault does not see, store, or ship your Proton password, and no subscription or server list is bundled. A configured proxy is not proof of a working or protected connection. Proton traffic is still being tested.</p>
-      <p>Want the store listing instead? <button class="mini" id="protonVpnDownload" type="button">Open Proton's extension page</button></p>
+      <p>Sign in with your own Proton account. Use the VPN button on the sidebar to connect or disconnect; right-click it to open Proton. A connection indicator alone does not prove there are no DNS or WebRTC leaks.</p>
+      <button class="mini" id="vpnCheckOpen" type="button">Open VPN checks</button>
       <button class="mini" id="protonVpnRestore" type="button">Restore / reinstall Proton VPN</button>
       <button class="mini" id="protonVpnStatus" type="button">Check install</button>
       <button class="mini" id="proxySelfTest" type="button">Test proxy support</button>
@@ -371,6 +396,11 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     <pre id="extShimLogBody" hidden style="max-height:150px;overflow:auto;font:12px/1.45 ui-monospace,Consolas,monospace;white-space:pre-wrap;background:rgba(0,0,0,.25);border-radius:6px;padding:8px;margin:6px 0 0"></pre>
     <div class="hint" id="protonVpnState">Press <b>Check install</b> to see what the bundled extension did at startup.</div>
     <div id="extList" class="ext-list"></div>
+    <details id="proxySwitchDetails" hidden>
+      <summary>Advanced: Proxy Switch diagnostic</summary>
+      <div class="hint">This bundled test extension is optional. It sets a proxy you enter yourself; it is not Proton VPN and can change the proxy used by the browser. Leave it alone unless you are testing a proxy.</div>
+      <div id="proxySwitchList" class="ext-list"></div>
+    </details>
     <div class="btnrow">
       <button class="mini" id="extAddFolder">Load unpacked...</button>
       <button class="mini" id="extAddCrx">Install .crx...</button>
@@ -405,13 +435,12 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
         <div class="lbl">Sleep tabs after</div>
         <div class="hint">Background tabs are dropped from memory and reload when clicked. Pinned tabs never sleep.</div>
       </div>
-      <select id="sleepTabsMin">
-        <option value="0">Never</option>
-        <option value="5">5 minutes</option>
-        <option value="15">15 minutes</option>
-        <option value="30">30 minutes</option>
-        <option value="60">1 hour</option>
-      </select>
+      <input type="number" id="sleepTabsMin" min="0" max="1440" step="1" aria-label="Minutes before tabs sleep; zero means never">
+
+    </div>
+    <div class="row">
+      <div><div class="lbl">Never sleep these sites</div><div class="hint">One hostname per line, for example example.com. Exact hostnames only. Audio-playing and loading tabs are also skipped. Unsaved forms may still be lost.</div></div>
+      <textarea id="sleepExclude" rows="3" placeholder="example.com"></textarea>
     </div>
     <div class="row">
       <div>
@@ -648,6 +677,11 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
       </div>
     </div>
 
+    <div class="note"><b>Import and encrypted backups</b> - unlock the vault first. CSV exports contain plaintext passwords: keep the file private and delete it securely when you are finished. Imports and restores merge entries and skip matching site and username; they never replace existing entries. Keep the backup password safe - it cannot be recovered.</div>
+    <div class="tile-row"><input type="password" id="vbackupPassword" autocomplete="new-password" placeholder="Backup password - at least 12 characters" aria-label="Backup password"><input type="password" id="vbackupConfirm" autocomplete="new-password" placeholder="Confirm password for new backup" aria-label="Confirm new backup password"></div>
+    <div class="btnrow"><button class="mini" id="vBackup">Save encrypted backup</button><button class="mini" id="vRestore">Restore encrypted backup</button><button class="mini" id="vImport">Import CSV export</button></div>
+    <div class="hint" id="vTransferMsg" aria-live="polite"></div>
+    <div class="hint">Vault filling is manual, HTTPS-only and limited to the same host (with www treated as equivalent). Cross-origin frames are not filled.</div>
     <div class="tiles-edit" id="vlist"></div>
 
     <div class="hint">Add an entry by hand - or right-click a password field on a real site and choose
@@ -728,6 +762,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
       <div class="settings-category" data-category-panel="about" data-title="About" data-description="Version and project information." hidden>
   <section>
     <h2>About</h2>
+    <div class="hint">If an update fails while Proton VPN is on, disconnect it and retry. PsychoVault does not bypass the VPN automatically. It removes an updater-downloaded installer only after the new version starts and the file is verified unchanged; older untracked installers are kept.</div>
     <div class="about">
       <b id="appVersion">PsychoVault</b><br>
       Browser application (this UI, tabs, bookmarks, history, downloads, blocking): written for this project.<br>
@@ -805,7 +840,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
   let settings = {}
   // every switch on this page, and how its default reads when the key is absent
   const TOGGLES = {
-    blockAds: true, restore: true, remember: true, sendDNT: true,
+    blockAds: true, blockUseBundled: true, restore: true, remember: true, sendDNT: true,
     blockThirdPartyCookies: false, blockAutoplay: false, hideSidebar: false,
     batterySaver: false, batteryAuto: false, vaultEnabled: true,
     enhanceVideo: false, enhanceImages: false, darkWebsites: false, uiSounds: false, mediaKeys: true,
@@ -815,6 +850,31 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
   }
   const hasVault = !!(window.pv && window.pv.vault)
 
+  const permFields = { camera: 'permCamera', microphone: 'permMicrophone', geolocation: 'permLocation', notifications: 'permNotifications' }
+  let editingOrigin = ''
+  function permissionOrigin(raw) {
+    try { const u = new URL(String(raw).trim()); return ['http:', 'https:'].includes(u.protocol) && !u.username && !u.password ? u.origin : '' } catch { return '' }
+  }
+  function paintPermissionSites(st) {
+    const box = s('permSaved'); box.replaceChildren()
+    const sites = Object.keys(st.sitePermissions || {}).sort()
+    if (!sites.length) { box.textContent = 'No site-specific rules saved.'; return }
+    box.append('Saved sites: ')
+    sites.forEach((site, i) => {
+      if (i) box.append(' · ')
+      const button = document.createElement('button'); button.className = 'mini'; button.textContent = site
+      button.onclick = () => { s('permOrigin').value = site; loadPermissionSite() }
+      box.appendChild(button)
+    })
+  }
+  function loadPermissionSite() {
+    const origin = permissionOrigin(s('permOrigin').value)
+    if (!origin) { s('permMsg').textContent = 'Enter a valid http or https site, such as https://example.com.'; s('permEditor').hidden = true; return }
+    editingOrigin = origin; s('permOrigin').value = origin
+    const rule = (settings.sitePermissions || {})[origin] || {}
+    for (const [key, id] of Object.entries(permFields)) s(id).value = ['allow', 'deny'].includes(rule[key]) ? rule[key] : 'default'
+    s('permEditor').hidden = false; s('permMsg').textContent = 'Editing ' + origin
+  }
   async function save(patch) {
     settings = await window.pv.settings.set(patch)
     paint(settings)
@@ -822,6 +882,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
 
   function paint(st) {
     settings = st
+    paintPermissionSites(st)
     document.body.dataset.theme = st.theme || 'midnight'
     document.body.classList.toggle('high-contrast', !!st.highContrast)
     document.body.classList.toggle('reduce-motion', !!st.reduceMotion)
@@ -831,6 +892,8 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     }
     s('homepage').value = st.homepage || 'psychovault://newtab'
     if (s('downloadDir')) s('downloadDir').value = st.downloadDir || ''
+    s('search').querySelectorAll('[data-custom]').forEach(el => el.remove())
+    for (const engine of (Array.isArray(st.customSearchEngines) ? st.customSearchEngines : [])) { const option = document.createElement('option'); option.value = 'custom:' + engine.shortcut; option.textContent = engine.name + ' (' + engine.shortcut + ')'; option.dataset.custom = '1'; s('search').append(option) }
     for (const id of ['search', 'cpuLimit', 'theme', 'accent', 'clearOnExit', 'translateTarget']) { const el = s(id); if (el) el.value = st[id] || el.options[0].value }
     s('netLimit').value = String(st.netLimit || 0)
     s('webRtc').value = st.webRtc || 'publiconly'
@@ -851,7 +914,11 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     if (window.pv.gx) window.pv.gx.switches().then((r) => {
       s('restartNote').style.display = r.restartNeeded ? 'block' : 'none'
     }).catch(() => {})
+    s('customSearchEngines').value = (Array.isArray(st.customSearchEngines) ? st.customSearchEngines : []).map(x => [x.shortcut, x.name, x.url].join(' | ')).join('\n')
     s('sleepTabsMin').value = String(st.sleepTabsMin || 0)
+    s('sleepExclude').value = String(st.sleepExclude || '')
+    s('blockAllowSites').value = String(st.blockAllowSites || '')
+    s('blockCustomDomains').value = String(st.blockCustomDomains || '')
     if (s('vaultLockMin')) s('vaultLockMin').value = String(st.vaultLockMin === undefined ? 5 : st.vaultLockMin)
     const c = ACCENTS[st.accent] || ACCENTS.cyan
     document.documentElement.style.setProperty('--accent', c[0])
@@ -869,18 +936,48 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
       const el = s(id)
       if (el) el.onchange = () => save({ [id]: id === 'sleepTabsMin' ? Number(el.value) : el.value })
     }
+    s('customSearchSave').onclick = async () => {
+      const lines = s('customSearchEngines').value.split('\n').map(x => x.trim()).filter(Boolean)
+      const engines = []; const seen = new Set()
+      for (const line of lines) {
+        const parts = line.split('|').map(x => x.trim())
+        let valid = parts.length === 3 && /^[a-z][a-z0-9_-]{0,19}$/i.test(parts[0]) && parts[1].length > 0 && parts[1].length <= 80 && parts[2].length <= 2048 && parts[2].includes('%s')
+        try { const a = new URL(parts[2].replaceAll('%s', 'sample')); const b = new URL(parts[2].replaceAll('%s', 'different')); valid = valid && a.protocol === 'https:' && !a.username && !a.password && a.origin === b.origin } catch { valid = false }
+        if (!valid || seen.has(parts[0].toLowerCase())) { s('customSearchMsg').textContent = 'Invalid or duplicate shortcut: ' + line; return }
+        seen.add(parts[0].toLowerCase()); engines.push({ shortcut: parts[0], name: parts[1], url: parts[2] })
+      }
+      await save({ customSearchEngines: engines }); s('customSearchMsg').textContent = 'Search shortcuts saved.'
+    }
+    s('permLoad').onclick = loadPermissionSite
+    s('permSave').onclick = async () => {
+      if (!editingOrigin) return
+      const rules = { ...(settings.sitePermissions || {}) }; const rule = {}
+      for (const [key, id] of Object.entries(permFields)) if (s(id).value !== 'default') rule[key] = s(id).value
+      if (Object.keys(rule).length) rules[editingOrigin] = rule; else delete rules[editingOrigin]
+      await save({ sitePermissions: rules }); s('permMsg').textContent = 'Saved rules for ' + editingOrigin
+    }
+    s('permRemove').onclick = async () => {
+      if (!editingOrigin) return
+      const rules = { ...(settings.sitePermissions || {}) }; delete rules[editingOrigin]
+      await save({ sitePermissions: rules }); loadPermissionSite(); s('permMsg').textContent = 'Removed site-specific rules.'
+    }
+    s('blockSaveLists').onclick = async () => {
+      await save({ blockAllowSites: s('blockAllowSites').value.slice(0, 50000), blockCustomDomains: s('blockCustomDomains').value.slice(0, 50000) })
+      s('blockListsMsg').textContent = 'Lists saved. Reload a page to apply them to its requests.'
+    }
+    s('sleepExclude').onchange = () => save({ sleepExclude: s('sleepExclude').value.slice(0, 5000) })
+    s('sleepTabsMin').onchange = () => {
+      const n = Number(s('sleepTabsMin').value)
+      if (!Number.isInteger(n) || n < 0 || n > 1440) { s('sleepTabsMin').value = String(settings.sleepTabsMin || 0); return }
+      save({ sleepTabsMin: n })
+    }
     s('homepage').onchange = () => save({ homepage: s('homepage').value || 'psychovault://newtab' })
     if (s('downloadDir')) s('downloadDir').onchange = () => save({ downloadDir: s('downloadDir').value.trim() })
     if (s('downloadDirPick')) s('downloadDirPick').onclick = async () => {
       const picked = await window.pv.downloads.pickdir()
       if (picked) { s('downloadDir').value = picked; save({ downloadDir: picked }) }
     }
-    if (s('protonVpnDownload')) s('protonVpnDownload').onclick = async () => {
-      try {
-        const result = await window.pv.tab.open('https://chromewebstore.google.com/detail/proton-vpn-fast-secure/jplgfhpmjnbigmhklmmbgecoobifkmpa')
-        if (!result || !result.ok) flag('Could not open the Proton VPN Chrome extension page')
-      } catch { flag('Could not open the Proton VPN Chrome extension page') }
-    }
+    s('vpnCheckOpen').onclick = () => window.pv.vpncheck.open()
     const paintBuiltinStatus = async () => {
       let st = null
       try { st = await window.pv.extensions.status() } catch (e) {
@@ -1099,6 +1196,18 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     s('contSave').onclick = () => { const l = containersValue().filter(x => x.name); save({ containers: l }).then(() => flag(l.length + ' containers saved - a tab picks one up from its right-click menu')) }
     s('dataRefresh').onclick = refreshData
     if (hasVault) {
+      const transfer = async action => {
+        const pw = s('vbackupPassword').value
+        if (action === 'backup' && (pw.length < 12 || pw !== s('vbackupConfirm').value)) { s('vTransferMsg').textContent = 'Use at least 12 characters and make sure both backup passwords match.'; return }
+        if (action === 'backup' && !confirm('Keep this backup password safe. If you lose it, this backup cannot be recovered. Continue?')) return
+        if (action === 'csv' && !confirm('CSV exports contain plaintext passwords. Import without overwriting existing entries?')) return
+        const r = await window.pv.vault.transfer(action, pw); s('vbackupPassword').value = ''; s('vbackupConfirm').value = ''
+        s('vTransferMsg').textContent = r.ok ? (action === 'backup' ? 'Encrypted backup saved (' + r.count + ' entries).' : 'Imported ' + r.count + ' entries; skipped ' + r.skipped + '.') : (r.reason || 'Transfer failed.')
+        refreshVault()
+      }
+      s('vBackup').onclick = () => transfer('backup')
+      s('vRestore').onclick = () => transfer('restore')
+      s('vImport').onclick = () => transfer('csv')
       s('vaultLockMin').onchange = () => save({ vaultLockMin: Number(s('vaultLockMin').value) })
       s('eGen').onclick = async () => {
         const pw = await window.pv.vault.generate({ mode: 'words', words: 4 })
@@ -1186,6 +1295,8 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     let items = []
     try { items = await window.pv.extensions.list() } catch (e) { return }
     box.innerHTML = ''
+    const proxyBox = s('proxySwitchList'); proxyBox.replaceChildren()
+    s('proxySwitchDetails').hidden = !items.some(x => x.builtin === 'proxy-switch')
     if (!items.length) {
       const none = document.createElement('div')
       none.className = 'ext-empty'
@@ -1252,7 +1363,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
         paintExtensions()
       })
       item.appendChild(acts)
-      box.appendChild(item)
+      ;(x.builtin === 'proxy-switch' ? proxyBox : box).appendChild(item)
     }
   }
 

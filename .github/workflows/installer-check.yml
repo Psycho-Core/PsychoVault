@@ -12,6 +12,7 @@ on:
       - 'tools/build-installer.sh'
       - 'tools/gen-filelist.mjs'
       - 'tools/*.test.cjs'
+      - 'tools/*-electron-smoke.cjs'
       - 'tools/patch-exe.mjs'
       - 'tools/package*.json'
       - '.github/workflows/installer-check.yml'
@@ -79,6 +80,8 @@ jobs:
           npm install --prefix app --no-audit --no-fund
       - name: Open Proton popup and attempt sign-in
         run: xvfb-run -a app/node_modules/.bin/electron --no-sandbox tools/proton-electron-smoke.cjs
+      - name: Exercise recovery and encrypted vault transfers
+        run: xvfb-run -a app/node_modules/.bin/electron --no-sandbox tools/features-electron-smoke.cjs
 
   worker-windows:
     name: Windows extension worker proxy test
@@ -94,6 +97,9 @@ jobs:
       - name: Test proxy authentication through a local proxy
         shell: cmd
         run: app\node_modules\.bin\electron.cmd tools\proxy-auth-electron-smoke.cjs
+      - name: Exercise recovery, encrypted vault transfers, and download controls
+        shell: cmd
+        run: app\node_modules\.bin\electron.cmd tools\features-electron-smoke.cjs
       - name: Test HTTPS proxy CONNECT authentication
         shell: cmd
         run: app\node_modules\.bin\electron.cmd tools\proxy-auth-https-electron-smoke.cjs

@@ -47,6 +47,8 @@ rem Without these the browser cannot start at all. Everything else is a warning:
 rem stopping a build over an optional file wasted a real user's afternoon.
 set "HARD=PsychoVault.exe icudtl.dat resources.pak locales resources"
 set "HARD=%HARD% resources\\app\\main.js resources\\app\\ui\\index.html"
+set "HARD=%HARD% resources\app\site-permissions.js resources\app\blocking-rules.js resources\app\custom-search.js resources\app\session-recovery.js"
+set "HARD=%HARD% resources\app\vault-transfer.js resources\app\vault-migration.js resources\app\update-cleanup.js"
 
 rem A ( or & in the folder name would break the unquoted echo lines further down.
 echo "%ROOT%"| findstr /c:"(" /c:"&" >nul

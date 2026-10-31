@@ -244,10 +244,16 @@ function renderNav() {
   $('#shield-count').textContent = pageBlocked
   const shields = $('#shield')
   if (shields) {
-    shields.title = (state.settings && state.settings.blockAds === false)
-      ? 'Shields are off - ads and trackers are allowed'
-      : pageBlocked + ' blocked on this page - ' + (state.blockedTotal || 0) + ' this session'
-    shields.classList.toggle('off', !!(state.settings && state.settings.blockAds === false))
+    let host = ''
+    try { const u = new URL(state.url); if (['http:', 'https:'].includes(u.protocol)) host = u.hostname.toLowerCase() } catch { /* internal page */ }
+    const exceptions = String(state.settings?.blockAllowSites || '').split(/[\n,]+/).map(x => x.trim().toLowerCase())
+    const exempt = !!host && exceptions.includes(host)
+    const disabled = state.settings && state.settings.blockAds === false
+    shields.disabled = !host || !!state.private
+    shields.title = (disabled ? 'Blocking is off globally. ' : exempt ? 'Blocking is off on ' + host + '. ' : 'Blocking is on for ' + host + '. ') + pageBlocked + ' requests blocked on this page; ' + (state.blockedTotal || 0) + ' in this browser session. Click to toggle this site.'
+    shields.setAttribute('aria-label', shields.title)
+    shields.setAttribute('aria-pressed', String(!exempt))
+    shields.classList.toggle('off', !!disabled || exempt)
   }
   const adblock = $('#btn-adblock')
   if (adblock) {
@@ -767,7 +773,7 @@ function downloadRow(d) {
   const state = document.createElement('div')
   state.className = 'dl-state'
   const pct = d.total > 0 ? Math.min(100, Math.round((d.received / d.total) * 100)) : (d.state === 'completed' ? 100 : 0)
-  state.textContent = d.state === 'completed' ? 'done' : d.state === 'failed' ? 'failed' : d.state === 'cancelled' ? 'cancelled' : pct + '%'
+  state.textContent = d.state === 'completed' ? 'done' : d.state === 'progress' ? (d.total > 0 ? pct + '%' : 'downloading') : d.state
   top.append(name, state)
   const bar = document.createElement('div')
   bar.className = 'dl-bar'
@@ -776,6 +782,18 @@ function downloadRow(d) {
   fill.style.width = pct + '%'
   bar.appendChild(fill)
   row.append(top, bar)
+  const meta = document.createElement('div')
+  meta.className = 'dl-state'
+  const bytes = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : (n / 1024).toFixed(1) + ' KB'
+  meta.textContent = bytes(d.received || 0) + (d.total > 0 ? ' / ' + bytes(d.total) : '') + (d.state === 'progress' ? ' · ' + bytes(d.speed || 0) + '/s' : '')
+  row.appendChild(meta)
+  if (d.id && (d.state === 'progress' || d.state === 'paused' || (d.state === 'interrupted' && d.canResume))) {
+    const action = d.state === 'progress' ? 'pause' : 'resume'
+    const button = document.createElement('button'); button.className = 'nav'; button.style.cssText = 'width:auto;padding:3px 8px;font-size:11px'
+    button.textContent = action === 'pause' ? 'Pause' : (d.state === 'interrupted' ? 'Retry / resume' : 'Resume')
+    button.onclick = async ev => { ev.stopPropagation(); const result = await window.pv.downloads.control({ id: d.id, action }); if (!result || !result.ok) alert((result && result.error) || 'Download control failed.') }
+    row.appendChild(button)
+  }
   if (d.state === 'completed' && d.path) {
     row.onclick = () => window.pv.downloads.open(d.path)
     row.title = 'Open ' + d.path
@@ -870,6 +888,17 @@ $('#menu').addEventListener('click', async (e) => {
   else if (cmd === 'settings') window.pv.tab.new('psychovault://settings')
   else if (cmd === 'devtools') toast('Right-click any page and choose Inspect element')
 })
+
+$('#shield').onclick = async () => {
+  if (state.private) return
+  let host
+  try { const u = new URL(state.url); if (!['http:', 'https:'].includes(u.protocol)) return; host = u.hostname.toLowerCase() } catch { return }
+  const list = String(state.settings?.blockAllowSites || '').split(/[\n,]+/).map(x => x.trim()).filter(Boolean)
+  const present = list.some(x => x.toLowerCase() === host)
+  const next = present ? list.filter(x => x.toLowerCase() !== host) : list.concat([host])
+  try { await window.pv.settings.set({ blockAllowSites: next.join('\n') }); toast((present ? 'Blocking enabled for ' : 'Blocking disabled for ') + host + ' - reload the page') }
+  catch { toast('Could not change the site blocker') }
+}
 
 // This controls PsychoVault's built-in domain blocker, not uBlock Origin.
 $('#btn-adblock').onclick = async () => {

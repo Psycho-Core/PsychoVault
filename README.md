@@ -41,23 +41,23 @@ the close button, and restoring their pinned state after a restart.
 | Area | What you get |
 | --- | --- |
 | Tabs | Horizontal strip, **drag a tab to move it** (a caret shows the gap it will drop into; pinned tabs stay a block at the head, keep the same width as regular tabs, and the order survives a restart), right-click menu (pin, duplicate, mute, split, move to window, close others), double-click to pin, middle-click to close, `Ctrl+Shift+T` to reopen |
-| Address bar | URL or search, live history suggestions, four search engines |
+| Address bar | URL or search, live history suggestions, four built-in search engines and custom HTTPS shortcuts |
 | Blocking | 262-domain bundled list, checked on every request, counted **per page** on the shield, resets on navigation |
 | Private windows | Separate in-memory session, violet chrome, `Ctrl+Shift+P`, nothing written to disk |
 | Split view | Two pages side by side in one window, `Ctrl+\` |
 | Command palette | `Ctrl+K`, 42 commands, fuzzy filter, falls through to a web search |
 | Workspaces | Chips in the tab row: click to switch, double-click to rename, **`x` on the chip to close it** (or right-click the chip for the menu, or middle-click), `+` for a new one, `Ctrl+1..9`; each keeps its own tab set across restarts, and the last workspace clears its tabs instead of vanishing |
 | Errors | Main-process exceptions are written to `errors.log` in the profile and the app keeps running, instead of Electron's modal error dialog |
-| Passwords | Local vault: scrypt + AES-256-GCM under a master password (or the OS keychain where one exists), save-from-the-field-menu, fill-from-the-field-menu, auto-lock, no sync |
+| Passwords | Local vault: scrypt + AES-256-GCM under a master password (or the OS keychain where one exists), manual HTTPS fill from the field menu, auto-lock, CSV import, encrypted backups and no sync |
 | Sidebar | Bookmarks, history and downloads in a panel that pushes the page instead of covering it |
 | Find in page | `Ctrl+F`, live match count |
 | Zoom | Per tab, `Ctrl+plus`, `Ctrl+minus`, `Ctrl+0` |
 | Page translation | Choose one of 20 target languages in Settings, then choose **Translate current page** from the top-right Menu button or command palette. PsychoVault asks before sending the current page URL to Google Translate; it opens a translated copy in a new tab and leaves the original alone. Google may fetch the page, and some sites may not translate correctly. |
 | Automatic updates | On Windows x64, checks GitHub Releases at startup. It asks before downloading, saves the installer to Downloads without a Save As prompt, verifies an Ed25519-signed update manifest and the installer SHA-256 against a public key bundled with PsychoVault, then opens the verified installer. The repository is public, so release checks do not need a token; a read-only one is only needed if you point the updater at a private fork (the `PsychoVault_Updater` Actions secret at build time, or paste one in Settings - About). GitHub answers 404 to an anonymous release lookup on a private repository, so a private one needs the token. The token gates *access*; the signature gates *trust* - one never substitutes for the other. **Settings - About - Check now** runs the same check on demand and reports the reason it failed. A verified update is offered in a **banner across the top of the browser** - Install, Later, or ✕ to dismiss that version for good - rather than a dialog box over your page. Nothing downloads until Install is pressed. |
 | Accessibility | High-contrast browser controls, less animation in PsychoVault and pages that honor reduced-motion CSS, visible keyboard focus, arrow/Home/End tab navigation with screen-reader tab names, and an option to keep tab-close buttons visible. Find these in **Settings → Accessibility & language**. |
-| Downloads | A Save As dialog is mandatory for ordinary downloads (browser updates use Downloads automatically), opened in your chosen starting folder with the suggested name - choose the exact destination, and cancel to stop the download. Live percentage in the rail badge, a message when a file starts (naming the folder) and when it finishes, a system notification if the window is behind something, and a panel that states where files go with a **Change** button |
+| Downloads | A Save As dialog is mandatory for ordinary downloads (browser updates use Downloads automatically), opened in your chosen starting folder with the suggested name - choose the exact destination, and cancel to stop the download. Live percentage in the rail badge, a message when a file starts (naming the folder) and when it finishes, a system notification if the window is behind something, and a panel that states where files go with a **Change** button. Active transfers show bytes and speed, and can be paused or resumed when supported; retry after restart is not supported |
 | Settings | Nineteen sections in ten navigable categories: General, Privacy & security, Downloads, Extensions, Performance, Appearance, Spelling, Passwords, Accessibility & language, and About. Includes search engine, blocking, cookies, tracking signals, autoplay, history, governor, Save As downloads, delete-on-exit, profile cleanup, vault, extensions, browser appearance, translation language, and accessibility controls |
-| Performance | Live per-tab memory and CPU (`Ctrl+Shift+H` or the speedometer in the rail), sleep any tab from the panel, CPU priority limiter, RAM governor, bandwidth cap on downloads, battery saver that switches itself on when you unplug |
+| Performance | Live per-tab memory and CPU (`Ctrl+Shift+H` or the speedometer in the rail), sleep any tab from the panel, CPU priority limiter, custom sleep time and hostname exclusions, bandwidth cap on downloads, battery saver that switches itself on when you unplug |
 | Tab islands | A tab opened from a page joins that page's island; the group gets a collapse control in the strip, and the tab you are reading is never hidden by a collapse |
 | Containers | Named cookie jar + localStorage + cache per tab (Work, Shopping, Social, Banking, or your own), assigned from the tab menu, dot in the strip, so two identities on one site never touch |
 | Snapshot | `Ctrl+Shift+5` or the tab menu: capture the page to a PNG, or save it as a PDF, straight to your Downloads folder |
@@ -69,6 +69,18 @@ the close button, and restoring their pinned state after a restart.
 | Personality | Synthesised keyboard sounds (no audio files in the repo), six accent colours, and a custom stylesheet box that repaints the chrome
 | Governor | CPU priority limiter and tab sleeping, so background tabs stop costing RAM |
 | Context menus | Right-click a tab, a link, an image, selected text, or a text field (Cut / Copy / Paste / Select all all the way through) |
+
+## Privacy and recovery controls
+
+I added the VPN check page under Settings - Extensions - Open VPN checks. Public IP checks use ipapi.co. The DNS button opens a separate BrowserLeaks test, and the optional WebRTC check contacts Google's STUN server. Those services receive network information when you run them. Results are not a guarantee against leaks.
+
+The built-in blocker is not uBlock Origin. Click the shield beside the address bar to allow or block on the current normal-window site, and manage the bundled and custom domain lists in Settings - Privacy. The shield count is blocked requests on that page; its tooltip also shows the session total. Custom lists accept domains, not uBlock filter syntax.
+
+I added exact-origin camera, microphone, location and notification rules under Privacy. The global permission deny list still applies when a site is set to Default. The vault can import common CSV exports without replacing existing site/username entries, and can save and restore password-protected encrypted backups. CSV files contain plaintext passwords. Keep the backup password safe - it cannot be recovered. The vault only fills manually on HTTPS, for the saved hostname (with www treated as equivalent), and not across origins.
+
+After an unexpected close, PsychoVault offers normal-window tabs from its most recent five-second snapshot. Private windows are never included. Sleeping tabs reload when selected and can lose unsaved form data. Battery Saver may sleep tabs sooner than your chosen idle time.
+
+If the updater fails while Proton is connected, disconnect Proton and retry. Future updater-downloaded installers are removed only after the new version starts and the tracked file still matches its recorded hash; older untracked setup files remain in Downloads.
 
 ## Keyboard
 

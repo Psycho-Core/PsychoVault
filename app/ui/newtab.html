@@ -74,9 +74,8 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     e.preventDefault()
     const v = document.getElementById('q').value.trim()
     if (!v) return
-    const abs = /^[a-z][a-z0-9+.-]*:\/\//i.test(v)
-    const hosty = !/\s/.test(v) && /^[^\s/]+\.[a-z]{2,}/i.test(v)
-    location.href = abs ? v : hosty ? 'https://' + v : engine[1] + enc(v)
+    if (window.pv && window.pv.nav) window.pv.nav.go(v)
+    else location.href = engine[1] + enc(v)
   }
 
   let tiles = [
@@ -111,6 +110,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
       if (!st) return
       if (Array.isArray(st.speedDial) && st.speedDial.length) tiles = st.speedDial.map(t => [t.title, t.url])
       if (ENGINE[st.search]) engine = ENGINE[st.search]
+      else if (String(st.search || '').startsWith('custom:')) { const e = (st.customSearchEngines || []).find(x => x.shortcut === st.search.slice(7)); if (e) engine = [e.name, e.url] }
       if (!isPriv) {
         const q = document.getElementById('q')
         q.placeholder = 'Search ' + engine[0] + ' or enter an address'

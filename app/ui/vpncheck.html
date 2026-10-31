@@ -1,0 +1,24 @@
+<!doctype html><html><head><meta charset="utf-8"><title>VPN checks - PsychoVault</title><style>
+body{background:#0a0e17;color:#e6edf7;font:15px/1.5 system-ui;margin:0;padding:32px}main{max-width:900px;margin:auto}h1{color:#38bdf8}section{background:#0f1523;border:1px solid #263346;border-radius:12px;padding:18px;margin:16px 0}button{background:#192438;color:#e6edf7;border:1px solid #344966;border-radius:8px;padding:9px 12px;cursor:pointer;margin:4px}button:hover{border-color:#38bdf8}.hint{color:#a8b6ca}pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#cfe4fa}strong{color:#fff}
+</style></head><body><main>
+<h1>VPN checks</h1><p class="hint">These checks are separate. A changed IP alone does not prove that DNS or WebRTC cannot leak. Results stay on this page until it closes.</p>
+<section><h2>1. Public IP and approximate location</h2><p class="hint">The check contacts ipapi.co through this tab's browser session. The service receives your public IP and returns an approximate location. Take a baseline with the VPN off, then connect and check again. The baseline reveals your normal IP to that service.</p><button id="before">Check before VPN</button><button id="after">Check after VPN</button><pre id="ips" aria-live="polite">No checks run yet.</pre></section>
+<section><h2>2. DNS leak check</h2><p class="hint">A public IP check cannot identify your DNS resolver. This opens a separate third-party DNS test; that site and its DNS servers receive your IP and test queries. Compare the resolvers shown with what you expect for your VPN. This browser does not independently verify the site's results.</p><button id="dns">Open BrowserLeaks DNS test</button></section>
+<section><h2>3. WebRTC candidates</h2><p class="hint">The test asks WebRTC for candidates and contacts Google's public STUN server. Google may receive your IP, including a direct IP if WebRTC bypasses the proxy. Local candidates can be hidden with mDNS. No candidates or a matching IP does not prove there is no leak.</p><button id="rtc">Run WebRTC check</button><pre id="rtcResult" aria-live="polite">Not run.</pre></section>
+</main><script>
+let before = null, after = null
+function paint() { const fmt = x => x ? [x.ip, [x.city,x.region,x.country].filter(Boolean).join(', ')].filter(Boolean).join(' - ') : 'Not checked'; document.getElementById('ips').textContent = 'Before: ' + fmt(before) + '\nAfter:  ' + fmt(after) + (before && after ? '\nComparison: ' + (before.ip === after.ip ? 'Same public IP' : 'Public IP changed') : '') }
+for (const key of ['before', 'after']) document.getElementById(key).onclick = async () => { document.getElementById('ips').textContent = 'Checking via ipapi.co...'; const r = await window.pv.vpncheck.ip(); if (!r.ok) { paint(); document.getElementById('ips').textContent += '\nCheck failed: ' + r.error; return } if (key === 'before') before = r; else after = r; paint() }
+document.getElementById('dns').onclick = () => window.pv.tab.open('https://browserleaks.com/dns')
+document.getElementById('rtc').onclick = async () => {
+  const out = document.getElementById('rtcResult'); out.textContent = 'Gathering candidates...'
+  let pc
+  try {
+    pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }); pc.createDataChannel('check')
+    const found = new Set(); pc.onicecandidate = e => { if (e.candidate) found.add(e.candidate.candidate) }
+    await pc.setLocalDescription(await pc.createOffer())
+    await new Promise(resolve => { if (pc.iceGatheringState === 'complete') return resolve(); pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') resolve() }; setTimeout(resolve, 5000) })
+    out.textContent = found.size ? [...found].join('\n') : 'No candidates observed. This is not proof of leak protection.'
+  } catch(e) { out.textContent = 'WebRTC check failed: ' + String(e.message || e) } finally { if (pc) pc.close() }
+}
+</script></body></html>
