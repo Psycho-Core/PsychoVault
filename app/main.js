@@ -602,7 +602,9 @@ try {
 let extShimReport = null
 // Resolving this tells us what the session would do for ordinary browsing. It is never
 // fetched - resolveProxy() only asks the proxy resolver.
-const PROXY_PROBE_URL = 'https://account.proton.me/'
+// Proton intentionally bypasses account.proton.me. Probe an ordinary browsing host instead;
+// resolving the account domain would report DIRECT even for a correctly applied Proton proxy.
+const PROXY_PROBE_URL = 'https://example.com/'
 
 let extWebRTCPolicy = 'default'
 
@@ -731,7 +733,9 @@ async function onShimCall(event, payload, channel) {
         }
       }
       extProxyState = { value: (payload && payload.value) || null, at: Date.now(), applied: applied.length, leaks }
-      if (!applied.length) {
+      if (!applied.length || leaks.length) {
+        // Never report extension control when any browsing partition rejected the setting.
+        extProxyValues.delete(real)
         const why = leaks[0] ? (leaks[0].reason || leaks[0].error || 'unknown') : 'no session accepted the proxy configuration'
         logMainError(new Error('proxy not applied: ' + why))
         return { ok: false, error: why, leaks }

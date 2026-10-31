@@ -2646,3 +2646,15 @@ The shim now answers only that exact Proton popup request by checking Chromium's
 grants; it returns false if they aren't all granted, and does not grant extra permissions.
 Other permission requests go to the original API. Account sign-in and VPN connectivity are
 not proven by this check.
+
+## Proton network-settings error
+
+The bundled Proton code excludes `account.proton.me` from its proxy. PsychoVault was probing
+that same domain after setting the proxy and treating `DIRECT` as a failed proxy. That could
+reject a correct Proton configuration. The probe now uses `https://example.com/`, and a
+partial session failure is not reported as extension control. This does not prove a connection
+or proxy authentication works. The Electron smoke test now tries a Proton-style fixed-server
+rule with the account bypass and checks both ordinary and bypass resolutions without making a
+network request or using credentials.
+
+Local checks: `node --test tools/*.test.cjs` - 149 pass; `node tools/audit.mjs` - no defects.

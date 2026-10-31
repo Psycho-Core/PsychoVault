@@ -11,3 +11,9 @@ Proton VPN sign-in
 - Avoid an Electron permission prompt error only when Chromium confirms Proton already has the requested permissions. No new permissions are granted.
 - This is an attempted fix for the blank popup, not a confirmed VPN connection. The Firefox
   extension linked by the user has not been tested in PsychoVault.
+
+Proton proxy check
+
+- Check a normal browsing domain instead of Proton's account domain, which Proton deliberately bypasses. The old check could incorrectly report that a correctly configured proxy was not applied.
+- Do not report the proxy as controlled if any browsing session rejects the setting.
+- Signing in, connecting, and confirming a changed public IP still need to be tested on Windows.

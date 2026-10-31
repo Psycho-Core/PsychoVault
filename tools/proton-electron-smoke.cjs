@@ -31,6 +31,16 @@ async function run() {
   if (!result || !result.ok) throw new Error('opening popup failed: ' + JSON.stringify(result))
   const popup = await waitFor('Proton popup', () => webContents.getAllWebContents().find(w => w.getURL().startsWith('chrome-extension://jplgfhpmjnbigmhklmmbgecoobifkmpa/popup.html')))
   await waitFor('visible sign-in button', () => popup.executeJavaScript(`(() => { const b = document.querySelector('.sign-in-button'); return !!b && b.offsetWidth > 0 && b.textContent.trim().length > 0 })()`), 45000)
+  // Simulate Proton's fixed-server rule, including the deliberate account bypass. No
+  // credentials are used and no request is sent to the fake proxy.
+  const setResult = await popup.executeJavaScript(`new Promise(resolve => chrome.proxy.settings.set({value: { mode: 'fixed_servers', rules: {singleProxy: {scheme: 'https', host: 'proxy.example.invalid', port: 4443}, bypassList: ['account.proton.me', 'localhost']}}, scope: 'regular'}, () => chrome.proxy.settings.get({}, resolve)))`)
+  if (!setResult || setResult.levelOfControl !== 'controlled_by_this_extension') throw new Error('proxy not reported as controlled after setting: ' + JSON.stringify(setResult))
+  const browsingSession = require('electron').session.fromPartition('persist:psychovault')
+  const normal = await browsingSession.resolveProxy('https://example.com/')
+  const account = await browsingSession.resolveProxy('https://account.proton.me/')
+  if (!/proxy\.example\.invalid/i.test(normal) || !/^DIRECT/i.test(account)) throw new Error('unexpected proxy resolution: browsing=' + normal + ' account=' + account)
+  console.log('PASS: Proton-style proxy applied to browsing while the account domain is bypassed.')
+  await popup.executeJavaScript(`new Promise(resolve => chrome.proxy.settings.clear({}, resolve))`)
   const permissions = await popup.executeJavaScript(`Promise.all([browser.permissions.getAll(), browser.permissions.contains({ permissions: ['proxy'], origins: ['http://*/*','https://*/*','ftp://*/*','ws://*/*','wss://*/*','https://account.protonvpn.com/*','https://account.proton.me/*'] })]).then(([all, contains]) => ({ all, contains })).catch(e => ({ error: String(e) }))`)
   console.error('::warning::Proton permissions: ' + JSON.stringify(permissions))
   const point = await popup.executeJavaScript(`(() => { const r = document.querySelector('.sign-in-button').getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) } })()`)
