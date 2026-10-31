@@ -1,0 +1,64 @@
+name: Check Windows installer
+
+on:
+  pull_request:
+    paths:
+      - 'app/**'
+      - 'assets/psychovault.ico'
+      - 'installer.nsi'
+      - 'LICENSE'
+      - 'README.md'
+      - 'VERIFICATION.md'
+      - 'tools/build-installer.sh'
+      - 'tools/gen-filelist.mjs'
+      - 'tools/*.test.cjs'
+      - 'tools/patch-exe.mjs'
+      - 'tools/package*.json'
+      - '.github/workflows/installer-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Audit and test
+        run: |
+          node tools/audit.mjs
+          node --test tools/*.test.cjs
+      - name: Install NSIS and 7-Zip
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nsis p7zip-full unzip
+      - name: Download and verify Windows Electron
+        env:
+          ELECTRON_SHA256: 55eaba17abff7b5bba6c3bbc85068967379024fe742fe9c7fdba9118922ccbe2
+        run: |
+          electron_version="$(node -p 'require("./app/package.json").devDependencies.electron')"
+          archive="electron-v${electron_version}-win32-x64.zip"
+          curl --fail --location --retry 3 "https://github.com/electron/electron/releases/download/v${electron_version}/${archive}" --output "$RUNNER_TEMP/$archive"
+          printf '%s  %s\n' "$ELECTRON_SHA256" "$RUNNER_TEMP/$archive" | sha256sum --check
+          mkdir -p /var/tmp/payload
+          unzip -q "$RUNNER_TEMP/$archive" -d /var/tmp/payload
+          mv /var/tmp/payload/electron.exe /var/tmp/payload/PsychoVault.exe
+      - name: Install PE resource editor
+        run: npm ci --prefix tools
+      - name: Set icon and version
+        run: node tools/patch-exe.mjs /var/tmp/payload/PsychoVault.exe assets/psychovault.ico "$(node -p 'require("./app/package.json").version')"
+      - name: Build and verify installer
+        env:
+          PAYLOAD: /var/tmp/payload
+        run: bash tools/build-installer.sh
+      - name: Upload test installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: PsychoVault-test-installer
+          path: PsychoVault-Setup-*.exe
+          if-no-files-found: error
+          retention-days: 3
