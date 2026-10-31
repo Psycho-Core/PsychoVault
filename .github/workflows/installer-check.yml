@@ -94,3 +94,6 @@ jobs:
       - name: Exercise proxy from an MV3 background worker
         shell: cmd
         run: app\node_modules\.bin\electron.cmd tools\worker-electron-smoke.cjs
+      - name: Test proxy authentication through a local proxy
+        shell: cmd
+        run: app\node_modules\.bin\electron.cmd tools\proxy-auth-electron-smoke.cjs

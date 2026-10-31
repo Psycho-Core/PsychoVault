@@ -847,6 +847,20 @@ $('#menu').addEventListener('click', async (e) => {
   else if (cmd === 'devtools') toast('Right-click any page and choose Inspect element')
 })
 
+$('#btn-proton').onclick = async () => {
+  try {
+    const items = await window.pv.extensions.list()
+    const proton = items.find((item) => item.builtin === 'proton-vpn')
+    if (!proton) return toast('Proton VPN is not installed. Restore it in Settings > Extensions.')
+    if (!proton.enabled || !proton.loaded) return toast('Enable Proton VPN in Settings > Extensions first.')
+    if (!proton.popup) return toast('Proton VPN has no window to open. Check Settings > Extensions.')
+    const result = await window.pv.extensions.openpage({ dir: proton.dir, page: proton.popup })
+    if (!result || !result.ok) toast('Could not open Proton VPN: ' + ((result && result.error) || 'unknown error'))
+  } catch (error) {
+    toast('Could not open Proton VPN: ' + (error.message || 'unknown error'))
+  }
+}
+
 $('#btn-settings').onclick = () => window.pv.nav.go('psychovault://settings')
 
 $('#btn-split').onclick = () => window.pv.view.split()

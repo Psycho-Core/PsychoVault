@@ -1,0 +1,6 @@
+Proton VPN sidebar and connection investigation
+
+- Added a Proton VPN button directly above Settings on the sidebar.
+- Proton can show Protected while pages do not load. This is still being investigated;
+  the status alone does not prove a working VPN or that traffic is protected.
+- If pages stop loading, disconnect Proton VPN while the problem is investigated.
