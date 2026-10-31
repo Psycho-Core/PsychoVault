@@ -31,7 +31,11 @@ async function run() {
   if (!result || !result.ok) throw new Error('opening popup failed: ' + JSON.stringify(result))
   const popup = await waitFor('Proton popup', () => webContents.getAllWebContents().find(w => w.getURL().startsWith('chrome-extension://jplgfhpmjnbigmhklmmbgecoobifkmpa/popup.html')))
   await waitFor('visible sign-in button', () => popup.executeJavaScript(`(() => { const b = document.querySelector('.sign-in-button'); return !!b && b.offsetWidth > 0 && b.textContent.trim().length > 0 })()`), 45000)
-  await popup.executeJavaScript("document.querySelector('.sign-in-button').click()")
+  const point = await popup.executeJavaScript(`(() => { const r = document.querySelector('.sign-in-button').getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) } })()`)
+  popup.focus()
+  popup.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y })
+  popup.sendInputEvent({ type: 'mouseDown', x: point.x, y: point.y, button: 'left', clickCount: 1 })
+  popup.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: 'left', clickCount: 1 })
   await waitFor('Proton authorize tab', () => webContents.getAllWebContents().find(w => w.getURL().startsWith('https://account.proton.me/authorize')), 30000)
   console.log('PASS: real Proton popup opened the account authorization tab (no credentials entered).')
 }
