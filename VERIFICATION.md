@@ -2609,3 +2609,32 @@ passes it to NSIS, and removes it on exit.
 - `node tools/audit.mjs`: no defects. `bash -n tools/build-installer.sh`: passed.
 - A real NSIS installer build has not been run here: this environment has no NSIS or
   staged Windows Electron runtime. The stubs do not prove that NSIS can compile it.
+
+## Update installer destination - 1.0.30
+
+The update installer now downloads to a temporary file in the system Downloads folder. Only
+once the size and SHA-256 match the already verified signed manifest is it copied to a new
+installer filename and launched. Existing files are never overwritten; a numbered suffix is
+used instead. Ordinary downloads still use Save As.
+
+- `node --test tools/*.test.cjs`: 142 passed. New tests cover existing files, concurrent saves,
+  invalid filenames, and the wiring of both update paths.
+- `node tools/audit.mjs`: no defects. `git diff --check`: passed.
+- No Windows/Electron end-to-end update was run in this environment; the tests do not prove
+  the installer launches on the owner's machine.
+- The linked Mozilla XPI could not be downloaded from this environment (connection failed).
+  It has not been tested in Electron, and Proton VPN sign-in is still unresolved.
+
+## Proton popup closes during sign-in - 1.0.30
+
+The bundled Proton popup's sign-in handler schedules `window.close()` after 200 ms before
+awaiting `browser.permissions.request`. PsychoVault opens the popup as a tab, not a toolbar
+popup, so closing its page while that work is pending can interrupt sign-in. The extension
+shim now keeps that specific Proton popup tab open; other extension pages retain normal close
+behaviour. The user can still close the tab normally.
+
+`tools/proton-popup.test.cjs` exercises the shim in a simulated extension page, checks that
+another tab request can finish after `close()`, checks the scope, and checks the bundled code's
+close-before-permission ordering. This is not a real Electron/Proton login test: the user must
+try the installed build. It does not establish that authentication or VPN traffic works.
+The Mozilla XPI could not be downloaded here, so it was not installed or tested.

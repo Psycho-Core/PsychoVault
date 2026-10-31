@@ -62,3 +62,20 @@ jobs:
           path: PsychoVault-Setup-*.exe
           if-no-files-found: error
           retention-days: 3
+
+  proton-smoke:
+    name: Proton popup sign-in smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install Electron and virtual display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libnss3 libatk-bridge2.0-0 libgtk-3-0 libgbm1 libasound2t64
+          npm install --prefix app --no-audit --no-fund
+      - name: Open Proton popup and attempt sign-in
+        run: xvfb-run -a app/node_modules/.bin/electron --no-sandbox tools/proton-electron-smoke.cjs

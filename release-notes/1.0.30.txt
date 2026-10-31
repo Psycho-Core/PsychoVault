@@ -1,0 +1,12 @@
+Browser updates go straight to Downloads
+
+- Clicking Install for a verified update saves its installer in your Downloads folder, without a Save As prompt.
+- Existing files are not overwritten; a numbered name is used when needed.
+- The signed manifest, installer size and SHA-256 are still checked before the installer opens. Ordinary downloads still ask where to save.
+
+Proton VPN sign-in
+
+- Proton's popup tries to close itself after 200 ms while it is still requesting permissions.
+  PsychoVault opens that popup as a tab, so keep that specific tab alive while sign-in runs.
+- This is an attempted fix for the blank popup, not a confirmed VPN connection. The Firefox
+  extension linked by the user has not been tested in PsychoVault.

@@ -51,6 +51,25 @@ function installExtensionAPIs(g, bridgeName) {
     return false
   }
 
+  // Proton treats its action page as a disposable toolbar popup. Its sign-in handler calls
+  // window.close() after 200 ms even while permissions or the account fork are still pending.
+  // PsychoVault opens that same page as a full tab, so closing it destroys the page and can
+  // interrupt the async sign-in before it opens an account tab. Keep only this known popup alive;
+  // the user can close the tab normally. Do not alter close() for other extensions or pages.
+  try {
+    if (g.location && g.location.protocol === 'chrome-extension:' &&
+        g.location.hostname === 'jplgfhpmjnbigmhklmmbgecoobifkmpa' &&
+        g.location.pathname === '/popup.html' && typeof g.close === 'function') {
+      var keepProtonTabOpen = function () {
+        try { b.log('Proton popup requested close; keeping its tab open for sign-in') } catch (e) { /* diagnostics only */ }
+      }
+      g.close = keepProtonTabOpen
+      if (g.close !== keepProtonTabOpen) b.log('could not keep Proton popup open: close is not writable')
+    }
+  } catch (e) {
+    try { b.log('could not keep Proton popup open: ' + String(e && e.message || e)) } catch (err) { /* diagnostics only */ }
+  }
+
   var makeEvent = function () {
     var listeners = new Set()
     return {
