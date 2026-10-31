@@ -37,6 +37,14 @@ async function run() {
   if (!result || !result.ok) throw new Error('opening popup failed: ' + JSON.stringify(result))
   const popup = await waitFor('Proton popup', () => webContents.getAllWebContents().find(w => w.getURL().startsWith('chrome-extension://jplgfhpmjnbigmhklmmbgecoobifkmpa/popup.html')))
   await waitFor('visible sign-in button', () => popup.executeJavaScript(`(() => { const b = document.querySelector('.sign-in-button'); return !!b && b.offsetWidth > 0 && b.textContent.trim().length > 0 })()`), 45000)
+  const layout = await waitFor('centered Proton popup', () => popup.executeJavaScript(`(() => {
+    const r = document.querySelector('.main-area').getBoundingClientRect();
+    return Math.abs((r.left + r.right) / 2 - innerWidth / 2) < 3 && r.width <= 520 && innerWidth >= 520
+  })()`))
+  if (!layout) throw new Error('Proton popup is not centered')
+  const advanced = await settings.executeJavaScript(`({ hidden: document.querySelector('#proxySwitchDetails').hidden, text: document.querySelector('#proxySwitchDetails').textContent })`)
+  if (advanced.hidden || !/not Proton VPN/.test(advanced.text)) throw new Error('Proxy Switch diagnostic explanation missing')
+  console.log('PASS: Proton popup centered and Proxy Switch labeled as an advanced diagnostic.')
   // Simulate Proton's fixed-server rule, including the deliberate account bypass. No
   // credentials are used and no request is sent to the fake proxy.
   const setResult = await popup.executeJavaScript(`new Promise(resolve => chrome.proxy.settings.set({value: { mode: 'fixed_servers', rules: {singleProxy: {scheme: 'https', host: 'proxy.example.invalid', port: 4443}, bypassList: ['account.proton.me', 'localhost']}}, scope: 'regular'}, () => chrome.proxy.settings.get({}, resolve)))`)

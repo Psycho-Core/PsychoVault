@@ -1,5 +1,7 @@
 Work in progress - do not publish yet.
 
+- Centered Proton VPN when its popup is opened as a full tab and moved the optional Proxy Switch into an explained Advanced section.
+- Removed the misleading Proton store button; bundled Proton can still be restored from Settings.
 - Added exact-origin controls for camera, microphone, location and notifications. Default follows the global permission settings.
 - Added a local domain list and exact site exceptions for the built-in blocker. These are not uBlock Origin filters.
 - Added custom sleeping-tab idle times and hostname exclusions. Sleeping still reloads a tab and can lose unsaved form data.

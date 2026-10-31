@@ -1097,7 +1097,7 @@ function extAnalyse(dir) {
   for (const p of perms) if (EXT_MISSING[p]) blockers.push(EXT_MISSING[p])
   const notes = []
   const action = manifest.action || manifest.browser_action
-  if (action) notes.push('it has a toolbar button, and this browser has no toolbar - use "Open its window" to reach the popup')
+  if (action) notes.push('Use Open its window to access this extension')
   if (manifest.options_ui || manifest.options_page) notes.push('it has an options page, reachable from here')
   if (manifest.background && manifest.background.service_worker) notes.push('manifest v3 background service worker (works, but fewer lifecycle events than Chrome)')
   if (manifest.background && manifest.background.scripts) notes.push('manifest v2 background page')
@@ -1979,7 +1979,21 @@ class TabWindow {
     wcTabs.set(wc.id, tab)
 
     const emit = () => this.sendState()
-    wc.on('dom-ready', () => applySpellToPage(wc))
+    wc.on('dom-ready', () => {
+      applySpellToPage(wc)
+      // Proton's popup is designed for a narrow toolbar popup. When opened in a
+      // full tab, keep its own UI intact but center and widen its content column.
+      // Scope this strictly to Proton's popup tab, not arbitrary extension pages
+      // or the hidden popup used by the sidebar connection toggle.
+      if (/^chrome-extension:\/\/jplgfhpmjnbigmhklmmbgecoobifkmpa\/popup\.html(?:[?#]|$)/.test(wc.getURL())) {
+        wc.insertCSS(`
+          body.main-modal { min-width: 0; min-height: 100vh; background: #16141c; }
+          .main-area { width: min(100%, 520px); margin-inline: auto; min-height: 100vh; }
+          .central-view { min-width: 0; }
+          .page-view { min-width: 0; max-width: none; }
+        `).catch(() => {})
+      }
+    })
     wc.on('did-start-navigation', (_e, url, isInPlace, isMainFrame) => {
       if (isMainFrame && !isInPlace) wc._pvSpellSeeded = false
     })

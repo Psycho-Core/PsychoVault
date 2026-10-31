@@ -375,13 +375,12 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
       <div class="settings-category" data-category-panel="extensions" data-title="Extensions" data-description="Install and manage compatible browser extensions." hidden>
   <section>
     <h2>Extensions</h2>
-    <div class="hint">Chrome-style extensions, loaded the way Chromium's own "load unpacked" works: install a folder, or a <b>.crx</b> file (this unpacks it, because Electron refuses crx files outright). Extensions run inside every tab and can read the pages you visit - only install ones you trust, and note that <b>no signature is verified</b> for a crx here.</div>
-    <div class="hint"><b>What actually works.</b> Content scripts, page changes, request blocking through the old <code>webRequest</code> API, storage, messaging, and - through PsychoVault's own shim - <b>chrome.proxy</b> and <b>chrome.privacy</b>, which is what a browser VPN extension needs to send traffic through a tunnel. What does not exist in this engine: <b>declarativeNetRequest</b> (the MV3 rules engine), native messaging, <code>chrome.vpnProvider</code>, and a toolbar to click. Every extension below is checked against that list, and anything it needs that is missing is named under it rather than left to fail silently.</div>
+    <div class="hint">Chrome-style extensions, loaded the way Chromium's own "load unpacked" works: install an unpacked folder or a <b>.crx</b> file. Chrome Web Store one-click installation is not supported. Extensions run inside every tab and can read the pages you visit - only install ones you trust, and note that <b>no signature is verified</b> for a crx here.</div>
+    <div class="hint"><b>What actually works.</b> Content scripts, page changes, request blocking through the old <code>webRequest</code> API, storage, messaging, and - through PsychoVault's own shim - <b>chrome.proxy</b> and <b>chrome.privacy</b>, which is what a browser VPN extension needs to send traffic through a tunnel. What does not exist in this engine: <b>declarativeNetRequest</b> (the MV3 rules engine), native messaging, <code>chrome.vpnProvider</code>, and a toolbar to click. Known incompatible permissions are flagged below, but this is not a guarantee an extension will work.</div>
     <div class="proton-card">
       <div class="proton-title">Proton VPN</div>
       <p><b>Installed by default.</b> PsychoVault ships a build of Proton's own browser extension, compiled from Proton's GPL-3.0 source at <code>github.com/ProtonVPN/proton-vpn-browser-extension</code>. It appears in the list below like any other extension - open its window to sign in and connect.</p>
-      <p>You need your own Proton account. Sign in with it in the extension window; PsychoVault does not see, store, or ship your Proton password, and no subscription or server list is bundled. A configured proxy is not proof of a working or protected connection. Proton traffic is still being tested.</p>
-      <p>Want the store listing instead? <button class="mini" id="protonVpnDownload" type="button">Open Proton's extension page</button></p>
+      <p>Sign in with your own Proton account. Use the VPN button on the sidebar to connect or disconnect; right-click it to open Proton. A connection indicator alone does not prove there are no DNS or WebRTC leaks.</p>
       <button class="mini" id="protonVpnRestore" type="button">Restore / reinstall Proton VPN</button>
       <button class="mini" id="protonVpnStatus" type="button">Check install</button>
       <button class="mini" id="proxySelfTest" type="button">Test proxy support</button>
@@ -393,6 +392,11 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     <pre id="extShimLogBody" hidden style="max-height:150px;overflow:auto;font:12px/1.45 ui-monospace,Consolas,monospace;white-space:pre-wrap;background:rgba(0,0,0,.25);border-radius:6px;padding:8px;margin:6px 0 0"></pre>
     <div class="hint" id="protonVpnState">Press <b>Check install</b> to see what the bundled extension did at startup.</div>
     <div id="extList" class="ext-list"></div>
+    <details id="proxySwitchDetails" hidden>
+      <summary>Advanced: Proxy Switch diagnostic</summary>
+      <div class="hint">This bundled test extension is optional. It sets a proxy you enter yourself; it is not Proton VPN and can change the proxy used by the browser. Leave it alone unless you are testing a proxy.</div>
+      <div id="proxySwitchList" class="ext-list"></div>
+    </details>
     <div class="btnrow">
       <button class="mini" id="extAddFolder">Load unpacked...</button>
       <button class="mini" id="extAddCrx">Install .crx...</button>
@@ -949,12 +953,6 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
       const picked = await window.pv.downloads.pickdir()
       if (picked) { s('downloadDir').value = picked; save({ downloadDir: picked }) }
     }
-    if (s('protonVpnDownload')) s('protonVpnDownload').onclick = async () => {
-      try {
-        const result = await window.pv.tab.open('https://chromewebstore.google.com/detail/proton-vpn-fast-secure/jplgfhpmjnbigmhklmmbgecoobifkmpa')
-        if (!result || !result.ok) flag('Could not open the Proton VPN Chrome extension page')
-      } catch { flag('Could not open the Proton VPN Chrome extension page') }
-    }
     const paintBuiltinStatus = async () => {
       let st = null
       try { st = await window.pv.extensions.status() } catch (e) {
@@ -1260,6 +1258,8 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     let items = []
     try { items = await window.pv.extensions.list() } catch (e) { return }
     box.innerHTML = ''
+    const proxyBox = s('proxySwitchList'); proxyBox.replaceChildren()
+    s('proxySwitchDetails').hidden = !items.some(x => x.builtin === 'proxy-switch')
     if (!items.length) {
       const none = document.createElement('div')
       none.className = 'ext-empty'
@@ -1326,7 +1326,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
         paintExtensions()
       })
       item.appendChild(acts)
-      box.appendChild(item)
+      ;(x.builtin === 'proxy-switch' ? proxyBox : box).appendChild(item)
     }
   }
 
