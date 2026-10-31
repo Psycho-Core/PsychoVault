@@ -2,6 +2,7 @@
 // Owns the windows, the tab views, the sessions, the blocker and the stores.
 const { app, BrowserWindow, WebContentsView, ipcMain, session, shell, Menu, clipboard, safeStorage, dialog, globalShortcut, powerMonitor, screen, Notification } = require('electron')
 const { createSaveDialogQueue, reserveDownloadPath } = require('./download-save')
+const { cleanupBackup } = require('./update-backup')
 const { buildTranslationUrl } = require('./translation')
 const {
   checkOnStartup: checkForUpdatesOnStartup,
@@ -1858,7 +1859,13 @@ class TabWindow {
     })
 
     this.win.webContents.on('context-menu', (_e, params) => this.showChromeMenu(params))
-    this.win.once('ready-to-show', () => this.win.show())
+    this.win.once('ready-to-show', () => {
+      this.win.show()
+      if (app.isPackaged && process.platform === 'win32') {
+        // Keep the previous program until a matching version has opened and stayed alive.
+        setTimeout(() => cleanupBackup(USER, process.execPath, app.getVersion()).catch(() => {}), 20000)
+      }
+    })
 
     // A frameless window on Windows fires resize bursts while it is being dragged,
     // and some of those bursts report a transient client height. Laying out from a

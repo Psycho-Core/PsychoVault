@@ -94,6 +94,9 @@ jobs:
           node-version: 24
       - name: Install Electron
         run: npm install --prefix app --no-audit --no-fund
+      - name: Test silent updater rollback on Windows
+        shell: powershell
+        run: ./tools/update-install-windows-smoke.ps1
       - name: Test proxy authentication through a local proxy
         shell: cmd
         run: app\node_modules\.bin\electron.cmd tools\proxy-auth-electron-smoke.cjs

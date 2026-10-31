@@ -269,10 +269,16 @@ function downloadInstaller(url, destination, manifest, onProgress) {
   })
 }
 
-function launchInstaller(installerPath, onProgress, onError) {
+function launchInstaller(installerPath, manifest, onProgress, onError) {
   let child
   try {
-    child = spawn(installerPath, [], { detached: true, stdio: 'ignore', windowsHide: false })
+    const installDir = path.dirname(process.execPath)
+    const helper = path.join(app.getPath('userData'), 'update-install.ps1')
+    fs.copyFileSync(path.join(__dirname, 'update-install.ps1'), helper)
+    const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    child = spawn(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', helper,
+      '-InstallDir', installDir, '-Installer', installerPath, '-Profile', app.getPath('userData'), '-Version', manifest.version, '-Sha256', manifest.sha256, '-Size', String(manifest.size), '-ParentPid', String(process.pid)],
+      { detached: true, stdio: 'ignore', windowsHide: true, cwd: app.getPath('userData') })
   } catch (error) {
     onError(error)
     return false
@@ -282,7 +288,7 @@ function launchInstaller(installerPath, onProgress, onError) {
   })
   child.once('spawn', () => {
     child.unref()
-    safeProgress(onProgress, { phase: 'install', percent: 100, message: 'Launching the verified installer…' })
+    safeProgress(onProgress, { phase: 'install', percent: 100, message: 'Installing the verified update…' })
     app.quit()
   })
   return true
@@ -432,7 +438,7 @@ async function checkForUpdates({ onProgress = () => {}, onError = () => {}, useB
     try { await rememberInstaller(app.getPath('userData'), app.getPath('downloads'), destination, manifest) } catch { /* leave installer in Downloads */ }
     setTaskbarProgress(-1)
     safeProgress(onProgress, { phase: 'verified', percent: 100, message: 'Verified installer saved. Launching update…' })
-    if (!launchInstaller(destination, onProgress, (error) => {
+    if (!launchInstaller(destination, manifest, onProgress, (error) => {
       try { dialog.showErrorBox('PsychoVault update could not start', `The signed installer is saved at:\n${destination}\n\nOpen it manually to install the update.\n\n${error.message}`) }
       catch { /* the main window may already be closing */ }
       try { onError(error) } catch { /* diagnostics are best effort */ }
@@ -491,7 +497,7 @@ async function installPending({ onProgress = () => {}, onError = () => {} } = {}
     try { await rememberInstaller(app.getPath('userData'), app.getPath('downloads'), destination, manifest) } catch { /* leave installer in Downloads */ }
     setTaskbarProgress(-1)
     safeProgress(onProgress, { phase: 'verified', percent: 100, message: 'Verified installer saved. Launching update…' })
-    if (!launchInstaller(destination, onProgress, (error) => {
+    if (!launchInstaller(destination, manifest, onProgress, (error) => {
       try { dialog.showErrorBox('PsychoVault update could not start', `The signed installer is saved at:\n${destination}\n\nOpen it manually to install the update.\n\n${error.message}`) }
       catch { /* main window may be closing */ }
       try { onError(error) } catch { /* best effort */ }
