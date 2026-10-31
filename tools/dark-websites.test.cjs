@@ -18,6 +18,7 @@ function apply(colour, enabled, existing) {
 test('darkening only applies to light pages, and turning it off removes the filter', () => {
   assert.match(apply('rgb(255, 255, 255)', true).inserted.textContent, /invert/)
   assert.equal(apply('rgb(10, 15, 20)', true).inserted, null)
+  assert.ok(apply('rgba(0, 0, 0, 0)', true).inserted)
   assert.equal(apply('rgb(255, 255, 255)', false, true).removed, true)
   assert.match(html, /id="darkWebsites"/)
 })

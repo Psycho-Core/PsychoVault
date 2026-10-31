@@ -2249,7 +2249,8 @@ class TabWindow {
       if (!${JSON.stringify(!!settings.darkWebsites)}) return;
       const colour = el => el && getComputedStyle(el).backgroundColor;
       let bg = colour(document.body); if (!bg || bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent') bg = colour(document.documentElement);
-      const parts = String(bg || '').match(/[0-9.]+/g);
+      if (!bg || bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent') bg = '';
+      const parts = String(bg).match(/[0-9.]+/g);
       const light = !parts || parts.length < 3 || (Number(parts[0]) * .2126 + Number(parts[1]) * .7152 + Number(parts[2]) * .0722) > 160;
       if (!light) return;
       const style = document.createElement('style'); style.id = id;
