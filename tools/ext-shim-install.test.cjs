@@ -70,18 +70,12 @@ test('the page path verifies the install instead of assuming it', () => {
   assert.match(src, /RAN BUT DID NOT TAKE/)
 })
 
-test('the service worker path installs directly instead of using executeInMainWorld', () => {
-  const at = src.indexOf('if (isServiceWorker) {')
-  assert.ok(at !== -1, 'no service worker branch')
-  const swBlock = src
-    .slice(at, src.indexOf('} else {', at))
-    .split('\n')
-    .filter((line) => !line.trim().startsWith('//'))
-    .join('\n')
-  assert.match(swBlock, /Object\.defineProperty\(globalThis, BRIDGE_NAME,/)
-  assert.match(swBlock, /installExtensionAPIs\(globalThis, BRIDGE_NAME\)/)
-  assert.ok(!/contextBridge\.executeInMainWorld/.test(swBlock), 'the service worker path still calls executeInMainWorld')
-  assert.match(src, /globalThis\[BRIDGE_NAME\] = bridge/, 'no fallback when defineProperty is refused')
+test('the service worker path installs in the worker main world', () => {
+  const at = src.indexOf('if (isServiceWorker) {', src.indexOf('const url = currentURL()'))
+  const swBlock = src.slice(at, src.indexOf('} else {', at))
+  assert.match(swBlock, /contextBridge\.exposeInMainWorld\(BRIDGE_NAME, bridge\)/)
+  assert.match(swBlock, /contextBridge\.executeInMainWorld/)
+  assert.match(src, /globalThis\.location\.href/)
 })
 
 test('a failed injection is not swallowed silently', () => {

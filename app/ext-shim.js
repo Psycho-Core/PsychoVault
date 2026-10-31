@@ -33,7 +33,8 @@ const isServiceWorker = process.type === 'service-worker'
 
 function currentURL() {
   try {
-    if (isServiceWorker && self.location) return String(self.location.href || '')
+    // Service-worker preloads run in a separate preload realm with no location.
+    if (isServiceWorker) return String(contextBridge.executeInMainWorld({ func: () => globalThis.location.href }) || '')
     if (typeof location !== 'undefined' && location) return String(location.href || '')
   } catch (e) { /* context gone */ }
   return ''
@@ -43,6 +44,7 @@ function currentURL() {
 // evaluated in that world, so it must not close over anything: every value it needs is either a
 // parameter or read from the global object.
 function installExtensionAPIs(g, bridgeName) {
+  g = g || globalThis
   var b = g && g[bridgeName]
   var chromeObj = g && g.chrome
   var where = typeof window !== 'undefined' ? 'page' : 'worker'
@@ -350,27 +352,14 @@ if (url.startsWith('chrome-extension://')) {
   }
 
   if (isServiceWorker) {
-    // A service worker has no separate "main world" for executeInMainWorld to reach, which is
-    // why the first fix installed nothing for Proton: its background is js/service.js, an MV3
-    // service worker. A service-worker preload shares the worker's global scope, so this can
-    // simply call the installer.
-    let onGlobal = false
+    // Worker preloads have an isolated preload realm too. Install in the worker's
+    // main world, not this realm, so the extension's own chrome APIs are replaced.
     try {
-      Object.defineProperty(globalThis, BRIDGE_NAME, { value: bridge, configurable: true, enumerable: false })
-      onGlobal = globalThis[BRIDGE_NAME] === bridge
+      contextBridge.exposeInMainWorld(BRIDGE_NAME, bridge)
+      const ok = contextBridge.executeInMainWorld({ func: installExtensionAPIs, args: [null, BRIDGE_NAME] })
+      note('installer in the worker main world: ' + (ok ? 'proxy and tabs installed' : 'ran, but the overrides did not take'))
     } catch (e) {
-      try { globalThis[BRIDGE_NAME] = bridge; onGlobal = true } catch (e2) { /* nothing else to try */ }
-    }
-    note('service-worker preload ran: ' + url + ' (bridge on globalThis: ' + onGlobal + ')')
-    if (onGlobal) {
-      try {
-        const ok = installExtensionAPIs(globalThis, BRIDGE_NAME)
-        note('installer in the worker: ' + (ok ? 'proxy and tabs installed' : 'ran, but the overrides did not take'))
-      } catch (e) {
-        note('installer in the worker threw: ' + (e && e.message))
-      }
-    } else {
-      note('the worker refused the bridge; the APIs cannot be installed')
+      note('worker main world installation failed: ' + (e && e.message))
     }
   } else {
     try {

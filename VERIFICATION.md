@@ -2668,3 +2668,8 @@ and the existing claimed-ID comparison still prevents impersonating another exte
 `tools/shim-sender.test.cjs` checks worker and frame identity without trusting the payload.
 The Windows Actions worker test exercises a real MV3 worker; it does not use a real VPN
 server, account credentials, or establish that a user's traffic is protected.
+
+The first Windows worker smoke run failed with `Access to extension API denied`; it did
+not show the worker shim installing. The worker preload uses an isolated preload realm,
+so the shim now reads the worker URL and installs its bridge in the worker's main world.
+The Windows worker test must pass before treating the simulated bridge as verified.
