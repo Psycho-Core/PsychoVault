@@ -735,7 +735,8 @@ async function paintPanel(name) {
     const dirTxt = document.createElement('div')
     dirTxt.className = 'dl-dir-t'
     const dirPath = await window.pv.downloads.dir()
-    dirTxt.textContent = 'Saved to ' + dirPath
+    const ask = !state.settings || state.settings.askSaveLocation !== false
+    dirTxt.textContent = (ask ? 'Ask each time · starting folder: ' : 'Automatically save to ') + dirPath
     dirTxt.title = dirPath
     const chg = document.createElement('button')
     chg.className = 'mini'
@@ -789,14 +790,17 @@ function downloadRow(d) {
   row.appendChild(meta)
   if (d.id && (d.state === 'progress' || d.state === 'paused' || (d.state === 'interrupted' && d.canResume))) {
     const action = d.state === 'progress' ? 'pause' : 'resume'
-    const button = document.createElement('button'); button.className = 'nav'; button.style.cssText = 'width:auto;padding:3px 8px;font-size:11px'
+    const button = document.createElement('button'); button.className = 'mini'; button.style.marginTop = '8px'
     button.textContent = action === 'pause' ? 'Pause' : (d.state === 'interrupted' ? 'Retry / resume' : 'Resume')
     button.onclick = async ev => { ev.stopPropagation(); const result = await window.pv.downloads.control({ id: d.id, action }); if (!result || !result.ok) alert((result && result.error) || 'Download control failed.') }
     row.appendChild(button)
   }
   if (d.state === 'completed' && d.path) {
-    row.onclick = () => window.pv.downloads.open(d.path)
-    row.title = 'Open ' + d.path
+    const actions = document.createElement('div'); actions.className = 'dl-actions'
+    const open = document.createElement('button'); open.className = 'mini'; open.textContent = 'Open'; open.onclick = () => window.pv.downloads.open(d.path)
+    const show = document.createElement('button'); show.className = 'mini'; show.textContent = 'Show in folder'; show.onclick = () => window.pv.downloads.reveal(d.path)
+    actions.append(open, show); row.appendChild(actions)
+    row.title = d.path
   }
   return row
 }

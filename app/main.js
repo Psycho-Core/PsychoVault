@@ -1,7 +1,7 @@
 // PsychoVault - main process
 // Owns the windows, the tab views, the sessions, the blocker and the stores.
 const { app, BrowserWindow, WebContentsView, ipcMain, session, shell, Menu, clipboard, safeStorage, dialog, globalShortcut, powerMonitor, screen, Notification } = require('electron')
-const { createSaveDialogQueue } = require('./download-save')
+const { createSaveDialogQueue, reserveDownloadPath } = require('./download-save')
 const { buildTranslationUrl } = require('./translation')
 const {
   checkOnStartup: checkForUpdatesOnStartup,
@@ -109,6 +109,7 @@ const DEFAULT_SETTINGS = {
   // --- GX Control third limiter: bandwidth, in KB/s (0 = no cap) ---
   netLimit: 0,
   settingsVersion: 3,           // internal settings schema version
+  askSaveLocation: true,        // ask for each download by default
   downloadDir: '',              // initial location for each Save As dialog; empty = system Downloads
   downloadNotify: true,         // system notification when the window is behind something
   // --- GX Panic Button ---
@@ -167,15 +168,13 @@ const DEFAULT_SETTINGS = {
   ]
 }
 let settings = Object.assign({}, DEFAULT_SETTINGS, readJSON('settings.json', {}))
-// Save As is now mandatory for every download, not a preference that can be left off
-// in an old profile. Remove the retired setting so legacy `false` values cannot silently
-// bypass the location picker.
+// Upgrade old profiles to the safe default. Only an explicit choice made in
+// this version can turn off the Save As prompt.
 ;(function migrateSettings() {
   const savedVersion = Number(settings.settingsVersion) || 1
-  const hadLegacySavePreference = Object.prototype.hasOwnProperty.call(settings, 'askSaveLocation')
-  if (savedVersion >= 3 && !hadLegacySavePreference) return
-  delete settings['askSaveLocation']
-  settings.settingsVersion = 3
+  if (savedVersion >= 4) return
+  settings.askSaveLocation = true
+  settings.settingsVersion = 4
   writeJSON('settings.json', settings)
 })()
 
@@ -2001,10 +2000,17 @@ class TabWindow {
       // or the hidden popup used by the sidebar connection toggle.
       if (/^chrome-extension:\/\/jplgfhpmjnbigmhklmmbgecoobifkmpa\/popup\.html(?:[?#]|$)/.test(wc.getURL())) {
         wc.insertCSS(`
-          body.main-modal { min-width: 0; min-height: 100vh; background: #16141c; }
-          .main-area { width: min(100%, 520px); margin-inline: auto; min-height: 100vh; }
-          .central-view { min-width: 0; }
-          .page-view { min-width: 0; max-width: none; }
+          body.main-modal { min-width: 0; min-height: 100vh; background: #0a0e17; }
+          .main-area { box-sizing: border-box; width: min(760px, calc(100% - 48px)); height: min(800px, calc(100vh - 48px)); min-height: 0; margin: 24px auto; background: #16141c; border: 1px solid #30384b; border-radius: 16px; box-shadow: 0 18px 60px rgba(0,0,0,.35); overflow: hidden; }
+          #logged-view { height: 100%; }
+          .top-bar { height: 54px; padding: 16px 20px; }
+          .central-view { min-width: 0; min-height: 0; height: calc(100% - 54px); }
+          .sidebar { padding: 12px 6px; margin-right: 0; border-right: 1px solid #30303d; }
+          .page-view { min-width: 0; max-width: none; max-height: none; height: 100%; padding: 12px 20px; }
+          .page-view::-webkit-scrollbar { width: 7px; }
+          .page-view::-webkit-scrollbar-track { background: transparent; }
+          .page-view::-webkit-scrollbar-thumb { background: #494458; border-radius: 7px; }
+          @media (max-width: 500px) { .main-area { width: 100%; height: 100vh; margin: 0; border: 0; border-radius: 0; } .page-view { padding: 10px; } }
         `).catch(() => {})
       }
     })
@@ -3536,8 +3542,7 @@ ipcMain.handle('vault:forgetMaster', () => {
 ipcMain.handle('settings:get', () => settings)
 ipcMain.handle('settings:set', (e, patch) => {
   settings = { ...settings, ...patch }
-  delete settings['askSaveLocation']
-  settings.settingsVersion = 3
+  settings.settingsVersion = 4
   writeJSON('settings.json', settings)
   loadBlocklist()
   applyCpuLimit()
@@ -3678,13 +3683,21 @@ function watchDownloads(ses) {
     const defaultPath = path.join(dir, suggested)
     const parent = downloadDialogParent(webContents)
 
-    // The asynchronous native picker now runs with the item paused. Do not call
-    // event.preventDefault(): that permanently cancels the transfer. Cancellation in the
-    // picker calls item.cancel(); only a chosen path reaches tracking and item.resume().
-    requestDownloadSavePath(item, parent, defaultPath, true).then((target) => {
+    // Pick or reserve a path while paused, then attach listeners before resuming.
+    // Automatic mode reserves a unique name and never replaces an existing file.
+    const destination = settings.askSaveLocation !== false
+      ? requestDownloadSavePath(item, parent, defaultPath, true)
+      : Promise.resolve().then(() => {
+        const target = reserveDownloadPath(dir, suggested)
+        try { item.setSavePath(target) } catch (error) {
+          try { fs.unlinkSync(target) } catch { /* leave the placeholder */ }
+          throw error
+        }
+        return target
+      })
+    destination.then((target) => {
       if (!target) return
       trackDownload(item, target, suggested)
-      // Attach progress and completion listeners before the first resumed bytes can land.
       item.resume()
     }).catch((e) => {
       logMainError(e)

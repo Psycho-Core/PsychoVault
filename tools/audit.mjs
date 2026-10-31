@@ -84,9 +84,8 @@ const uiIds = uniq([...settingsHtml.matchAll(/id="([a-zA-Z0-9_]+)"/g)].map((m) =
 
 const ALIAS = { speedDial: 'tiles', services: 'svcList', containers: 'contList' }
 // Keys the app writes for itself: schema markers, extension inventory, the version of an
-// update the user dismissed for good, and the retired askSaveLocation preference (consumed
-// only by the one-time migration to mandatory Save As).
-const INTERNAL = ['settingsVersion', 'extensions', 'askSaveLocation', 'dismissedUpdate', 'sitePermissions']
+// update the user dismissed for good, and site permission rules edited through their own UI.
+const INTERNAL = ['settingsVersion', 'extensions', 'dismissedUpdate', 'sitePermissions']
 
 // The settings view must have one navigation button for every category panel, and all
 // real sections must live inside one of those panels.
@@ -103,14 +102,14 @@ for (let i = 0; i < panels.length; i++) {
 }
 const allSections = (settingsHtml.match(/<section>/g) || []).length
 if (!panels.length || groupedSections !== allSections) defects.push(`settings categories: only ${groupedSections} of ${allSections} sections are inside a category`)
-if (/id="askSaveLocation"/.test(settingsHtml)) defects.push('downloads: save-location prompt must not be disableable in Settings')
+if (!/id="askSaveLocation"/.test(settingsHtml)) defects.push('downloads: save-location preference needs a Settings control')
 const downloadFlow = main.slice(main.indexOf('function watchDownloads(ses)'), main.indexOf('function broadcast(ch, payload)', main.indexOf('function watchDownloads(ses)')))
-if (!downloadFlow.includes('requestDownloadSavePath') || !downloadFlow.includes('item.resume()')) defects.push('downloads: every download must wait for its Save As path before resuming')
+if (!downloadFlow.includes('requestDownloadSavePath') || !downloadFlow.includes('item.resume()')) defects.push('downloads: the chosen or reserved path must be set before resuming')
 if (downloadFlow.indexOf('item.pause()') < 0 || downloadFlow.indexOf('item.pause()') > downloadFlow.indexOf('requestDownloadSavePath')) defects.push('downloads: pause the item before doing save-dialog setup')
 if (downloadFlow.includes('showSaveDialogSync')) defects.push('downloads: the Save As picker must not block synchronously inside will-download')
 if (!downloadSave.includes('item.pause()') || !downloadSave.includes('dialog.showSaveDialog') || !downloadSave.includes('item.setSavePath') || !downloadSave.includes('item.cancel()')) defects.push('downloads: pause, async Save As, selected path, and cancellation must all be implemented')
 if (downloadSave.indexOf('item.pause()') > downloadSave.indexOf('dialog.showSaveDialog')) defects.push('downloads: the transfer must be paused before the Save As dialog opens')
-if (downloadFlow.includes('settings.askSaveLocation')) defects.push('downloads: legacy setting still controls whether Save As appears')
+if (!downloadFlow.includes('settings.askSaveLocation') || !downloadFlow.includes('reserveDownloadPath')) defects.push('downloads: automatic mode must reserve a unique path')
 if (!translation.includes("new URL('https://translate.google.com/translate')") || !translation.includes("searchParams.set('sl', 'auto')")) defects.push('translation: the in-app translation URL must auto-detect the source language')
 if (!main.includes("ipcMain.handle('translate:page'") || !main.includes('Google Translate will receive this page URL')) defects.push('translation: page translation must be bridged and disclose the third-party URL/content request')
 if (!chromeHtml.includes('data-cmd="translate"') || !chromeJs.includes('translateCurrentPage')) defects.push('translation: the page-translation action must be discoverable from browser chrome')

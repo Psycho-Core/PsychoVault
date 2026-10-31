@@ -1,0 +1,5 @@
+- Made the Proton VPN tab wider and centered it inside a cleaner panel. Its connection controls still belong to Proton.
+- Fixed password and number fields in Settings so they follow the selected theme. Corrected the vault message when the OS keychain is available.
+- Added an Ask where to save each download switch. When off, ordinary downloads use the chosen folder and reserve an unused name rather than replacing files. Browser updates still use Downloads separately.
+- Refreshed the download panel, including Open and Show in folder buttons. The Save As window is still the operating system's dialog.
+- Existing profiles start with Ask where to save enabled until you choose otherwise.

@@ -93,3 +93,18 @@ test('simultaneous downloads queue their dialogs while both transfers stay pause
   answers[1]({ canceled: false, filePath: '/chosen/two.zip' })
   assert.equal(await second, '/chosen/two.zip')
 })
+
+test('automatic downloads reserve different names without overwriting files or symlinks', t => {
+  const fs = require('node:fs'), os = require('node:os'), path = require('node:path')
+  const { reserveDownloadPath } = require('../app/download-save')
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pv-autodl-'))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  fs.writeFileSync(path.join(dir, 'file.zip'), 'keep me')
+  const one = reserveDownloadPath(dir, 'file.zip')
+  const two = reserveDownloadPath(dir, 'file.zip')
+  assert.equal(path.basename(one), 'file (1).zip')
+  assert.equal(path.basename(two), 'file (2).zip')
+  assert.equal(fs.readFileSync(path.join(dir, 'file.zip'), 'utf8'), 'keep me')
+  assert.equal(path.basename(reserveDownloadPath(dir, 'CON.txt')), '_CON.txt')
+  assert.ok(path.dirname(reserveDownloadPath(dir, '../escape.txt')) === dir)
+})
