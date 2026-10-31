@@ -31,6 +31,8 @@ async function run() {
   if (!result || !result.ok) throw new Error('opening popup failed: ' + JSON.stringify(result))
   const popup = await waitFor('Proton popup', () => webContents.getAllWebContents().find(w => w.getURL().startsWith('chrome-extension://jplgfhpmjnbigmhklmmbgecoobifkmpa/popup.html')))
   await waitFor('visible sign-in button', () => popup.executeJavaScript(`(() => { const b = document.querySelector('.sign-in-button'); return !!b && b.offsetWidth > 0 && b.textContent.trim().length > 0 })()`), 45000)
+  const permissions = await popup.executeJavaScript(`Promise.all([browser.permissions.getAll(), browser.permissions.contains({ permissions: ['proxy'], origins: ['http://*/*','https://*/*','ftp://*/*','ws://*/*','wss://*/*','https://account.protonvpn.com/*','https://account.proton.me/*'] })]).then(([all, contains]) => ({ all, contains })).catch(e => ({ error: String(e) }))`)
+  console.error('::warning::Proton permissions: ' + JSON.stringify(permissions))
   const point = await popup.executeJavaScript(`(() => { const r = document.querySelector('.sign-in-button').getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) } })()`)
   popup.focus()
   popup.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y })
