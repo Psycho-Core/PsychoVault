@@ -8,6 +8,10 @@
   * { box-sizing:border-box; margin:0; padding:0; }
   body { background:var(--bg); color:var(--fg); font:14px/1.6 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
          padding:32px 24px 64px; display:flex; flex-direction:column; align-items:center; }
+body[data-theme="graphite"] { --bg:#121416; --bg2:#1b1e21; --bg3:#272b30; --bg4:#333840; --fg:#f0f2f4; --dim:#a9b2ba; --line:#333a40; --line2:#414a52; }
+body[data-theme="forest"] { --bg:#0d1815; --bg2:#13241e; --bg3:#1a3328; --bg4:#234235; --fg:#e2f1e7; --dim:#9cbaa8; --line:#294638; --line2:#365844; }
+body[data-theme="plum"] { --bg:#180f1c; --bg2:#241629; --bg3:#332039; --bg4:#432b4b; --fg:#f5e9f6; --dim:#c2a6c7; --line:#48304f; --line2:#5b3e63; }
+body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#194657; --fg:#e2f4f8; --dim:#96bdc8; --line:#24505e; --line2:#306676; }
   body.high-contrast { --bg:#000; --bg2:#090909; --bg3:#161616; --fg:#fff; --dim:#f0f0f0; --accent:#ffeb3b; --line:#fff; --line2:#c8c8c8; }
   :focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
   body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after { animation-duration:.01ms!important; animation-iteration-count:1!important; scroll-behavior:auto!important; transition-duration:.01ms!important; }
@@ -187,7 +191,7 @@
     <div class="row">
       <div>
         <div class="lbl">Block ads and trackers</div>
-        <div class="hint">Uses a bundled domain list, checked on every request. No remote calls.</div>
+        <div class="hint">Uses PsychoVault’s built-in domain list, checked on every request. It is not an extension and does not have uBlock Origin’s settings or filters. No remote calls.</div>
       </div>
       <label class="switch"><input type="checkbox" id="blockAds"><span class="slider"></span></label>
     </div>
@@ -325,7 +329,7 @@
       <div class="settings-category" data-category-panel="downloads" data-title="Downloads" data-description="Choose a destination for every file before it downloads." hidden>
   <section>
     <h2>Downloads</h2>
-    <div class="hint">Every download opens a Save As dialog so you can choose its exact name and destination. Cancelling the dialog cancels the download. The folder below is the starting location.</div>
+    <div class="hint">Ordinary downloads open a Save As dialog so you can choose their exact name and destination. Browser updates go to Downloads automatically. Cancelling the dialog cancels the download. The folder below is the starting location.</div>
     <div class="row">
       <div>
         <div class="lbl">Download folder</div>
@@ -354,7 +358,7 @@
     <div class="proton-card">
       <div class="proton-title">Proton VPN</div>
       <p><b>Installed by default.</b> PsychoVault ships a build of Proton's own browser extension, compiled from Proton's GPL-3.0 source at <code>github.com/ProtonVPN/proton-vpn-browser-extension</code>. It appears in the list below like any other extension - open its window to sign in and connect.</p>
-      <p>You need your own Proton account. Sign in with it in the extension window; PsychoVault does not see, store, or ship your Proton password, and no subscription or server list is bundled. Traffic is then routed by Chromium through Proton's proxy - the same mechanism the extension uses in Chrome.</p>
+      <p>You need your own Proton account. Sign in with it in the extension window; PsychoVault does not see, store, or ship your Proton password, and no subscription or server list is bundled. A configured proxy is not proof of a working or protected connection. Proton traffic is still being tested.</p>
       <p>Want the store listing instead? <button class="mini" id="protonVpnDownload" type="button">Open Proton's extension page</button></p>
       <button class="mini" id="protonVpnRestore" type="button">Restore / reinstall Proton VPN</button>
       <button class="mini" id="protonVpnStatus" type="button">Check install</button>
@@ -435,6 +439,10 @@
   <section>
     <h2>Appearance</h2>
     <div class="row">
+      <div><div class="lbl">Browser theme</div><div class="hint">Changes browser and settings colours.</div></div>
+      <select id="theme"><option value="midnight">Midnight</option><option value="graphite">Graphite</option><option value="forest">Forest</option><option value="plum">Plum</option><option value="ocean">Ocean</option></select>
+    </div>
+    <div class="row">
       <div>
         <div class="lbl">Accent colour</div>
         <div class="hint">The accent colour, applied to the whole UI. Private windows stay violet.</div>
@@ -446,7 +454,18 @@
         <option value="green">Green</option>
         <option value="orange">Orange</option>
         <option value="pink">Pink</option>
+        <option value="gold">Gold</option>
+        <option value="teal">Teal</option>
+        <option value="indigo">Indigo</option>
+        <option value="rose">Rose</option>
       </select>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Darken light websites</div>
+        <div class="hint">Experimental colour filter for light pages. Some sites or images may look wrong; turn it off here if needed.</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="darkWebsites"><span class="slider"></span></label>
     </div>
     <div class="row">
       <div>
@@ -614,7 +633,7 @@
     <div id="vunlock" style="display:none">
       <div class="note">The vault is locked - the decrypted copy was wiped from memory. Open it for this session:</div>
       <div class="tile-row">
-        <input type="text" id="vpw" placeholder="master password">
+        <input type="password" autocomplete="current-password" id="vpw" placeholder="master password">
         <button class="mini" id="vgo">Unlock vault</button>
         <button class="mini" id="vforget">Stop using a master password</button>
       </div>
@@ -624,7 +643,7 @@
       <div class="note">This system gave no usable keychain, so the vault will not store anything until
       you set a master password. It is deliberate: PsychoVault never writes a plaintext password file.</div>
       <div class="tile-row">
-        <input type="text" id="vnew" placeholder="master password, 8 characters or more">
+        <input type="password" autocomplete="new-password" id="vnew" placeholder="master password, 8 characters or more">
         <button class="mini" id="vset">Set master password</button>
       </div>
     </div>
@@ -636,7 +655,7 @@
     <div class="tile-row">
       <input type="text" id="eSite" placeholder="site, e.g. github.com">
       <input type="text" id="eUser" placeholder="username or email">
-      <input type="text" id="ePass" placeholder="password">
+      <input type="password" autocomplete="new-password" id="ePass" placeholder="password">
       <button class="mini" id="eGen">Generate</button>
       <button class="mini" id="eSave">Save</button>
     </div>
@@ -779,7 +798,9 @@
   const ACCENTS = {
     cyan: ['#38bdf8', '#0ea5e9'], red: ['#ff5a5a', '#e03131'],
     purple: ['#a78bfa', '#8b5cf6'], green: ['#3ddc97', '#22c55e'],
-    orange: ['#ffb020', '#f97316'], pink: ['#f472b6', '#ec4899']
+    orange: ['#ffb020', '#f97316'], pink: ['#f472b6', '#ec4899'],
+    gold: ['#facc15', '#eab308'], teal: ['#2dd4bf', '#0d9488'],
+    indigo: ['#818cf8', '#6366f1'], rose: ['#fb7185', '#e11d48']
   }
   let settings = {}
   // every switch on this page, and how its default reads when the key is absent
@@ -787,7 +808,7 @@
     blockAds: true, restore: true, remember: true, sendDNT: true,
     blockThirdPartyCookies: false, blockAutoplay: false, hideSidebar: false,
     batterySaver: false, batteryAuto: false, vaultEnabled: true,
-    enhanceVideo: false, enhanceImages: false, uiSounds: false, mediaKeys: true,
+    enhanceVideo: false, enhanceImages: false, darkWebsites: false, uiSounds: false, mediaKeys: true,
     mediaAutoPause: true, panicEnabled: true, downloadNotify: true,
     stripReferrer: true, railIcons: true, spellCheck: true, spellBuiltin: true,
     highContrast: false, reduceMotion: false, showTabCloseButtons: false
@@ -801,6 +822,7 @@
 
   function paint(st) {
     settings = st
+    document.body.dataset.theme = st.theme || 'midnight'
     document.body.classList.toggle('high-contrast', !!st.highContrast)
     document.body.classList.toggle('reduce-motion', !!st.reduceMotion)
     for (const id of Object.keys(TOGGLES)) {
@@ -809,7 +831,7 @@
     }
     s('homepage').value = st.homepage || 'psychovault://newtab'
     if (s('downloadDir')) s('downloadDir').value = st.downloadDir || ''
-    for (const id of ['search', 'cpuLimit', 'accent', 'clearOnExit', 'translateTarget']) { const el = s(id); if (el) el.value = st[id] || el.options[0].value }
+    for (const id of ['search', 'cpuLimit', 'theme', 'accent', 'clearOnExit', 'translateTarget']) { const el = s(id); if (el) el.value = st[id] || el.options[0].value }
     s('netLimit').value = String(st.netLimit || 0)
     s('webRtc').value = st.webRtc || 'publiconly'
     s('doh').value = st.doh || 'off'
@@ -843,7 +865,7 @@
       const el = s(id)
       if (el) el.onchange = () => save({ [id]: el.checked })
     }
-    for (const id of ['search', 'cpuLimit', 'accent', 'clearOnExit', 'sleepTabsMin', 'translateTarget']) {
+    for (const id of ['search', 'cpuLimit', 'theme', 'accent', 'clearOnExit', 'sleepTabsMin', 'translateTarget']) {
       const el = s(id)
       if (el) el.onchange = () => save({ [id]: id === 'sleepTabsMin' ? Number(el.value) : el.value })
     }

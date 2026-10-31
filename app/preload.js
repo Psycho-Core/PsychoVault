@@ -97,6 +97,7 @@ contextBridge.exposeInMainWorld('pv', {
     later: () => invoke('update:later'),
     dismiss: () => invoke('update:dismiss')
   },
+  proton: { toggle: () => invoke('proton:toggle') },
   extensions: {
     list: () => invoke('ext:list'),
     addfolder: () => invoke('ext:addfolder'),

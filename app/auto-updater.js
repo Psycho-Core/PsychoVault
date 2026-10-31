@@ -7,6 +7,7 @@ const { spawn } = require('node:child_process')
 const { app, BrowserWindow, dialog, net, safeStorage } = require('electron')
 const { authorizationForHop, authHeader, tokenSource, apiAssetUrl } = require('./update-auth')
 const { followRedirects } = require('./update-http')
+const { saveVerifiedInstaller } = require('./update-download')
 const {
   REPOSITORY,
   PLATFORM,
@@ -184,18 +185,6 @@ function getParentWindow() {
 function showMessage(options) {
   const parent = getParentWindow()
   return parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options)
-}
-
-function showInstallerSaveDialog(manifest) {
-  const parent = getParentWindow()
-  const options = {
-    title: `Save PsychoVault ${manifest.version} installer`,
-    defaultPath: path.join(app.getPath('downloads'), manifest.assetName),
-    buttonLabel: 'Save installer',
-    filters: [{ name: 'Windows installer', extensions: ['exe'] }],
-    properties: ['createDirectory', 'showOverwriteConfirmation']
-  }
-  return parent ? dialog.showSaveDialog(parent, options) : dialog.showSaveDialog(options)
 }
 
 function setTaskbarProgress(value) {
@@ -427,13 +416,7 @@ async function checkForUpdates({ onProgress = () => {}, onError = () => {}, useB
   let destination
   let temporaryDestination
   try {
-    const selection = await showInstallerSaveDialog(manifest)
-    if (!selection || selection.canceled || typeof selection.filePath !== 'string' || !selection.filePath) {
-      return { skipped: true, reason: 'save-as-cancelled' }
-    }
-    destination = path.resolve(selection.filePath)
-    if (!path.extname(destination)) destination += '.exe'
-    if (path.extname(destination).toLowerCase() !== '.exe') throw new Error('Choose a destination ending in .exe for the Windows installer.')
+    destination = path.join(app.getPath('downloads'), manifest.assetName)
     temporaryDestination = path.join(
       path.dirname(destination),
       `.${path.basename(destination)}.${crypto.randomBytes(8).toString('hex')}.download`
@@ -442,7 +425,7 @@ async function checkForUpdates({ onProgress = () => {}, onError = () => {}, useB
     safeProgress(onProgress, { phase: 'download', percent: 0, message: 'Downloading signed update… 0%' })
     setTaskbarProgress(0)
     await downloadInstaller(url, temporaryDestination, manifest, onProgress)
-    await fs.promises.rename(temporaryDestination, destination)
+    destination = await saveVerifiedInstaller(temporaryDestination, app.getPath('downloads'), manifest.assetName)
     temporaryDestination = null
     setTaskbarProgress(-1)
     safeProgress(onProgress, { phase: 'verified', percent: 100, message: 'Verified installer saved. Launching update…' })
@@ -491,13 +474,7 @@ async function installPending({ onProgress = () => {}, onError = () => {} } = {}
   let destination
   let temporaryDestination
   try {
-    const selection = await showInstallerSaveDialog(manifest)
-    if (!selection || selection.canceled || typeof selection.filePath !== 'string' || !selection.filePath) {
-      return { skipped: true, reason: 'save-as-cancelled' }
-    }
-    destination = path.resolve(selection.filePath)
-    if (!path.extname(destination)) destination += '.exe'
-    if (path.extname(destination).toLowerCase() !== '.exe') throw new Error('Choose a destination ending in .exe for the Windows installer.')
+    destination = path.join(app.getPath('downloads'), manifest.assetName)
     temporaryDestination = path.join(
       path.dirname(destination),
       `.${path.basename(destination)}.${crypto.randomBytes(8).toString('hex')}.download`
@@ -505,7 +482,7 @@ async function installPending({ onProgress = () => {}, onError = () => {} } = {}
     safeProgress(onProgress, { phase: 'download', percent: 0, message: 'Downloading signed update… 0%' })
     setTaskbarProgress(0)
     await downloadInstaller(url, temporaryDestination, manifest, onProgress)
-    await fs.promises.rename(temporaryDestination, destination)
+    destination = await saveVerifiedInstaller(temporaryDestination, app.getPath('downloads'), manifest.assetName)
     temporaryDestination = null
     setTaskbarProgress(-1)
     safeProgress(onProgress, { phase: 'verified', percent: 100, message: 'Verified installer saved. Launching update…' })

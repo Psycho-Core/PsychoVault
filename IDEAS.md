@@ -40,8 +40,9 @@ built-in implementation that Electron can enable, and there is a fallback using 
 `page-preload.js`.
 
 **6. Session restore** — *M*
-Currently a crash loses your tabs. Write the open-tab list to the profile on a debounce and offer
-"Restore previous session" on next start. Small file, big perceived reliability.
+The browser already saves and restores normal tabs. Improve it with a clear restore choice after
+a crash, reliable recovery of multiple windows and workspaces, and tests that private tabs are
+never restored. Do not claim a crash loses every tab.
 
 **7. Tab search / switcher (Ctrl+Shift+A)** — *S*
 The command palette exists; a dedicated tab switcher that fuzzy-matches titles and URLs across all
@@ -52,18 +53,20 @@ Visible page / full page / selected region, copied to clipboard or saved via the
 dialog. `webContents.capturePage()` plus one UI overlay.
 
 **9. Download manager upgrades** — *M*
-Pause/resume, retry, "open containing folder" (exists), and a real speed/time readout. Downloads
-already funnel through one module, so this is contained work.
+Improve the existing downloads list with reliable pause/resume and retry where supported, a
+clear speed and time remaining display, and open containing folder. Test interrupted downloads
+and make unsupported actions clear instead of promising they always work.
 
 **10. Search engine management** — *S*
-Add/edit/delete search engines and a keyword shortcut system (`gh foo` searches GitHub). The
-omnibox parser is already there; it just needs a settings UI.
+Add/edit/delete search engines in Settings, select a default, and add keyword shortcuts
+(`gh foo` searches GitHub). Validate search URL templates and keep existing choices working.
 
 ### Performance ("Performance" rail button)
 
 **11. Tab hibernation** — *M*
-Hot tabs are already tracked. Add "sleep after N minutes idle", which unloads the renderer and
-restores it on click. The honest, measurable version of what gaming browsers advertise.
+Settings already has idle-time choices and an off switch. Improve the feature with custom idle
+times and per-site exclusions. Sleep inactive tabs and restore them on click; do not discard unsaved forms,
+audio, downloads or private data without a clear policy and tests.
 
 **12. Live performance HUD** — *S*
 Small overlay: per-tab memory, process count, GPU vs software rendering, and a network graph. Great
@@ -74,6 +77,14 @@ Current panic clears what it clears; let the user choose the exact set (cookies,
 downloads, vault lock) and show a receipt of what was erased.
 
 ### Extension system
+
+**uBlock Origin / uBlock Origin Lite integration** — *L*
+The existing sidebar button controls my built-in domain blocker, not uBlock. Start by checking the
+actual Chromium package and Electron API support: uBlock Origin Lite is the Manifest V3 build;
+the original uBlock Origin is not the same extension. Test ruleset loading, blocking and the
+popup-in-a-tab path with real pages before bundling it or saying it works. Keep its GPL licence
+and third-party notices, and avoid claiming the two blockers are equivalent.
+
 
 **14. A real install flow from a URL** — *M*
 Right now extensions come from a folder or a `.crx`. A "paste a Chrome Web Store link" box that
@@ -104,18 +115,20 @@ Local-only crash log with "copy details" — no upload. Turns "it crashed" into 
 
 ## Part 2 — extension ideas
 
-These are the Chromium extensions that actually work under Electron 45 (MV3, no `chrome.proxy`
-beyond the shim that already exists, no `.crx` auto-install from the Web Store). Bundling means
-shipping the built/unpacked extension in `app/builtin/<name>/` and pre-enabling it, exactly the way
-Proton VPN is shipped now.
+These are extensions I want to investigate, not a list of confirmed working extensions. Electron
+45 does not implement every Chrome extension API. Bundling would mean shipping the built/unpacked
+extension and keeping its licence, but only after testing its important features in PsychoVault.
 
 ### Bundle-worthy, in order
 
 1. **Proton VPN** — already bundled. The open work is making its proxy path actually change the IP.
-2. **uBlock Origin Lite** (MV3) — the built-in blocker is a 262-domain list; uBO Lite brings real
-   filter lists and per-site switches. Big upgrade in blocking quality for one bundled folder.
-3. **Bitwarden** — the local vault covers passwords, but people want their existing ones. Works as
-   an unpacked MV3 extension; would need the popup-in-a-tab path that Proton already uses.
+2. **uBlock Origin Lite** (MV3) — test its rules and popup first. A synthetic static-rule test
+   failed in Electron, so it is not bundled or verified. The sidebar currently controls my own
+   domain blocker, not uBlock.
+3. **My password vault** - improve my existing vault instead of adding another password manager.
+   Add safe local imports from browser and password-manager exports, with a preview and duplicate
+   handling; warn that exports may contain plaintext passwords. Review encryption, recovery,
+   backups and autofill, and get independent security review before comparing it to Bitwarden.
 4. **Dark Reader** — universal dark mode for sites that ignore `prefers-color-scheme`. Fits the
    dark navy look and is the most-requested "nice" feature in any browser.
 5. **SponsorBlock** — skips sponsor segments; small, MV3-clean, and immediately noticeable.

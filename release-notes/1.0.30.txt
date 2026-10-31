@@ -1,0 +1,19 @@
+Browser updates go straight to Downloads
+
+- Clicking Install for a verified update saves its installer in your Downloads folder, without a Save As prompt.
+- Existing files are not overwritten; a numbered name is used when needed.
+- The signed manifest, installer size and SHA-256 are still checked before the installer opens. Ordinary downloads still ask where to save.
+
+Proton VPN sign-in
+
+- Proton's popup tries to close itself after 200 ms while it is still requesting permissions.
+  PsychoVault opens that popup as a tab, so keep that specific tab alive while sign-in runs.
+- Avoid an Electron permission prompt error only when Chromium confirms Proton already has the requested permissions. No new permissions are granted.
+- This is an attempted fix for the blank popup, not a confirmed VPN connection. The Firefox
+  extension linked by the user has not been tested in PsychoVault.
+
+Proton proxy check
+
+- Check a normal browsing domain instead of Proton's account domain, which Proton deliberately bypasses. The old check could incorrectly report that a correctly configured proxy was not applied.
+- Do not report the proxy as controlled if any browsing session rejects the setting.
+- Signing in, connecting, and confirming a changed public IP still need to be tested on Windows.

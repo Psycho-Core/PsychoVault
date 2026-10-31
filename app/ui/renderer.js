@@ -249,6 +249,25 @@ function renderNav() {
       : pageBlocked + ' blocked on this page - ' + (state.blockedTotal || 0) + ' this session'
     shields.classList.toggle('off', !!(state.settings && state.settings.blockAds === false))
   }
+  const adblock = $('#btn-adblock')
+  if (adblock) {
+    const enabled = !state.settings || state.settings.blockAds !== false
+    const label = enabled ? 'Turn ad and tracker blocking off' : 'Turn ad and tracker blocking on'
+    adblock.title = label
+    adblock.setAttribute('aria-label', label)
+    adblock.setAttribute('aria-pressed', String(enabled))
+    adblock.classList.toggle('on', enabled)
+    adblock.classList.toggle('status-on', enabled)
+    adblock.classList.toggle('status-off', !enabled)
+  }
+  const proton = $('#btn-proton')
+  if (proton) {
+    const configured = !!state.protonProxyConfigured
+    proton.classList.toggle('status-on', configured)
+    proton.classList.toggle('status-off', !configured)
+    proton.title = configured ? 'Proton proxy configured - connection not verified' : 'Proton VPN - proxy not configured'
+    proton.setAttribute('aria-label', proton.title)
+  }
   const sp = $('#btn-split')
   if (sp) {
     sp.classList.toggle('on', !!state.splitId)
@@ -262,7 +281,11 @@ const ACCENTS = {
   purple: ['#a78bfa', '#8b5cf6'],
   green: ['#3ddc97', '#22c55e'],
   orange: ['#ffb020', '#f97316'],
-  pink: ['#f472b6', '#ec4899']
+  pink: ['#f472b6', '#ec4899'],
+  gold: ['#facc15', '#eab308'],
+  teal: ['#2dd4bf', '#0d9488'],
+  indigo: ['#818cf8', '#6366f1'],
+  rose: ['#fb7185', '#e11d48']
 }
 let lastAccent = null
 
@@ -275,6 +298,7 @@ function rgba(hex, a) {
 function applyAccent(s) {
   const name = (s.settings && s.settings.accent) || 'cyan'
   const prefs = s.settings || {}
+  document.body.dataset.theme = prefs.theme || 'midnight'
   document.body.classList.toggle('no-rail', !!prefs.hideSidebar)
   document.body.classList.toggle('high-contrast', !!prefs.highContrast)
   document.body.classList.toggle('reduce-motion', !!prefs.reduceMotion)
@@ -843,11 +867,43 @@ $('#menu').addEventListener('click', async (e) => {
   else if (cmd === 'bookmarks') openPanel('bookmarks', railBtns[0])
   else if (cmd === 'history') openPanel('history', railBtns[1])
   else if (cmd === 'downloads') openPanel('downloads', railBtns[2])
-  else if (cmd === 'settings') window.pv.nav.go('psychovault://settings')
+  else if (cmd === 'settings') window.pv.tab.new('psychovault://settings')
   else if (cmd === 'devtools') toast('Right-click any page and choose Inspect element')
 })
 
-$('#btn-settings').onclick = () => window.pv.nav.go('psychovault://settings')
+// This controls PsychoVault's built-in domain blocker, not uBlock Origin.
+$('#btn-adblock').onclick = async () => {
+  try {
+    const enabled = !state.settings || state.settings.blockAds !== false
+    await window.pv.settings.set({ blockAds: !enabled })
+    toast(enabled ? 'Ad and tracker blocking is off' : 'Ad and tracker blocking is on')
+  } catch (error) {
+    toast('Could not change ad blocking: ' + (error.message || 'unknown error'))
+  }
+}
+
+async function openProtonSettings() {
+  try {
+    const items = await window.pv.extensions.list()
+    const proton = items.find((item) => item.builtin === 'proton-vpn')
+    if (!proton) return toast('Proton VPN is not installed. Restore it in Settings > Extensions.')
+    if (!proton.enabled || !proton.loaded) return toast('Enable Proton VPN in Settings > Extensions first.')
+    if (!proton.popup) return toast('Proton VPN has no window to open. Check Settings > Extensions.')
+    const result = await window.pv.extensions.openpage({ dir: proton.dir, page: proton.popup })
+    if (!result || !result.ok) toast('Could not open Proton VPN: ' + ((result && result.error) || 'unknown error'))
+  } catch (error) { toast('Could not open Proton VPN: ' + (error.message || 'unknown error')) }
+}
+$('#btn-proton').onclick = async () => {
+  try {
+    const result = await window.pv.proton.toggle()
+    if (!result || !result.ok) return toast((result && result.error) || 'Could not change Proton VPN.')
+    toast(result.action === 'connect' ? 'Proton proxy configured - connection not verified' : 'Proton VPN disconnected')
+  } catch (error) { toast('Could not change Proton VPN: ' + (error.message || 'unknown error')) }
+}
+$('#btn-proton').oncontextmenu = (event) => { event.preventDefault(); openProtonSettings() }
+$('#btn-adblock').oncontextmenu = (event) => { event.preventDefault(); window.pv.tab.new('psychovault://settings#privacy') }
+
+$('#btn-settings').onclick = () => window.pv.tab.new('psychovault://settings')
 
 $('#btn-split').onclick = () => window.pv.view.split()
 
@@ -858,7 +914,7 @@ const COMMANDS = [
   { id: 'reopen',   title: 'Reopen closed tab',  keys: 'Ctrl+Shift+T',run: () => window.pv.tab.reopen() },
   { id: 'private',  title: 'New private window', keys: 'Ctrl+Shift+P',run: () => window.pv.win.private() },
   { id: 'split',    title: 'Toggle split view',  keys: 'Ctrl+\\',     run: () => window.pv.view.split() },
-  { id: 'settings', title: 'Open settings',      keys: '',            run: () => window.pv.nav.go('psychovault://settings') },
+  { id: 'settings', title: 'Open settings',      keys: '',            run: () => window.pv.tab.new('psychovault://settings') },
   { id: 'newtab2',  title: 'Open new tab page',  keys: '',            run: () => window.pv.nav.go('psychovault://newtab') },
   { id: 'bookmarks',title: 'Show bookmarks',     keys: '',            run: () => openPanel('bookmarks', railBtns[0]) },
   { id: 'history',  title: 'Show history',       keys: '',            run: () => openPanel('history', railBtns[1]) },
@@ -889,7 +945,7 @@ const COMMANDS = [
   { id: 'home',     title: 'Go home',            keys: '',            run: () => window.pv.nav.home() },
   { id: 'copyurl',  title: 'Copy current address', keys: '',          run: () => window.pv.clip.write(state.url || '') },
   { id: 'wsclose',  title: 'Close this workspace', keys: '',          run: () => window.pv.ws.close((state.workspaces || {}).active || 0) },
-  { id: 'spellset', title: 'Spelling settings', keys: '', run: () => window.pv.nav.go('psychovault://settings') },
+  { id: 'spellset', title: 'Spelling settings', keys: '', run: () => window.pv.tab.new('psychovault://settings') },
   { id: 'ddg',      title: 'Search engine: DuckDuckGo', keys: '',     run: () => window.pv.settings.set({ search: 'duckduckgo' }) },
   { id: 'brave',    title: 'Search engine: Brave',      keys: '',     run: () => window.pv.settings.set({ search: 'brave' }) },
   { id: 'startpage',title: 'Search engine: Startpage',  keys: '',     run: () => window.pv.settings.set({ search: 'startpage' }) },

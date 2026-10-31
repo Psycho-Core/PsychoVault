@@ -1,0 +1,9 @@
+Local vault safety and sidebar controls
+
+- Hide the local vault's password fields while typing.
+- Keep an unreadable or damaged vault locked instead of treating it as empty.
+- Require the existing vault to be unlocked before changing or removing its master password.
+- The sidebar has a control for PsychoVault's own ad blocker above the Proton VPN button.
+- Proton VPN can report Protected while pages do not load. It is not verified as working.
+- uBlock Origin Lite is not bundled or verified. The ad-blocker button controls PsychoVault's blocker.
+- The local vault changes have not had an independent security audit.

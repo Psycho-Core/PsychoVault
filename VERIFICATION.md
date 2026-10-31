@@ -2609,3 +2609,122 @@ passes it to NSIS, and removes it on exit.
 - `node tools/audit.mjs`: no defects. `bash -n tools/build-installer.sh`: passed.
 - A real NSIS installer build has not been run here: this environment has no NSIS or
   staged Windows Electron runtime. The stubs do not prove that NSIS can compile it.
+
+## Update installer destination - 1.0.30
+
+The update installer now downloads to a temporary file in the system Downloads folder. Only
+once the size and SHA-256 match the already verified signed manifest is it copied to a new
+installer filename and launched. Existing files are never overwritten; a numbered suffix is
+used instead. Ordinary downloads still use Save As.
+
+- `node --test tools/*.test.cjs`: 142 passed. New tests cover existing files, concurrent saves,
+  invalid filenames, and the wiring of both update paths.
+- `node tools/audit.mjs`: no defects. `git diff --check`: passed.
+- No Windows/Electron end-to-end update was run in this environment; the tests do not prove
+  the installer launches on the owner's machine.
+- The linked Mozilla XPI could not be downloaded from this environment (connection failed).
+  It has not been tested in Electron, and Proton VPN sign-in is still unresolved.
+
+## Proton popup closes during sign-in - 1.0.30
+
+The bundled Proton popup's sign-in handler schedules `window.close()` after 200 ms before
+awaiting `browser.permissions.request`. PsychoVault opens the popup as a tab, not a toolbar
+popup, so closing its page while that work is pending can interrupt sign-in. The extension
+shim now keeps that specific Proton popup tab open; other extension pages retain normal close
+behaviour. The user can still close the tab normally.
+
+`tools/proton-popup.test.cjs` exercises the shim in a simulated extension page, checks that
+another tab request can finish after `close()`, checks the scope, and checks the bundled code's
+close-before-permission ordering. This is not a real Electron/Proton login test: the user must
+try the installed build. It does not establish that authentication or VPN traffic works.
+The Mozilla XPI could not be downloaded here, so it was not installed or tested.
+
+A real Electron smoke test on GitHub Actions then reached the Proton sign-in button but
+reported `Could not find an active window` from the permission request. In the same test,
+Chromium's `permissions.contains` returned true for the exact permissions Proton requested.
+The shim now answers only that exact Proton popup request by checking Chromium's existing
+grants; it returns false if they aren't all granted, and does not grant extra permissions.
+Other permission requests go to the original API. Account sign-in and VPN connectivity are
+not proven by this check.
+
+## Proton network-settings error
+
+The bundled Proton code excludes `account.proton.me` from its proxy. PsychoVault was probing
+that same domain after setting the proxy and treating `DIRECT` as a failed proxy. That could
+reject a correct Proton configuration. The probe now uses `https://example.com/`, and a
+partial session failure is not reported as extension control. This does not prove a connection
+or proxy authentication works. The Electron smoke test now tries a Proton-style fixed-server
+rule with the account bypass and checks both ordinary and bypass resolutions without making a
+network request or using credentials.
+
+Local checks: `node --test tools/*.test.cjs` - 149 pass; `node tools/audit.mjs` - no defects.
+
+## Background worker sender - 1.0.31
+
+Electron documents `IpcMainServiceWorkerInvokeEvent.serviceWorker`, not `event.sender`.
+The extension shim was looking for `event.sender.scope`, so real background worker calls
+could be rejected as not coming from an extension. It now reads the actual worker's scope,
+and the existing claimed-ID comparison still prevents impersonating another extension.
+`tools/shim-sender.test.cjs` checks worker and frame identity without trusting the payload.
+The Windows Actions worker test exercises a real MV3 worker; it does not use a real VPN
+server, account credentials, or establish that a user's traffic is protected.
+
+The first Windows worker smoke run failed with `Access to extension API denied`; it did
+not show the worker shim installing. The worker preload uses an isolated preload realm,
+so the shim now reads the worker URL and installs its bridge in the worker's main world.
+The Windows worker test must pass before treating the simulated bridge as verified.
+
+## Proxy authentication investigation - 1.0.32
+
+A Windows Actions test (`tools/proxy-auth-electron-smoke.cjs`) configured a local HTTP
+proxy, received a 407 Basic challenge, and registered an MV3 `webRequest.onAuthRequired`
+listener with synthetic credentials. Run 41207454572 reached the proxy once but the proxy
+received no authenticated request (`challenges=1`, `accepted=0`); the requested test page
+did not load. This reproduces an authentication failure in the test, but does not prove
+it is the cause of every Proton failure. It is not a real Proton connection or an HTTPS
+proxy test. The Windows proxy test remains failing and Proton is not verified as working.
+The sidebar shortcut has separate passing Node tests; the installer build succeeded.
+
+## uBlock Origin Lite investigation
+
+The upstream Chromium MV3 package uses `declarative_net_request` static rules. Electron's
+extensions documentation does not list declarativeNetRequest among its supported APIs, so
+it needs a real test instead of being assumed to work. `tools/ubol-electron-smoke.cjs`
+checks a synthetic static blocking rule in Windows Electron; it is not the real extension
+or a full compatibility test. The sidebar button currently controls PsychoVault's existing
+domain blocker only. uBlock Origin Lite is not bundled or verified.
+
+## Local vault safety checks
+
+`tools/vault-recovery.test.cjs` checks valid and damaged synthetic master-password vaults,
+keychain decode failure, unexpected file contents, locked master-password operations and
+masked inputs. It does not test a real Windows keychain, crash-safe key migration, imports,
+autofill security or provide an independent audit. A damaged vault stays locked instead
+of being treated as empty when unlocked. Keep backups of the existing encrypted vault and
+metadata; these changes do not repair corrupted data.
+
+## Proxy authentication and appearance - 1.0.34
+
+Windows run 41212858042 passed the synthetic MV3 worker test and a real HTTP request through
+an authenticated local proxy. The test used invented credentials, not Proton or a public VPN.
+An additional local HTTPS CONNECT test is being added to exercise a path closer to Proton's
+HTTPS proxy. Neither test proves a real Proton server works or that the public IP changes.
+Proxy auth responses are accepted only from the worker owning the matching proxy endpoint;
+credentials are not intentionally written to logs or files by the bridge.
+The Proton sidebar indicator shows proxy configuration, not verified protection.
+The optional light-site colour filter is cosmetic and can break site appearance.
+
+Windows Actions run 41213945980 passed local HTTP and HTTPS CONNECT proxy authentication
+with a synthetic MV3 extension and fake credentials. The real Proton service was not used.
+The separate worker proxy smoke was intermittent and failed in that run; it is being isolated
+from Proton startup rather than counted as a pass. The uBlock Lite probe also still failed.
+
+## Sidebar controls and Settings - 1.0.35
+
+Left-clicking Proton uses its popup's connect/disconnect controls in a temporary hidden window;
+right-click opens its popup. Proxy configuration is not proof of network protection. The
+signed-out Electron smoke and simulated popup control tests use no Proton credentials; a real
+signed-in connect/disconnect through the new sidebar control has not been automated or verified.
+Settings opens a new tab; the ad blocker right-click opens Privacy. The existing built-in ad
+blocker remains distinct from uBlock Origin Lite. The uBlock compatibility probe is explicitly
+informational and continues to fail; it does not certify uBlock as supported.

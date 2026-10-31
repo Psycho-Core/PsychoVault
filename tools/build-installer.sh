@@ -36,7 +36,7 @@ fi
 test ! -e app/update-token.json || grep -q "app/update-token.json" .gitignore || { echo "REFUSING: update-token.json is not gitignored"; exit 1; }
 mkdir -p "$STAGE/resources/app"
 cp -a app/. "$STAGE/resources/app/"
-for f in main.js download-save.js translation.js update-manifest.js update-public-key.pem auto-updater.js \
+for f in main.js download-save.js translation.js update-manifest.js update-download.js update-public-key.pem auto-updater.js \
          preload.js page-preload.js spell-page.js spell-words.txt ui/renderer.js ui/style.css ui/settings.html \
          ext-proxy.js ext-shim.js builtin/proton-vpn/manifest.json builtin/proton-vpn/js/service.js \
          builtin/README.md builtin/proton-vpn/LICENSE \
@@ -72,7 +72,7 @@ echo "[4/4] verifying what actually went inside"
 V=/var/tmp/vfy-$$; mkdir -p "$V"
 7z x -y -bso0 -bse0 "$OUT" 'resources/app/*' README.txt LICENSE.txt VERIFICATION.txt -o"$V" > /dev/null 2>&1
 for f in resources/app/main.js resources/app/download-save.js resources/app/translation.js \
-         resources/app/update-manifest.js resources/app/update-public-key.pem resources/app/auto-updater.js \
+         resources/app/update-manifest.js resources/app/update-download.js resources/app/update-public-key.pem resources/app/auto-updater.js \
          resources/app/spell-page.js resources/app/spell-words.txt resources/app/preload.js \
          resources/app/page-preload.js resources/app/ui/renderer.js resources/app/ui/style.css \
          resources/app/ui/settings.html \

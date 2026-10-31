@@ -126,3 +126,14 @@ test('an empty resolution is a failure, not a pass', () => {
   const config = toElectronProxy({ mode: 'pac_script', pacScript: { data: 'x' } })
   assert.strictEqual(proxyOutcome(config, '').ok, false)
 })
+
+test('the proxy probe is not Proton account, which Proton explicitly bypasses', () => {
+  const fs = require('node:fs')
+  const path = require('node:path')
+  const main = fs.readFileSync(path.join(__dirname, '../app/main.js'), 'utf8')
+  const bundle = fs.readFileSync(path.join(__dirname, '../app/builtin/proton-vpn/js/background.js'), 'utf8')
+  assert.match(bundle, /baseDomainURL:"https:\/\/account\.proton\.me"/)
+  assert.match(bundle, /f=\[u,\.\.\.t\.apiDomainsExclusion\]/)
+  assert.match(main, /const PROXY_PROBE_URL = 'https:\/\/example\.com\/'/)
+  assert.match(main, /if \(!applied\.length \|\| leaks\.length\)/)
+})

@@ -35,6 +35,8 @@ fs.mkdirSync(USER, { recursive: true })
 
 const { toElectronProxy, getResult, toWebRTCPolicy, proxyOutcome } = require('./ext-proxy')
 const { findWindowFor } = require('./window-lookup')
+const { matchesProxyChallenge, allowsProxyAuth } = require('./ext-proxy-auth')
+const { inspectProtonPopup, clickProtonPopup } = require('./proton-toggle')
 
 // An uncaught throw in the main process used to pop Electron's modal "A JavaScript
 // error occurred in the main process" box - on a browser that is a wall between you and
@@ -71,6 +73,8 @@ const DEFAULT_SETTINGS = {
   restore: true,
   remember: true,               // off = history is never recorded
   // --- extras, every one of them user-controllable ---
+  theme: 'midnight',             // chrome and internal page palette
+  darkWebsites: false,            // optional cosmetic darkening for light websites
   accent: 'cyan',                 // "mods": accent colour of the whole UI
   hideSidebar: false,             // collapse the GX rail
   highContrast: false,            // higher contrast for browser chrome and Settings
@@ -530,12 +534,45 @@ const EXT_SHIM_CHANNELS = [
   'extshim:proxy:get', 'extshim:proxy:set', 'extshim:proxy:clear',
   'extshim:webrtc:get', 'extshim:webrtc:set', 'extshim:report',
   'extshim:tabs:query', 'extshim:tabs:create', 'extshim:tabs:update', 'extshim:tabs:remove',
-  'extshim:log'
+  'extshim:log', 'extshim:auth:reply'
 ]
 const shimSessions = new WeakSet()
 const shimWorkers = new WeakSet()
 // What each extension last asked for, so a chrome.proxy settings read can answer honestly.
 const extProxyValues = new Map()
+let extProxyOwner = ''
+const proxyAuthPending = new Map()
+
+// Route proxy challenges only to the extension that set the exact proxy endpoint.
+// Credentials are never logged, persisted, or exposed to a page.
+app.on('login', (event, _wc, details, authInfo, callback) => {
+  const owner = extProxyOwner
+  if (!owner || !matchesProxyChallenge(extProxyValues.get(owner), authInfo)) return
+  const ses = session.fromPartition('persist:psychovault')
+  const extension = ses.getAllExtensions().find(item => item.id === owner)
+  if (!extension || !allowsProxyAuth(extension.manifest)) return
+  event.preventDefault()
+  const requestId = crypto.randomUUID()
+  let done = false
+  const finish = (credentials) => {
+    if (done) return
+    done = true
+    clearTimeout(timer)
+    proxyAuthPending.delete(requestId)
+    if (credentials && typeof credentials.username === 'string' && typeof credentials.password === 'string') callback(credentials.username, credentials.password)
+    else callback()
+  }
+  const timer = setTimeout(() => finish(null), 20000)
+  proxyAuthPending.set(requestId, { owner, finish })
+  const scope = 'chrome-extension://' + owner + '/'
+  Promise.resolve(ses.serviceWorkers.startWorkerForScope(scope)).then(worker => {
+    if (!done && worker) worker.send('extshim:auth:challenge', { requestId, details: {
+      isProxy: true, challenger: { host: authInfo.host, port: authInfo.port },
+      scheme: authInfo.scheme || '', realm: authInfo.realm || '', url: details.url || '', requestId
+    } })
+    else if (!worker) finish(null)
+  }).catch(() => finish(null))
+})
 // What happened the last time an extension asked for a proxy, so Settings can answer
 // "is this browser actually proxied right now" instead of guessing.
 let extProxyState = { value: null, at: 0, applied: 0, leaks: [] }
@@ -602,7 +639,9 @@ try {
 let extShimReport = null
 // Resolving this tells us what the session would do for ordinary browsing. It is never
 // fetched - resolveProxy() only asks the proxy resolver.
-const PROXY_PROBE_URL = 'https://account.proton.me/'
+// Proton intentionally bypasses account.proton.me. Probe an ordinary browsing host instead;
+// resolving the account domain would report DIRECT even for a correctly applied Proton proxy.
+const PROXY_PROBE_URL = 'https://example.com/'
 
 let extWebRTCPolicy = 'default'
 
@@ -650,7 +689,9 @@ function shimSenderId(event) {
     if (u.startsWith('chrome-extension://')) return u.slice('chrome-extension://'.length).split('/')[0]
   } catch (e) { /* not a webContents */ }
   try {
-    const u = String(event.sender.scope || '')
+    // IpcMainServiceWorkerInvokeEvent exposes serviceWorker, not sender. Never use the
+    // claimed ID from the payload: the scope belongs to the actual invoking worker.
+    const u = String((event.serviceWorker && event.serviceWorker.scope) || '')
     if (u.startsWith('chrome-extension://')) return u.slice('chrome-extension://'.length).split('/')[0]
   } catch (e) { /* not a service worker */ }
   return ''
@@ -706,6 +747,15 @@ async function onShimCall(event, payload, channel) {
     if (claimed && claimed !== real) return { ok: false, error: 'sender does not match the extension id in the request' }
 
     channel = String(channel || '')
+    if (channel === 'extshim:auth:reply') {
+      // Only the actual owning service worker may answer this one pending challenge.
+      const pending = proxyAuthPending.get(String(payload && payload.requestId || ''))
+      if (!event.serviceWorker || !pending || pending.owner !== real || extProxyOwner !== real) return { ok: false }
+      const response = payload && payload.response
+      pending.finish(response && response.authCredentials)
+      return { ok: true }
+    }
+
     if (channel === 'extshim:proxy:get') {
       return { ok: true, ...getResult(extProxyValues.has(real), extProxyValues.get(real)) }
     }
@@ -731,12 +781,18 @@ async function onShimCall(event, payload, channel) {
         }
       }
       extProxyState = { value: (payload && payload.value) || null, at: Date.now(), applied: applied.length, leaks }
-      if (!applied.length) {
+      if (!applied.length || leaks.length) {
+        // Never report extension control when any browsing partition rejected the setting.
+        extProxyValues.delete(real)
+        if (extProxyOwner === real) extProxyOwner = ''
+        for (const w of mainWindows) w.sendState()
         const why = leaks[0] ? (leaks[0].reason || leaks[0].error || 'unknown') : 'no session accepted the proxy configuration'
         logMainError(new Error('proxy not applied: ' + why))
         return { ok: false, error: why, leaks }
       }
       extProxyValues.set(real, (payload && payload.value) || { mode: 'system' })
+      extProxyOwner = real
+      for (const w of mainWindows) w.sendState()
       return { ok: true, applied: applied.length, leaks }
     }
 
@@ -745,6 +801,8 @@ async function onShimCall(event, payload, channel) {
         try { await ses.setProxy({ mode: 'system' }) } catch (e) { logMainError(e) }
       }
       extProxyValues.delete(real)
+      if (extProxyOwner === real) extProxyOwner = ''
+      for (const w of mainWindows) w.sendState()
       extProxyState = { value: null, at: Date.now(), applied: 0, leaks: [] }
       return { ok: true }
     }
@@ -1250,6 +1308,53 @@ ipcMain.handle('ext:openpage', (e, o) => {
   return { ok: true, url: href }
 })
 
+// Toggle through Proton's real popup controls, rather than replacing its connection
+// state or replaying credentials. Only the browser's own chrome can request this.
+let protonToggleBusy = false
+ipcMain.handle('proton:toggle', async (event) => {
+  const w = [...mainWindows].find(x => x.win && !x.win.isDestroyed() && x.win.webContents === event.sender)
+  if (!w) return { ok: false, error: 'No browser window is available.' }
+  if (protonToggleBusy) return { ok: false, error: 'Proton is already changing connection.' }
+  const rec = extRecords().find(x => x.builtin === 'proton-vpn' && x.enabled && x.id === 'jplgfhpmjnbigmhklmmbgecoobifkmpa')
+  if (!rec) return { ok: false, error: 'Enable Proton VPN in Settings > Extensions first.' }
+  protonToggleBusy = true
+  let popup
+  try {
+    popup = new BrowserWindow({ show: false, width: 500, height: 800, webPreferences: {
+      session: session.fromPartition('persist:psychovault'), contextIsolation: true, nodeIntegration: false, sandbox: true
+    } })
+    await popup.loadURL('chrome-extension://' + rec.id + '/popup.html')
+    let status = null
+    const end = Date.now() + 20000
+    while (Date.now() < end) {
+      status = await popup.webContents.executeJavaScript('(' + inspectProtonPopup.toString() + ')()')
+      if (status.state !== 'loading') break
+      await new Promise(resolve => setTimeout(resolve, 200))
+    }
+    if (!status || status.state === 'loading') return { ok: false, error: 'Proton did not finish loading. Right-click to open it.' }
+    if (status.state === 'signed-out') return { ok: false, error: 'Sign in to Proton first. Right-click to open it.' }
+    const action = status.state === 'on' ? 'disconnect' : 'connect'
+    const clicked = await popup.webContents.executeJavaScript('(' + clickProtonPopup.toString() + ')(' + JSON.stringify(action) + ')', true)
+    if (!clicked) return { ok: false, error: 'Proton could not start the requested action.' }
+    const want = action === 'connect' ? 'on' : 'off'
+    const until = Date.now() + 30000
+    while (Date.now() < until) {
+      await new Promise(resolve => setTimeout(resolve, 250))
+      const value = extProxyValues.get(rec.id)
+      const proxy = value && value.mode === 'fixed_servers' && value.rules && value.rules.singleProxy
+      const host = String(proxy && proxy.host || '').toLowerCase()
+      const on = extProxyOwner === rec.id && !!host && !['localhost', '127.0.0.1', '::1'].includes(host)
+      if ((want === 'on') === on) return { ok: true, action }
+    }
+    return { ok: false, error: 'Proton did not finish. Right-click to check its window.' }
+  } catch (error) {
+    return { ok: false, error: 'Could not control Proton: ' + String(error.message || error) }
+  } finally {
+    if (popup && !popup.isDestroyed()) popup.destroy()
+    protonToggleBusy = false
+  }
+})
+
 // ---------------------------------------------------------------- blocklist
 // Domain list shipped with the app; loaded once, matched by hostname.
 let blockSet = new Set()
@@ -1449,11 +1554,14 @@ function vaultLoad() {
   if (!fs.existsSync(f)) return []
   const method = vaultMethod()
   try {
+    let parsed
     if (method === 'master') {
       if (!vaultKey) return null
-      return JSON.parse(vaultOpen(fs.readFileSync(f), vaultKey))
+      parsed = JSON.parse(vaultOpen(fs.readFileSync(f), vaultKey))
+    } else if (method === 'keychain') {
+      parsed = JSON.parse(safeStorage.decryptString(fs.readFileSync(f)))
     }
-    if (method === 'keychain') return JSON.parse(safeStorage.decryptString(fs.readFileSync(f)))
+    return Array.isArray(parsed) ? parsed : null
   } catch { return null }
   return null
 }
@@ -1491,7 +1599,9 @@ function vaultStatus() {
 
 function vaultUnlock(pw) {
   if (vaultMethod() !== 'master') {
-    vaultCache = vaultLoad() || []
+    const loaded = vaultLoad()
+    if (!loaded) return { ok: false, reason: 'could not read the vault; the existing file was left unchanged' }
+    vaultCache = loaded
     vaultLocked = false
     vaultArmLock()
     return { ok: true }
@@ -1505,7 +1615,14 @@ function vaultUnlock(pw) {
     if (check.v !== 1) throw new Error('bad verifier')
   } catch { return { ok: false, reason: 'wrong master password' } }
   vaultKey = key
-  vaultCache = vaultLoad() || []
+  const loaded = vaultLoad()
+  if (!loaded) {
+    vaultKey = null
+    vaultCache = null
+    vaultLocked = true
+    return { ok: false, reason: 'could not read the vault; the existing file was left unchanged' }
+  }
+  vaultCache = loaded
   vaultLocked = false
   vaultArmLock()
   return { ok: true }
@@ -1962,8 +2079,9 @@ class TabWindow {
     tab.url = target
     if (target === 'psychovault://newtab') {
       tab.view.webContents.loadFile(path.join(__dirname, 'ui', 'newtab.html'), { query: { private: this.private ? '1' : '0' } })
-    } else if (target === 'psychovault://settings') {
-      tab.view.webContents.loadFile(path.join(__dirname, 'ui', 'settings.html'))
+    } else if (/^psychovault:\/\/settings(?:#[a-z-]+)?$/.test(target)) {
+      const section = target.split('#')[1]
+      tab.view.webContents.loadFile(path.join(__dirname, 'ui', 'settings.html'), section ? { hash: section } : {})
     } else {
       tab.view.webContents.loadURL(target).catch(() => {})
     }
@@ -2175,6 +2293,22 @@ class TabWindow {
         .replace('__IMAGES__', JSON.stringify(!!settings.enhanceImages))
       wc.executeJavaScript(css).catch(() => { /* page refused; enhancement is cosmetic */ })
     }
+    // A reversible cosmetic filter only for pages with a light computed background.
+    // It is deliberately optional and is never applied to internal or extension pages.
+    const darkScript = `(() => {
+      const id = '__pv_dark_websites'; let old = document.getElementById(id); if (old) old.remove();
+      if (!${JSON.stringify(!!settings.darkWebsites)}) return;
+      const colour = el => el && getComputedStyle(el).backgroundColor;
+      let bg = colour(document.body); if (!bg || bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent') bg = colour(document.documentElement);
+      if (!bg || bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent') bg = '';
+      const parts = String(bg).match(/[0-9.]+/g);
+      const light = !parts || parts.length < 3 || (Number(parts[0]) * .2126 + Number(parts[1]) * .7152 + Number(parts[2]) * .0722) > 160;
+      if (!light) return;
+      const style = document.createElement('style'); style.id = id;
+      style.textContent = 'html { filter: invert(1) hue-rotate(180deg) !important; background: white !important; } img, video, canvas, svg, iframe { filter: invert(1) hue-rotate(180deg) !important; }';
+      (document.head || document.documentElement).appendChild(style);
+    })()`
+    wc.executeJavaScript(darkScript).catch(() => {})
     const accessibilityCss = TabWindow.ACCESSIBILITY_CSS.replace('__REDUCE__', JSON.stringify(!!settings.reduceMotion))
     wc.executeJavaScript(accessibilityCss).catch(() => { /* the page may have navigated away */ })
   }
@@ -2647,6 +2781,12 @@ class TabWindow {
       url: a ? a.url : '',
       title: a ? a.title : '',
       settings,
+      protonProxyConfigured: (() => {
+        const value = extProxyValues.get('jplgfhpmjnbigmhklmmbgecoobifkmpa')
+        const proxy = value && value.mode === 'fixed_servers' && value.rules && value.rules.singleProxy
+        const host = String(proxy && proxy.host || '').toLowerCase()
+        return extProxyOwner === 'jplgfhpmjnbigmhklmmbgecoobifkmpa' && !!host && !['localhost', '127.0.0.1', '::1'].includes(host)
+      })(),
       splitId: this.splitId,
       blockedTotal: globalBlocked,
       workspaces: wsPayload(),
@@ -3249,6 +3389,7 @@ ipcMain.handle('vault:copy', (e, o) => {
 })
 ipcMain.handle('vault:generate', (e, opts) => vaultGenerate(opts))
 ipcMain.handle('vault:setMaster', (e, pw) => {
+  if (vaultLocked && fs.existsSync(path.join(USER, VAULT_FILE))) return { ok: false, reason: 'unlock the existing vault first' }
   const str = String(pw || '')
   if (str.length < 8) return { ok: false, reason: 'use at least 8 characters' }
   const salt = crypto.randomBytes(16)
@@ -3268,7 +3409,9 @@ ipcMain.handle('vault:setMaster', (e, pw) => {
   } catch (err) { return { ok: false, reason: err.message } }
 })
 ipcMain.handle('vault:forgetMaster', () => {
-  const data = vaultCache || vaultLoad() || []
+  if (vaultLocked || !vaultCache) return { ok: false, reason: 'unlock the vault first' }
+  if (!vaultSafeOk()) return { ok: false, reason: 'no secure system keychain is available' }
+  const data = vaultCache
   try { fs.unlinkSync(path.join(USER, VAULT_KEY)) } catch (e) { /* nothing set */ }
   vaultKey = null
   vaultCache = data
@@ -3287,7 +3430,7 @@ ipcMain.handle('settings:set', (e, patch) => {
   loadBlocklist()
   applyCpuLimit()
   for (const ses of liveSessions) applySessionPolicy(ses)
-  if ('enhanceVideo' in patch || 'enhanceImages' in patch || 'reduceMotion' in patch) {
+  if ('enhanceVideo' in patch || 'enhanceImages' in patch || 'reduceMotion' in patch || 'darkWebsites' in patch) {
     for (const w of mainWindows) for (const t of w.tabs.values()) w.applyEnhancements(t)
   }
   if ('vaultLockMin' in patch || 'vaultEnabled' in patch) vaultArmLock()

@@ -33,7 +33,8 @@ const isServiceWorker = process.type === 'service-worker'
 
 function currentURL() {
   try {
-    if (isServiceWorker && self.location) return String(self.location.href || '')
+    // Service-worker preloads run in a separate preload realm with no location.
+    if (isServiceWorker) return String(contextBridge.executeInMainWorld({ func: () => globalThis.location.href }) || '')
     if (typeof location !== 'undefined' && location) return String(location.href || '')
   } catch (e) { /* context gone */ }
   return ''
@@ -43,12 +44,32 @@ function currentURL() {
 // evaluated in that world, so it must not close over anything: every value it needs is either a
 // parameter or read from the global object.
 function installExtensionAPIs(g, bridgeName) {
+  g = g || globalThis
   var b = g && g[bridgeName]
   var chromeObj = g && g.chrome
   var where = typeof window !== 'undefined' ? 'page' : 'worker'
   if (!b || !chromeObj) {
     try { if (b) b.report({ proxy: false, privacy: false, tabs: false, where: where, why: !b ? 'no bridge' : 'no chrome object' }) } catch (e) { /* nothing to report to */ }
     return false
+  }
+
+  // Proton treats its action page as a disposable toolbar popup. Its sign-in handler calls
+  // window.close() after 200 ms even while permissions or the account fork are still pending.
+  // PsychoVault opens that same page as a full tab, so closing it destroys the page and can
+  // interrupt the async sign-in before it opens an account tab. Keep only this known popup alive;
+  // the user can close the tab normally. Do not alter close() for other extensions or pages.
+  try {
+    if (g.location && g.location.protocol === 'chrome-extension:' &&
+        g.location.hostname === 'jplgfhpmjnbigmhklmmbgecoobifkmpa' &&
+        g.location.pathname === '/popup.html' && typeof g.close === 'function') {
+      var keepProtonTabOpen = function () {
+        try { b.log('Proton popup requested close; keeping its tab open for sign-in') } catch (e) { /* diagnostics only */ }
+      }
+      g.close = keepProtonTabOpen
+      if (g.close !== keepProtonTabOpen) b.log('could not keep Proton popup open: close is not writable')
+    }
+  } catch (e) {
+    try { b.log('could not keep Proton popup open: ' + String(e && e.message || e)) } catch (err) { /* diagnostics only */ }
   }
 
   var makeEvent = function () {
@@ -93,6 +114,66 @@ function installExtensionAPIs(g, bridgeName) {
     return target
   }
 
+  // Proton's popup asks for the same proxy/origin permissions it already has. In Electron
+  // permissions.request still tries to find a Chrome browser window for a prompt and fails:
+  // "Could not find an active window". For this exact request in Proton's popup only, ask
+  // Chromium whether every permission is already granted. Never grant a new permission: if
+  // contains fails or returns false, return false. Other requests use the original API.
+  try {
+    if (g.location && g.location.protocol === 'chrome-extension:' &&
+        g.location.hostname === 'jplgfhpmjnbigmhklmmbgecoobifkmpa' &&
+        g.location.pathname === '/popup.html' && chromeObj.permissions &&
+        typeof chromeObj.permissions.contains === 'function' &&
+        typeof chromeObj.permissions.request === 'function') {
+      var originalPermissions = chromeObj.permissions
+      var originalRequest = originalPermissions.request.bind(originalPermissions)
+      var expectedOrigins = ['http://*/*', 'https://*/*', 'ftp://*/*', 'ws://*/*', 'wss://*/*',
+        'https://account.protonvpn.com/*', 'https://account.proton.me/*'].sort().join('\n')
+      var safePermissions = merge({
+        request: function (details, cb) {
+          var origins = details && Array.isArray(details.origins) ? details.origins.slice().sort().join('\n') : ''
+          var perms = details && details.permissions
+          if (!Array.isArray(perms) || perms.length !== 1 || perms[0] !== 'proxy' || origins !== expectedOrigins) {
+            return originalRequest(details, cb)
+          }
+          try {
+            return originalPermissions.contains(details, function (granted) {
+              var error = chromeObj.runtime && chromeObj.runtime.lastError
+              safeCall(cb, !error && granted === true)
+            })
+          } catch (e) { safeCall(cb, false) }
+        }
+      }, originalPermissions)
+      if (!override('permissions', safePermissions)) b.log('could not install the Proton permissions check')
+      // webextension-polyfill may already have cached the old permissions namespace before
+      // this preload's main-world injection ran. Patch its Promise-based facade too.
+      var patchBrowserPermissions = function (attempt) {
+        try {
+          if (!g.browser || !g.browser.permissions || typeof g.browser.permissions.request !== 'function') {
+            if (attempt < 40 && typeof g.setTimeout === 'function') g.setTimeout(function () { patchBrowserPermissions(attempt + 1) }, 25)
+            return
+          }
+          var browserPermissions = g.browser.permissions
+          var browserRequest = browserPermissions.request.bind(browserPermissions)
+          browserPermissions.request = function (details) {
+            var origins = details && Array.isArray(details.origins) ? details.origins.slice().sort().join('\n') : ''
+            var perms = details && details.permissions
+            if (!Array.isArray(perms) || perms.length !== 1 || perms[0] !== 'proxy' || origins !== expectedOrigins) {
+              return browserRequest(details)
+            }
+            return new Promise(function (resolve) { safePermissions.request(details, resolve) })
+          }
+          try { b.log('installed Proton browser permissions check') } catch (e) { /* diagnostics only */ }
+        } catch (e) {
+          try { b.log('could not install Proton browser permissions check: ' + String(e && e.message || e)) } catch (err) { /* diagnostics only */ }
+        }
+      }
+      patchBrowserPermissions(0)
+    }
+  } catch (e) {
+    try { b.log('could not install the Proton permissions check: ' + String(e && e.message || e)) } catch (err) { /* diagnostics only */ }
+  }
+
   // chrome.proxy
   var onChange = makeEvent()
   var onProxyError = makeEvent()
@@ -126,6 +207,40 @@ function installExtensionAPIs(g, bridgeName) {
     onProxyError: onProxyError,
     onRequest: undefined
   }, chromeObj.proxy))
+
+  // Electron's proxy login event needs forwarding to the owning MV3 worker. Keep
+  // the rest of webRequest intact; this only replaces the auth event in workers.
+  if (where === 'worker' && chromeObj.webRequest && b.onProxyAuth) {
+    var authListeners = new Set()
+    var nativeAuth = chromeObj.webRequest.onAuthRequired
+    var authEvent = {
+      addListener: function (fn, filter, options) {
+        // The fallback only forwards broad filters; narrower filters stay with Chromium.
+        if (typeof fn === 'function' && filter && Array.isArray(filter.urls) && filter.urls.includes('<all_urls>')) authListeners.add(fn)
+        try { if (nativeAuth) nativeAuth.addListener(fn, filter, options) } catch (e) { /* fallback bridge remains */ }
+      },
+      removeListener: function (fn) {
+        authListeners.delete(fn)
+        try { if (nativeAuth) nativeAuth.removeListener(fn) } catch (e) {}
+      },
+      hasListener: function (fn) { return authListeners.has(fn) },
+      hasListeners: function () { return authListeners.size > 0 }
+    }
+    try {
+      Object.defineProperty(chromeObj.webRequest, 'onAuthRequired', { configurable: true, value: authEvent })
+      b.onProxyAuth(function (details, respond) {
+        var answered = false
+        var reply = function (r) { if (!answered) { answered = true; respond(r || {}) } }
+        var listener = authListeners.values().next().value
+        if (!listener) return reply({ cancel: true })
+        try {
+          var result = listener(details, reply)
+          if (result && typeof result.then === 'function') result.then(reply, function () { reply({ cancel: true }) })
+          else if (result && typeof result === 'object') reply(result)
+        } catch (e) { reply({ cancel: true }) }
+      })
+    } catch (e) { try { b.log('proxy auth event installation failed') } catch (ignored) {} }
+  }
 
   // chrome.privacy
   var privacyChange = makeEvent()
@@ -197,6 +312,32 @@ function installExtensionAPIs(g, bridgeName) {
     onUpdated: tabUpdated
   }, chromeObj.tabs))
   try { b.onTabsRemoved(function (tabId) { tabRemoved.__emit(tabId, { windowId: 1, isWindowClosing: false }) }) } catch (e) { /* no bridge */ }
+  // The webextension polyfill can cache Electron's original, incomplete tabs object before
+  // this preload installs chrome.tabs. Replace the cached create method with a Promise-based
+  // bridge as well; Proton uses browser.tabs.create to open its authorization page.
+  if (g.location && g.location.protocol === 'chrome-extension:' &&
+      g.location.hostname === 'jplgfhpmjnbigmhklmmbgecoobifkmpa' &&
+      g.location.pathname === '/popup.html') {
+    var patchBrowserTabs = function (attempt) {
+      try {
+        if (!g.browser || !g.browser.tabs) {
+          if (attempt < 40 && typeof g.setTimeout === 'function') g.setTimeout(function () { patchBrowserTabs(attempt + 1) }, 25)
+          return
+        }
+        Object.defineProperty(g.browser.tabs, 'create', { configurable: true, enumerable: true, value: function (details) {
+          return Promise.resolve(b.tabsCreate(details)).then(function (r) {
+            if (!r || !r.ok || !r.tab) throw new Error((r && r.error) || 'the tab could not be opened')
+            tabCreated.__emit(r.tab)
+            return r.tab
+          })
+        } })
+        try { b.log('installed Proton browser tabs.create') } catch (e) { /* diagnostics only */ }
+      } catch (e) {
+        try { b.log('could not install Proton browser tabs.create: ' + String(e && e.message || e)) } catch (err) { /* diagnostics only */ }
+      }
+    }
+    patchBrowserTabs(0)
+  }
 
   // Proton calls chrome.action.openPopup() once a sign-in tab closes. There is no toolbar here,
   // so nothing can pop up - answer cleanly instead of throwing.
@@ -230,6 +371,14 @@ if (url.startsWith('chrome-extension://')) {
     proxyClear: (scope) => ipcRenderer.invoke('extshim:proxy:clear', { id, scope: scope || 'regular' }),
     webrtcGet: () => ipcRenderer.invoke('extshim:webrtc:get', { id }),
     webrtcSet: (value) => ipcRenderer.invoke('extshim:webrtc:set', { id, value }),
+    onProxyAuth: (fn) => {
+      if (!isServiceWorker) return
+      ipcRenderer.on('extshim:auth:challenge', (_e, data) => {
+        try {
+          fn(data.details, (response) => { ipcRenderer.invoke('extshim:auth:reply', { id, requestId: data.requestId, response }).catch(() => {}) })
+        } catch (e) { ipcRenderer.invoke('extshim:auth:reply', { id, requestId: data.requestId, response: { cancel: true } }).catch(() => {}) }
+      })
+    },
     // chrome.tabs, backed by the real tab list in main.
     tabsQuery: (query) => ipcRenderer.invoke('extshim:tabs:query', { id, query: query || {} }),
     tabsCreate: (details) => ipcRenderer.invoke('extshim:tabs:create', { id, details: details || {} }),
@@ -245,27 +394,14 @@ if (url.startsWith('chrome-extension://')) {
   }
 
   if (isServiceWorker) {
-    // A service worker has no separate "main world" for executeInMainWorld to reach, which is
-    // why the first fix installed nothing for Proton: its background is js/service.js, an MV3
-    // service worker. A service-worker preload shares the worker's global scope, so this can
-    // simply call the installer.
-    let onGlobal = false
+    // Worker preloads have an isolated preload realm too. Install in the worker's
+    // main world, not this realm, so the extension's own chrome APIs are replaced.
     try {
-      Object.defineProperty(globalThis, BRIDGE_NAME, { value: bridge, configurable: true, enumerable: false })
-      onGlobal = globalThis[BRIDGE_NAME] === bridge
+      contextBridge.exposeInMainWorld(BRIDGE_NAME, bridge)
+      const ok = contextBridge.executeInMainWorld({ func: installExtensionAPIs, args: [null, BRIDGE_NAME] })
+      note('installer in the worker main world: ' + (ok ? 'proxy and tabs installed' : 'ran, but the overrides did not take'))
     } catch (e) {
-      try { globalThis[BRIDGE_NAME] = bridge; onGlobal = true } catch (e2) { /* nothing else to try */ }
-    }
-    note('service-worker preload ran: ' + url + ' (bridge on globalThis: ' + onGlobal + ')')
-    if (onGlobal) {
-      try {
-        const ok = installExtensionAPIs(globalThis, BRIDGE_NAME)
-        note('installer in the worker: ' + (ok ? 'proxy and tabs installed' : 'ran, but the overrides did not take'))
-      } catch (e) {
-        note('installer in the worker threw: ' + (e && e.message))
-      }
-    } else {
-      note('the worker refused the bridge; the APIs cannot be installed')
+      note('worker main world installation failed: ' + (e && e.message))
     }
   } else {
     try {
