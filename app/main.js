@@ -47,7 +47,7 @@ const { inspectProtonPopup, clickProtonPopup } = require('./proton-toggle')
 
 // An uncaught throw in the main process used to pop Electron's modal "A JavaScript
 // error occurred in the main process" box - on a browser that is a wall between you and
-// your tabs. It now lands in errors.log (visible in Settings - Your data) and the app
+// your tabs. It now lands in errors.log (visible in Settings - About) and the app
 // keeps running; the first one in a session also shows a quiet notification.
 let mainErrorNotified = false
 function logMainError(e) {
@@ -56,7 +56,7 @@ function logMainError(e) {
   console.error('[psychovault]', line.trim())
   if (!mainErrorNotified && Notification.isSupported()) {
     mainErrorNotified = true
-    try { new Notification({ title: 'PsychoVault recovered from an error', body: 'Details are in errors.log in your profile folder (Settings - Your data).' }).show() } catch { /* no notifier */ }
+    try { new Notification({ title: 'PsychoVault recovered from an error', body: 'Details are in errors.log in your profile folder (Settings - About).' }).show() } catch { /* no notifier */ }
   }
 }
 process.on('uncaughtException', (e) => { try { logMainError(e) } catch { /* dying */ } })
@@ -87,7 +87,6 @@ const DEFAULT_SETTINGS = {
   remember: true,               // off = history is never recorded
   // --- extras, every one of them user-controllable ---
   theme: 'midnight',             // chrome and internal page palette
-  darkWebsites: false,            // optional cosmetic darkening for light websites
   accent: 'cyan',                 // "mods": accent colour of the whole UI
   hideSidebar: false,             // collapse the GX rail
   highContrast: false,            // higher contrast for browser chrome and Settings
@@ -489,6 +488,7 @@ const EXT_ROOT = path.join(USER, 'extensions')
 // it off or remove it like any other extension; a removal is remembered and not re-added.
 const EXT_BUILTIN = [
   { key: 'proton-vpn', label: 'Proton VPN', source: path.join(__dirname, 'builtin', 'proton-vpn') },
+  { key: 'dark-reader', label: 'Dark Reader', source: path.join(__dirname, 'builtin', 'dark-reader') },
   // A deliberately small extension that sets a proxy through chrome.proxy and shows the
   // result, so the same path a VPN extension uses can be seen working - or seen failing.
   { key: 'proxy-switch', label: 'Proxy Switch', source: path.join(__dirname, 'builtin', 'proxy-switch') }
@@ -2346,22 +2346,6 @@ class TabWindow {
         .replace('__IMAGES__', JSON.stringify(!!settings.enhanceImages))
       wc.executeJavaScript(css).catch(() => { /* page refused; enhancement is cosmetic */ })
     }
-    // A reversible cosmetic filter only for pages with a light computed background.
-    // It is deliberately optional and is never applied to internal or extension pages.
-    const darkScript = `(() => {
-      const id = '__pv_dark_websites'; let old = document.getElementById(id); if (old) old.remove();
-      if (!${JSON.stringify(!!settings.darkWebsites)}) return;
-      const colour = el => el && getComputedStyle(el).backgroundColor;
-      let bg = colour(document.body); if (!bg || bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent') bg = colour(document.documentElement);
-      if (!bg || bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent') bg = '';
-      const parts = String(bg).match(/[0-9.]+/g);
-      const light = !parts || parts.length < 3 || (Number(parts[0]) * .2126 + Number(parts[1]) * .7152 + Number(parts[2]) * .0722) > 160;
-      if (!light) return;
-      const style = document.createElement('style'); style.id = id;
-      style.textContent = 'html { filter: invert(1) hue-rotate(180deg) !important; background: white !important; } img, video, canvas, svg, iframe { filter: invert(1) hue-rotate(180deg) !important; }';
-      (document.head || document.documentElement).appendChild(style);
-    })()`
-    wc.executeJavaScript(darkScript).catch(() => {})
     const accessibilityCss = TabWindow.ACCESSIBILITY_CSS.replace('__REDUCE__', JSON.stringify(!!settings.reduceMotion))
     wc.executeJavaScript(accessibilityCss).catch(() => { /* the page may have navigated away */ })
   }
@@ -3157,6 +3141,23 @@ function findWin(e) {
   return findWindowFor(e && e.sender, mainWindows)
 }
 
+// Native popup menus live above WebContentsViews without changing page geometry.
+ipcMain.handle('ui:menu', (e) => {
+  const w = findWin(e)
+  if (!w) return false
+  const items = [
+    ['New tab', 'newtab'], ['New private window', 'private'], ['Reopen closed tab', 'reopen'], null,
+    ['Find in page', 'find'], ['Translate current page', 'translate'], ['Zoom in', 'zoomin'],
+    ['Zoom out', 'zoomout'], ['Reset zoom', 'zoomreset'], null,
+    ['Bookmarks', 'bookmarks'], ['History', 'history'], ['Downloads', 'downloads'], null,
+    ['Settings', 'settings'], ['Developer tools', 'devtools']
+  ]
+  const menu = Menu.buildFromTemplate(items.map(item => item
+    ? { label: item[0], click: () => w.sendChrome('menu-command', item[1]) }
+    : { type: 'separator' }))
+  return new Promise(resolve => menu.popup({ window: w.win, x: Math.max(0, w.win.getContentBounds().width - 260), y: CHROME_H, callback: () => resolve(true) }))
+})
+
 ipcMain.handle('ui:layout', (e, o) => {
   const w = findWin(e)
   if (!w) return
@@ -3572,7 +3573,7 @@ ipcMain.handle('settings:set', (e, patch) => {
   loadBlocklist()
   applyCpuLimit()
   for (const ses of liveSessions) applySessionPolicy(ses)
-  if ('enhanceVideo' in patch || 'enhanceImages' in patch || 'reduceMotion' in patch || 'darkWebsites' in patch) {
+  if ('enhanceVideo' in patch || 'enhanceImages' in patch || 'reduceMotion' in patch) {
     for (const w of mainWindows) for (const t of w.tabs.values()) w.applyEnhancements(t)
   }
   if ('vaultLockMin' in patch || 'vaultEnabled' in patch) vaultArmLock()
@@ -3865,6 +3866,26 @@ if (!gotLock) {
 // The startup check is deliberately quiet, which left no way to tell a working updater from
 // a broken one. This runs the same check on demand and always answers with the reason.
 let updateCheckRunning = false
+function diagnosticReport() { return ({
+  version: app.getVersion(), electron: process.versions.electron, chromium: process.versions.chrome,
+  platform: process.platform, arch: process.arch, packaged: app.isPackaged,
+  workspacesEnabled: settings.workspacesEnabled !== false,
+  blockerEnabled: settings.blockAds !== false,
+  restoreEnabled: settings.restore !== false,
+  vpnProxyConfigured: (() => {
+    const value = extProxyValues.get('jplgfhpmjnbigmhklmmbgecoobifkmpa')
+    const proxy = value && value.mode === 'fixed_servers' && value.rules && value.rules.singleProxy
+    const host = String(proxy && proxy.host || '').toLowerCase()
+    return extProxyOwner === 'jplgfhpmjnbigmhklmmbgecoobifkmpa' && !!host && !['localhost', '127.0.0.1', '::1'].includes(host)
+  })(),
+  errorLogPresent: fs.existsSync(path.join(USER, 'errors.log'))
+}) }
+ipcMain.handle('app:diagnostics', () => diagnosticReport())
+ipcMain.handle('app:diagnosticsCopy', () => {
+  const text = 'PsychoVault troubleshooting report\n' + Object.entries(diagnosticReport()).map(([key, value]) => key + ': ' + value).join('\n')
+  clipboard.writeText(text)
+  return text
+})
 ipcMain.handle('app:info', () => ({
   version: app.getVersion(),
   electron: process.versions.electron,

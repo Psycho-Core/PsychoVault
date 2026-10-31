@@ -7,7 +7,6 @@ if (isPrivate) document.body.classList.add('private')
 let state = { tabs: [], activeId: null, canGoBack: false, canGoForward: false, loading: false, url: '', maximized: false }
 let SUGGEST_H = 250
 const FIND_H = 44
-let MENU_H = 340
 let suggestIndex = -1
 let suggestItems = []
 
@@ -567,7 +566,6 @@ function syncChrome() {
   let extra = 0
   if (!$('#suggest').classList.contains('hidden')) extra += SUGGEST_H
   if (!$('#findbar').classList.contains('hidden')) extra += FIND_H
-  if (!$('#menu').classList.contains('hidden')) extra += MENU_H
   const toastHeight = $('#toast').classList.contains('hidden') ? 0 : Math.ceil($('#toast').getBoundingClientRect().height + 16)
   window.pv.ui.layout({ extraTop: extra, extraBottom: toastHeight, panel: !$('#panel').classList.contains('hidden') })
 }
@@ -862,14 +860,15 @@ async function translateCurrentPage() {
 }
 
 // ------------------------------------------------------------------ menu
-$('#btn-menu').onclick = (e) => {
+$('#btn-menu').onclick = async (e) => {
   e.stopPropagation()
-  $('#menu').classList.toggle('hidden')
-  const open = !$('#menu').classList.contains('hidden')
-  $('#btn-menu').setAttribute('aria-expanded', String(open))
-  if (open) MENU_H = $('#menu').offsetHeight + 14
-  syncChrome()
+  $('#btn-menu').setAttribute('aria-expanded', 'true')
+  try { await window.pv.ui.menu() } finally { $('#btn-menu').setAttribute('aria-expanded', 'false') }
 }
+window.pv.on('menu-command', cmd => {
+  const button = [...document.querySelectorAll('#menu button')].find(b => b.dataset.cmd === cmd)
+  if (button) button.click()
+})
 
 $('#menu').addEventListener('click', async (e) => {
   const btn = e.target.closest('button')

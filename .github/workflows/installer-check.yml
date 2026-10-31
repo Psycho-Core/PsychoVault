@@ -100,6 +100,9 @@ jobs:
       - name: Exercise recovery, encrypted vault transfers, and download controls
         shell: cmd
         run: app\node_modules\.bin\electron.cmd tools\features-electron-smoke.cjs
+      - name: Test bundled Dark Reader on a local page
+        shell: cmd
+        run: app\node_modules\.bin\electron.cmd tools\dark-reader-electron-smoke.cjs
       - name: Test HTTPS proxy CONNECT authentication
         shell: cmd
         run: app\node_modules\.bin\electron.cmd tools\proxy-auth-https-electron-smoke.cjs

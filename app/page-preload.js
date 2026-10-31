@@ -44,7 +44,9 @@ if (isInternal) {
       clear: (what) => invoke('data:clear', what)
     },
     app: {
-      info: () => invoke('app:info')
+      info: () => invoke('app:info'),
+      diagnostics: () => invoke('app:diagnostics'),
+      diagnosticsCopy: () => invoke('app:diagnosticsCopy')
     },
     recovery: { list: () => invoke('recovery:list'), restore: selections => invoke('recovery:restore', selections) },
     vpncheck: { open: () => invoke('vpncheck:open'), ip: () => invoke('vpncheck:ip') },

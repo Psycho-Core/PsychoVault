@@ -34,6 +34,7 @@ set "VERIFY=%VERIFY% resources\app\blocklist.json resources\app\spell-words.txt 
 set "VERIFY=%VERIFY% resources\app\ui\renderer.js resources\app\ui\style.css resources\app\ui\settings.html"
 set "VERIFY=%VERIFY% resources\app\ext-shim.js resources\app\ext-proxy.js"
 set "VERIFY=%VERIFY% resources\app\builtin\proton-vpn\manifest.json"
+set "VERIFY=%VERIFY% resources\app\builtin\dark-reader\manifest.json"
 set "VERIFY=%VERIFY% resources\app\builtin\proxy-switch\manifest.json"
 set "VERIFY=%VERIFY% resources\app\builtin\proxy-switch\background.js"
 set "VERIFY=%VERIFY% resources\app\builtin\proxy-switch\popup.html"

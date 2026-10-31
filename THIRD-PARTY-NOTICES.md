@@ -75,3 +75,7 @@ The application icon is an original PsychoVault mark.
 ## Codecs
 Electron ships Chromium's ffmpeg build with H.264 and AAC support. HEVC is not included.
 Widevine CDM is not included, so DRM-protected playback is unavailable.
+
+## Dark Reader
+
+Dark Reader 4.9.134 is Copyright (c) 2026 Dark Reader Ltd. and licensed under the MIT License. The full license is included in `app/builtin/dark-reader/LICENSE`. Source: https://github.com/darkreader/darkreader/tree/d12521bb3120ecb0d796248020c497d53b300496.

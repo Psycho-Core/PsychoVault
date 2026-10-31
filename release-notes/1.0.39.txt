@@ -1,0 +1,5 @@
+I changed the hamburger menu so it opens above the page rather than pushing the page down. The error log button is now in About, with a copyable troubleshooting report that contains runtime versions and on/off states instead of logs, paths, URLs or credentials.
+
+I removed my experimental dark website filter and bundled Dark Reader 4.9.134 instead. Manage it in Settings > Extensions. It needs access to website content to darken pages. This build of Dark Reader has not been verified on every website or for every extension feature.
+
+Unattended updates are not implemented yet. Updates still use the setup wizard; the installer needs a tested recovery path before I can safely remove it.
