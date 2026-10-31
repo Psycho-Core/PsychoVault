@@ -40,6 +40,7 @@ if (isInternal) {
     },
     data: {
       report: () => invoke('data:report'),
+      openErrorLog: () => invoke('data:openErrorLog'),
       clear: (what) => invoke('data:clear', what)
     },
     app: {

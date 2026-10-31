@@ -507,3 +507,5 @@ and liability terms are in [LICENSE](LICENSE).
 Bundled third-party software has its own licences. In particular, the Proton VPN extension is
 GPL-3.0, not MIT. See [third-party notices](THIRD-PARTY-NOTICES.md) and the
 [extension licence](app/builtin/proton-vpn/LICENSE).
+
+Workspaces can be turned off in Settings. Saved groups stay in the profile; when turned back on, the current tabs become a new group. Bookmarks, History and Downloads are in the menu. If a recovery notification mentions errors.log, open Settings > Your data > Open error log. Review it for private paths and URLs before sharing it.

@@ -73,7 +73,7 @@ function renderTabs() {
     el.setAttribute('aria-selected', t.id === state.activeId ? 'true' : 'false')
     el.setAttribute('aria-label', prettyTitle(t) + (t.pinned ? ', pinned' : '') + (t.muted ? ', muted' : '') + (t.discarded ? ', sleeping' : ''))
     el.tabIndex = t.id === state.activeId ? 0 : -1
-    el.title = (t.pinned ? 'Pinned - ' : '') + (t.url || 'New tab') + (t.discarded ? ' (sleeping)' : '')
+    el.title = (t.pinned ? 'Pinned - ' : '') + (/^chrome-extension:\/\/jplgfhpmjnbigmhklmmbgecoobifkmpa\/popup\.html(?:[?#]|$)/.test(t.url || '') ? 'Proton VPN' : (t.url || 'New tab')) + (t.discarded ? ' (sleeping)' : '')
 
     if (t.loading) {
       const sp = document.createElement('div')
@@ -236,7 +236,7 @@ function renderNav() {
   const om = $('#omnibox')
   if (document.activeElement !== om) {
     const u = state.url || ''
-    om.value = u.startsWith('file://') ? '' : u
+    om.value = u.startsWith('file://') ? '' : /^chrome-extension:\/\/jplgfhpmjnbigmhklmmbgecoobifkmpa\/popup\.html(?:[?#]|$)/.test(u) ? 'Proton VPN' : u
   }
   updateBookmarkButton(!!state.isBookmarked)
   const act = (state.tabs || []).find(t => t.id === state.activeId)
@@ -258,7 +258,7 @@ function renderNav() {
   const adblock = $('#btn-adblock')
   if (adblock) {
     const enabled = !state.settings || state.settings.blockAds !== false
-    const label = enabled ? 'Turn ad and tracker blocking off' : 'Turn ad and tracker blocking on'
+    const label = (enabled ? 'Ad blocker on' : 'Ad blocker off') + ' - left-click to toggle; right-click for Privacy settings'
     adblock.title = label
     adblock.setAttribute('aria-label', label)
     adblock.setAttribute('aria-pressed', String(enabled))
@@ -271,7 +271,7 @@ function renderNav() {
     const configured = !!state.protonProxyConfigured
     proton.classList.toggle('status-on', configured)
     proton.classList.toggle('status-off', !configured)
-    proton.title = configured ? 'Proton proxy configured - connection not verified' : 'Proton VPN - proxy not configured'
+    proton.title = (configured ? 'Proton proxy configured - connection not verified' : 'Proton VPN - proxy not configured') + ' - left-click to connect or disconnect; right-click to open Proton'
     proton.setAttribute('aria-label', proton.title)
   }
   const sp = $('#btn-split')
@@ -329,7 +329,7 @@ function renderWorkspaces() {
   const wrap = $('#ws')
   if (!wrap) return
   // Private windows have no workspaces: nothing about them is written to disk.
-  if (isPrivate) { wrap.innerHTML = ''; return }
+  if (isPrivate || state.settings?.workspacesEnabled === false) { wrap.innerHTML = ''; return }
   const ws = state.workspaces || { list: [], active: 0 }
   wrap.innerHTML = ''
   ws.list.forEach((w, i) => {
@@ -446,7 +446,7 @@ window.pv.on('downloads', (list) => {
 // with the panel shut - and it is the only part of the strip that moves while a big
 // file lands behind a tab you are reading.
 function paintDlBadge(list) {
-  const btn = document.querySelector('.rail-btn[data-panel="downloads"]')
+  const btn = document.querySelector('#btn-menu')
   if (!btn) return
   const live = (Array.isArray(list) ? list : []).filter((d) => d && d.state === 'progress').length
   let badge = btn.querySelector('.dl-badge')
@@ -454,12 +454,12 @@ function paintDlBadge(list) {
   if (live > 0) {
     if (!badge) { badge = document.createElement('span'); badge.className = 'dl-badge'; btn.appendChild(badge) }
     badge.textContent = String(live)
-    btn.title = live === 1 ? 'Downloads - 1 in progress' : 'Downloads - ' + live + ' in progress'
-    btn.setAttribute('aria-label', live === 1 ? 'Downloads, 1 in progress' : 'Downloads, ' + live + ' in progress')
+    btn.title = 'Menu - ' + live + (live === 1 ? ' download in progress' : ' downloads in progress')
+    btn.setAttribute('aria-label', btn.title)
   } else if (badge) {
     badge.remove()
-    btn.title = 'Downloads'
-    btn.setAttribute('aria-label', 'Downloads')
+    btn.title = 'Menu'
+    btn.setAttribute('aria-label', 'Open menu')
   }
 }
 
@@ -568,7 +568,8 @@ function syncChrome() {
   if (!$('#suggest').classList.contains('hidden')) extra += SUGGEST_H
   if (!$('#findbar').classList.contains('hidden')) extra += FIND_H
   if (!$('#menu').classList.contains('hidden')) extra += MENU_H
-  window.pv.ui.layout({ extraTop: extra, panel: !$('#panel').classList.contains('hidden') })
+  const toastHeight = $('#toast').classList.contains('hidden') ? 0 : Math.ceil($('#toast').getBoundingClientRect().height + 16)
+  window.pv.ui.layout({ extraTop: extra, extraBottom: toastHeight, panel: !$('#panel').classList.contains('hidden') })
 }
 
 document.addEventListener('mousedown', (e) => {
@@ -835,8 +836,7 @@ function panelRow(item, removable) {
     x.onclick = async (e) => {
       e.stopPropagation()
       await window.pv.bookmarks.remove(item.url)
-      openPanel('bookmarks')
-      railBtns[0].classList.add('active')
+      paintPanel('bookmarks')
     }
     row.appendChild(x)
   }
@@ -886,9 +886,9 @@ $('#menu').addEventListener('click', async (e) => {
   else if (cmd === 'zoomin') window.pv.zoom.in()
   else if (cmd === 'zoomout') window.pv.zoom.out()
   else if (cmd === 'zoomreset') window.pv.zoom.reset()
-  else if (cmd === 'bookmarks') openPanel('bookmarks', railBtns[0])
-  else if (cmd === 'history') openPanel('history', railBtns[1])
-  else if (cmd === 'downloads') openPanel('downloads', railBtns[2])
+  else if (cmd === 'bookmarks') openPanel('bookmarks')
+  else if (cmd === 'history') openPanel('history')
+  else if (cmd === 'downloads') openPanel('downloads')
   else if (cmd === 'settings') window.pv.tab.new('psychovault://settings')
   else if (cmd === 'devtools') toast('Right-click any page and choose Inspect element')
 })
@@ -949,9 +949,9 @@ const COMMANDS = [
   { id: 'split',    title: 'Toggle split view',  keys: 'Ctrl+\\',     run: () => window.pv.view.split() },
   { id: 'settings', title: 'Open settings',      keys: '',            run: () => window.pv.tab.new('psychovault://settings') },
   { id: 'newtab2',  title: 'Open new tab page',  keys: '',            run: () => window.pv.nav.go('psychovault://newtab') },
-  { id: 'bookmarks',title: 'Show bookmarks',     keys: '',            run: () => openPanel('bookmarks', railBtns[0]) },
-  { id: 'history',  title: 'Show history',       keys: '',            run: () => openPanel('history', railBtns[1]) },
-  { id: 'downloads',title: 'Show downloads',     keys: '',            run: () => openPanel('downloads', railBtns[2]) },
+  { id: 'bookmarks',title: 'Show bookmarks',     keys: '',            run: () => openPanel('bookmarks') },
+  { id: 'history',  title: 'Show history',       keys: '',            run: () => openPanel('history') },
+  { id: 'downloads',title: 'Show downloads',     keys: '',            run: () => openPanel('downloads') },
   { id: 'find',     title: 'Find in page',       keys: 'Ctrl+F',      run: () => showFind() },
   { id: 'translate',title: 'Translate current page', keys: '',             run: () => translateCurrentPage() },
   { id: 'wsnew',    title: 'New workspace',       keys: '',            run: () => window.pv.ws.new('Workspace') },
@@ -1114,8 +1114,9 @@ function toast(msg) {
   if (!t || !msg) return
   t.textContent = msg
   t.classList.remove('hidden')
+  syncChrome()
   clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => t.classList.add('hidden'), 2000)
+  toastTimer = setTimeout(() => { t.classList.add('hidden'); syncChrome() }, 3500)
 }
 
 // one more rail button: Performance (CPU/RAM/bandwidth), the speedometer slot
