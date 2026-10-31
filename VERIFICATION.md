@@ -2729,8 +2729,8 @@ Settings opens a new tab; the ad blocker right-click opens Privacy. The existing
 blocker remains distinct from uBlock Origin Lite. The uBlock compatibility probe is explicitly
 informational and continues to fail; it does not certify uBlock as supported.
 
-## v1.0.36 work in progress
+## v1.0.36 checks
 
 The Node test suite includes local tests for search-template validation, exact-origin permissions, domain blocking and exceptions, private-window exclusion from recovery snapshots, encrypted backup authentication, CSV quoting and duplicate handling, vault migration rollback, and tracked installer cleanup. These tests do not by themselves demonstrate a live VPN or a Windows update.
 
-A new Electron smoke test uses a throwaway profile, synthetic crash snapshot and local HTTP download. It exercises the recovery page, vault import/backup/restore and download pause/resume without real passwords. See the PR's latest CI run for its result. The IP and DNS services are third-party services; their live results and actual Proton DNS/WebRTC leak protection have not been independently verified here.
+A new Electron smoke test uses a throwaway profile, synthetic crash snapshot and local HTTP download. It exercises the recovery page, vault import/backup/restore and download pause/resume without real passwords. In PR run 41218966819, that smoke test passed on Linux and Windows, including the local download pause/resume; the Windows installer build, Proton signed-out popup smoke and local proxy tests also passed. The separate informational uBlock Lite static-rule probe failed; uBlock Lite is not bundled or supported. The IP and DNS services are third-party services; their live results and actual Proton DNS/WebRTC leak protection have not been independently verified here.
