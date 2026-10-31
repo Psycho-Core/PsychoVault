@@ -298,6 +298,7 @@ function rgba(hex, a) {
 function applyAccent(s) {
   const name = (s.settings && s.settings.accent) || 'cyan'
   const prefs = s.settings || {}
+  document.body.dataset.theme = prefs.theme || 'midnight'
   document.body.classList.toggle('no-rail', !!prefs.hideSidebar)
   document.body.classList.toggle('high-contrast', !!prefs.highContrast)
   document.body.classList.toggle('reduce-motion', !!prefs.reduceMotion)

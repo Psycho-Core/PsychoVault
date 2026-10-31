@@ -72,6 +72,7 @@ const DEFAULT_SETTINGS = {
   restore: true,
   remember: true,               // off = history is never recorded
   // --- extras, every one of them user-controllable ---
+  theme: 'midnight',             // chrome and internal page palette
   darkWebsites: false,            // optional cosmetic darkening for light websites
   accent: 'cyan',                 // "mods": accent colour of the whole UI
   hideSidebar: false,             // collapse the GX rail

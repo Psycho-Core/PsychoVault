@@ -1,0 +1,9 @@
+Proton proxy, colours and website appearance
+
+- Forward proxy authentication challenges to the extension that owns the matching proxy.
+  A local proxy test passed, but real Proton connections and public IP changes are not yet verified.
+- The Proton sidebar indicator reflects proxy configuration, not proof of protection.
+- The ad-blocker button is green when PsychoVault's built-in blocker is on and red when off.
+  It is not uBlock Origin, which is not included.
+- Added Graphite, Forest, Plum and Ocean themes, more accent colours, and an optional
+  experimental filter for light websites. The filter can look wrong on some pages.

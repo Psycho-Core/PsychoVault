@@ -2702,3 +2702,14 @@ masked inputs. It does not test a real Windows keychain, crash-safe key migratio
 autofill security or provide an independent audit. A damaged vault stays locked instead
 of being treated as empty when unlocked. Keep backups of the existing encrypted vault and
 metadata; these changes do not repair corrupted data.
+
+## Proxy authentication and appearance - 1.0.34
+
+Windows run 41212858042 passed the synthetic MV3 worker test and a real HTTP request through
+an authenticated local proxy. The test used invented credentials, not Proton or a public VPN.
+An additional local HTTPS CONNECT test is being added to exercise a path closer to Proton's
+HTTPS proxy. Neither test proves a real Proton server works or that the public IP changes.
+Proxy auth responses are accepted only from the worker owning the matching proxy endpoint;
+credentials are not intentionally written to logs or files by the bridge.
+The Proton sidebar indicator shows proxy configuration, not verified protection.
+The optional light-site colour filter is cosmetic and can break site appearance.

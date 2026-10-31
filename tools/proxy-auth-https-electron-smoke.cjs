@@ -1,0 +1,83 @@
+'use strict'
+// Exercise Chromium's extension auth callback through an actual local HTTPS proxy CONNECT challenge.
+// This test uses synthetic credentials only; it does not contact Proton or the internet.
+const { app, BrowserWindow, session } = require('electron')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+const https = require('node:https')
+const net = require('node:net')
+// The self-signed key is a public test fixture, never a real credential.
+const tlsOptions = { key: fs.readFileSync(path.join(__dirname, 'fixtures/proxy-test-private.pem')), cert: fs.readFileSync(path.join(__dirname, 'fixtures/proxy-test-cert.pem')) }
+app.commandLine.appendSwitch('ignore-certificate-errors')
+const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'pv-proxy-auth-'))
+app.setPath('userData', profile)
+require('../app/main.js')
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+async function waitFor(label, fn, timeout = 30000) {
+  const end = Date.now() + timeout
+  while (Date.now() < end) {
+    try { const v = await fn(); if (v) return v } catch {}
+    await sleep(250)
+  }
+  throw new Error(label + ' timed out')
+}
+async function run() {
+  await app.whenReady()
+  const ses = session.fromPartition('persist:psychovault')
+  await waitFor('preloads', () => ses.getPreloadScripts().some(p => p.id === 'pv-ext-sw'))
+  let challenges = 0, accepted = 0
+  const target = https.createServer(tlsOptions, (_req, res) => { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end('<title>proxy auth succeeded</title>') })
+  await new Promise(resolve => target.listen(0, '127.0.0.1', resolve))
+  const proxy = https.createServer(tlsOptions)
+  proxy.on('connect', (req, socket, head) => {
+    if (req.headers['proxy-authorization'] !== 'Basic ' + Buffer.from('test-user:test-pass').toString('base64')) {
+      challenges++
+      socket.end('HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="PsychoVault test"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
+      return
+    }
+    accepted++
+    const upstream = net.connect(target.address().port, '127.0.0.1', () => {
+      socket.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+      if (head.length) upstream.write(head)
+      socket.pipe(upstream); upstream.pipe(socket)
+    })
+    upstream.on('error', () => socket.destroy())
+    socket.on('error', () => upstream.destroy())
+  })
+  await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve))
+  const port = proxy.address().port
+  const dir = path.join(profile, 'auth-extension')
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ manifest_version: 3, name: 'Proxy auth smoke', version: '1.0.0', permissions: ['proxy', 'storage', 'webRequest', 'webRequestAuthProvider'], host_permissions: ['<all_urls>'], background: { service_worker: 'worker.js' } }))
+  fs.writeFileSync(path.join(dir, 'worker.js'), `
+chrome.webRequest.onAuthRequired.addListener((details, callback) => {
+  if (!details.isProxy) return callback({});
+  callback({authCredentials:{username:'test-user',password:'test-pass'}});
+}, {urls:['<all_urls>']}, ['asyncBlocking']);
+chrome.storage.local.set({ready:true});`)
+  fs.writeFileSync(path.join(dir, 'test.html'), '<title>test extension</title>')
+  const ext = await ses.extensions.loadExtension(dir)
+  const win = new BrowserWindow({ show: false, webPreferences: { session: ses, contextIsolation: true, sandbox: true } })
+  await win.loadURL('chrome-extension://' + ext.id + '/test.html')
+  const setup = await waitFor('worker setup', () => win.webContents.executeJavaScript(`new Promise(resolve => chrome.storage.local.get('ready', r => resolve(r && r.ready)))`))
+  await waitFor('extension page bridge', () => win.webContents.executeJavaScript(`!!window.__pvExtensionBridge`))
+  const applied = await win.webContents.executeJavaScript(`window.__pvExtensionBridge.proxySet({mode:'fixed_servers',rules:{singleProxy:{scheme:'https',host:'127.0.0.1',port:${port}}}}, 'regular')`)
+  if (!applied || !applied.ok) throw new Error('test extension could not set proxy: ' + JSON.stringify(applied))
+  const resolved = await ses.resolveProxy('https://proxy-auth-test.invalid/')
+  const page = new BrowserWindow({ show: false, webPreferences: { session: ses, sandbox: true } })
+  try {
+    await Promise.race([page.loadURL('https://proxy-auth-test.invalid/'), sleep(20000).then(() => { throw new Error('proxy page load timed out') })])
+  } catch (e) {
+    throw new Error(String(e.message) + `; resolved=${resolved}; challenges=${challenges}; accepted=${accepted}; setup=${JSON.stringify(setup)}`)
+  }
+  const title = page.webContents.getTitle()
+  if (!challenges || !accepted || title !== 'proxy auth succeeded') throw new Error(`proxy challenge failed: challenges=${challenges} accepted=${accepted} title=${title}`)
+  console.log('PASS: extension supplied synthetic credentials for an actual local HTTPS proxy CONNECT challenge; the page loaded through that proxy.')
+  proxy.close(); target.close()
+}
+run().then(() => app.exit(0)).catch(error => {
+  console.error('::error::Proxy authentication test: ' + String(error.message).replace(/\n/g, ' '))
+  try { for (const line of fs.readFileSync(path.join(profile, 'ext-shim.log'), 'utf8').split('\n').slice(-15)) if (line && !/authorize|state=|token/i.test(line)) console.error('::error::' + line) } catch {}
+  app.exit(1)
+})

@@ -5,6 +5,10 @@
 <title>New Tab</title>
 <style>
   :root { --bg:#0a0e17; --bg2:#0f1523; --bg3:#141c2e; --fg:#e6edf7; --dim:#8b9bb4; --accent:#38bdf8; --line:#1e293b; }
+body[data-theme="graphite"] { --bg:#121416; --bg2:#1b1e21; --bg3:#272b30; --bg4:#333840; --fg:#f0f2f4; --dim:#a9b2ba; --line:#333a40; --line2:#414a52; }
+body[data-theme="forest"] { --bg:#0d1815; --bg2:#13241e; --bg3:#1a3328; --bg4:#234235; --fg:#e2f1e7; --dim:#9cbaa8; --line:#294638; --line2:#365844; }
+body[data-theme="plum"] { --bg:#180f1c; --bg2:#241629; --bg3:#332039; --bg4:#432b4b; --fg:#f5e9f6; --dim:#c2a6c7; --line:#48304f; --line2:#5b3e63; }
+body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#194657; --fg:#e2f4f8; --dim:#96bdc8; --line:#24505e; --line2:#306676; }
   body.private { --accent:#a78bfa; }
   * { box-sizing:border-box; margin:0; padding:0; }
   body {
@@ -103,6 +107,7 @@
   // settings page writes to, so a tile edited there shows up here on next new tab.
   if (window.pv && window.pv.settings) {
     window.pv.settings.get().then((st) => {
+      document.body.dataset.theme = st.theme || 'midnight'
       if (!st) return
       if (Array.isArray(st.speedDial) && st.speedDial.length) tiles = st.speedDial.map(t => [t.title, t.url])
       if (ENGINE[st.search]) engine = ENGINE[st.search]
