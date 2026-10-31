@@ -2,4 +2,4 @@ I changed the hamburger menu so it opens above the page rather than pushing the 
 
 I removed my experimental dark website filter and bundled Dark Reader 4.9.134 instead. Manage it in Settings > Extensions. It needs access to website content to darken pages. This build of Dark Reader has not been verified on every website or for every extension feature.
 
-This version includes a silent updater with a backup and rollback helper. The update from 1.0.38 still uses the old setup wizard; later updates use the new updater. Windows tests covered the helper with a simulated installer; the full packaged update still needs end-to-end verification.
+This version includes a silent updater with a backup and rollback helper. The update from 1.0.38 still uses the old setup wizard; later updates use the new updater. Windows tests exercised the real installer through the helper and checked rollback with a simulated failure; a live update between two released versions has not yet been tested.
