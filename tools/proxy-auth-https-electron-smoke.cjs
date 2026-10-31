@@ -13,7 +13,7 @@ app.commandLine.appendSwitch('ignore-certificate-errors')
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'pv-proxy-auth-'))
 app.setPath('userData', profile)
 // Keep built-in VPN startup from overwriting the synthetic proxy in this fresh test profile.
-fs.writeFileSync(path.join(profile, 'builtin-removed.json'), JSON.stringify(['proton-vpn', 'proxy-switch']))
+fs.writeFileSync(path.join(profile, 'builtin-removed.json'), JSON.stringify(['proton-vpn']))
 require('../app/main.js')
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 async function waitFor(label, fn, timeout = 30000) {
