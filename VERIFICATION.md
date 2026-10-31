@@ -2718,3 +2718,13 @@ Windows Actions run 41213945980 passed local HTTP and HTTPS CONNECT proxy authen
 with a synthetic MV3 extension and fake credentials. The real Proton service was not used.
 The separate worker proxy smoke was intermittent and failed in that run; it is being isolated
 from Proton startup rather than counted as a pass. The uBlock Lite probe also still failed.
+
+## Sidebar controls and Settings - 1.0.35
+
+Left-clicking Proton uses its popup's connect/disconnect controls in a temporary hidden window;
+right-click opens its popup. Proxy configuration is not proof of network protection. The
+signed-out Electron smoke and simulated popup control tests use no Proton credentials; a real
+signed-in connect/disconnect through the new sidebar control has not been automated or verified.
+Settings opens a new tab; the ad blocker right-click opens Privacy. The existing built-in ad
+blocker remains distinct from uBlock Origin Lite. The uBlock compatibility probe is explicitly
+informational and continues to fail; it does not certify uBlock as supported.

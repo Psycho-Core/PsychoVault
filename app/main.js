@@ -36,6 +36,7 @@ fs.mkdirSync(USER, { recursive: true })
 const { toElectronProxy, getResult, toWebRTCPolicy, proxyOutcome } = require('./ext-proxy')
 const { findWindowFor } = require('./window-lookup')
 const { matchesProxyChallenge, allowsProxyAuth } = require('./ext-proxy-auth')
+const { inspectProtonPopup, clickProtonPopup } = require('./proton-toggle')
 
 // An uncaught throw in the main process used to pop Electron's modal "A JavaScript
 // error occurred in the main process" box - on a browser that is a wall between you and
@@ -1307,6 +1308,53 @@ ipcMain.handle('ext:openpage', (e, o) => {
   return { ok: true, url: href }
 })
 
+// Toggle through Proton's real popup controls, rather than replacing its connection
+// state or replaying credentials. Only the browser's own chrome can request this.
+let protonToggleBusy = false
+ipcMain.handle('proton:toggle', async (event) => {
+  const w = [...mainWindows].find(x => x.win && !x.win.isDestroyed() && x.win.webContents === event.sender)
+  if (!w) return { ok: false, error: 'No browser window is available.' }
+  if (protonToggleBusy) return { ok: false, error: 'Proton is already changing connection.' }
+  const rec = extRecords().find(x => x.builtin === 'proton-vpn' && x.enabled && x.id === 'jplgfhpmjnbigmhklmmbgecoobifkmpa')
+  if (!rec) return { ok: false, error: 'Enable Proton VPN in Settings > Extensions first.' }
+  protonToggleBusy = true
+  let popup
+  try {
+    popup = new BrowserWindow({ show: false, width: 500, height: 800, webPreferences: {
+      session: session.fromPartition('persist:psychovault'), contextIsolation: true, nodeIntegration: false, sandbox: true
+    } })
+    await popup.loadURL('chrome-extension://' + rec.id + '/popup.html')
+    let status = null
+    const end = Date.now() + 20000
+    while (Date.now() < end) {
+      status = await popup.webContents.executeJavaScript('(' + inspectProtonPopup.toString() + ')()')
+      if (status.state !== 'loading') break
+      await new Promise(resolve => setTimeout(resolve, 200))
+    }
+    if (!status || status.state === 'loading') return { ok: false, error: 'Proton did not finish loading. Right-click to open it.' }
+    if (status.state === 'signed-out') return { ok: false, error: 'Sign in to Proton first. Right-click to open it.' }
+    const action = status.state === 'on' ? 'disconnect' : 'connect'
+    const clicked = await popup.webContents.executeJavaScript('(' + clickProtonPopup.toString() + ')(' + JSON.stringify(action) + ')', true)
+    if (!clicked) return { ok: false, error: 'Proton could not start the requested action.' }
+    const want = action === 'connect' ? 'on' : 'off'
+    const until = Date.now() + 30000
+    while (Date.now() < until) {
+      await new Promise(resolve => setTimeout(resolve, 250))
+      const value = extProxyValues.get(rec.id)
+      const proxy = value && value.mode === 'fixed_servers' && value.rules && value.rules.singleProxy
+      const host = String(proxy && proxy.host || '').toLowerCase()
+      const on = extProxyOwner === rec.id && !!host && !['localhost', '127.0.0.1', '::1'].includes(host)
+      if ((want === 'on') === on) return { ok: true, action }
+    }
+    return { ok: false, error: 'Proton did not finish. Right-click to check its window.' }
+  } catch (error) {
+    return { ok: false, error: 'Could not control Proton: ' + String(error.message || error) }
+  } finally {
+    if (popup && !popup.isDestroyed()) popup.destroy()
+    protonToggleBusy = false
+  }
+})
+
 // ---------------------------------------------------------------- blocklist
 // Domain list shipped with the app; loaded once, matched by hostname.
 let blockSet = new Set()
@@ -2031,8 +2079,9 @@ class TabWindow {
     tab.url = target
     if (target === 'psychovault://newtab') {
       tab.view.webContents.loadFile(path.join(__dirname, 'ui', 'newtab.html'), { query: { private: this.private ? '1' : '0' } })
-    } else if (target === 'psychovault://settings') {
-      tab.view.webContents.loadFile(path.join(__dirname, 'ui', 'settings.html'))
+    } else if (/^psychovault:\/\/settings(?:#[a-z-]+)?$/.test(target)) {
+      const section = target.split('#')[1]
+      tab.view.webContents.loadFile(path.join(__dirname, 'ui', 'settings.html'), section ? { hash: section } : {})
     } else {
       tab.view.webContents.loadURL(target).catch(() => {})
     }

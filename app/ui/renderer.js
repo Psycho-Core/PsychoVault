@@ -867,7 +867,7 @@ $('#menu').addEventListener('click', async (e) => {
   else if (cmd === 'bookmarks') openPanel('bookmarks', railBtns[0])
   else if (cmd === 'history') openPanel('history', railBtns[1])
   else if (cmd === 'downloads') openPanel('downloads', railBtns[2])
-  else if (cmd === 'settings') window.pv.nav.go('psychovault://settings')
+  else if (cmd === 'settings') window.pv.tab.new('psychovault://settings')
   else if (cmd === 'devtools') toast('Right-click any page and choose Inspect element')
 })
 
@@ -882,7 +882,7 @@ $('#btn-adblock').onclick = async () => {
   }
 }
 
-$('#btn-proton').onclick = async () => {
+async function openProtonSettings() {
   try {
     const items = await window.pv.extensions.list()
     const proton = items.find((item) => item.builtin === 'proton-vpn')
@@ -891,12 +891,19 @@ $('#btn-proton').onclick = async () => {
     if (!proton.popup) return toast('Proton VPN has no window to open. Check Settings > Extensions.')
     const result = await window.pv.extensions.openpage({ dir: proton.dir, page: proton.popup })
     if (!result || !result.ok) toast('Could not open Proton VPN: ' + ((result && result.error) || 'unknown error'))
-  } catch (error) {
-    toast('Could not open Proton VPN: ' + (error.message || 'unknown error'))
-  }
+  } catch (error) { toast('Could not open Proton VPN: ' + (error.message || 'unknown error')) }
 }
+$('#btn-proton').onclick = async () => {
+  try {
+    const result = await window.pv.proton.toggle()
+    if (!result || !result.ok) return toast((result && result.error) || 'Could not change Proton VPN.')
+    toast(result.action === 'connect' ? 'Proton proxy configured - connection not verified' : 'Proton VPN disconnected')
+  } catch (error) { toast('Could not change Proton VPN: ' + (error.message || 'unknown error')) }
+}
+$('#btn-proton').oncontextmenu = (event) => { event.preventDefault(); openProtonSettings() }
+$('#btn-adblock').oncontextmenu = (event) => { event.preventDefault(); window.pv.tab.new('psychovault://settings#privacy') }
 
-$('#btn-settings').onclick = () => window.pv.nav.go('psychovault://settings')
+$('#btn-settings').onclick = () => window.pv.tab.new('psychovault://settings')
 
 $('#btn-split').onclick = () => window.pv.view.split()
 
@@ -907,7 +914,7 @@ const COMMANDS = [
   { id: 'reopen',   title: 'Reopen closed tab',  keys: 'Ctrl+Shift+T',run: () => window.pv.tab.reopen() },
   { id: 'private',  title: 'New private window', keys: 'Ctrl+Shift+P',run: () => window.pv.win.private() },
   { id: 'split',    title: 'Toggle split view',  keys: 'Ctrl+\\',     run: () => window.pv.view.split() },
-  { id: 'settings', title: 'Open settings',      keys: '',            run: () => window.pv.nav.go('psychovault://settings') },
+  { id: 'settings', title: 'Open settings',      keys: '',            run: () => window.pv.tab.new('psychovault://settings') },
   { id: 'newtab2',  title: 'Open new tab page',  keys: '',            run: () => window.pv.nav.go('psychovault://newtab') },
   { id: 'bookmarks',title: 'Show bookmarks',     keys: '',            run: () => openPanel('bookmarks', railBtns[0]) },
   { id: 'history',  title: 'Show history',       keys: '',            run: () => openPanel('history', railBtns[1]) },
@@ -938,7 +945,7 @@ const COMMANDS = [
   { id: 'home',     title: 'Go home',            keys: '',            run: () => window.pv.nav.home() },
   { id: 'copyurl',  title: 'Copy current address', keys: '',          run: () => window.pv.clip.write(state.url || '') },
   { id: 'wsclose',  title: 'Close this workspace', keys: '',          run: () => window.pv.ws.close((state.workspaces || {}).active || 0) },
-  { id: 'spellset', title: 'Spelling settings', keys: '', run: () => window.pv.nav.go('psychovault://settings') },
+  { id: 'spellset', title: 'Spelling settings', keys: '', run: () => window.pv.tab.new('psychovault://settings') },
   { id: 'ddg',      title: 'Search engine: DuckDuckGo', keys: '',     run: () => window.pv.settings.set({ search: 'duckduckgo' }) },
   { id: 'brave',    title: 'Search engine: Brave',      keys: '',     run: () => window.pv.settings.set({ search: 'brave' }) },
   { id: 'startpage',title: 'Search engine: Startpage',  keys: '',     run: () => window.pv.settings.set({ search: 'startpage' }) },

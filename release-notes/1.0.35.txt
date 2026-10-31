@@ -1,0 +1,16 @@
+VPN, sidebar controls and updates
+
+- Left-click Proton VPN to connect or disconnect. Right-click it for Proton's window.
+  Sign in through the window first. A configured proxy alone does not prove protection.
+- Left-click the built-in ad blocker to switch it on or off; right-click opens its
+  Privacy setting. It is PsychoVault's own domain blocker, not uBlock Origin.
+- Settings now opens in a new tab, leaving the current website alone.
+- Added Graphite, Forest, Plum and Ocean themes, more accent colours and an optional
+  experimental dark filter for light websites.
+- Fixed Proton's worker proxy and authentication bridge. Local HTTP and HTTPS proxy
+  tests passed; a user reported an IP location change with Proton, but there is no
+  automated test of a real Proton account or service.
+- Update installers download into Downloads without asking for a save location.
+- Password inputs are masked, and a damaged vault is not silently treated as empty.
+- uBlock Origin Lite is not included or verified. The MV3 rules compatibility probe
+  is informational and still fails.

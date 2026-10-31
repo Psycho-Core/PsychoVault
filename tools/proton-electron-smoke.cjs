@@ -24,9 +24,15 @@ async function waitFor(label, fn, timeout = 30000) {
 }
 async function run() {
   const ui = await waitFor('browser UI', () => webContents.getAllWebContents().find(w => w.getURL().includes('/ui/index.html')))
-  await ui.executeJavaScript("window.pv.nav.go('psychovault://settings')")
+  const before = await ui.executeJavaScript("document.querySelectorAll('#tabs [role=tab]').length")
+  await ui.executeJavaScript("document.getElementById('btn-settings').click()")
   const settings = await waitFor('settings', () => webContents.getAllWebContents().find(w => w.getURL().includes('/ui/settings.html')))
+  const after = await ui.executeJavaScript("document.querySelectorAll('#tabs [role=tab]').length")
+  if (after <= before) throw new Error('Settings did not open a new tab')
   const ext = await waitFor('Proton extension loading', () => settings.executeJavaScript(`window.pv.extensions.list().then(xs => xs.find(x => x.name === 'Proton VPN: Fast & Secure' && x.loaded))`))
+  const toggle = await ui.executeJavaScript('window.pv.proton.toggle()')
+  if (!toggle || toggle.ok || !/sign in/i.test(toggle.error || '')) throw new Error('signed-out VPN toggle: ' + JSON.stringify(toggle))
+  console.log('PASS: signed-out VPN toggle asks for sign-in and Settings opens a new tab.')
   const result = await settings.executeJavaScript(`window.pv.extensions.openpage(${JSON.stringify({ dir: ext.dir, page: ext.popup })})`)
   if (!result || !result.ok) throw new Error('opening popup failed: ' + JSON.stringify(result))
   const popup = await waitFor('Proton popup', () => webContents.getAllWebContents().find(w => w.getURL().startsWith('chrome-extension://jplgfhpmjnbigmhklmmbgecoobifkmpa/popup.html')))
