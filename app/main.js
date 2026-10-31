@@ -1665,12 +1665,8 @@ function vaultGenerate(opts) {
   return cap.join('-') + '-' + (10 + (buf[n] % 90))
 }
 
-// A saved entry may only be offered on its own host or a subdomain of it - and,
-// the other way round, an entry saved for www.github.com may fill github.com.
-// The previous version compared "last two labels", which meant an entry stored
-// for github.co.uk was offered on any *.co.uk site. That is a cross-site password
-// suggestion, so it is gone: equality of the registrable domain is a necessary
-// condition, a host suffix match is the sufficient one.
+// Fill only the saved hostname (www is treated as equivalent), not arbitrary
+// subdomains or registrable-domain guesses. The menu also requires HTTPS.
 function siteHost(site) {
   try { return new URL(/^https?:/.test(site) ? site : 'https://' + site).hostname.toLowerCase() }
   catch { return '' }
@@ -1718,6 +1714,7 @@ const VAULT_GRAB = `(function () {
 })()`
 
 const VAULT_FILL = `(function (payload) {
+  if (location.origin !== payload.origin || location.protocol !== 'https:') return 'page changed - nothing filled'
   const el = document.activeElement
   const form = (el && (el.form || el.closest('form'))) || document.querySelector('form') || document
   let done = []
@@ -2262,7 +2259,7 @@ class TabWindow {
         click: () => {
           if (tab.view.webContents.getURL() !== tab.url || !vaultFrameAllowed(tab.url, params.frameURL)) return
           tab.view.webContents
-            .executeJavaScript(`${VAULT_FILL}(${JSON.stringify({ user: m.user, pass: m.pass })})`)
+            .executeJavaScript(`${VAULT_FILL}(${JSON.stringify({ user: m.user, pass: m.pass, origin: new URL(tab.url).origin })})`)
             .then((how) => this.sendChrome('vault', { ...vaultStatus(), toast: 'Filled ' + how }))
             .catch(() => this.sendChrome('vault', { ...vaultStatus(), toast: 'Fill failed - this page blocked the script' }))
         }
@@ -2276,7 +2273,7 @@ class TabWindow {
       label: 'Save password for this site',
       click: () => {
         if (tab.view.webContents.getURL() !== tab.url || !vaultFrameAllowed(tab.url, params.frameURL)) return
-        tab.view.webContents.executeJavaScript(VAULT_GRAB).then((got) => {
+        tab.view.webContents.executeJavaScript(`(() => { if (location.origin !== ${JSON.stringify(new URL(tab.url).origin)} || location.protocol !== 'https:') return null; return ${VAULT_GRAB} })()`).then((got) => {
           if (!got || got.error || !got.pass) {
             this.sendChrome('vault', { ...vaultStatus(), toast: (got && got.error) || 'This form has no password value to read' })
             return

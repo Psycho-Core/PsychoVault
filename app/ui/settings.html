@@ -678,7 +678,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     </div>
 
     <div class="note"><b>Import and encrypted backups</b> - unlock the vault first. CSV exports contain plaintext passwords: keep the file private and delete it securely when you are finished. Imports and restores merge entries and skip matching site and username; they never replace existing entries. Keep the backup password safe - it cannot be recovered.</div>
-    <div class="tile-row"><input type="password" id="vbackupPassword" autocomplete="new-password" placeholder="Backup password - at least 12 characters" aria-label="Backup password"></div>
+    <div class="tile-row"><input type="password" id="vbackupPassword" autocomplete="new-password" placeholder="Backup password - at least 12 characters" aria-label="Backup password"><input type="password" id="vbackupConfirm" autocomplete="new-password" placeholder="Confirm password for new backup" aria-label="Confirm new backup password"></div>
     <div class="btnrow"><button class="mini" id="vBackup">Save encrypted backup</button><button class="mini" id="vRestore">Restore encrypted backup</button><button class="mini" id="vImport">Import CSV export</button></div>
     <div class="hint" id="vTransferMsg" aria-live="polite"></div>
     <div class="hint">Vault filling is manual, HTTPS-only and limited to the same host (with www treated as equivalent). Cross-origin frames are not filled.</div>
@@ -1198,9 +1198,10 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     if (hasVault) {
       const transfer = async action => {
         const pw = s('vbackupPassword').value
-        if (action === 'backup' && (pw.length < 12 || !confirm('Keep this backup password safe. If you lose it, this backup cannot be recovered. Continue?'))) return
+        if (action === 'backup' && (pw.length < 12 || pw !== s('vbackupConfirm').value)) { s('vTransferMsg').textContent = 'Use at least 12 characters and make sure both backup passwords match.'; return }
+        if (action === 'backup' && !confirm('Keep this backup password safe. If you lose it, this backup cannot be recovered. Continue?')) return
         if (action === 'csv' && !confirm('CSV exports contain plaintext passwords. Import without overwriting existing entries?')) return
-        const r = await window.pv.vault.transfer(action, pw); s('vbackupPassword').value = ''
+        const r = await window.pv.vault.transfer(action, pw); s('vbackupPassword').value = ''; s('vbackupConfirm').value = ''
         s('vTransferMsg').textContent = r.ok ? (action === 'backup' ? 'Encrypted backup saved (' + r.count + ' entries).' : 'Imported ' + r.count + ' entries; skipped ' + r.skipped + '.') : (r.reason || 'Transfer failed.')
         refreshVault()
       }
