@@ -130,7 +130,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
 <div class="wrap">
 
   <h1>Settings</h1>
-  <div class="sub">PsychoVault 1.0.4 - built by Psycho-Core</div>
+  <div class="sub">Built by Psycho-Core</div>
   <div class="settings-layout">
     <nav class="settings-nav" aria-label="Settings categories">
       <div class="settings-nav-label">Categories</div>
@@ -179,6 +179,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
       </div>
       <label class="switch"><input type="checkbox" id="restore"><span class="slider"></span></label>
     </div>
+    <div class="row"><div><div class="lbl">Workspaces</div><div class="hint">Show workspace groups and enable workspace switching. Turning this off keeps your saved groups. Turning it back on puts your current tabs in a new group.</div></div><label class="switch"><input type="checkbox" id="workspacesEnabled"><span class="slider"></span></label></div>
     <div class="row">
       <div>
         <div class="lbl">Home page</div>
@@ -348,7 +349,10 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
       <button class="mini" data-clear="downloads">Clear downloads</button>
       <button class="mini" data-clear="session">Forget saved tabs</button>
       <button class="mini" id="dataRefresh">Refresh</button>
+      <button class="mini" id="openErrorLog">Open error log</button>
     </div>
+    <div class="hint">Logs can contain private paths or URLs. Review and redact them before sharing.</div>
+    <div class="hint" id="errorLogResult" aria-live="polite"></div>
   </section>
       </div>
       <div class="settings-category" data-category-panel="downloads" data-title="Downloads" data-description="Choose a destination for every file before it downloads." hidden>
@@ -843,7 +847,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
   let settings = {}
   // every switch on this page, and how its default reads when the key is absent
   const TOGGLES = {
-    blockAds: true, blockUseBundled: true, restore: true, remember: true, sendDNT: true, askSaveLocation: true,
+    blockAds: true, blockUseBundled: true, workspacesEnabled: true, restore: true, remember: true, sendDNT: true, askSaveLocation: true,
     blockThirdPartyCookies: false, blockAutoplay: false, hideSidebar: false,
     batterySaver: false, batteryAuto: false, vaultEnabled: true,
     enhanceVideo: false, enhanceImages: false, darkWebsites: false, uiSounds: false, mediaKeys: true,
@@ -1198,6 +1202,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     s('contAdd').onclick = () => { const l = containersValue(); l.push({ name: 'New', color: '#38bdf8' }); renderContainers(l) }
     s('contSave').onclick = () => { const l = containersValue().filter(x => x.name); save({ containers: l }).then(() => flag(l.length + ' containers saved - a tab picks one up from its right-click menu')) }
     s('dataRefresh').onclick = refreshData
+    s('openErrorLog').onclick = async () => { const r = await window.pv.data.openErrorLog(); s('errorLogResult').textContent = r.ok ? 'Opened: ' + r.path : (r.message || 'Could not open the log') }
     if (hasVault) {
       const transfer = async action => {
         const pw = s('vbackupPassword').value

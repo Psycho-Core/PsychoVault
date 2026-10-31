@@ -1,0 +1,5 @@
+I added a workspace toggle. Turning it off keeps saved groups; turning it back on puts the current tabs in a new group.
+
+Bookmarks, History and Downloads are in the menu instead of the sidebar. Proton's popup has a clearer tab title and address, and the Proton and ad blocker tooltips explain left and right click. Toasts now reserve space so they are not covered by the page. The version is shown in About, and Settings has a button to open errors.log (review it for private information before sharing). I fixed the line breaks on the installer pages.
+
+Updates still open the setup wizard. I have not made updates silent because the existing installer replaces files in place and does not yet have a tested rollback.

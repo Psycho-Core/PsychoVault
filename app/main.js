@@ -82,6 +82,7 @@ const DEFAULT_SETTINGS = {
   blockAllowSites: '',           // exact top-level page hostnames
   blockAds: true,
   homepage: 'psychovault://newtab',
+  workspacesEnabled: true,       // show and enable workspace groups
   restore: true,
   remember: true,               // off = history is never recorded
   // --- extras, every one of them user-controllable ---
@@ -1823,12 +1824,13 @@ class TabWindow {
     this.activeId = null
     this.splitId = null
     this.extraTop = 0
+    this.extraBottom = 0
     this.panelOpen = false
     this.chromeModal = false
     this.nextId = 1
     this.findActive = false
 
-    const wsSet = (!this.private && settings.restore) ? workspaces.list[workspaces.active] : null
+    const wsSet = (!this.private && settings.restore && settings.workspacesEnabled !== false) ? workspaces.list[workspaces.active] : null
     const saved = opts.saved || (opts.noRestore ? null : ((wsSet && wsSet.urls && wsSet.urls.length) ? wsSet
       : ((!this.private && settings.restore) ? readJSON('session.json', null) : null)))
 
@@ -2021,7 +2023,7 @@ class TabWindow {
     wc.on('page-title-updated', (_e, title) => {
       if (tab.discarded) return
       if (!title) return
-      tab.title = title
+      tab.title = /^chrome-extension:\/\/jplgfhpmjnbigmhklmmbgecoobifkmpa\/popup\.html(?:[?#]|$)/.test(wc.getURL()) ? 'Proton VPN' : title
       if (!this.private && /^https?:/.test(tab.url)) {
         const h = history.find(x => x.url === tab.url)
         if (h && h.title !== title) { h.title = title; writeJSON('history.json', history) }
@@ -2041,6 +2043,7 @@ class TabWindow {
       // the unload that a sleeping tab performs is ours, not the user's
       if (u === 'about:blank' && tab.discarded) { emit(); return }
       tab.url = u
+      if (/^chrome-extension:\/\/jplgfhpmjnbigmhklmmbgecoobifkmpa\/popup\.html(?:[?#]|$)/.test(u)) tab.title = 'Proton VPN'
       this.recordHistory(u, tab.title)
       emit()
     })
@@ -2666,7 +2669,7 @@ class TabWindow {
       return
     }
     const W = Math.max(0, width - left)
-    const H = Math.max(0, height - top - (full ? 0 : STATUS_H))
+    const H = Math.max(0, height - top - (full ? 0 : Math.max(STATUS_H, this.extraBottom)))
     const half = Math.floor(W / 2)
     for (const [tid, t] of this.tabs) {
       const main = tid === this.activeId
@@ -2723,7 +2726,7 @@ class TabWindow {
   }
 
   wsSwitch(i) {
-    if (this.private || !workspaces.list[i]) return
+    if (this.private || settings.workspacesEnabled === false || !workspaces.list[i]) return
     if (i === workspaces.active) { this.sendState(); return }
     workspaces.list[workspaces.active] = { ...workspaces.list[workspaces.active], ...this.wsState() }
     workspaces.active = i
@@ -2734,7 +2737,7 @@ class TabWindow {
   }
 
   wsNew(name) {
-    if (this.private) return
+    if (this.private || settings.workspacesEnabled === false) return
     workspaces.list[workspaces.active] = { ...workspaces.list[workspaces.active], ...this.wsState() }
     workspaces.list.push({ name: String(name || 'Workspace').trim().slice(0, 24) || 'Workspace', urls: [], flags: [], active: 0 })
     workspaces.active = workspaces.list.length - 1
@@ -2748,7 +2751,7 @@ class TabWindow {
   // nothing to remove without breaking the invariant that a window always has a home, so
   // the same control empties it back to the home page instead.
   wsClose(i) {
-    if (this.private) return { ok: false, why: 'private windows have no workspaces' }
+    if (this.private || settings.workspacesEnabled === false) return { ok: false, why: 'workspaces are unavailable' }
     if (workspaces.list.length < 2) {
       workspaces.list[0] = { ...workspaces.list[0], urls: [], flags: [], active: 0 }
       saveWorkspaces()
@@ -2783,7 +2786,7 @@ class TabWindow {
   }
 
   wsRename(i, name) {
-    if (!workspaces.list[i]) return
+    if (settings.workspacesEnabled === false || !workspaces.list[i]) return
     workspaces.list[i].name = String(name || 'Workspace').trim().slice(0, 24) || 'Workspace'
     saveWorkspaces()
     wsBroadcast()
@@ -2798,8 +2801,10 @@ class TabWindow {
     })
     const active = this.order.indexOf(this.activeId)
     writeJSON('session.json', { urls, active: active < 0 ? 0 : active, flags })
-    workspaces.list[workspaces.active] = { ...workspaces.list[workspaces.active], urls, flags, active: active < 0 ? 0 : active }
-    saveWorkspaces()
+    if (settings.workspacesEnabled !== false) {
+      workspaces.list[workspaces.active] = { ...workspaces.list[workspaces.active], urls, flags, active: active < 0 ? 0 : active }
+      saveWorkspaces()
+    }
   }
 
   sendChrome(channel, payload) {
@@ -3156,6 +3161,7 @@ ipcMain.handle('ui:layout', (e, o) => {
   const w = findWin(e)
   if (!w) return
   if (typeof o.extraTop === 'number') w.extraTop = Math.max(0, Math.min(600, o.extraTop))
+  if (typeof o.extraBottom === 'number') w.extraBottom = Math.max(0, Math.min(160, o.extraBottom))
   if (typeof o.panel === 'boolean') w.panelOpen = o.panel
   if (typeof o.palette === 'boolean') {
     w.chromeModal = o.palette
@@ -3217,6 +3223,12 @@ ipcMain.handle('history:search', (e, q) => {
 
 // What is actually on disk, and a way to erase any of it. Used by the settings
 // page's "Your data" panel.
+ipcMain.handle('data:openErrorLog', async () => {
+  const file = path.join(USER, 'errors.log')
+  if (!fs.existsSync(file)) return { ok: false, message: 'No errors.log exists yet. The profile folder is shown instead.', path: USER, error: await shell.openPath(USER) }
+  const error = await shell.openPath(file)
+  return error ? { ok: false, message: error, path: file } : { ok: true, path: file }
+})
 ipcMain.handle('data:report', async () => {
   const files = []
   try {
@@ -3391,7 +3403,7 @@ ipcMain.handle('ws:close', (e, i) => { const w = findWin(e); if (w) w.wsClose(Nu
 ipcMain.handle('ws:rename', (e, o) => { const w = findWin(e); if (w) w.wsRename(Number(o.i), o.name) })
 ipcMain.handle('ws:menu', (e, i) => {
   const w = findWin(e)
-  if (!w || w.private) return { ok: false }
+  if (!w || w.private || settings.workspacesEnabled === false) return { ok: false }
   const tpl = w.wsMenuItems(Number(i))
   const menu = Menu.buildFromTemplate(tpl)
   const pt = screen.getCursorScreenPoint()
@@ -3541,7 +3553,20 @@ ipcMain.handle('vault:forgetMaster', () => {
 
 ipcMain.handle('settings:get', () => settings)
 ipcMain.handle('settings:set', (e, patch) => {
+  if (patch.workspacesEnabled === false && settings.workspacesEnabled !== false) {
+    const w = [...mainWindows].find(x => !x.private && x.tabs.size)
+    if (w) { workspaces.list[workspaces.active] = { ...workspaces.list[workspaces.active], ...w.wsState() }; saveWorkspaces() }
+  }
+  const reenableWorkspaces = patch.workspacesEnabled === true && settings.workspacesEnabled === false
   settings = { ...settings, ...patch }
+  if (reenableWorkspaces) {
+    const w = [...mainWindows].find(x => !x.private && x.tabs.size)
+    if (w) {
+      workspaces.list.push({ name: 'Current tabs', ...w.wsState() })
+      workspaces.active = workspaces.list.length - 1
+      saveWorkspaces()
+    }
+  }
   settings.settingsVersion = 4
   writeJSON('settings.json', settings)
   loadBlocklist()
@@ -3552,6 +3577,7 @@ ipcMain.handle('settings:set', (e, patch) => {
   }
   if ('vaultLockMin' in patch || 'vaultEnabled' in patch) vaultArmLock()
   if ('spellCheck' in patch || 'spellLangs' in patch || 'spellDictUrl' in patch || 'spellBuiltin' in patch || 'spellUserWords' in patch) { applySpellPolicyAll(); applySpellToAllPages() }
+  if ('workspacesEnabled' in patch && patch.workspacesEnabled === false) for (const w of mainWindows) w.saveSession()
   if ('services' in patch || 'railIcons' in patch) { updateServiceIcons(); for (const w of mainWindows) w.sendState() }
   for (const w of mainWindows) { w.layout(); w.sendState() }
   wsBroadcast()
