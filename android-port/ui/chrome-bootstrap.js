@@ -12,11 +12,11 @@
   window.pv = bridge;
   // Unsupported controls stay visible in their desktop order, but cannot pretend to work.
   function markUnavailable() {
-    for (const button of document.querySelectorAll('#btn-private,#btn-adblock,#btn-proton,#btn-split,#shield,.rail-btn[data-panel],#btn-perf')) {
+    for (const button of document.querySelectorAll('#btn-private,#btn-adblock,#btn-split,#shield,.rail-btn[data-panel],#btn-perf')) {
       button.disabled = true; button.title = 'Not connected on Android yet';
     }
     for (const button of document.querySelectorAll('#menu button')) {
-      if (!['newtab','bookmarks','history','settings'].includes(button.dataset.cmd)) { button.disabled = true; button.title = 'Not connected on Android yet'; }
+      if (!['newtab','bookmarks','history','settings','extensions','find'].includes(button.dataset.cmd)) { button.disabled = true; button.title = 'Not connected on Android yet'; }
     }
   }
   markUnavailable();

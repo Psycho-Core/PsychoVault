@@ -1,0 +1,88 @@
+name: Android source and build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [arena/4770266d-psychovault]
+    paths:
+      - 'android-port/**'
+      - '.github/workflows/android-build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  source-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Desktop audit and tests
+        run: |
+          node tools/audit.mjs
+          node --test tools/*.test.cjs
+      - name: Android source tests
+        run: |
+          node --test android-port/test/*.test.cjs
+          python3 -m unittest discover -s android-port/test -p '*_test.py'
+          node android-port/scripts/audit-android-source.cjs
+      - name: Generate UI and bundled extension assets
+        run: |
+          node android-port/scripts/prepare-ui.cjs "$RUNNER_TEMP/psychovault-ui"
+          python3 android-port/engine/psychovault/prepare_bundled_extensions.py
+      - name: Java syntax parse
+        run: |
+          python3 -m pip install --target "$RUNNER_TEMP/py" javalang
+          PYTHONPATH="$RUNNER_TEMP/py" python3 - <<'PY'
+          import glob, javalang
+          for path in glob.glob('android-port/engine/psychovault/java/**/*.java', recursive=True):
+              javalang.parse.parse(open(path, encoding='utf-8').read())
+              print('parsed', path)
+          PY
+
+  build-apk:
+    needs: source-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Build preflight and notes
+        id: preflight
+        shell: bash
+        run: |
+          mkdir -p build-notes
+          free_gb=$(df -BG --output=avail . | tail -1 | tr -dc '0-9')
+          echo "Free disk: ${free_gb}GB"
+          {
+            echo "PsychoVault Android build notes"
+            echo "Status: source checks passed; APK build attempted"
+            echo "Runner free disk: ${free_gb}GB"
+          } > build-notes/Release-Notes-Android.txt
+          if [ "$free_gb" -lt 100 ]; then
+            echo "Chromium documents at least 100GB free disk for an Android build." >> build-notes/Release-Notes-Android.txt
+            echo "This runner does not meet the build requirement. No APK was produced." >> build-notes/Release-Notes-Android.txt
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+      - name: Prepare pinned engine workspace
+        if: steps.preflight.outputs.ok == 'true'
+        run: bash android-port/scripts/prepare-engine.sh "$RUNNER_TEMP/psychovault-engine"
+      - name: Build APK
+        if: steps.preflight.outputs.ok == 'true'
+        working-directory: ${{ runner.temp }}/psychovault-engine
+        run: bash build.sh
+      - name: Upload build notes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build-notes
+          path: build-notes/Release-Notes-Android.txt
+          if-no-files-found: warn
+          retention-days: 7

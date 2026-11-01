@@ -48,6 +48,7 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
     private final CompositorViewHolder mCompositor;
     private final PsychoTabController mController;
     private final PsychoProfileStore mStore;
+    private final PsychoExtensions mExtensions;
     private final FrameLayout mOverlay;
     private final Map<Boolean, Session> mSessions = new HashMap<>();
     private final Map<Integer, PageBinding> mPages = new HashMap<>();
@@ -83,7 +84,7 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
         }
     };
     private final TabObserver mTabObserver = new TabObserver() {
-        @Override public void onContentChanged(Tab tab) { unbindPage(tab.getId()); bindPage(tab); changed(); }
+        @Override public void onContentChanged(Tab tab) { unbindPage(tab.getId()); unobserveNavigation(tab.getId()); mObservedTabs.remove(tab.getId()); observeTab(tab); bindPage(tab); changed(); }
         @Override public void onUrlUpdated(Tab tab) { changed(); }
         @Override public void onTitleUpdated(Tab tab) { changed(); }
         @Override public void onLoadStarted(Tab tab, boolean differentDocument) { changed(); }
@@ -115,6 +116,7 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
         mCompositor = compositor;
         mController = new PsychoTabController(selector, () -> ((org.chromium.chrome.browser.ChromeTabbedActivity) activity).getCurrentTabCreator());
         mStore = new PsychoProfileStore(activity);
+        mExtensions = new PsychoExtensions(activity);
         mOverlay = new FrameLayout(activity) {
             @Override public boolean dispatchTouchEvent(MotionEvent event) {
                 int x = Math.round(event.getX()), y = Math.round(event.getY());
@@ -140,6 +142,7 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
         ViewGroup root = activity.findViewById(android.R.id.content);
         root.addView(mOverlay, new FrameLayout.LayoutParams(-1, -1));
         selectSession();
+        try { mExtensions.ensureBundled(profile(), mStore); } catch (Exception e) { /* UI reports extension status honestly. */ }
     }
 
     private Profile profile() { return mSelector.getCurrentModel().getProfile(); }
@@ -201,8 +204,9 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
     private void recordVisit(int tabId, String url) {
         try {
             Profile profile = profile();
-            Tab tab = mSelector.getCurrentTab();
-            if (profile == null || profile.isOffTheRecord() || tab == null || tab.getId() != tabId) return;
+            TabModel current = mSelector.getCurrentModel();
+            Tab tab = current.getTabById(tabId);
+            if (profile == null || profile.isOffTheRecord() || tab == null || tab.isOffTheRecord()) return;
             if (!mStore.read(profile).optBoolean("remember", true)) return;
             Session regular = mSessions.get(false);
             if (regular == null) return;
@@ -283,6 +287,13 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
             if (channel.equals("settings:get")) { result.send(true, mStore.read(profile())); return; }
             if (channel.equals("settings:set") && args.length() == 1) { result.send(true, mStore.write(profile(), args.getJSONObject(0))); changed(); return; }
             if (channel.equals("rail:icons")) { result.send(true, new JSONObject()); return; }
+            if (channel.equals("ext:list")) { result.send(true, mExtensions.list(profile())); return; }
+            if (channel.equals("ext:status")) { result.send(true, mExtensions.status(profile())); return; }
+            if (channel.equals("ext:toggle") && args.length() == 1) { JSONObject o = args.getJSONObject(0); mExtensions.toggle(profile(), o.optString("id", o.optString("dir")), o.getBoolean("enabled")); result.send(true, new JSONObject().put("ok", true).put("items", mExtensions.list(profile()))); return; }
+            if (channel.equals("ext:remove") && args.length() == 1) { mExtensions.remove(profile(), args.getString(0), mStore); result.send(true, new JSONObject().put("ok", true).put("items", mExtensions.list(profile()))); return; }
+            if (channel.equals("ext:restorebuiltin")) { mExtensions.restoreBundled(profile(), mStore); result.send(true, new JSONObject().put("ok", true).put("items", mExtensions.list(profile()))); return; }
+            if (channel.equals("ext:openpage") && args.length() == 1) { JSONObject o = args.getJSONObject(0); String id = mExtensions.resolveId(profile(), o.optString("id", o.optString("dir"))); String page = o.getString("page"); mController.openExtensionPage(id, page); result.send(true, new JSONObject().put("ok", true).put("url", "chrome-extension://" + id + "/" + page)); return; }
+            if (channel.equals("proton:toggle")) { mController.openExtensionPage(PsychoExtensions.PROTON_ID, "popup.html"); result.send(false, "Proton opened. Connect inside Proton; protection is not verified."); return; }
             if (channel.equals("tab:new") || channel.equals("nav:go") || channel.equals("tab:open")
                     || channel.startsWith("nav:") || channel.startsWith("tab:")) {
                 Object value = mController.invoke(channel, args); changed(); result.send(true, value); return;

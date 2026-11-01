@@ -10,6 +10,8 @@ import org.chromium.chrome.browser.tabmodel.TabClosureParams;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.content_public.browser.LoadUrlParams;
+import org.chromium.content_public.browser.WebContents;
+import org.chromium.components.find_in_page.FindInPageBridge;
 import org.chromium.url.GURL;
 
 import org.json.JSONArray;
@@ -144,6 +146,47 @@ public final class PsychoTabController {
         for (Runnable listener : mListeners) listener.run();
     }
 
+    public boolean setPinned(int id, boolean pinned) {
+        Tab tab = model().getTabById(id);
+        if (tab == null) return false;
+        tab.setIsPinned(pinned); return true;
+    }
+
+    public boolean setMuted(int id, boolean muted) {
+        Tab tab = model().getTabById(id);
+        WebContents contents = tab == null ? null : tab.getWebContents();
+        if (contents == null || contents.isDestroyed()) return false;
+        contents.setAudioMuted(muted); return true;
+    }
+
+    public boolean find(String text, boolean forward, boolean caseSensitive) {
+        Tab tab = currentTab();
+        WebContents contents = tab == null ? null : tab.getWebContents();
+        if (contents == null || contents.isDestroyed() || text == null || text.length() > 1000) return false;
+        new FindInPageBridge(contents).startFinding(text, forward, caseSensitive);
+        return true;
+    }
+
+    public boolean stopFind() {
+        Tab tab = currentTab();
+        WebContents contents = tab == null ? null : tab.getWebContents();
+        if (contents == null || contents.isDestroyed()) return false;
+        new FindInPageBridge(contents).stopFinding(true);
+        return true;
+    }
+
+    /** Open an extension page only after the trusted host validated the extension ID. */
+    public int openExtensionPage(String id, String page) {
+        if (id == null || !id.matches("[a-p]{32}") || page == null || page.length() > 512
+                || page.startsWith("/") || page.contains("..") || page.contains("\\") || page.contains("?") || page.contains("#")) {
+            throw new IllegalArgumentException("Invalid extension page");
+        }
+        Tab tab = mCreator.get().createNewTab(new LoadUrlParams("chrome-extension://" + id + "/" + page),
+                TabLaunchType.FROM_CHROME_UI, null);
+        if (tab == null) throw new IllegalStateException("Chromium did not create a tab");
+        return tab.getId();
+    }
+
     private Tab currentTab() {
         model();
         return mSelector.getCurrentTab();
@@ -166,6 +209,20 @@ public final class PsychoTabController {
                 requireCount(args, 1); return activate(requireTabId(args, 0));
             case "tab:close":
                 requireCount(args, 1); return close(requireTabId(args, 0));
+            case "tab:pin": {
+                requireCount(args, 1); JSONObject o = args.getJSONObject(0);
+                return setPinned(o.getInt("id"), o.getBoolean("pinned"));
+            }
+            case "tab:mute": {
+                requireCount(args, 1); JSONObject o = args.getJSONObject(0);
+                return setMuted(o.getInt("id"), o.getBoolean("muted"));
+            }
+            case "find:start": {
+                requireCount(args, 1); JSONObject o = args.getJSONObject(0);
+                return find(o.getString("text"), o.optBoolean("forward", true), o.optBoolean("caseSensitive", false));
+            }
+            case "find:stop":
+                requireCount(args, 0); return stopFind();
             case "nav:go":
                 requireCount(args, 1); return navigate(requireString(args, 0));
             case "nav:home":
@@ -216,6 +273,9 @@ public final class PsychoTabController {
             item.put("url", tab.getUrl().getSpec());
             item.put("title", tab.getTitle());
             item.put("loading", tab.isLoading());
+            item.put("pinned", tab.getIsPinned());
+            WebContents contents = tab.getWebContents();
+            item.put("muted", contents != null && !contents.isDestroyed() && contents.isAudioMuted());
             tabs.put(item);
         }
         JSONObject state = new JSONObject();

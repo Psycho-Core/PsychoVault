@@ -1,6 +1,6 @@
 # Android extension engine - research and decision
 
-Research date: 1 November 2026. This is a recommendation, not an implemented engine or a successful device test. Proton VPN is required in the Android port.
+Research date: 1 November 2026. The source now contains a first extension-manager and bundled-extension staging path, but no Android extension install or device test has passed. Proton VPN is required in the Android port.
 
 ## What I need
 

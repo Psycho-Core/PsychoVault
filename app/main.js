@@ -89,7 +89,7 @@ const DEFAULT_SETTINGS = {
   // --- extras, every one of them user-controllable ---
   theme: 'midnight',             // chrome and internal page palette
   accent: 'cyan',                 // "mods": accent colour of the whole UI
-  hideSidebar: false,             // collapse the GX rail
+  hideSidebar: false,             // collapse the Performance rail
   highContrast: false,            // higher contrast for browser chrome and Settings
   reduceMotion: false,             // reduce interface and page animations
   showTabCloseButtons: false,     // keep tab close controls visible without hover
@@ -101,22 +101,22 @@ const DEFAULT_SETTINGS = {
   sleepExclude: '',              // newline-separated exact hostnames
   sleepTabsMin: 0,                // 0 = never; minutes idle before a tab is dropped
   clearOnExit: 'nothing',         // nothing | cache | all
-  batterySaver: false,            // GX power save: low priority + fast tab sleep
+  batterySaver: false,            // Performance power save: low priority + fast tab sleep
   vaultEnabled: true,             // local password vault
   vaultLockMin: 5,                // 0 = keep in memory until the app closes
-  // --- RGX mode (GX's "enhance videos / enhance images") ---
+  // --- Enhance mode (Performance's "enhance videos / enhance images") ---
   enhanceVideo: false,
   enhanceImages: false,
-  // --- GX Control third limiter: bandwidth, in KB/s (0 = no cap) ---
+  // --- Performance third limiter: bandwidth, in KB/s (0 = no cap) ---
   netLimit: 0,
   settingsVersion: 3,           // internal settings schema version
   askSaveLocation: true,        // ask for each download by default
   downloadDir: '',              // initial location for each Save As dialog; empty = system Downloads
   downloadNotify: true,         // system notification when the window is behind something
-  // --- GX Panic Button ---
+  // --- Performance Panic Button ---
   panicEnabled: true,
   panicUrl: 'https://en.wikipedia.org/wiki/Main_Page',
-  // --- sidebar services (GX's messengers/music row) ---
+  // --- sidebar services (Performance's messengers/music row) ---
   services: [
     { name: 'Discord', url: 'https://discord.com/app' },
     { name: 'Twitch', url: 'https://www.twitch.tv/directory' },
@@ -141,7 +141,7 @@ const DEFAULT_SETTINGS = {
   extensions: [],               // [{ dir, enabled, id }] - what is installed, in install order
   mediaKeys: true,
   mediaAutoPause: true,
-  // --- keyboard sounds, the GX personality bit ---
+  // --- keyboard sounds, the Performance personality bit ---
   uiSounds: false,
   soundVol: 0.4,
   // --- hardening (privacy, all off-by-default where it could break a site) ---
@@ -1397,7 +1397,7 @@ function isBlocked(url, pageUrl) {
   return isDomainBlocked(blockSet, url)
 }
 
-// ---------------------------------------------------------------- GX-style extras
+// ---------------------------------------------------------------- Performance-style extras
 const liveSessions = new Set()   // every session PsychoVault has touched, for policy re-apply
 
 function etld1(host) {
@@ -1413,7 +1413,7 @@ function crossSite(initiator, target) {
   } catch { return false }
 }
 
-// CPU limiter: lowers the priority of the whole process tree, the way GX's does.
+// CPU limiter: lowers the priority of the whole process tree, the way Performance's does.
 function applyCpuLimit() {
   try {
     if (settings.batterySaver) {
@@ -1732,7 +1732,7 @@ const VAULT_FILL = `(function (payload) {
 
 // ---------------------------------------------------------------- workspaces
 // A workspace is simply the set of tabs in the window. Switching saves one and
-// loads another, which is what GX's workspace strip does.
+// loads another, which is what Performance's workspace strip does.
 let workspaces = readJSON('workspaces.json', null) || { active: 0, list: [{ name: 'General' }] }
 if (!workspaces.list || !workspaces.list.length) workspaces.list = [{ name: 'General' }]
 for (const ws of workspaces.list) if (!ws.urls) ws.urls = []
@@ -2072,7 +2072,7 @@ class TabWindow {
 
     watchExtensionConsole(wc)
     wc.setWindowOpenHandler(({ url: target }) => {
-      // remember who opened it: that is what makes a GX tab island collapsible
+      // remember who opened it: that is what makes a Performance tab island collapsible
       if (/^http/.test(target)) { this.createTab(target, { parentId: tab.id, container: tab.container }); return }
       if (target && !target.startsWith('javascript:')) this.createTab(target)
       return { action: 'deny' }
@@ -2168,7 +2168,7 @@ class TabWindow {
 
   // Bring a sleeping tab back: reload the URL it was dropped from.
   revive(x) {
-    // called with an id from the tab menu and the GX panel, with a tab object from
+    // called with an id from the tab menu and the Performance panel, with a tab object from
     // the activation path - a number is not a tab, so resolve it here
     const t = typeof x === 'object' ? x : this.tabs.get(x)
     if (!t || !t.discarded) return
@@ -2309,16 +2309,16 @@ class TabWindow {
     return out
   }
 
-  // RGX mode: the same two switches GX ships, done as CSS filters on the page.
+  // Enhance mode: the same two switches Performance ships, done as CSS filters on the page.
   static ENHANCE_CSS = `(() => {
     const v = __VIDEO__, i = __IMAGES__
     let css = ''
     if (v) css += 'video{filter:contrast(1.06) saturate(1.10) brightness(1.03)}'
     if (i) css += 'img{filter:contrast(1.04) saturate(1.06)}'
-    const node = document.getElementById('__pv_rgx')
+    const node = document.getElementById('__pv_enhance')
     if (css && !node) {
       const st = document.createElement('style')
-      st.id = '__pv_rgx'
+      st.id = '__pv_enhance'
       st.textContent = css
       document.documentElement.appendChild(st)
     } else if (!css && node) node.remove()
@@ -2346,7 +2346,7 @@ class TabWindow {
     if (!/^https?:/.test(tab.url || '')) return
     const on = !!settings.enhanceVideo || !!settings.enhanceImages
     if (!on) {
-      wc.executeJavaScript(`(function(){const a=document.getElementById('__pv_rgx');if(a)a.remove();return true})()`).catch(() => {})
+      wc.executeJavaScript(`(function(){const a=document.getElementById('__pv_enhance');if(a)a.remove();return true})()`).catch(() => {})
     } else {
       const css = TabWindow.ENHANCE_CSS
         .replace('__VIDEO__', JSON.stringify(!!settings.enhanceVideo))
@@ -2365,7 +2365,7 @@ class TabWindow {
     return settings
   }
 
-  // GX Panic Button: tuck every tab away and show a bland page.
+  // Performance Panic Button: tuck every tab away and show a bland page.
   panic(on) {
     if (on === this._panicked) return { panicked: !!this._panicked, held: this._panicStack ? this._panicStack.length : 0 }
     if (on) {
@@ -3093,7 +3093,7 @@ ipcMain.handle('nav:reload', (e) => { const w = findWin(e); const t = w && w.tab
 ipcMain.handle('nav:stop', (e) => { const w = findWin(e); const t = w && w.tabs.get(w.activeId); if (t) t.view.webContents.stop() })
 ipcMain.handle('nav:home', (e) => { const w = findWin(e); const t = w && w.tabs.get(w.activeId); if (t) w.go(t, settings.homepage) })
 
-// GX's sidebar player is mostly about not touching the keyboard: the media keys
+// Performance's sidebar player is mostly about not touching the keyboard: the media keys
 // drive whichever tab holds audio, and the music pauses itself when a video
 // somewhere else starts making noise.
 let mediaPausedByUs = null
@@ -3126,7 +3126,7 @@ function watchPower() {
   } catch { /* headless */ }
 }
 
-// "Automatically pause playback when other media start playing", GX's player switch.
+// "Automatically pause playback when other media start playing", Performance's player switch.
 setInterval(() => {
   if (!settings.mediaAutoPause) return
   for (const w of mainWindows) {
@@ -3272,8 +3272,8 @@ ipcMain.handle('data:clear', (e, what) => {
   return { done }
 })
 
-// ---- GX extras
-ipcMain.handle('gx:hot', (e, o) => {
+// ---- Performance extras
+ipcMain.handle('perf:hot', (e, o) => {
   const w = findWin(e)
   if (!w) return []
   if (o && o.action) {
@@ -3285,10 +3285,10 @@ ipcMain.handle('gx:hot', (e, o) => {
   }
   return w.hotTabs()
 })
-ipcMain.handle('gx:media', (e, cmd) => { const w = findWin(e); return w ? w.mediaRoute(cmd) : { ok: false } })
-ipcMain.handle('gx:snapshot', (e, kind) => { const w = findWin(e); return w ? w.capturePage(kind) : { ok: false } })
-ipcMain.handle('gx:panic', (e, on) => { const w = findWin(e); return w ? w.panic(!!on) : { ok: false } })
-ipcMain.handle('gx:services', (e, o) => {
+ipcMain.handle('perf:media', (e, cmd) => { const w = findWin(e); return w ? w.mediaRoute(cmd) : { ok: false } })
+ipcMain.handle('perf:snapshot', (e, kind) => { const w = findWin(e); return w ? w.capturePage(kind) : { ok: false } })
+ipcMain.handle('perf:panic', (e, on) => { const w = findWin(e); return w ? w.panic(!!on) : { ok: false } })
+ipcMain.handle('perf:services', (e, o) => {
   const w = findWin(e)
   if (!w) return { ok: false }
   const svc = (settings.services || [])[Number(o.i)]
@@ -3382,7 +3382,7 @@ ipcMain.handle('spell:remove', (e, word) => {
   return r
 })
 
-ipcMain.handle('gx:switches', () => {
+ipcMain.handle('perf:switches', () => {
   const cl = app.commandLine
   const g = (name) => (cl.hasSwitch && cl.hasSwitch(name) ? cl.getSwitchValue(name) : null)
   return {
@@ -3674,7 +3674,7 @@ function saveDownloads() {
   writeJSON('downloads.json', downloads.slice(0, 50))
 }
 
-// GX Control also wants a live number; the panel asks for it on demand.
+// Performance also wants a live number; the panel asks for it on demand.
 let downloadRate = 0
 setInterval(() => {
   let sum = 0
@@ -3764,7 +3764,7 @@ function trackDownload(item, target, suggested) {
     const now = Date.now()
     if (now - lastBeat >= 200) { lastBeat = now; broadcast('downloads', downloads) }
   })
-  // Bandwidth cap - GX's network limiter. Electron has no bytes-per-second hook,
+  // Bandwidth cap - Performance's network limiter. Electron has no bytes-per-second hook,
   // so this is a duty cycle with cumulative accounting: the transfer is only
   // allowed to be "ahead of schedule", where schedule = bytes received / cap.
   // The cap is read when the download starts; changing it does not affect a file
@@ -4147,7 +4147,7 @@ app.on('before-quit', () => {
   writeJSON('bookmarks.json', bookmarks)
   writeJSON('history.json', history)
 
-  // "Delete browsing data on close" - GX's Cleaner switch
+  // "Delete browsing data on close" - Performance's Cleaner switch
   const mode = settings.clearOnExit
   if (mode && mode !== 'nothing') {
     const ses = session.fromPartition('persist:psychovault')

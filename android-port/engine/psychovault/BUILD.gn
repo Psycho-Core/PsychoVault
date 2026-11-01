@@ -2,9 +2,18 @@ import("//build/config/android/rules.gni")
 import("//third_party/jni_zero/jni_zero.gni")
 
 generate_jni("jni_headers") {
-  sources = [ "java/org/chromium/chrome/browser/psychovault/PsychoProfileStore.java" ]
+  sources = [
+    "java/org/chromium/chrome/browser/psychovault/PsychoProfileStore.java",
+    "java/org/chromium/chrome/browser/psychovault/PsychoExtensions.java",
+  ]
 }
 
+
+android_assets("bundled_extensions") {
+  disable_compression = true
+  renaming_sources = [ "bundled/proton-vpn.zip", "bundled/dark-reader.zip" ]
+  renaming_destinations = [ "psychovault/bundled/proton-vpn.zip", "psychovault/bundled/dark-reader.zip" ]
+}
 
 android_assets("ui_assets") {
   disable_compression = true
@@ -27,11 +36,13 @@ android_assets("ui_assets") {
 }
 
 source_set("native") {
-  sources = [ "native/psycho_ui.cc", "native/psycho_ui.h", "native/psycho_profile.cc" ]
+  sources = [ "native/psycho_ui.cc", "native/psycho_ui.h", "native/psycho_profile.cc", "native/psycho_extensions.cc" ]
   deps = [
     ":jni_headers",
     "//base",
     "//chrome/browser/profiles:profile",
+    "//extensions/browser",
+    "//extensions/common",
     "//content/public/browser",
     "//services/network/public/mojom",
     "//third_party/skia",

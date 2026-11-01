@@ -49,14 +49,25 @@ final class PsychoProfileStore {
 
     /** Merge only allowlisted, validated keys. Unknown keys are refused, not silently saved. */
     JSONObject write(Profile profile, JSONObject patch) throws Exception {
+        if (profile != null && profile.isOffTheRecord()) throw new IllegalArgumentException("Private windows do not save settings");
+        if (patch == null) throw new IllegalArgumentException("Settings patch required");
+        for (Iterator<String> it = patch.keys(); it.hasNext();) {
+            if (!ALLOWED.contains(it.next())) throw new IllegalArgumentException("This setting is not connected on Android yet");
+        }
+        return writeInternal(profile, patch);
+    }
+
+    /** Host-only persistence for bundled-extension removal; not a desktop settings key. */
+    JSONObject writeInternal(Profile profile, JSONObject patch) throws Exception {
         if (patch == null) throw new IllegalArgumentException("Settings patch required");
         JSONObject current = read(profile);
         for (Iterator<String> it = patch.keys(); it.hasNext();) {
             String key = it.next();
-            if (!ALLOWED.contains(key)) throw new IllegalArgumentException("This setting is not connected on Android yet");
+            if (!ALLOWED.contains(key) && !key.equals("removedBundledExtensions")) throw new IllegalArgumentException("This setting is not connected on Android yet");
             current.put(key, patch.get(key));
         }
         JSONObject validated = defaults(current);
+        if (current.has("removedBundledExtensions")) validated.put("removedBundledExtensions", current.getJSONArray("removedBundledExtensions"));
         SharedPreferences.Editor editor = prefs(profile).edit();
         editor.putString(KEY, validated.toString());
         editor.apply();
@@ -74,8 +85,16 @@ final class PsychoProfileStore {
         out.put("highContrast", saved.optBoolean("highContrast", false));
         out.put("reduceMotion", saved.optBoolean("reduceMotion", false));
         out.put("showTabCloseButtons", saved.optBoolean("showTabCloseButtons", false));
-        out.put("customSearchEngines", engines(saved.optJSONArray("customSearchEngines")));
+        JSONArray custom = engines(saved.optJSONArray("customSearchEngines"));
+        out.put("customSearchEngines", custom);
+        String search = out.optString("search", "duckduckgo");
+        if (search.startsWith("custom:")) {
+            boolean found = false;
+            for (int i = 0; i < custom.length(); i++) if (search.equals("custom:" + custom.getJSONObject(i).getString("shortcut"))) found = true;
+            if (!found) out.put("search", "duckduckgo");
+        }
         out.put("speedDial", tiles(saved.optJSONArray("speedDial")));
+        if (saved.has("removedBundledExtensions")) out.put("removedBundledExtensions", saved.getJSONArray("removedBundledExtensions"));
         // Fixed, honest values for features whose Android handlers do not exist yet.
         out.put("blockAds", false).put("workspacesEnabled", false).put("showSpeedDial", true);
         return out;

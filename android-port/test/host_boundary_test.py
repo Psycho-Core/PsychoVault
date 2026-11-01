@@ -56,4 +56,19 @@ class HostBoundaryTests(unittest.TestCase):
         self.assertEqual(staged, served)
         self.assertIn('chrome-bootstrap.js', served)
         self.assertIn('settings.html', served)
+    def test_extensions_are_regular_profile_and_id_checked(self):
+        ext = (JAVA / 'psychovault/PsychoExtensions.java').read_text()
+        self.assertIn('PROTON_ID', ext)
+        self.assertIn('Unsafe extension archive path', ext)
+        self.assertIn('isOffTheRecord()', ext)
+        self.assertIn('[a-p]{32}', ext)
+        native = (ROOT / 'engine/psychovault/native/psycho_extensions.cc').read_text()
+        self.assertIn('RegularProfile', native)
+        self.assertIn('UnpackedInstaller', native)
+        self.assertIn('UNINSTALL_REASON_USER_INITIATED', native)
+    def test_private_settings_are_not_written(self):
+        store = (JAVA / 'psychovault/PsychoProfileStore.java').read_text()
+        self.assertIn('Private windows do not save settings', store)
+        self.assertIn('writeInternal', store)
+
 if __name__ == '__main__': unittest.main()

@@ -18,7 +18,7 @@ test('adapter exposes the same browser method names as the desktop preload',()=>
 test('commands forward explicit desktop channels and expected arguments',async()=>{
   const calls=[]; const api=create({invoke:(name,args)=>{calls.push([name,args]);return 'ok';},subscribe(){}});
   assert.equal(await api.nav.go('https://example.com'),'ok');await api.ws.rename(2,'Work');await api.rail.menu(1);
-  assert.deepEqual(calls,[['nav:go',['https://example.com']],['ws:rename',[{i:2,name:'Work'}]],['gx:services',[{i:1,action:'menu'}]]]);
+  assert.deepEqual(calls,[['nav:go',['https://example.com']],['ws:rename',[{i:2,name:'Work'}]],['perf:services',[{i:1,action:'menu'}]]]);
 });
 test('rejects unrecognised events and propagates native failures',async()=>{
   const api=create({invoke(){throw Error('not implemented');},subscribe:(event,cb)=>({event,cb})});

@@ -28,7 +28,8 @@
   select(location.hash.slice(1) || 'general');
 
   const SUPPORTED = new Set(['search','customSearchEngines','customSearchSave','homepage','remember','theme','accent',
-    'hideSidebar','highContrast','reduceMotion','showTabCloseButtons','tiles','tileAdd','tileSave']);
+    'hideSidebar','highContrast','reduceMotion','showTabCloseButtons','tiles','tileAdd','tileSave',
+    'extList','extReload','extAddFolder','extAddCrx','protonVpnRestore','protonVpnStatus','vpnCheckOpen']);
   // Disable every unsupported control explicitly; no fabricated success states.
   for (const el of document.querySelectorAll('input,select,textarea,button')) {
     if (el.hasAttribute('data-category') || SUPPORTED.has(el.id)) continue;
@@ -89,6 +90,34 @@
   };
   if (s('tileSave')) s('tileSave').onclick = () => save({speedDial: [...s('tiles').querySelectorAll('.tile-row')].map(r => ({title: r.querySelector('.t').value.trim(), url: r.querySelector('.u').value.trim()})).filter(t => t.title && t.url)});
 
-  transport.start().then(() => window.pv.settings.get()).then(paint).catch(e => { status.textContent = e.message || 'Android settings are unavailable.'; });
+  async function paintExtensions() {
+    const box = s('extList'); if (!box) return;
+    try {
+      const items = await window.pv.extensions.list();
+      box.replaceChildren();
+      if (!items.length) { box.textContent = 'No extensions installed.'; return; }
+      for (const x of items) {
+        const row = document.createElement('div'); row.className = 'ext-item';
+        const head = document.createElement('div'); head.className = 'ext-head';
+        const name = document.createElement('span'); name.className = 'ext-name'; name.textContent = x.name || x.id;
+        const ver = document.createElement('span'); ver.className = 'ext-ver'; ver.textContent = 'v' + (x.version || '?');
+        head.append(name, ver); row.appendChild(head);
+        const acts = document.createElement('div'); acts.className = 'ext-acts';
+        const toggle = document.createElement('button'); toggle.className = 'mini'; toggle.textContent = x.enabled ? 'Disable' : 'Enable';
+        toggle.onclick = async () => { try { await window.pv.extensions.toggle({id: x.id, enabled: !x.enabled}); paintExtensions(); } catch (e) { status.textContent = e.message; } };
+        const remove = document.createElement('button'); remove.className = 'mini'; remove.textContent = 'Remove';
+        remove.onclick = async () => { try { await window.pv.extensions.remove(x.id); paintExtensions(); } catch (e) { status.textContent = e.message; } };
+        acts.append(toggle, remove);
+        if (x.popup) { const open = document.createElement('button'); open.className = 'mini'; open.textContent = 'Open'; open.onclick = () => window.pv.extensions.openpage({id: x.id, page: x.popup}).catch(e => status.textContent = e.message); acts.append(open); }
+        row.appendChild(acts); box.appendChild(row);
+      }
+    } catch (e) { box.textContent = e.message || 'Extensions unavailable.'; }
+  }
+  if (s('extReload')) s('extReload').onclick = paintExtensions;
+  if (s('protonVpnStatus')) s('protonVpnStatus').onclick = paintExtensions;
+  if (s('protonVpnRestore')) s('protonVpnRestore').onclick = async () => { try { await window.pv.extensions.restorebuiltin(); paintExtensions(); status.textContent = 'Bundled extensions restored.'; } catch (e) { status.textContent = e.message; } };
+  if (s('vpnCheckOpen')) s('vpnCheckOpen').onclick = () => window.pv.tab.open('https://browserleaks.com/webrtc').catch(e => status.textContent = e.message);
+  for (const id of ['extAddFolder','extAddCrx']) if (s(id)) { s(id).disabled = true; s(id).title = 'Not connected on Android yet'; }
+  transport.start().then(() => window.pv.settings.get()).then(st => { paint(st); paintExtensions(); }).catch(e => { status.textContent = e.message || 'Android settings are unavailable.'; });
   window.addEventListener('pagehide', () => transport.dispose(), {once:true});
 })();

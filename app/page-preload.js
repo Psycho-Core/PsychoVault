@@ -69,8 +69,8 @@ if (isInternal) {
       restorebuiltin: (key) => invoke('ext:restorebuiltin', key),
       status: () => invoke('ext:status')
     },
-    gx: {
-      switches: () => invoke('gx:switches'),
+    perf: {
+      switches: () => invoke('perf:switches'),
       relaunch: () => invoke('app:relaunch')
     },
     vault: {

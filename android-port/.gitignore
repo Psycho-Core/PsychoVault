@@ -12,3 +12,6 @@ build-notes/
 # Python source-test cache
 __pycache__/
 *.py[cod]
+
+# Generated bundled extension archives; recreate with prepare_bundled_extensions.py.
+/engine/psychovault/bundled/

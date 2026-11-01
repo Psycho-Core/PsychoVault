@@ -14,6 +14,7 @@ JAVA_FILES = [
     'java/org/chromium/chrome/browser/psychovault/PsychoBridge.java',
     'java/org/chromium/chrome/browser/psychovault/PsychoChromeHost.java',
     'java/org/chromium/chrome/browser/psychovault/PsychoProfileStore.java',
+    'java/org/chromium/chrome/browser/psychovault/PsychoExtensions.java',
 ]
 
 
@@ -36,7 +37,7 @@ def install(src):
     texts = {name: path.read_text(encoding='utf-8') for name, path in paths.items()}
     if any((HERE / name).is_file() is False for name in JAVA_FILES):
         raise RuntimeError('Missing PsychoVault Java source')
-    if not (HERE / 'ui/index.html').is_file() or not (HERE / 'ui/newtab.js').is_file() or not (HERE / 'ui/settings.js').is_file():
+    if not (HERE / 'ui/index.html').is_file() or not (HERE / 'ui/newtab.js').is_file() or not (HERE / 'ui/settings.js').is_file() or not (HERE / 'bundled/proton-vpn.zip').is_file() or not (HERE / 'bundled/dark-reader.zip').is_file():
         raise RuntimeError('Run prepare-engine.sh so the adapted UI assets are staged first')
     if (src / 'psychovault').exists():
         raise RuntimeError('PsychoVault source already installed; use a fresh staged tree')
@@ -73,7 +74,7 @@ def install(src):
     gni = replace_once(texts['gni'], source_anchor, source_anchor + '\n' + additions, 'Java sources')
 
     chrome_build = replace_once(texts['chrome_build'], '  android_library("chrome_java") {\n    deps = [\n',
-        '  android_library("chrome_java") {\n    deps = [\n      "//psychovault:ui_assets",\n', 'APK assets')
+        '  android_library("chrome_java") {\n    deps = [\n      "//psychovault:ui_assets",\n      "//psychovault:bundled_extensions",\n', 'APK assets')
     chrome_build = replace_once(chrome_build, '    srcjar_deps += [ ":chrome_jni_headers" ]',
         '    srcjar_deps += [ ":chrome_jni_headers", "//psychovault:jni_headers" ]', 'profile JNI')
     ui_build = texts['ui_build']
