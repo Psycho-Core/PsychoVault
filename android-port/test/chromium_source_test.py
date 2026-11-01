@@ -23,7 +23,7 @@ class ChromiumSourceTests(unittest.TestCase):
         webui = ui / 'webui'; webui.mkdir()
         (webui / 'chrome_web_ui_configs.cc').write_text('#include "chrome/browser/ui/webui/chrome_web_ui_configs.h"\nvoid RegisterChromeWebUIConfigs() {\n  auto& map = content::WebUIConfigMap::GetInstance();\n}\n')
         content = path / 'chrome/browser/chrome_content_browser_client.cc'
-        content.write_text('#include "chrome/browser/chrome_content_browser_client.h"\nvoid f() {\n  DCHECK(browser_context);\n  Profile* profile = Profile::FromBrowserContext(browser_context);\n  DCHECK(profile);\n}\n')
+        content.write_text('#include "chrome/browser/chrome_content_browser_client.h"\nvoid f() {\n  DCHECK(browser_context);\n  Profile* profile = Profile::FromBrowserContext(browser_context);\n  DCHECK(profile);\n\n  ChromeNavigationUIData* chrome_navigation_ui_data =\n      nullptr;\n}\n')
         return java, activity, gn
 
     def test_controller_is_added_to_activity_and_gn(self):

@@ -112,11 +112,15 @@ def install(src):
     content_client = replace_once(texts['content_client'], '#include "chrome/browser/chrome_content_browser_client.h"\n',
         '#include "chrome/browser/chrome_content_browser_client.h"\n#include "psychovault/native/psycho_network.h"\n', 'network include')
     content_client = replace_once(content_client,
-        '  DCHECK(browser_context);\n  Profile* profile = Profile::FromBrowserContext(browser_context);\n  DCHECK(profile);\n',
-        '  DCHECK(browser_context);\n  Profile* profile = Profile::FromBrowserContext(browser_context);\n  DCHECK(profile);\n'
+        '  DCHECK(profile);\n\n  ChromeNavigationUIData* chrome_navigation_ui_data =\n',
+        '  DCHECK(profile);\n\n'
         '  content::WebContents* psycho_contents = wc_getter.is_null() ? nullptr : wc_getter.Run();\n'
         '  if (!psycho_contents) psycho_contents = content::WebContents::FromFrameTreeNodeId(frame_tree_node_id);\n'
-        '  result.push_back(psychovault::CreateNetworkThrottle(profile, psycho_contents));\n', 'network throttle')
+        '  result.push_back(psychovault::CreateNetworkThrottle(profile, psycho_contents));\n\n'
+        '  ChromeNavigationUIData* chrome_navigation_ui_data =\n', 'network throttle')
+    # The keep-alive throttle factory has the same Profile DCHECK but no
+    # ChromeNavigationUIData; the anchor above intentionally targets only the
+    # main-frame factory where wc_getter/frame_tree_node_id are available.
     configs = replace_once(configs, '  auto& map = content::WebUIConfigMap::GetInstance();\n',
         '  auto& map = content::WebUIConfigMap::GetInstance();\n  psychovault::RegisterPsychoWebUIConfigs();\n', 'WebUI registration')
 
