@@ -102,8 +102,11 @@ def install(src):
         )
     )
     ui_build = replace_once(ui_build, 'static_library("ui") {',
-        'static_library("ui") {\n  sources = [\n' + native_sources +
-        '\n  ]\n  deps = [ "//psychovault:jni_headers" ]', 'native UI sources')
+        'static_library("ui") {\n  sources = [\n' + native_sources + '\n  ]',
+        'native UI sources')
+    ui_build = replace_once(ui_build, '  deps = [\n    ":browser_element_identifiers",',
+        '  deps = [\n    "//psychovault:jni_headers",\n    ":browser_element_identifiers",',
+        'native UI JNI dependency')
     configs = replace_once(texts['configs'], '#include "chrome/browser/ui/webui/chrome_web_ui_configs.h"\n',
         '#include "chrome/browser/ui/webui/chrome_web_ui_configs.h"\n#include "psychovault/native/psycho_ui.h"\n', 'WebUI include')
     content_client = replace_once(texts['content_client'], '#include "chrome/browser/chrome_content_browser_client.h"\n',
