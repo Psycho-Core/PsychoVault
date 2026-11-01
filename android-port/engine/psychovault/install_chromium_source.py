@@ -15,6 +15,12 @@ JAVA_FILES = [
     'java/org/chromium/chrome/browser/psychovault/PsychoChromeHost.java',
     'java/org/chromium/chrome/browser/psychovault/PsychoProfileStore.java',
     'java/org/chromium/chrome/browser/psychovault/PsychoExtensions.java',
+    'java/org/chromium/chrome/browser/psychovault/PsychoDownloads.java',
+    'java/org/chromium/chrome/browser/psychovault/PsychoNetwork.java',
+    'java/org/chromium/chrome/browser/psychovault/PsychoPerformance.java',
+    'java/org/chromium/chrome/browser/psychovault/PsychoSessions.java',
+    'java/org/chromium/chrome/browser/psychovault/PsychoVaultStore.java',
+    'java/org/chromium/chrome/browser/psychovault/PsychoWorkspaces.java',
 ]
 
 
@@ -33,11 +39,12 @@ def install(src):
         'chrome_build': src / 'chrome/android/BUILD.gn',
         'ui_build': src / 'chrome/browser/ui/BUILD.gn',
         'configs': src / 'chrome/browser/ui/webui/chrome_web_ui_configs.cc',
+        'content_client': src / 'chrome/browser/chrome_content_browser_client.cc',
     }
     texts = {name: path.read_text(encoding='utf-8') for name, path in paths.items()}
     if any((HERE / name).is_file() is False for name in JAVA_FILES):
         raise RuntimeError('Missing PsychoVault Java source')
-    if not (HERE / 'ui/index.html').is_file() or not (HERE / 'ui/newtab.js').is_file() or not (HERE / 'ui/settings.js').is_file() or not (HERE / 'bundled/proton-vpn.zip').is_file() or not (HERE / 'bundled/dark-reader.zip').is_file():
+    if not (HERE / 'ui/index.html').is_file() or not (HERE / 'ui/newtab.js').is_file() or not (HERE / 'ui/settings.js').is_file() or not (HERE / 'bundled/proton-vpn.zip').is_file() or not (HERE / 'bundled/dark-reader.zip').is_file() or not (HERE / 'bundled/blocklist.json').is_file():
         raise RuntimeError('Run prepare-engine.sh so the adapted UI assets are staged first')
     if (src / 'psychovault').exists():
         raise RuntimeError('PsychoVault source already installed; use a fresh staged tree')
@@ -68,6 +75,8 @@ def install(src):
         '    public void onPauseWithNative() {\n        if (mPsychoChromeHost != null) mPsychoChromeHost.pause();\n', 'pause')
     activity = replace_once(activity, '    public void onDestroyInternal() {\n',
         '    public void onDestroyInternal() {\n        destroyPsychoChromeHost();\n', 'destroy')
+    activity = replace_once(activity, '            super.onActivityResult(requestCode, resultCode, data);\n',
+        '            super.onActivityResult(requestCode, resultCode, data);\n            if (mPsychoChromeHost != null) mPsychoChromeHost.handleActivityResult(requestCode, resultCode, data);\n', 'activity result')
 
     source_anchor = '  "java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java",'
     additions = '\n'.join('  "java/src/org/chromium/chrome/browser/' + name.split('browser/', 1)[1] + '",' for name in JAVA_FILES)
@@ -82,11 +91,19 @@ def install(src):
         '  public_deps = [\n    "//psychovault:native",\n    # WARNING WARNING WARNING', 'native UI dependency')
     configs = replace_once(texts['configs'], '#include "chrome/browser/ui/webui/chrome_web_ui_configs.h"\n',
         '#include "chrome/browser/ui/webui/chrome_web_ui_configs.h"\n#include "psychovault/native/psycho_ui.h"\n', 'WebUI include')
+    content_client = replace_once(texts['content_client'], '#include "chrome/browser/chrome_content_browser_client.h"\n',
+        '#include "chrome/browser/chrome_content_browser_client.h"\n#include "psychovault/native/psycho_network.h"\n', 'network include')
+    content_client = replace_once(content_client,
+        '  DCHECK(browser_context);\n  Profile* profile = Profile::FromBrowserContext(browser_context);\n  DCHECK(profile);\n',
+        '  DCHECK(browser_context);\n  Profile* profile = Profile::FromBrowserContext(browser_context);\n  DCHECK(profile);\n'
+        '  content::WebContents* psycho_contents = wc_getter.is_null() ? nullptr : wc_getter.Run();\n'
+        '  if (!psycho_contents) psycho_contents = content::WebContents::FromFrameTreeNodeId(frame_tree_node_id);\n'
+        '  result.push_back(psychovault::CreateNetworkThrottle(profile, psycho_contents));\n', 'network throttle')
     configs = replace_once(configs, '  auto& map = content::WebUIConfigMap::GetInstance();\n',
         '  auto& map = content::WebUIConfigMap::GetInstance();\n  psychovault::RegisterPsychoWebUIConfigs();\n', 'WebUI registration')
 
     # No target path is modified until every anchor and source check has succeeded.
-    replacements = {'activity': activity, 'gni': gni, 'chrome_build': chrome_build, 'ui_build': ui_build, 'configs': configs}
+    replacements = {'activity': activity, 'gni': gni, 'chrome_build': chrome_build, 'ui_build': ui_build, 'configs': configs, 'content_client': content_client}
     for name, text in replacements.items():
         paths[name].write_text(text, encoding='utf-8')
     for name in JAVA_FILES:

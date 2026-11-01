@@ -83,7 +83,7 @@ The build keeps your profile separate from the application files. Updating the a
 
 ## Android status
 
-The Android source is being rebuilt on a pinned Chromium foundation in [`android-port/`](android-port/README.md). It has source for the trusted browser UI, tab/navigation bridge, per-profile settings and bookmarks/history, but it is not feature-complete and has not been device-verified. Extensions, Dark Reader, Proton VPN, the vault and several desktop features still need Android implementations and tests.
+The Android source is being rebuilt on a pinned Chromium foundation in [`android-port/`](android-port/README.md). It now has source handlers for the trusted browser UI, tabs/navigation, per-profile settings, bookmarks/history, downloads, blocker/privacy controls, workspaces, session recovery, the local vault, performance controls and extension management. None of that is compiled or device-verified yet, and some desktop controls still have no Android equivalent. Proton VPN is staged as the default in-browser extension, but I will not call it protected until sign-in, routing, failure behaviour and leak checks pass on a real device.
 
 The old preview APK is a different implementation. Its data is not automatically migrated, and a different signing key can require a separate install. Back up anything important before uninstalling it.
 

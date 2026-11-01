@@ -9,6 +9,7 @@ import org.chromium.chrome.browser.tabmodel.ChromeTabCreator;
 import org.chromium.chrome.browser.tabmodel.TabClosureParams;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
+import org.chromium.content_public.browser.HostZoomMap;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.components.find_in_page.FindInPageBridge;
@@ -19,7 +20,9 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.function.Supplier;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /** Native tab operations for the browser chrome, not an API for web content.
@@ -33,6 +36,7 @@ public final class PsychoTabController {
     private final TabModelSelector mSelector;
     private final Supplier<ChromeTabCreator> mCreator;
     private final List<Runnable> mListeners = new CopyOnWriteArrayList<>();
+    private final Map<Integer, FindInPageBridge> mFind = new HashMap<>();
 
     public PsychoTabController(TabModelSelector selector, Supplier<ChromeTabCreator> creator) {
         if (selector == null || creator == null) throw new IllegalArgumentException("Tab model unavailable");
@@ -60,7 +64,8 @@ public final class PsychoTabController {
         boolean incognito = model().isIncognito();
         String suffix = "?private=" + (incognito ? "1" : "0");
         if (("chrome://psychovault-pages/newtab.html" + suffix).equals(raw)
-                || ("chrome://psychovault-pages/settings.html" + suffix).equals(raw)) return raw;
+                || ("chrome://psychovault-pages/settings.html" + suffix).equals(raw)
+                || ("chrome://psychovault-pages/recovery.html" + suffix).equals(raw)) return raw;
         return requireWebUrl(raw);
     }
 
@@ -74,10 +79,38 @@ public final class PsychoTabController {
     }
 
     /** Open PsychoVault's internal new-tab page in the selected profile. */
-    public void openNewTab() {
-        model();
-        Tab tab = mCreator.get().createNewTab(new LoadUrlParams(requireNavigationUrl("")), TabLaunchType.FROM_CHROME_UI, null);
+    public void openNewTab() { createTab("psychovault://newtab"); }
+
+    public int createTab(String raw) {
+        String url = "psychovault://newtab".equals(raw)
+                ? "chrome://psychovault-pages/newtab.html?private=" + (model().isIncognito() ? 1 : 0)
+                : requireNavigationUrl(raw);
+        TabModel current = model();
+        Tab tab = mCreator.get().createNewTab(new LoadUrlParams(url), TabLaunchType.FROM_CHROME_UI, current.getTabAt(current.index()));
         if (tab == null) throw new IllegalStateException("Chromium did not create a tab");
+        return tab.getId();
+    }
+
+    public boolean move(int id, int beforeId) {
+        TabModel current = model(); Tab tab = current.getTabById(id); Tab before = beforeId < 0 ? null : current.getTabById(beforeId);
+        if (tab == null || beforeId >= 0 && before == null) return false;
+        int index = beforeId < 0 ? current.getCount() - 1 : current.indexOf(before);
+        if (index < 0 || index >= current.getCount()) return false;
+        current.moveTab(id, index); return true;
+    }
+
+    public JSONObject zoom(String action) throws JSONException {
+        Tab tab = currentTab(); WebContents contents = tab == null ? null : tab.getWebContents();
+        if (contents == null || contents.isDestroyed() || !tab.getUrl().getSpec().startsWith("http")) throw new IllegalStateException("Zoom is unavailable for this page");
+        double[] steps = HostZoomMap.AVAILABLE_ZOOM_FACTORS;
+        double current = HostZoomMap.getZoomLevel(contents); int index = 0;
+        for (int i = 1; i < steps.length; i++) if (Math.abs(steps[i] - current) < Math.abs(steps[index] - current)) index = i;
+        if ("zoom:reset".equals(action)) current = 0;
+        else if ("zoom:in".equals(action)) current = steps[Math.min(steps.length - 1, index + 1)];
+        else if ("zoom:out".equals(action)) current = steps[Math.max(0, index - 1)];
+        else throw new IllegalArgumentException("Unknown zoom action");
+        HostZoomMap.setZoomLevel(contents, current);
+        return new JSONObject().put("ok", true).put("level", current);
     }
 
     public boolean activate(int id) {
@@ -163,7 +196,8 @@ public final class PsychoTabController {
         Tab tab = currentTab();
         WebContents contents = tab == null ? null : tab.getWebContents();
         if (contents == null || contents.isDestroyed() || text == null || text.length() > 1000) return false;
-        new FindInPageBridge(contents).startFinding(text, forward, caseSensitive);
+        FindInPageBridge bridge = mFind.computeIfAbsent(tab.getId(), id -> new FindInPageBridge(contents));
+        bridge.startFinding(text, forward, caseSensitive);
         return true;
     }
 
@@ -171,9 +205,13 @@ public final class PsychoTabController {
         Tab tab = currentTab();
         WebContents contents = tab == null ? null : tab.getWebContents();
         if (contents == null || contents.isDestroyed()) return false;
-        new FindInPageBridge(contents).stopFinding(true);
+        FindInPageBridge bridge = mFind.remove(tab.getId());
+        if (bridge != null) { bridge.stopFinding(true); bridge.destroy(); }
         return true;
     }
+
+    public void clearFind(int id) { FindInPageBridge bridge = mFind.remove(id); if (bridge != null) bridge.destroy(); }
+    public void destroy() { for (FindInPageBridge bridge : mFind.values()) bridge.destroy(); mFind.clear(); mListeners.clear(); }
 
     /** Open an extension page only after the trusted host validated the extension ID. */
     public int openExtensionPage(String id, String page) {

@@ -15,6 +15,7 @@
     const text = typeof input === 'string' ? input.trim() : '';
     if (text.length > 8192) throw new TypeError('Address is too long');
     if (text === 'psychovault://settings') return PAGE_ORIGIN + '/settings.html?private=' + (isPrivate ? '1' : '0');
+    if (text === 'psychovault://recovery') return PAGE_ORIGIN + '/recovery.html?private=' + (isPrivate ? '1' : '0');
     if (!text || text === 'psychovault://newtab' || text === 'about:newtab' || text === 'psychovault://home') {
       return PAGE_ORIGIN + '/newtab.html?private=' + (isPrivate ? '1' : '0');
     }
@@ -51,7 +52,9 @@
   function display(url, isPrivate = false) {
     const expected = PAGE_ORIGIN + '/newtab.html?private=' + (isPrivate ? '1' : '0');
     const settingsUrl = PAGE_ORIGIN + '/settings.html?private=' + (isPrivate ? '1' : '0');
+    const recoveryUrl = PAGE_ORIGIN + '/recovery.html?private=' + (isPrivate ? '1' : '0');
     if (url === settingsUrl) return 'psychovault://settings';
+    if (url === recoveryUrl) return 'psychovault://recovery';
     return url === expected ? 'psychovault://newtab' : String(url || '');
   }
   return Object.freeze({resolve, display, PAGE_ORIGIN});

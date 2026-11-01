@@ -14,7 +14,7 @@ class ChromiumSourceTests(unittest.TestCase):
         java = path / 'chrome/android/java/src/org/chromium/chrome/browser'
         java.mkdir(parents=True)
         activity = java / 'ChromeTabbedActivity.java'
-        activity.write_text('public class ChromeTabbedActivity extends ChromeActivity implements PreAttachIntentObserver {\n}\nvoid onResumeWithNative() {\n        super.onResumeWithNative();\n}\n    public void onPauseWithNative() {\n}\n    public void onDestroyInternal() {\n}\n')
+        activity.write_text('public class ChromeTabbedActivity extends ChromeActivity implements PreAttachIntentObserver {\n}\nvoid onResumeWithNative() {\n        super.onResumeWithNative();\n}\n    public void onPauseWithNative() {\n}\n    public void onDestroyInternal() {\n}\n    public void onActivityResult(int requestCode, int resultCode, Intent data) {\n            super.onActivityResult(requestCode, resultCode, data);\n}\n')
         gn = path / 'chrome/android/chrome_java_sources.gni'
         gn.write_text('chrome_java_sources = [\n  "java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java",\n]\n')
         (path / 'chrome/android/BUILD.gn').write_text('  android_library("chrome_java") {\n    deps = [\n    ]\n    srcjar_deps += [ ":chrome_jni_headers" ]\n}\n')
@@ -22,6 +22,8 @@ class ChromiumSourceTests(unittest.TestCase):
         (ui / 'BUILD.gn').write_text('static_library("ui") {\n  public_deps = [\n    # WARNING WARNING WARNING\n  ]\n}\n')
         webui = ui / 'webui'; webui.mkdir()
         (webui / 'chrome_web_ui_configs.cc').write_text('#include "chrome/browser/ui/webui/chrome_web_ui_configs.h"\nvoid RegisterChromeWebUIConfigs() {\n  auto& map = content::WebUIConfigMap::GetInstance();\n}\n')
+        content = path / 'chrome/browser/chrome_content_browser_client.cc'
+        content.write_text('#include "chrome/browser/chrome_content_browser_client.h"\nvoid f() {\n  DCHECK(browser_context);\n  Profile* profile = Profile::FromBrowserContext(browser_context);\n  DCHECK(profile);\n}\n')
         return java, activity, gn
 
     def test_controller_is_added_to_activity_and_gn(self):
@@ -34,7 +36,7 @@ class ChromiumSourceTests(unittest.TestCase):
             (staged / 'ui').mkdir()
             for name in ('index.html', 'newtab.js', 'settings.js'): (staged / 'ui' / name).write_text('fixture')
             (staged / 'bundled').mkdir(exist_ok=True)
-            for name in ('proton-vpn.zip', 'dark-reader.zip'): (staged / 'bundled' / name).write_bytes(b'fixture')
+            for name in ('proton-vpn.zip', 'dark-reader.zip', 'blocklist.json'): (staged / 'bundled' / name).write_bytes(b'fixture')
             subprocess.run(['python3', str(staged / 'install_chromium_source.py'), str(root)], check=True)
             self.assertIn('ensurePsychoChromeHost()', activity.read_text())
             self.assertIn('destroyPsychoChromeHost()', activity.read_text())
@@ -43,6 +45,9 @@ class ChromiumSourceTests(unittest.TestCase):
             self.assertIn('PsychoTabController.java', gn.read_text())
             self.assertIn('PsychoProfileStore.java', gn.read_text())
             self.assertIn('PsychoExtensions.java', gn.read_text())
+            self.assertIn('PsychoVaultStore.java', gn.read_text())
+            self.assertIn('handleActivityResult', activity.read_text())
+            self.assertIn('CreateNetworkThrottle', (root / 'chrome/browser/chrome_content_browser_client.cc').read_text())
             self.assertIn('//psychovault:bundled_extensions', (root / 'chrome/android/BUILD.gn').read_text())
             self.assertIn('//psychovault:jni_headers', (root / 'chrome/android/BUILD.gn').read_text())
             self.assertEqual((java / 'PsychoTabController.java').read_bytes(), (ROOT / 'java/org/chromium/chrome/browser/PsychoTabController.java').read_bytes())

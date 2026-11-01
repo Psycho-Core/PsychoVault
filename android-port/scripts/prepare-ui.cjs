@@ -20,7 +20,16 @@ try {
   replaceOnce('<div id="logo"></div>', '<button id="mobile-rail-toggle" type="button" aria-label="Show sidebar" aria-controls="rail" aria-expanded="false">☰</button>\n      <div id="logo"></div>');
   replaceOnce('<script src="renderer.js"></script>', '<script src="sidebar.js"></script>\n<script src="navigation-resolver.js"></script>\n<script src="desktop-bridge.js"></script>\n<script src="native-transport.js"></script>\n<script src="host-layout.js"></script>\n<script src="library.js"></script>\n<script src="indexeddb-storage.js"></script>\n<script src="library-transport.js"></script>\n<script src="chrome-bootstrap.js"></script>');
   fs.writeFileSync(path.join(target,'index.html'), html);
-  for (const file of ['style.css','renderer.js','icon.png']) fs.copyFileSync(path.join(ui,file),path.join(target,file));
+  for (const file of ['style.css','icon.png']) fs.copyFileSync(path.join(ui,file),path.join(target,file));
+  let renderer = fs.readFileSync(path.join(ui,'renderer.js'), 'utf8');
+  function replaceRenderer(before, after) {
+    if (renderer.split(before).length !== 2) throw new Error('Desktop renderer structure changed: ' + before);
+    renderer = renderer.replace(before, after);
+  }
+  replaceRenderer('window.pv.downloads.open(d.path)', 'window.pv.downloads.open(d.id)');
+  replaceRenderer("const show = document.createElement('button'); show.className = 'mini'; show.textContent = 'Show in folder'; show.onclick = () => window.pv.downloads.reveal(d.path)", "const show = document.createElement('button'); show.className = 'mini'; show.textContent = 'Show in folder'; show.disabled = true; show.title = 'Folder reveal is unavailable on Android';");
+  replaceRenderer('row.title = d.path', 'row.title = d.file || d.name || d.id');
+  fs.writeFileSync(path.join(target,'renderer.js'), renderer);
   // WebUI CSP forbids inline scripts. Adapt the copied new tab, not the desktop source.
   let newtab = fs.readFileSync(path.join(ui,'newtab.html'),'utf8');
   const script = newtab.match(/<script>([\s\S]*?)<\/script>/);
@@ -33,7 +42,7 @@ try {
   if (!settingsScript || settingsHtml.split('<script>').length !== 2) throw new Error('Settings script structure changed');
   settingsHtml = settingsHtml.replace(settingsScript[0],'').replace('<meta charset="utf-8">','<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">').replace('</body>','<script src="navigation-resolver.js"></script>\n<script src="internal-page-bridge.js"></script>\n<script src="native-transport.js"></script>\n<script src="settings.js"></script>\n</body>');
   fs.writeFileSync(path.join(target,'settings.html'),settingsHtml);
-  for (const file of ['settings.js','mobile.css','sidebar.js','mobile-shell.js','desktop-bridge.js','internal-page-bridge.js','navigation-resolver.js','native-transport.js','host-layout.js','chrome-bootstrap.js','page-bootstrap.js']) fs.copyFileSync(path.join(repo,'android-port/ui',file),path.join(target,file));
+  for (const file of ['settings.js','recovery.html','recovery.js','mobile.css','sidebar.js','mobile-shell.js','desktop-bridge.js','internal-page-bridge.js','navigation-resolver.js','native-transport.js','host-layout.js','chrome-bootstrap.js','page-bootstrap.js']) fs.copyFileSync(path.join(repo,'android-port/ui',file),path.join(target,file));
   for (const file of ['library.js','indexeddb-storage.js','library-transport.js']) fs.copyFileSync(path.join(repo,'android-port/core',file),path.join(target,file));
   console.log('Desktop UI adaptation prepared at ' + target + '. No APK was built.');
 } catch (error) {

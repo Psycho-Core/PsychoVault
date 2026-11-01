@@ -10,14 +10,14 @@
     tab:{close:'tab:close',open:'tab:open'}, downloads:{dir:'downloads:dir',pickdir:'downloads:pickdir'},
     data:{report:'data:report',openErrorLog:'data:openErrorLog',clear:'data:clear'},
     app:{info:'app:info',diagnostics:'app:diagnostics',diagnosticsCopy:'app:diagnosticsCopy'},
-    recovery:{list:'recovery:list',restore:'recovery:restore'}, vpncheck:{open:'vpncheck:open',ip:'vpncheck:ip'},
+    recovery:{list:'recovery:list',restore:'recovery:restore',remove:'recovery:remove'}, vpncheck:{open:'vpncheck:open',ip:'vpncheck:ip'},
     proxy:{selftest:'proxy:selftest',status:'proxy:status'}, updates:{check:'update:check',tokenstate:'update:tokenstate',settoken:'update:settoken'},
     extensions:{list:'ext:list',addfolder:'ext:addfolder',addcrx:'ext:addcrx',remove:'ext:remove',toggle:'ext:toggle',openpage:'ext:openpage',restorebuiltin:'ext:restorebuiltin',status:'ext:status'},
     perf:{switches:'perf:switches',relaunch:'app:relaunch'},
-    vault:{status:'vault:status',transfer:'vault:transfer',list:'vault:list',add:'vault:add',remove:'vault:delete',reveal:'vault:reveal',copy:'vault:copy',generate:'vault:generate',setMaster:'vault:setMaster',forgetMaster:'vault:forgetMaster',unlock:'vault:unlock',lock:'vault:lock'},
+    vault:{status:'vault:status',recover:'vault:recover',transfer:'vault:transfer',list:'vault:list',add:'vault:add',remove:'vault:delete',reveal:'vault:reveal',copy:'vault:copy',generate:'vault:generate',setMaster:'vault:setMaster',forgetMaster:'vault:forgetMaster',unlock:'vault:unlock',lock:'vault:lock'},
     spell:{status:'spell:status',add:'spell:add',remove:'spell:remove'}, rail:{icons:'rail:icons',catalogue:'catalogue:list',toggle:'catalogue:toggle'}
   };
-  const noArguments = new Set(["settings.get","history.clear","downloads.dir","downloads.pickdir","data.report","data.openErrorLog","app.info","app.diagnostics","app.diagnosticsCopy","recovery.list","vpncheck.open","vpncheck.ip","proxy.selftest","proxy.status","updates.check","updates.tokenstate","extensions.list","extensions.addfolder","extensions.addcrx","extensions.status","perf.switches","perf.relaunch","vault.status","vault.list","vault.forgetMaster","vault.lock","spell.status","rail.icons","rail.catalogue"]);
+  const noArguments = new Set(["settings.get","history.clear","downloads.dir","downloads.pickdir","data.report","data.openErrorLog","app.info","app.diagnostics","app.diagnosticsCopy","recovery.list","vault.recover","vpncheck.open","vpncheck.ip","proxy.selftest","proxy.status","updates.check","updates.tokenstate","extensions.list","extensions.addfolder","extensions.addcrx","extensions.status","perf.switches","perf.relaunch","vault.status","vault.list","vault.forgetMaster","vault.lock","spell.status","rail.icons","rail.catalogue"]);
   function create(transport) {
     if (!transport || typeof transport.invoke !== 'function' || typeof transport.subscribe !== 'function') throw new TypeError('A native Chromium transport is required');
     const api = {};

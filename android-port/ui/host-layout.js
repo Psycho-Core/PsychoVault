@@ -20,10 +20,11 @@
   }
   function start({document, window, invoke}) {
     let queued = false, disposed = false, last = '', nativeTopPx = 0;
-    const density = window.devicePixelRatio || 1;
+    let density = window.devicePixelRatio || 1;
     function send() {
       queued = false;
       if (disposed) return;
+      density = window.devicePixelRatio || 1;
       const value = measure(document, nativeTopPx, density), encoded = JSON.stringify(value);
       if (encoded !== last) { last = encoded; Promise.resolve(invoke('ui:layout', [value])).catch(() => { last = ''; }); }
     }
@@ -34,10 +35,13 @@
       const el = document.getElementById(id); if (el) observer.observe(el);
     }
     window.addEventListener('resize', schedule);
+    window.addEventListener('orientationchange', schedule);
+    const viewport = window.visualViewport;
+    if (viewport) { viewport.addEventListener('resize', schedule); viewport.addEventListener('scroll', schedule); }
     const mutation = new MutationObserver(schedule);
     mutation.observe(document.body, {subtree:true, attributes:true, attributeFilter:['hidden','class','style']});
     return {schedule, setState(state) { nativeTopPx = Number(state.nativeTopPx) || 0; schedule(); },
-      dispose() { disposed = true; observer.disconnect(); mutation.disconnect(); window.removeEventListener('resize', schedule); }};
+      dispose() { disposed = true; observer.disconnect(); mutation.disconnect(); window.removeEventListener('resize', schedule); window.removeEventListener('orientationchange', schedule); if (viewport) { viewport.removeEventListener('resize', schedule); viewport.removeEventListener('scroll', schedule); } }};
   }
   return {measure, start};
 });

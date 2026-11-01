@@ -25,7 +25,19 @@ final class PsychoProfileStore {
     private static final String KEY = "settings";
     private static final Set<String> ALLOWED = Set.of(
             "search", "customSearchEngines", "homepage", "remember", "theme", "accent",
-            "speedDial", "hideSidebar", "highContrast", "reduceMotion", "showTabCloseButtons");
+            "speedDial", "hideSidebar", "highContrast", "reduceMotion", "showTabCloseButtons",
+            "blockAds", "blockUseBundled", "blockCustomDomains", "blockAllowSites", "workspacesEnabled",
+            "translateTarget", "blockAutoplay", "blockThirdPartyCookies", "sendDNT", "cpuLimit",
+            "sleepExclude", "sleepTabsMin", "batterySaver", "vaultEnabled", "vaultLockMin",
+            "enhanceVideo", "enhanceImages", "askSaveLocation", "panicEnabled", "panicUrl",
+            "services", "railIcons", "spellCheck", "spellBuiltin", "spellLangs", "webRtc", "doh",
+            "dohTemplate", "stripReferrer", "denyPerms", "modCss", "restore");
+    private static final Set<String> INTERNAL = Set.of("removedBundledExtensions", "extensions", "workspaceOrder", "workspaceActive");
+    private static final Set<String> BOOL_KEYS = Set.of("remember", "restore", "hideSidebar", "highContrast", "reduceMotion", "showTabCloseButtons",
+            "blockAds", "blockUseBundled", "workspacesEnabled", "blockAutoplay", "blockThirdPartyCookies", "sendDNT", "batterySaver",
+            "vaultEnabled", "enhanceVideo", "enhanceImages", "askSaveLocation", "panicEnabled", "railIcons", "spellCheck", "spellBuiltin", "stripReferrer");
+    private static final Set<String> NUMBER_KEYS = Set.of("sleepTabsMin", "vaultLockMin");
+    private static final Set<String> ARRAY_KEYS = Set.of("customSearchEngines", "speedDial", "services", "extensions", "workspaceOrder", "removedBundledExtensions");
     private final Context mContext;
 
     PsychoProfileStore(Context context) { mContext = context.getApplicationContext(); }
@@ -59,18 +71,32 @@ final class PsychoProfileStore {
 
     /** Host-only persistence for bundled-extension removal; not a desktop settings key. */
     JSONObject writeInternal(Profile profile, JSONObject patch) throws Exception {
+        return writeInternal(profile, patch, false);
+    }
+
+    /** Destructive workspace/extension inventory changes must reach disk before tabs close. */
+    JSONObject writeInternalDurable(Profile profile, JSONObject patch) throws Exception {
+        return writeInternal(profile, patch, true);
+    }
+
+    private JSONObject writeInternal(Profile profile, JSONObject patch, boolean durable) throws Exception {
         if (patch == null) throw new IllegalArgumentException("Settings patch required");
         JSONObject current = read(profile);
         for (Iterator<String> it = patch.keys(); it.hasNext();) {
             String key = it.next();
-            if (!ALLOWED.contains(key) && !key.equals("removedBundledExtensions")) throw new IllegalArgumentException("This setting is not connected on Android yet");
-            current.put(key, patch.get(key));
+            if (!ALLOWED.contains(key) && !INTERNAL.contains(key)) throw new IllegalArgumentException("This setting is not connected on Android yet");
+            Object value = patch.get(key);
+            if (BOOL_KEYS.contains(key) && !(value instanceof Boolean)) throw new IllegalArgumentException("Expected a true/false value for " + key);
+            if (NUMBER_KEYS.contains(key) && !(value instanceof Number)) throw new IllegalArgumentException("Expected a number for " + key);
+            if (ARRAY_KEYS.contains(key) && !(value instanceof JSONArray)) throw new IllegalArgumentException("Expected a list for " + key);
+            if ((ALLOWED.contains(key) && !BOOL_KEYS.contains(key) && !NUMBER_KEYS.contains(key) && !ARRAY_KEYS.contains(key) || key.equals("workspaceActive")) && !(value instanceof String)) throw new IllegalArgumentException("Expected text for " + key);
+            current.put(key, value);
         }
         JSONObject validated = defaults(current);
         if (current.has("removedBundledExtensions")) validated.put("removedBundledExtensions", current.getJSONArray("removedBundledExtensions"));
         SharedPreferences.Editor editor = prefs(profile).edit();
         editor.putString(KEY, validated.toString());
-        editor.apply();
+        if (durable) { if (!editor.commit()) throw new IllegalStateException("Browser data could not be saved"); } else editor.apply();
         return validated;
     }
 
@@ -81,6 +107,7 @@ final class PsychoProfileStore {
         out.put("accent", enumValue(saved, "accent", "cyan", Set.of("cyan", "red", "purple", "green", "orange", "pink", "gold", "teal", "indigo", "rose")));
         out.put("homepage", homepage(saved.optString("homepage", "psychovault://newtab")));
         out.put("remember", saved.optBoolean("remember", true));
+        out.put("restore", saved.optBoolean("restore", true));
         out.put("hideSidebar", saved.optBoolean("hideSidebar", false));
         out.put("highContrast", saved.optBoolean("highContrast", false));
         out.put("reduceMotion", saved.optBoolean("reduceMotion", false));
@@ -95,8 +122,61 @@ final class PsychoProfileStore {
         }
         out.put("speedDial", tiles(saved.optJSONArray("speedDial")));
         if (saved.has("removedBundledExtensions")) out.put("removedBundledExtensions", saved.getJSONArray("removedBundledExtensions"));
-        // Fixed, honest values for features whose Android handlers do not exist yet.
-        out.put("blockAds", false).put("workspacesEnabled", false).put("showSpeedDial", true);
+        out.put("blockAds", saved.optBoolean("blockAds", true));
+        out.put("blockUseBundled", saved.optBoolean("blockUseBundled", true));
+        out.put("blockCustomDomains", text(saved, "blockCustomDomains", "", 20000));
+        out.put("blockAllowSites", text(saved, "blockAllowSites", "", 20000));
+        out.put("workspacesEnabled", saved.optBoolean("workspacesEnabled", true));
+        out.put("showSpeedDial", true);
+        out.put("translateTarget", text(saved, "translateTarget", "en", 35));
+        out.put("blockAutoplay", saved.optBoolean("blockAutoplay", false));
+        out.put("blockThirdPartyCookies", saved.optBoolean("blockThirdPartyCookies", false));
+        out.put("sendDNT", saved.optBoolean("sendDNT", true));
+        out.put("cpuLimit", enumValue(saved, "cpuLimit", "off", Set.of("off", "balanced", "low")));
+        out.put("sleepExclude", text(saved, "sleepExclude", "", 20000));
+        out.put("sleepTabsMin", Math.max(0, Math.min(1440, saved.optInt("sleepTabsMin", 0))));
+        out.put("batterySaver", saved.optBoolean("batterySaver", false));
+        out.put("vaultEnabled", saved.optBoolean("vaultEnabled", true));
+        out.put("vaultLockMin", Math.max(0, Math.min(1440, saved.optInt("vaultLockMin", 5))));
+        out.put("enhanceVideo", saved.optBoolean("enhanceVideo", false));
+        out.put("enhanceImages", saved.optBoolean("enhanceImages", false));
+        out.put("askSaveLocation", saved.optBoolean("askSaveLocation", true));
+        out.put("panicEnabled", saved.optBoolean("panicEnabled", true));
+        out.put("panicUrl", homepage(saved.optString("panicUrl", "https://en.wikipedia.org/wiki/Main_Page")));
+        out.put("services", services(saved.optJSONArray("services")));
+        out.put("railIcons", saved.optBoolean("railIcons", true));
+        out.put("spellCheck", saved.optBoolean("spellCheck", true));
+        out.put("spellBuiltin", saved.optBoolean("spellBuiltin", true));
+        out.put("spellLangs", text(saved, "spellLangs", "", 500));
+        out.put("webRtc", enumValue(saved, "webRtc", "publiconly", Set.of("default", "publiconly", "disableudp")));
+        out.put("doh", enumValue(saved, "doh", "off", Set.of("off", "automatic", "secure")));
+        String dohTemplate = text(saved, "dohTemplate", "", 2048);
+        if (!dohTemplate.isEmpty() && !dohTemplate.startsWith("https://")) throw new IllegalArgumentException("Secure DNS template must use HTTPS");
+        out.put("dohTemplate", dohTemplate);
+        out.put("stripReferrer", saved.optBoolean("stripReferrer", true));
+        out.put("denyPerms", text(saved, "denyPerms", "geolocation, media, clipboard-read, midi, sync-xhr, wake-lock, notifications", 2000));
+        out.put("modCss", text(saved, "modCss", "", 20000));
+        if (saved.has("extensions")) out.put("extensions", saved.getJSONArray("extensions"));
+        if (saved.has("workspaceOrder")) out.put("workspaceOrder", saved.getJSONArray("workspaceOrder"));
+        if (saved.has("workspaceActive")) out.put("workspaceActive", saved.optString("workspaceActive"));
+        return out;
+    }
+
+    private static String text(JSONObject o, String key, String fallback, int limit) {
+        String value = o.optString(key, fallback);
+        if (value.length() > limit) throw new IllegalArgumentException("Setting is too long: " + key);
+        return value;
+    }
+
+    private static JSONArray services(JSONArray input) throws Exception {
+        JSONArray out = new JSONArray();
+        if (input == null) {
+            String[][] initial = {{"Discord", "https://discord.com/app"}, {"YouTube Music", "https://music.youtube.com"}, {"YouTube", "https://www.youtube.com"}, {"GitHub", "https://github.com"}};
+            for (String[] item : initial) out.put(new JSONObject().put("name", item[0]).put("url", item[1]));
+            return out;
+        }
+        if (input.length() > 12) throw new IllegalArgumentException("The rail holds 12 services");
+        for (int i = 0; i < input.length(); i++) { JSONObject item = input.getJSONObject(i); String name = item.optString("name"), url = homepage(item.optString("url")); if (name.isEmpty() || name.length() > 80 || !url.startsWith("https://")) throw new IllegalArgumentException("Invalid rail service"); out.put(new JSONObject().put("name", name).put("url", url)); }
         return out;
     }
 

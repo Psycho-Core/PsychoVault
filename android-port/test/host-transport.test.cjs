@@ -17,7 +17,9 @@ test('address resolver distinguishes URLs, searches and profile-specific interna
   assert.equal(resolver.resolve('', {}, true), resolver.PAGE_ORIGIN + '/newtab.html?private=1');
   assert.equal(resolver.resolve('psychovault://settings', {}, true), resolver.PAGE_ORIGIN + '/settings.html?private=1');
   assert.equal(resolver.display(resolver.PAGE_ORIGIN + '/settings.html?private=0'), 'psychovault://settings');
-  for (const input of ['javascript:alert(1)', 'file:///data', 'chrome://settings', 'data:text/html,x', 'psychovault://recovery']) {
+  assert.equal(resolver.resolve('psychovault://recovery', {}, false), resolver.PAGE_ORIGIN + '/recovery.html?private=0');
+  assert.equal(resolver.display(resolver.PAGE_ORIGIN + '/recovery.html?private=1', true), 'psychovault://recovery');
+  for (const input of ['javascript:alert(1)', 'file:///data', 'chrome://settings', 'data:text/html,x']) {
     assert.throws(() => resolver.resolve(input));
   }
   assert.equal(resolver.resolve('custom query', {search:'custom:x', customSearchEngines:[{shortcut:'x',url:'https://search.example/?q=%s'}]}), 'https://search.example/?q=custom%20query');

@@ -44,14 +44,15 @@ final class PsychoBridge {
         Profile own = Profile.fromWebContents(mContents);
         if (current == null || own == null || current != own) return false;
         GURL url = mContents.getLastCommittedUrl();
-        if (url == null || !url.isValid() || url.getSpec().contains("#")) return false;
+        if (url == null || !url.isValid()) return false;
+        String spec = url.getSpec(); int hash = spec.indexOf('#'); if (hash >= 0) spec = spec.substring(0, hash);
         String expectedOrigin = mChrome ? PsychoChromeHost.CHROME_ORIGIN : PsychoChromeHost.PAGE_ORIGIN;
-        if (!url.getSpec().startsWith(expectedOrigin + "/")) return false;
-        String path = url.getSpec().substring(expectedOrigin.length());
+        if (!spec.startsWith(expectedOrigin + "/")) return false;
+        String path = spec.substring(expectedOrigin.length());
         boolean expectedPrivate = own.isOffTheRecord();
         String suffix = "?private=" + (expectedPrivate ? 1 : 0);
         return mChrome ? path.equals("/index.html" + suffix)
-                : path.equals("/newtab.html" + suffix) || path.equals("/settings.html" + suffix);
+                : path.equals("/newtab.html" + suffix) || path.equals("/settings.html" + suffix) || path.equals("/recovery.html" + suffix);
     }
 
     // This is the ONLY JavaScript-exposed method. Calls arrive off the UI thread.
@@ -83,6 +84,13 @@ final class PsychoBridge {
         } catch (Exception e) {
             if (id >= 0) reply(id, false, safeMessage(e));
         }
+    }
+
+    static byte[] readLimited(java.io.InputStream in, int limit) throws java.io.IOException {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        byte[] buffer = new byte[8192]; int n;
+        while ((n = in.read(buffer)) > 0) { if (out.size() + n > limit) throw new java.io.IOException("File is too large"); out.write(buffer, 0, n); }
+        return out.toByteArray();
     }
 
     static String safeMessage(Exception e) {

@@ -20,6 +20,7 @@ cp -R "$port_dir/engine/titanium/." "$stage/"
 cp -R "$port_dir/engine/psychovault" "$stage/psychovault"
 node "$port_dir/scripts/prepare-ui.cjs" "$stage/psychovault/ui"
 python3 "$stage/psychovault/prepare_bundled_extensions.py"
+cp "$repo_root/app/blocklist.json" "$stage/psychovault/bundled/blocklist.json"
 python3 "$stage/psychovault/configure_stage.py"
 git init -q "$stage/vanadium"
 git -C "$stage/vanadium" remote add origin https://github.com/GrapheneOS/Vanadium.git

@@ -6,6 +6,8 @@
 #include "psychovault/jni_headers/PsychoProfileStore_jni.h"
 
 namespace {
+using base::android::JavaRef;
+using base::android::ScopedJavaLocalRef;
 ScopedJavaLocalRef<jstring> JNI_PsychoProfileStore_GetProfileName(
     JNIEnv* env, const JavaRef<jobject>& jprofile) {
   Profile* profile = Profile::FromJavaObject(jprofile);

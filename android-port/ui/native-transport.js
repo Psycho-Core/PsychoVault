@@ -17,7 +17,8 @@
       }
       return new Promise((resolve, reject) => {
         const id = sequence++;
-        const timer = later(() => { pending.delete(id); reject(new Error('Android browser request timed out')); }, 15000);
+        const slow = {'ext:addfolder':180000,'ext:addcrx':180000,'ext:remove':60000,'vault:transfer':180000,'vault:unlock':60000,'vault:setMaster':60000,'perf:snapshot':30000};
+        const timer = later(() => { pending.delete(id); reject(new Error('Android browser request timed out')); }, slow[channel] || 15000);
         pending.set(id, {resolve, reject, timer, channel});
         try { native.post(JSON.stringify({id, channel, args})); }
         catch (e) { cancel(timer); pending.delete(id); reject(e); }

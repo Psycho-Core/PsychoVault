@@ -29,7 +29,7 @@
       const obj = {};
       for (const [method, channel] of Object.entries(methods)) obj[method] = (...args) => {
         const count = noArguments.has(group + '.' + method) ? 0 : (group === 'vault' && method === 'transfer' ? 2 : 1);
-        const forwarded = Array.from({length:count}, (_, index) => args[index]);
+        const forwarded = group === 'perf' && method === 'hot' && args.length === 0 ? [] : Array.from({length:count}, (_, index) => args[index]);
         return Promise.resolve().then(() => transport.invoke(channel, forwarded));
       };
       api[group] = Object.freeze(obj);

@@ -10,6 +10,8 @@ class HostBoundaryTests(unittest.TestCase):
         self.assertIn('ThreadUtils.postOnUiThread', bridge)
         self.assertIn('current != own', bridge)
         self.assertIn('getLastCommittedUrl()', bridge)
+        self.assertIn('recovery.html', bridge)
+        self.assertIn("spec.indexOf('#')", bridge)
         self.assertIn('mDestroyed', bridge)
     def test_host_uses_exact_origins_and_cleans_up(self):
         host = (JAVA / 'psychovault/PsychoChromeHost.java').read_text()
@@ -37,7 +39,7 @@ class HostBoundaryTests(unittest.TestCase):
         self.assertIn('IsOffTheRecord()', native)
     def test_internal_page_cannot_use_chrome_layout_or_tab_commands(self):
         host = (JAVA / 'psychovault/PsychoChromeHost.java').read_text()
-        page = host.split('if (tabId != Tab.INVALID_TAB_ID) {',1)[1].split('if (channel.equals("ui:layout"))',1)[0]
+        page = host.split('private void pageCommand',1)[1].split('private void chromeCommand',1)[0]
         self.assertIn('navigateTab(tabId', page)
         self.assertNotIn('mController.invoke', page)
         self.assertNotIn('layout(args', page)
@@ -48,7 +50,8 @@ class HostBoundaryTests(unittest.TestCase):
         self.assertIn("script-src 'self';", native)
         self.assertIn('4 * 1024 * 1024', native)
         self.assertIn('disable_compression = true', gn)
-        self.assertNotIn('recovery.html', native)
+        self.assertIn('recovery.html', native)
+        self.assertIn('path != "recovery.html"', native)
         # Every staged asset must be served, and every served asset must be staged.
         import re
         staged = set(re.findall(r'"ui/([^"]+)"', gn))
@@ -70,5 +73,44 @@ class HostBoundaryTests(unittest.TestCase):
         store = (JAVA / 'psychovault/PsychoProfileStore.java').read_text()
         self.assertIn('Private windows do not save settings', store)
         self.assertIn('writeInternal', store)
+
+    def test_vault_master_salt_is_reused_and_recovery_is_explicit(self):
+        vault = (JAVA / 'psychovault/PsychoVaultStore.java').read_text()
+        self.assertIn('final byte[] salt = bytes(16);', vault)
+        self.assertIn('derive(password, salt, key ->', vault)
+        self.assertNotIn('byte[] salt = bytes(16);\n                JSONObject meta', vault)
+        self.assertIn('JSONObject recover()', vault)
+        self.assertIn('vault-migration.json', vault)
+        self.assertIn('psychovault-backup', vault)
+        native = (ROOT / 'engine/psychovault/native/psycho_vault.cc').read_text()
+        self.assertIn('JNI_PsychoVaultStore_DeriveKey', native)
+        self.assertIn('EVP_PBE_scrypt', native)
+    def test_downloads_use_guids_and_real_manager(self):
+        native = (ROOT / 'engine/psychovault/native/psycho_downloads.cc').read_text()
+        self.assertIn('GetDownloadByGuid', native)
+        self.assertIn('GetAsReferrer()', native)
+        self.assertNotIn('GetWithoutUsername', native)
+        java = (JAVA / 'psychovault/PsychoDownloads.java').read_text()
+        self.assertIn('requireGuid', java)
+    def test_sessions_strip_credentials_without_placeholder_logic(self):
+        sessions = (JAVA / 'psychovault/PsychoSessions.java').read_text()
+        self.assertIn('return stripCredentials(value.getSpec());', sessions)
+        self.assertNotIn('|| true', sessions)
+        self.assertIn('commit()', sessions)
+    def test_network_policy_is_profile_scoped_and_private_inherits(self):
+        native = (ROOT / 'engine/psychovault/native/psycho_network.cc').read_text()
+        self.assertIn('ERR_BLOCKED_BY_CLIENT', native)
+        self.assertIn('GetOriginalProfile()', native)
+        self.assertIn('CancelWithError', native)
+        self.assertIn('kPromptForDownloadAndroid', native)
+        self.assertNotIn('modified_request_headers', native)
+    def test_performance_does_not_fabricate_metrics(self):
+        java = (JAVA / 'psychovault/PsychoPerformance.java').read_text()
+        self.assertIn('JSONObject.NULL', java)
+        self.assertIn('"verified", false', java)
+        self.assertIn('MediaStore.Images.Media.IS_PENDING', java)
+        native = (ROOT / 'engine/psychovault/native/psycho_performance.cc').read_text()
+        self.assertIn('ExecuteJavaScriptInIsolatedWorld', native)
+        self.assertIn('CopyFromSurface', native)
 
 if __name__ == '__main__': unittest.main()

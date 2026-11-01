@@ -9,7 +9,11 @@ const end = main.indexOf('\nlet settings =',begin);
 if (begin < 0 || end <= begin) throw new Error('Desktop defaults could not be located.');
 const sandbox = {};
 vm.runInNewContext(main.slice(begin,end) + '\nthis.defaults = DEFAULT_SETTINGS;',sandbox,{timeout:1000});
-const implemented = new Set(['search','customSearchEngines','homepage','remember','theme','accent','speedDial','hideSidebar','highContrast','reduceMotion','showTabCloseButtons']);
+const implemented = new Set(['search','customSearchEngines','homepage','remember','theme','accent','speedDial','hideSidebar','highContrast','reduceMotion','showTabCloseButtons',
+  'blockAds','blockUseBundled','blockCustomDomains','blockAllowSites','workspacesEnabled','restore','translateTarget',
+  'blockAutoplay','blockThirdPartyCookies','sendDNT','cpuLimit','sleepExclude','sleepTabsMin','batterySaver',
+  'vaultEnabled','vaultLockMin','enhanceVideo','enhanceImages','askSaveLocation','panicEnabled','panicUrl',
+  'services','railIcons','spellCheck','spellBuiltin','spellLangs','webRtc','doh','dohTemplate','stripReferrer','denyPerms','modCss']);
 const inventory = Object.keys(sandbox.defaults).map(key => ({
   key,
   status: key === 'settingsVersion' ? 'desktop-internal-migration-marker'
