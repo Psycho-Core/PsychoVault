@@ -82,8 +82,11 @@ def install(src):
     additions = '\n'.join('  "java/src/org/chromium/chrome/browser/' + name.split('browser/', 1)[1] + '",' for name in JAVA_FILES)
     gni = replace_once(texts['gni'], source_anchor, source_anchor + '\n' + additions, 'Java sources')
 
-    chrome_build = replace_once(texts['chrome_build'], '  android_library("chrome_java") {\n    deps = [\n',
-        '  android_library("chrome_java") {\n    deps = [\n      "//psychovault:ui_assets",\n      "//psychovault:bundled_extensions",\n', 'APK assets')
+    chrome_build = replace_once(texts['chrome_build'],
+        '  chrome_public_apk_or_module_tmpl("chrome_public_apk") {\n    target_type = "android_apk"',
+        '  chrome_public_apk_or_module_tmpl("chrome_public_apk") {\n    target_type = "android_apk"\n'
+        '    asset_deps = [\n      "//psychovault:ui_assets",\n      "//psychovault:bundled_extensions",\n    ]',
+        'APK assets')
     chrome_build = replace_once(chrome_build, '    srcjar_deps += [ ":chrome_jni_headers" ]',
         '    srcjar_deps += [ ":chrome_jni_headers", "//psychovault:jni_headers_java" ]', 'profile JNI')
     ui_build = texts['ui_build']
