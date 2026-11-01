@@ -105,7 +105,16 @@ def install(src):
         'static_library("ui") {\n  sources = [\n' + native_sources + '\n  ]',
         'native UI sources')
     ui_build = replace_once(ui_build, '  deps = [\n    ":browser_element_identifiers",',
-        '  deps = [\n    "//psychovault:jni_headers",\n    ":browser_element_identifiers",',
+        '  deps = [\n    "//psychovault:jni_headers",\n'
+        '    "//components/download/public/common",\n'
+        '    "//components/proxy_config",\n'
+        '    "//components/spellcheck/browser",\n'
+        '    "//extensions/browser",\n'
+        '    "//extensions/common",\n'
+        '    "//services/network/public/cpp",\n'
+        '    "//third_party/boringssl",\n'
+        '    "//ui/gfx/codec",\n'
+        '    ":browser_element_identifiers",',
         'native UI JNI dependency')
     configs = replace_once(texts['configs'], '#include "chrome/browser/ui/webui/chrome_web_ui_configs.h"\n',
         '#include "chrome/browser/ui/webui/chrome_web_ui_configs.h"\n#include "psychovault/native/psycho_ui.h"\n', 'WebUI include')

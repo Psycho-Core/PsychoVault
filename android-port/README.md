@@ -19,7 +19,7 @@ The upstream `.gclient` fetches Chromium build dependencies and filter lists fro
 - Compile the Java/C++ against the pinned Chromium tree and fix the first real build error. Source tests and javalang parsing are not compilation.
 - Test extension installation, permission prompts, updates, popups and Dark Reader behaviour on a phone; the source now reports Chromium load/install results instead of guessing.
 - Device-test the blocker, vault, privacy, downloads, workspaces, recovery and performance handlers. Verify Proton sign-in, proxy routing, failure behaviour and DNS/WebRTC leaks before claiming protection.
-- Close the remaining Android gaps: containers, per-site permission editing, custom download directories, download notifications, network speed limits, battery-auto rules, media keys/auto-pause, UI sounds, custom spellcheck dictionaries, clear-on-exit and update dismissal. These are disabled or refused, not faked.
+- Close the remaining Android gaps: containers, per-site permission editing, custom download directories, download notifications, network speed limits, media keys/auto-pause, custom spellcheck dictionaries and update dismissal. These are disabled or refused, not faked.
 - Establish licence compliance, secure signing, update compatibility, data migration, build notes and a repeatable Windows `.bat` workflow.
 - The GitHub Actions source-check workflow is authorised. The APK job is manual and requires a runner with enough disk; no APK has been produced yet.
 
@@ -47,7 +47,7 @@ To generate UI assets alone: `node scripts/prepare-ui.cjs /absolute/path/to/new/
 
 ## Desktop feature verification
 
-`scripts/audit-desktop-settings.cjs` inventories the 59 desktop default settings. The current source marks 43 as Android-source-implemented-not-device-verified, 1 (`extensions`) as extension-manager-source-not-device-verified, 1 (`settingsVersion`) as a desktop-internal migration marker, and 14 as not implemented on this Android host. The 14 are sitePermissions, clearOnExit, netLimit, downloadDir, downloadNotify, spellDictUrl, spellUserWords, dismissedUpdate, mediaKeys, mediaAutoPause, uiSounds, soundVol, containers and batteryAuto. These are disabled or refused rather than shown as working. The inventories and adapter tests check coverage and contracts, not actual device functionality. Java/C++ have not been compiled against Chromium; no APK, extension install, Proton connection or leak test has run.
+`scripts/audit-desktop-settings.cjs` inventories the 59 desktop default settings. The current source marks 47 as Android-source-implemented-not-device-verified, 1 (`extensions`) as extension-manager-source-not-device-verified, 1 (`settingsVersion`) as a desktop-internal migration marker, and 10 as not implemented on this Android host. The 10 are sitePermissions, netLimit, downloadDir, downloadNotify, spellDictUrl, spellUserWords, dismissedUpdate, mediaKeys, mediaAutoPause and containers. These are disabled or refused rather than shown as working. The inventories and adapter tests check coverage and contracts, not actual device functionality. Java/C++ have not been compiled against Chromium; no APK, extension install, Proton connection or leak test has run.
 
 ## Pinned extension build input
 
