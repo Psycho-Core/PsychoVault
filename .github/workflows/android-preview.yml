@@ -47,7 +47,18 @@ jobs:
         run: npm run sync
       - name: Build debug APK
         id: build
-        run: ./gradlew assembleDebug
+        run: |
+          mkdir -p ../build-notes
+          set +e
+          ./gradlew assembleDebug --stacktrace > ../build-notes/gradle-build.txt 2>&1
+          result=$?
+          set -e
+          cat ../build-notes/gradle-build.txt
+          if [ "$result" -ne 0 ]; then
+            error=$(grep -m 1 -E 'error:|Execution failed|Could not|FAILURE:' ../build-notes/gradle-build.txt || true)
+            echo "::error title=First Gradle error::$error"
+            exit "$result"
+          fi
         working-directory: android-port/android
       - name: Inspect APK and verify signing
         id: verify
@@ -83,7 +94,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: android-preview-build-notes
-          path: android-port/build-notes/Release-Notes-Android.txt
+          path: android-port/build-notes/
           if-no-files-found: warn
       - name: Upload verified debug APK
         if: steps.verify.outcome == 'success'
