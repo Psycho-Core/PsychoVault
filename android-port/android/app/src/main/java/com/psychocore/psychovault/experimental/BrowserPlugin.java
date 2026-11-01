@@ -140,7 +140,7 @@ public class BrowserPlugin extends Plugin {
             FrameLayout root = getActivity().findViewById(android.R.id.content);
             int[] uiPos = new int[2], rootPos = new int[2];
             ui.getLocationOnScreen(uiPos); root.getLocationOnScreen(rootPos);
-            float density = getResources().getDisplayMetrics().density;
+            float density = getContext().getResources().getDisplayMetrics().density;
             for (WebView page : tabs.values()) {
                 FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
                     Math.max(1, Math.round(w * density)), Math.max(1, Math.round(h * density)));
