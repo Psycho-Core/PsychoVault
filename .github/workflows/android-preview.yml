@@ -112,7 +112,7 @@ jobs:
             android-port/android/app/build/outputs/apk/debug/SHA256SUMS.txt
           if-no-files-found: error
       - name: Publish requested Android preview pre-release
-        if: github.event_name == 'push' && github.event.head_commit.message == 'Release Android preview for testing' && steps.verify.outcome == 'success'
+        if: github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Release Android preview for testing') && steps.verify.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
