@@ -6,11 +6,12 @@ Proton's manifest key is preserved so Chromium derives the same extension ID.
 """
 from pathlib import Path
 import hashlib
+import os
 import json
 import zipfile
 
 HERE = Path(__file__).resolve().parent
-REPO = HERE.parent.parent.parent
+REPO = Path(os.environ.get('PSYCHO_REPO_ROOT') or HERE.parent.parent.parent)
 OUT = HERE / 'bundled'
 BUNDLES = {'proton-vpn': 'proton-vpn', 'dark-reader': 'dark-reader'}
 
