@@ -85,10 +85,22 @@ def install(src):
     chrome_build = replace_once(texts['chrome_build'], '  android_library("chrome_java") {\n    deps = [\n',
         '  android_library("chrome_java") {\n    deps = [\n      "//psychovault:ui_assets",\n      "//psychovault:bundled_extensions",\n', 'APK assets')
     chrome_build = replace_once(chrome_build, '    srcjar_deps += [ ":chrome_jni_headers" ]',
-        '    srcjar_deps += [ ":chrome_jni_headers", "//psychovault:jni_headers" ]', 'profile JNI')
+        '    srcjar_deps += [ ":chrome_jni_headers", "//psychovault:jni_headers_java" ]', 'profile JNI')
     ui_build = texts['ui_build']
-    ui_build = replace_once(ui_build, '  public_deps = [\n    # WARNING WARNING WARNING',
-        '  public_deps = [\n    "//psychovault:native",\n    # WARNING WARNING WARNING', 'native UI dependency')
+    # Compile the host inside Chromium's existing browser/UI target. A separate
+    # native target would create dependency cycles with factories implemented by
+    # that target. Generated JNI headers remain a separate, acyclic target.
+    native_sources = '\n'.join(
+        f'    "//psychovault/native/{name}",'
+        for name in (
+            "psycho_ui.cc", "psycho_ui.h", "psycho_profile.cc",
+            "psycho_extensions.cc", "psycho_network.cc", "psycho_network.h",
+            "psycho_downloads.cc", "psycho_vault.cc", "psycho_performance.cc",
+        )
+    )
+    ui_build = replace_once(ui_build, 'static_library("ui") {',
+        'static_library("ui") {\n  sources = [\n' + native_sources +
+        '\n  ]\n  deps = [ "//psychovault:jni_headers" ]', 'native UI sources')
     configs = replace_once(texts['configs'], '#include "chrome/browser/ui/webui/chrome_web_ui_configs.h"\n',
         '#include "chrome/browser/ui/webui/chrome_web_ui_configs.h"\n#include "psychovault/native/psycho_ui.h"\n', 'WebUI include')
     content_client = replace_once(texts['content_client'], '#include "chrome/browser/chrome_content_browser_client.h"\n',

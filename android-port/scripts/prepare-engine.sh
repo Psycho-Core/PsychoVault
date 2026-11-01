@@ -17,6 +17,7 @@ stage="$(mktemp -d "$parent/.psychovault-engine.XXXXXXXX")"
 cleanup() { if [[ -n "${stage:-}" && -d "$stage" ]]; then rm -rf -- "$stage"; fi; }
 trap cleanup EXIT
 cp -R "$port_dir/engine/titanium/." "$stage/"
+cp "$port_dir/scripts/build-engine.sh" "$stage/build-engine.sh"
 cp -R "$port_dir/engine/psychovault" "$stage/psychovault"
 node "$port_dir/scripts/prepare-ui.cjs" "$stage/psychovault/ui"
 python3 "$stage/psychovault/prepare_bundled_extensions.py"

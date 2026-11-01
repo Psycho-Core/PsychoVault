@@ -2,6 +2,10 @@ import("//build/config/android/rules.gni")
 import("//third_party/jni_zero/jni_zero.gni")
 
 generate_jni("jni_headers") {
+  deps = [
+    "//chrome/browser/profiles/android:java",
+    "//content/public/android:content_java",
+  ]
   sources = [
     "java/org/chromium/chrome/browser/psychovault/PsychoProfileStore.java",
     "java/org/chromium/chrome/browser/psychovault/PsychoExtensions.java",
@@ -36,34 +40,5 @@ android_assets("ui_assets") {
     "psychovault/ui/native-transport.js", "psychovault/ui/host-layout.js", "psychovault/ui/chrome-bootstrap.js",
     "psychovault/ui/newtab.html", "psychovault/ui/newtab.js", "psychovault/ui/page-bootstrap.js", "psychovault/ui/icon.png",
     "psychovault/ui/settings.html", "psychovault/ui/settings.js", "psychovault/ui/recovery.html", "psychovault/ui/recovery.js", "psychovault/ui/library.js", "psychovault/ui/library-transport.js", "psychovault/ui/indexeddb-storage.js",
-  ]
-}
-
-source_set("native") {
-  sources = [
-    "native/psycho_ui.cc", "native/psycho_ui.h", "native/psycho_profile.cc",
-    "native/psycho_extensions.cc", "native/psycho_network.cc", "native/psycho_network.h",
-    "native/psycho_downloads.cc", "native/psycho_vault.cc", "native/psycho_performance.cc",
-  ]
-  deps = [
-    ":jni_headers",
-    "//base",
-    "//chrome/browser/profiles:profile",
-    "//chrome/browser/content_settings",
-    "//chrome/common",
-    "//components/content_settings/core/browser",
-    "//components/download/public/common",
-    "//components/prefs",
-    "//components/proxy_config",
-    "//components/spellcheck/browser",
-    "//extensions/browser",
-    "//extensions/common",
-    "//content/public/browser",
-    "//services/network/public/cpp",
-    "//services/network/public/mojom",
-    "//ui/gfx/codec",
-    "//net",
-    "//third_party/skia",
-    "//url",
   ]
 }

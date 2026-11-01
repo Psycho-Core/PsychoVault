@@ -2,19 +2,21 @@ name: Android source and build
 
 on:
   workflow_dispatch:
-    inputs:
-      attempt_apk:
-        description: Attempt the APK build (requires a runner with at least 100GB free)
-        type: boolean
-        default: false
   push:
     branches: [arena/4770266d-psychovault]
     paths:
       - 'android-port/**'
+      - 'app/ui/**'
+      - 'app/builtin/**'
+      - 'app/blocklist.json'
       - '.github/workflows/android-build.yml'
 
 permissions:
   contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   source-checks:
@@ -53,7 +55,7 @@ jobs:
           {
             echo "PsychoVault Android source notes"
             echo "Status: source checks passed"
-            echo "No APK was produced by this job."
+            echo "The APK build is a separate job. Source checks alone do not produce an APK."
             echo "Chromium compile, device, extension and VPN behaviour tests are still required."
           } > build-notes/Release-Notes-Android.txt
       - uses: actions/upload-artifact@v4
@@ -63,46 +65,115 @@ jobs:
           retention-days: 7
 
   build-apk:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.attempt_apk }}
     needs: source-checks
-    runs-on: ${{ vars.ANDROID_BUILD_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Build preflight and notes
-        id: preflight
+      - name: Free hosted-runner disk and choose engine workspace
+        id: paths
         shell: bash
         run: |
-          mkdir -p build-notes
-          free_gb=$(df -BG --output=avail . | tail -1 | tr -dc '0-9')
-          echo "Free disk: ${free_gb}GB"
+          set -Eeuo pipefail
+          notes="$RUNNER_TEMP/psychovault-build-notes"
+          mkdir -p "$notes"
+          echo "notes_dir=$notes" >> "$GITHUB_OUTPUT"
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift /usr/local/.ghcup || true
+          sudo apt-get clean || true
+          sudo docker system prune -af || true
+          parent=/mnt
+          if [[ ! -w "$parent" ]]; then parent="$RUNNER_TEMP"; fi
+          engine="$parent/psychovault-engine-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "engine_root=$engine" >> "$GITHUB_OUTPUT"
+          free_gb=$(df -BG --output=avail "$parent" | tail -1 | tr -dc '0-9')
+          df -h "$parent" "$RUNNER_TEMP" | tee "$notes/disk.txt"
           {
             echo "PsychoVault Android build notes"
             echo "Status: APK build attempted"
             echo "Runner free disk: ${free_gb}GB"
-          } > build-notes/Release-Notes-Android.txt
-          if [ "$free_gb" -lt 100 ]; then
-            echo "Chromium documents at least 100GB free disk for an Android build." >> build-notes/Release-Notes-Android.txt
-            echo "This runner does not meet the build requirement. No APK was produced." >> build-notes/Release-Notes-Android.txt
-            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "Engine workspace: $engine"
+          } > "$notes/Release-Notes-Android.txt"
+          # A single arm64, no-PGO/no-ThinLTO, symbol-stripped build is smaller
+          # than the upstream dual-arch/AAB build. Fail early if even that cannot fit.
+          if [[ "$free_gb" -lt 60 ]]; then
+            echo "This runner has less than 60GB free after cleanup. No APK was produced." >> "$notes/Release-Notes-Android.txt"
             exit 1
           fi
-          echo "ok=true" >> "$GITHUB_OUTPUT"
       - name: Prepare pinned engine workspace
-        if: steps.preflight.outputs.ok == 'true'
-        run: bash android-port/scripts/prepare-engine.sh "$RUNNER_TEMP/psychovault-engine"
-      - name: Build APK
-        if: steps.preflight.outputs.ok == 'true'
-        working-directory: ${{ runner.temp }}/psychovault-engine
-        run: bash build.sh
-      - name: Upload build notes
+        run: bash android-port/scripts/prepare-engine.sh "${{ steps.paths.outputs.engine_root }}"
+      - name: Build and validate APK
+        env:
+          PSYCHO_NOTES_DIR: ${{ steps.paths.outputs.notes_dir }}
+        run: bash "${{ steps.paths.outputs.engine_root }}/build-engine.sh"
+      - name: Upload APK and release inputs
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release
+          path: ${{ steps.paths.outputs.engine_root }}/dist/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload build notes and failure log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: android-build-notes
-          path: build-notes/Release-Notes-Android.txt
+          path: ${{ steps.paths.outputs.notes_dir }}/
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 14
+
+  publish-release:
+    needs: build-apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-release
+          path: dist
+      - name: Verify downloaded APK before publishing
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd dist
+          sha256sum -c SHA256SUMS
+          python3 - <<'PY'
+          import json, pathlib, zipfile
+          meta = json.loads(pathlib.Path('build-metadata.json').read_text())
+          apk = pathlib.Path(meta['apk'])
+          if not apk.is_file() or apk.stat().st_size != meta['bytes']:
+              raise SystemExit('APK metadata mismatch')
+          with zipfile.ZipFile(apk) as z:
+              if z.testzip():
+                  raise SystemExit('Corrupt APK')
+          print(f"Verified {apk} ({apk.stat().st_size} bytes)")
+          PY
+      - name: Publish prerelease to Releases
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          tag="android-chromium-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          title="PsychoVault Android Chromium preview $(python3 -c "import json; print(json.load(open('dist/build-metadata.json'))['chromiumVersion'])")"
+          gh release create "$tag" \
+            dist/*.apk \
+            dist/Release-Notes-Android.txt \
+            dist/build-metadata.json \
+            dist/SHA256SUMS \
+            dist/engine-source-manifest.txt \
+            dist/apksigner.txt \
+            dist/apk-badging.txt \
+            --repo "$GH_REPO" \
+            --target "$GITHUB_SHA" \
+            --title "$title" \
+            --notes-file dist/Release-Notes-Android.txt \
+            --prerelease
