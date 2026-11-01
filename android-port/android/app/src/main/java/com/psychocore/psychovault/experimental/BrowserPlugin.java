@@ -4,6 +4,7 @@ import android.annotation.SuppressLint;
 import android.graphics.Color;
 import android.net.Uri;
 import android.view.View;
+import android.view.MotionEvent;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
@@ -58,6 +59,12 @@ public class BrowserPlugin extends Plugin {
         // Default WebChromeClient denies permission requests and does not implement file uploads.
         page.setWebChromeClient(new WebChromeClient() {
             @Override public void onReceivedTitle(WebView view, String title) { event(id, view.getUrl(), title); }
+        });
+        page.setOnTouchListener((view, motion) -> {
+            if (motion.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                notifyListeners("pageTouched", new JSObject());
+            }
+            return false;
         });
         page.setVisibility(View.GONE);
         ((FrameLayout) getActivity().findViewById(android.R.id.content)).addView(page,

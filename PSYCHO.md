@@ -6,7 +6,7 @@ This is my project guide for people and coding agents working on PsychoVault. Re
 
 ## What I am building
 
-PsychoVault is my desktop browser application, built with Electron and Chromium. The browser UI and features are in this repository; Electron supplies the rendering engine. The Windows x64 installer is the main release target. Do not describe Android or an APK as available unless it has actually been built and tested.
+PsychoVault is my desktop browser application, built with Electron and Chromium. The browser UI and features are in this repository; Electron supplies the rendering engine. The Windows x64 installer is the main release target. An experimental Android debug APK has been built and the earlier preview was reported working on a phone. Do not describe it as a finished Android browser or claim that untested features work.
 
 Keep changes focused on what I asked for. If a request has multiple parts, answer them in order. When I report a bug, use the installed version I give you, read the first error in a transcript, and do not assume a screenshot or generic notification identifies the cause.
 
@@ -14,7 +14,7 @@ Keep changes focused on what I asked for. If a request has multiple parts, answe
 
 - `app/main.js` - windows, tabs, sessions, settings, IPC, extensions and browser services.
 - `app/preload.js` and `app/page-preload.js` - the separate, restricted IPC bridges for browser chrome and internal pages. Do not expose privileged APIs to ordinary websites.
-- `android-port/` - experimental Capacitor Android source and plan; not a released APK. Proton and extensions do not work in the preview.
+- `android-port/` - experimental Capacitor Android source, plan and debug APK preview; not a finished Android release. Proton and extensions do not work in the preview.
 - `app/ui/` - browser chrome, internal pages, settings and styles. Electron child views can cover the chrome; check window layout as well as CSS when fixing overlays.
 - `app/auto-updater.js`, `app/update-*.js` and `app/update-install.ps1` - signed update checks, downloads, installer handoff, backup and cleanup.
 - `installer.nsi` and `tools/gen-filelist.mjs` - NSIS installer and its generated file list.

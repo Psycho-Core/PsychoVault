@@ -6,13 +6,17 @@ I inventoried the 42 tracked project Markdown files, historical harness notes an
 
 I did not rewrite third-party licence text, generated assets, the spellcheck word list, or historical harness output. These are not ordinary project prose, and licence wording and test evidence should not be altered to change their voice. The punctuation-only changes to `VERIFICATION.md` do not change its recorded results.
 
-## Changes
+## Changes recorded in the earlier audit
 
 - Kept the new-tab picture near the top of the main README and added an honest link to this Android experiment. No APK, Proton connection or extension support is claimed for it.
 - Added the Android folder and its limits to `PSYCHO.md`.
 - Replaced em-dash separators in the project prose and verification notes with ` - `. I left licence text and historical harness output alone.
 - Changed the Windows build guide's hard-coded 1.0.35 output examples to `<version>`, because the actual filename comes from `app/package.json`.
 - Wrote this folder's README and plan in plain first-person language and stated what still needs proof.
+
+## Follow-up
+
+I corrected the Android preview, GitHub Actions and phone-test status in my main README, project guide and Android documentation. I kept the older audit findings as historical evidence instead of changing what was observed at the time.
 
 ## Still to do
 

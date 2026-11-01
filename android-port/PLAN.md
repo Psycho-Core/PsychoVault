@@ -16,9 +16,9 @@ This folder is a starting experiment, not the finished port. Its simplified inte
 
 ## Phase 2 - Browser engine and Proton decision gate
 
-1. Keep the trusted Capacitor interface separate from untrusted website views. Prototype both Android WebView and a custom GeckoView host as needed. Compare extension APIs, site compatibility, update size and maintenance.
+1. Keep the trusted Capacitor interface separate from untrusted website views. Compare an extension-capable Chromium Android foundation with a custom GeckoView host. Keep Capacitor only if the integration is practical. Compare extension APIs, site compatibility, build size and maintenance.
 2. Android WebView does not supply the desktop extension host. Do not present this experiment as evidence that extensions work.
-3. Investigate a suitable Proton Firefox extension build, licensing, installation and its required APIs. Test a small independent extension first. Check how extension popups, storage, permissions, tabs, proxy and authentication are provided by the host.
+3. Investigate Proton's Chromium extension with an Android Chromium extension host, as well as a suitable Firefox build, licensing, installation and required APIs. Test a small independent extension first. Check how extension popups, storage, permissions, tabs, proxy and authentication are provided by the host.
 4. Verify a local authenticated proxy with synthetic credentials before testing Proton. Then test real Proton sign-in with user consent, actual network routing, reconnect and failure behaviour. Independently test DNS and WebRTC. A popup, status icon or changed IP alone is not proof of complete leak protection.
 5. Test general extension installation separately. Firefox/Android API support and signed downloaded extensions differ from Chromium. Document exactly which extensions and APIs were tested.
 6. If Proton does not work inside the browser, stop and report the blocker. Do not switch to a system VPN or ship a fake protected state.
@@ -36,7 +36,7 @@ This folder is a starting experiment, not the finished port. Its simplified inte
 ## Phase 4 - Build, signing and release
 
 - Make `BUILD-ANDROID.bat` repeatable on my Windows path and write release notes on every success or failure. Test it on Windows and confirm the first failure is visible.
-- Add automated unit, native and device tests without adding GitHub Actions until I ask. Build a debug APK first; verify on a real phone.
+- Add automated unit, native and device tests. Use GitHub Actions only when needed. A debug APK has been built and the earlier preview was reported working on one phone; the missing features and new changes still need testing.
 - Decide the final application ID, release signing key storage, backups, update process and upgrade compatibility before sharing a release. Never commit keys.
 - Test installation and signed updates, including Android approval prompts. Do not promise silent updates.
 - Document licences, bundled sources, patches and notices. Recheck Android distribution rules before release.

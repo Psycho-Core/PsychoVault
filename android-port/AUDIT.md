@@ -1,8 +1,8 @@
 # Android port audit
 
-## Result
+## Original audit result
 
-The Android folder is an early experiment, not a correctly verified port of my desktop browser. I cannot claim that it compiles, runs on a phone, protects traffic with Proton or supports extensions. I found a critical dependency advisory and several defects in the prototype. I did not change the app code during this audit.
+At the time of this audit, the Android folder is an early experiment, not a correctly verified port of my desktop browser. I cannot claim that it compiles, runs on a phone, protects traffic with Proton or supports extensions. I found a critical dependency advisory and several defects in the prototype. I did not change the app code during this audit.
 
 ## Findings
 
@@ -81,3 +81,7 @@ The Proton warning now has its own element, URL tests cover hostnames with ports
 ## GitHub Actions debug build
 
 Run [41275853664](https://github.com/Psycho-Core/PsychoVault/actions/runs/41275853664) built the debug APK after correcting a Java compilation error. Actions passed the production dependency audit, source tests, APK archive check and Android signature verification, and uploaded the APK and build notes. The Actions artifact download was not accessible from this sandbox, so I did not independently inspect or install its contents locally. No phone, Proton traffic, extension, privacy or end-to-end security tests ran. This is not a release-signed APK.
+
+## Sidebar auto-hide change
+
+The sidebar now starts hidden and can be opened from the tab strip. It closes after five seconds or when the page, toolbar or tabs are touched. The UI tests exercise the toggle, timer and page-touch event using mocks. The native view resize and touch handling still need to be checked in the new APK on a phone.

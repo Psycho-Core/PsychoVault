@@ -4,6 +4,30 @@
   const tabs = new Map(); let active = null; let count = 0;
   const show = text => { $('notice').textContent = text; $('notice').hidden = false; };
   if (!browser) { show('Native Android browser is unavailable. Build and open the Android app.'); return; }
+  let railTimer = null;
+  function hideRail() {
+    if (railTimer !== null) clearTimeout(railTimer);
+    railTimer = null;
+    $('rail').hidden = true;
+    $('rail-toggle').setAttribute('aria-expanded', 'false');
+    $('rail-toggle').setAttribute('aria-label', 'Show sidebar');
+    $('rail-toggle').title = 'Show sidebar';
+  }
+  function scheduleRailHide() {
+    if (railTimer !== null) clearTimeout(railTimer);
+    railTimer = setTimeout(hideRail, 5000);
+  }
+  $('rail-toggle').onclick = () => {
+    if (!$('rail').hidden) { hideRail(); return; }
+    $('rail').hidden = false;
+    $('rail-toggle').setAttribute('aria-expanded', 'true');
+    $('rail-toggle').setAttribute('aria-label', 'Hide sidebar');
+    $('rail-toggle').title = 'Hide sidebar';
+    scheduleRailHide();
+  };
+  $('rail').addEventListener('pointerdown', scheduleRailHide);
+  $('toolbar').addEventListener('pointerdown', hideRail);
+  $('tabs').addEventListener('pointerdown', hideRail);
   const run = promise => promise.catch(() => show('That action failed in the experimental browser.'));
   function paint() {
     $('tabs').replaceChildren();
@@ -41,6 +65,7 @@
   $('proton').onclick = () => show('Proton VPN is not implemented or connected in this preview. Traffic is not protected by Proton.');
   $('blocker').onclick = () => show('The desktop ad blocker is not implemented in this preview.');
   $('settings').onclick = () => show('Settings, extensions, private browsing and the vault are not implemented in this preview.');
+  browser.addListener('pageTouched', hideRail);
   browser.addListener('pageChanged', data => {
     const tab = tabs.get(data.id); if (!tab) return;
     tab.title = data.title || 'New tab'; tab.url = data.url || ''; paint();

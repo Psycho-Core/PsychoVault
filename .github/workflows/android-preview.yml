@@ -85,6 +85,8 @@ jobs:
             echo 'This is an experimental debug build, not a finished browser.'
             echo 'Proton VPN, extensions, private browsing, the vault and the ad blocker do not work.'
             echo 'Traffic is not protected by Proton. Do not use this for sensitive browsing.'
+            echo 'The sidebar starts hidden. Use the menu button next to the logo to open it.'
+            echo 'The sidebar hides after five seconds or when touching the page, toolbar or tabs.'
             echo 'The interface is a simplified preview, not the complete desktop interface.'
             echo 'No device or network protection tests are performed by this workflow.'
             echo 'This debug APK may not update a later build signed with a different key.'

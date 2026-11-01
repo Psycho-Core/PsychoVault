@@ -5,10 +5,13 @@ html,body { margin:0; width:100%; height:100%; background:var(--bg); color:var(-
 button,input { font:inherit; color:inherit; } button { cursor:pointer; }
 #app { display:flex; width:100%; height:100%; padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
 #rail { width:var(--rail-w); flex:0 0 var(--rail-w); display:flex; flex-direction:column; align-items:center; gap:4px; padding:10px 0; border-right:1px solid var(--line); }
+#rail[hidden] { display:none; }
 .rail-spacer { flex:1; }
 .rail-btn { width:34px; height:34px; padding:7px; border:0; border-radius:9px; background:transparent; color:#9fb0c6; font-size:18px; }
 #main { min-width:0; flex:1; display:flex; flex-direction:column; }
 #tabstrip { height:38px; flex:0 0 38px; display:flex; align-items:flex-end; background:var(--bg); }
+#rail-toggle { width:36px; height:36px; flex:0 0 36px; border:0; background:transparent; color:var(--dim); font-size:18px; }
+#rail-toggle[aria-expanded="true"] { color:var(--accent); background:var(--bg2); }
 #logo { width:20px; height:20px; margin:0 8px 8px 6px; }
 #tabs { display:flex; align-items:flex-end; min-width:0; flex:1; overflow-x:auto; scrollbar-width:none; }
 .tab { height:36px; min-width:90px; max-width:180px; flex:0 0 135px; border:0; border-radius:9px 9px 0 0; padding:0 8px; color:var(--dim); background:transparent; display:flex; align-items:center; gap:6px; }
@@ -24,4 +27,6 @@ button,input { font:inherit; color:inherit; } button { cursor:pointer; }
 #vpn-warning, #notice { padding:5px 8px; background:#49331a; color:#ffdfaa; font-size:12px; }
 #page { flex:1; min-height:0; background:#fff; }
 #status { height:22px; flex:0 0 22px; padding:3px 8px; color:var(--dim); background:var(--bg); }
-@media (max-width:350px) { #toolbar > button { width:27px; flex-basis:27px; } #logo { margin-right:3px; } .tab { flex-basis:100px; } }
+@media (max-width:350px) { #toolbar > button { width:27px; flex-basis:27px; } #rail-toggle { width:36px; height:36px; flex:0 0 36px; border:0; background:transparent; color:var(--dim); font-size:18px; }
+#rail-toggle[aria-expanded="true"] { color:var(--accent); background:var(--bg2); }
+#logo { margin-right:3px; } .tab { flex-basis:100px; } }
