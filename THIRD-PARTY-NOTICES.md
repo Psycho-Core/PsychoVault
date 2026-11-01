@@ -36,8 +36,11 @@ The corresponding source is the commit named above, obtainable from Proton's pub
 PsychoVault does not modify, patch, or add to that source; a newer upstream commit can be rebuilt
 with the same two commands and dropped into the same folder.
 
-PsychoVault's own code stays MIT. The extension is aggregated, not linked: it is a separate
-program loaded at runtime through `session.loadExtension()`, and PsychoVault runs without it.
+PsychoVault's own code is MIT licensed. The extension is a separate program loaded at runtime
+through `session.loadExtension()`, and PsychoVault runs without it. A modified or differently
+integrated distribution needs its own GPL and third-party licence review. An upstream source link
+alone does not guarantee that every corresponding-source or installation-information requirement
+has been met for a particular distribution. Proton trademarks and service terms are separate.
 
 No account, subscription, credential or server list ships with it. Signing in is done by you,
 in the extension, against Proton's own API.

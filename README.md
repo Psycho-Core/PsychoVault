@@ -462,8 +462,9 @@ again.
 
 ## Proton VPN, and how it got here
 
-Proton publishes the extension's source under GPL-3.0, which is what makes it shippable in a way the
-Chrome Web Store copy is not: the store's terms forbid redistribution, Proton's licence does not.
+Proton publishes the extension's source under GPL-3.0, which permits modification and
+redistribution subject to its conditions. This build comes from Proton's source, not the Chrome
+Web Store package. The licence and corresponding-source requirements apply to distributions.
 `app/builtin/proton-vpn/` is that source built with `npm ci --legacy-peer-deps && npm run build` at
 commit `71d7d86f164a2ee8e50ce5a389c9e5cbe0fd6883`, copied into your profile on first launch, and
 loaded like any other unpacked extension. Version, commit and licence are recorded in

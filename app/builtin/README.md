@@ -27,8 +27,10 @@ and the licence travel with it.** If you want the exact sources that produced th
     cd proton-vpn-browser-extension
     git checkout 71d7d86f164a2ee8e50ce5a389c9e5cbe0fd6883
 
-That satisfies GPL-3.0's source requirement without PsychoVault having to mirror a copy that
-could drift from upstream. Each release states this version and commit in `VERIFICATION.md`.
+That identifies the upstream source used for this build. A release still needs to provide the
+complete corresponding source and build/install material required by GPL-3.0 for how it is
+distributed; an upstream link alone is not automatically sufficient. Each release states this
+version and commit in `VERIFICATION.md`.
 
 ### What it does here, and what it is honest about
 
@@ -45,8 +47,8 @@ not put it back on the next launch. **Settings → Extensions → Restore** brin
 ### Not covered by PsychoVault's MIT licence
 
 `proton-vpn/` is GPL-3.0 and is the property of Proton AG. PsychoVault's own source under
-`app/` remains MIT. The two are aggregated, not linked: the extension is a separate program
-that PsychoVault loads at runtime, and PsychoVault works without it.
+`app/` remains MIT. The extension is a separate program loaded at runtime, and PsychoVault works without it.
+Any modified or differently integrated distribution needs its own licence review.
 
 ## Dark Reader 4.9.134 - `dark-reader/`
 

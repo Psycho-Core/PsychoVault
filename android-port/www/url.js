@@ -1,5 +1,5 @@
 (function (root) {
-  function destination(value) {
+  function destination(value, engine) {
     const text = String(value || '').trim();
     if (!text) return null;
     if (/^https?:\/\//i.test(text)) {
@@ -10,7 +10,8 @@
     }
     // Other schemes are not allowed, including javascript:, file: and intent:.
     if (/^[a-z][a-z\d+.-]*:/i.test(text)) return null;
-    return 'https://www.google.com/search?q=' + encodeURIComponent(text);
+    const base = { google: 'https://www.google.com/search?q=', duckduckgo: 'https://duckduckgo.com/?q=', bing: 'https://www.bing.com/search?q=' }[engine] || 'https://www.google.com/search?q=';
+    return base + encodeURIComponent(text);
   }
   if (typeof module !== 'undefined') module.exports = { destination };
   else root.PsychoUrl = { destination };

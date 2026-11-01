@@ -30,3 +30,15 @@ button,input { font:inherit; color:inherit; } button { cursor:pointer; }
 @media (max-width:350px) { #toolbar > button { width:27px; flex-basis:27px; } #rail-toggle { width:36px; height:36px; flex:0 0 36px; border:0; background:transparent; color:var(--dim); font-size:18px; }
 #rail-toggle[aria-expanded="true"] { color:var(--accent); background:var(--bg2); }
 #logo { margin-right:3px; } .tab { flex-basis:100px; } }
+
+body[data-theme="graphite"] { --bg:#121416; --bg2:#1b1e21; --bg3:#272b30; --fg:#f0f2f4; --dim:#a9b2ba; --line:#333a40; }
+body[data-theme="forest"] { --bg:#0d1815; --bg2:#13241e; --bg3:#1a3328; --fg:#e2f1e7; --dim:#9cbaa8; --line:#294638; }
+body[data-theme="plum"] { --bg:#180f1c; --bg2:#241629; --bg3:#332039; --fg:#f5e9f6; --dim:#c2a6c7; --line:#48304f; }
+body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --fg:#e2f4f8; --dim:#96bdc8; --line:#24505e; }
+#panel { flex:0 1 auto; overflow-y:auto; max-height:45%; padding:10px; background:var(--bg2); border-bottom:1px solid var(--line); }
+#panel[hidden] { display:none; }
+#panel button, #panel select { padding:8px; margin:3px; border:1px solid var(--line); border-radius:7px; background:var(--bg3); color:var(--fg); }
+#panel .entry { display:block; width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left; }
+#panel label { display:block; padding:5px 0; }
+
+#panel textarea { display:block; width:100%; padding:8px; border:1px solid var(--line); border-radius:7px; background:var(--bg3); color:var(--fg); font:inherit; }

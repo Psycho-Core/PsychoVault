@@ -26,7 +26,7 @@ This folder is a starting experiment, not the finished port. Its simplified inte
 ## Phase 3 - Browser functionality and data
 
 - Implement navigation, tabs, session restore, downloads, file upload, external links, permissions and safe Android back handling.
-- Implement bookmarks, history and optional workspaces. Design migration separately; never overwrite desktop data.
+- Build on the source-only basic bookmarks, history and search/theme settings. Add the missing desktop behaviour and optional workspaces. Design migration separately; never overwrite desktop data.
 - Design private sessions and container separation. Test cookies, storage, process death, cleanup and restart before making privacy claims.
 - Port the blocker using engine-specific request handling and measure coverage, including redirects and service workers. Do not promise parity based on a domain matcher alone.
 - Test an appropriate Dark Reader extension build, not just the desktop Chromium bundle.
@@ -52,3 +52,11 @@ A successful clean APK build, real-device UI and navigation checks, accessibilit
 - [GeckoView](https://mozilla.github.io/geckoview/) and its [extension controller](https://mozilla.github.io/geckoview/javadoc/mozilla-central/org/mozilla/geckoview/WebExtensionController.html).
 - [Proton browser extension](https://protonvpn.com/support/browser-extensions) and [Firefox proxy API](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/proxy).
 - [Android command-line builds](https://developer.android.com/build/building-cmdline) and [app update requirements](https://developer.android.com/google/play/app-updates).
+
+## Current work in progress
+
+Basic local bookmarks, history, search/theme settings and opt-in tab-address restore have been added to the Android source. Restore does not preserve back/forward stacks. They have mock-backed JavaScript tests but have not been built into an APK or tested on a phone. The source also has an unbuilt Android file-picker, DownloadManager integration and experimental encrypted vault with important gaps documented in README.md. Proton, general extensions and the other desktop features remain open. I will not call the Android port complete until they are actually implemented and verified.
+
+## Signing and installation
+
+I added a key-creation script and a manually triggered signed-preview workflow in the source. They have not been tested with a real key. Older debug APKs may use different signing keys, so the first switch to a stable key may require uninstalling the preview and losing its app data. Play Protect may still ask to scan an unfamiliar APK. See `SIGNING.md` before testing.
