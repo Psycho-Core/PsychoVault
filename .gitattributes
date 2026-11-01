@@ -1,3 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
 *.bat text eol=crlf
+# Keep the vendored upstream files byte-for-byte, including upstream whitespace.
+android-port/engine/titanium/** whitespace=-blank-at-eol

@@ -1,6 +1,6 @@
 # Third-party notices
 
-PsychoVault's own code is MIT licensed. Bundled third-party code in `app/` has its own licences, as described below.
+PsychoVault's own code is MIT licensed. Third-party code in `app/` and the Android engine inputs has its own licences, as described below.
 
 ## Electron 45.1.0
 MIT licensed. Bundles Chromium and Node.js. https://github.com/electron/electron/blob/main/LICENSE
@@ -47,7 +47,7 @@ in the extension, against Proton's own API.
 
 ## Other extensions
 
-Nothing else from an extension store is bundled. `Install .crx...` unpacks a file **you** supply
+Alongside Proton, the desktop app bundles Dark Reader, described below. `Install .crx...` unpacks a file **you** supply
 into your own profile folder (`extensions/`). Extension loading is Electron's
 `session.loadExtension`. No signature is verified for a `.crx` - see the Settings text.
 
@@ -82,3 +82,9 @@ Widevine CDM is not included, so DRM-protected playback is unavailable.
 ## Dark Reader
 
 Dark Reader 4.9.134 is Copyright (c) 2026 Dark Reader Ltd. and licensed under the MIT License. The full license is included in `app/builtin/dark-reader/LICENSE`. Source: https://github.com/darkreader/darkreader/tree/d12521bb3120ecb0d796248020c497d53b300496.
+
+## Android Chromium foundation - Titanium and Vanadium
+
+The unfinished Android restart includes Titanium Browser for Android build inputs under `android-port/engine/titanium/`, from commit `5e9070a98b48f6b6cb239bf90b8718b91795b7c5`, licensed GPL-2.0. Its licence is included in that directory. The preparation script fetches Vanadium at commit `0202b7badff99434822ba5e32e0d738792868455` separately; Chromium, Vanadium, extensions and other dependencies have their own notices. The staged build process also specifies the Titanium companion extension as a pinned external download; it is not included in this repository.
+
+This is not a complete Android distribution licence review. Before shipping an Android APK I need to verify all applicable component licences, corresponding source, install information, branding and codec obligations for the actual build. See `android-port/PROTON-LICENCE.md` and `android-port/EXTENSION-ENGINE-DECISION.md`.

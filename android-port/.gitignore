@@ -1,10 +1,14 @@
-www/icon.png
-android/app/src/main/assets/public/
+# Build workspaces, Chromium, packages and private keys must stay outside the repository.
+/chromium/
+/depot_tools/
+build-notes/
+*.apk
+*.aab
 *.jks
 *.keystore
-build-notes/
 *.p12
 *.pfx
-www/blocklist.json
-www/scrypt.js
-www/scrypt-license.txt
+
+# Python source-test cache
+__pycache__/
+*.py[cod]

@@ -1,0 +1,13 @@
+{
+  "name": "Titanium Browser for Android",
+  "repository": "https://github.com/jqssun/android-titanium-browser",
+  "commit": "5e9070a98b48f6b6cb239bf90b8718b91795b7c5",
+  "license": "GPL-2.0",
+  "submodules": {
+    "vanadium": {
+      "repository": "https://github.com/GrapheneOS/Vanadium.git",
+      "commit": "0202b7badff99434822ba5e32e0d738792868455"
+    }
+  },
+  "status": "upstream-source-only; not a PsychoVault build"
+}

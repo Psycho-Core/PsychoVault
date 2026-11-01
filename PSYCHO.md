@@ -14,7 +14,7 @@ Keep changes focused on what I asked for. If a request has multiple parts, answe
 
 - `app/main.js` - windows, tabs, sessions, settings, IPC, extensions and browser services.
 - `app/preload.js` and `app/page-preload.js` - the separate, restricted IPC bridges for browser chrome and internal pages. Do not expose privileged APIs to ordinary websites.
-- `android-port/` - experimental Capacitor Android source, plan and debug APK preview; not a finished Android release. Proton and extensions do not work in the preview.
+- `android-port/` - restarted Android port based on pinned Titanium/Chromium source inputs; not yet a working PsychoVault build. The old WebView source was removed, and the previously published preview does not support extensions or Proton.
 - `app/ui/` - browser chrome, internal pages, settings and styles. Electron child views can cover the chrome; check window layout as well as CSS when fixing overlays.
 - `app/auto-updater.js`, `app/update-*.js` and `app/update-install.ps1` - signed update checks, downloads, installer handoff, backup and cleanup.
 - `installer.nsi` and `tools/gen-filelist.mjs` - NSIS installer and its generated file list.
@@ -41,6 +41,8 @@ From the repository root, the quick checks are:
 ```sh
 node tools/audit.mjs
 node --test tools/*.test.cjs
+node --test android-port/test/*.test.cjs
+python3 -m unittest discover -s android-port/test -p '*_test.py'
 ```
 
 On Windows, I want the normal build to work by double-clicking `PsychoVault_easy_build.bat`. My checkout is at `D:\Blakes_SHIT\#Psycho-core_REPOS\PsychoVault`; do not tell me to move it. Keep release notes as a required build output, including when a build fails. Read `BUILD-WINDOWS.md` and the script for the current prerequisites and behaviour before changing the build.

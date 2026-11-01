@@ -1,8 +1,10 @@
 # What I actually ran
 
-Everything on this page was executed against the build in `release/`, on Linux with
-Electron 45.1.0 and Xvfb, with screenshots taken from the live window. I am not listing
-things I "should" have tested; this is the list of things that produced output.
+The desktop checks below were executed against an earlier build in `release/`, on Linux with Electron 45.1.0 and Xvfb, with screenshots taken from the live window. They are historical evidence, not proof that every later release or Android port has been tested. I am not listing things I "should" have tested; this is the list of things that produced output.
+
+## Android restart source checks - 1 November 2026
+
+I ran 24 Node source tests and 6 Python source tests for the Android restart, plus 185 desktop Node tests and `node tools/audit.mjs`. The pinned Vanadium workspace preparation and Chromium source-installer anchors were checked separately; the controller was parsed as Java, not compiled against Chromium. The real Titanium companion CRX could not be downloaded in this environment. No new Android APK, Android SDK compilation, GitHub Actions build, extension install, Proton traffic test or phone test was run for the restart. See `android-port/README.md` for the limitations.
 
 ## Smoke
 

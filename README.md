@@ -14,8 +14,7 @@ This is an earlier capture of the new tab page - the current interface may look 
 
 I am also experimenting with an Android port in [`android-port/`](android-port/README.md).
 I published an experimental debug APK, and the earlier preview was reported working on a phone.
-It is not a finished browser, and new changes still need testing.
-Proton VPN and extensions do not work in that preview. My Windows browser is separate.
+The Android source has since been restarted on a Chromium/Titanium foundation; it does not yet produce a working PsychoVault APK. Proton VPN and extensions do not work in the old preview, and the new port still needs its browser UI, features, settings and extensions connected and tested. My Windows browser is separate.
 
 Screenshots of the running app are in `docs/` - the new tab page, the command palette, a
 private window, Settings, the Performance panel, the extension manager, a tab held mid-drag,
