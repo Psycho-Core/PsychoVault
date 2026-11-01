@@ -1,27 +1,27 @@
-# Build PsychoVault on Windows — the easy way
+# Build PsychoVault on Windows - the easy way
 
 **Nothing in this guide costs money.** No account, no subscription, no GitHub Actions minutes.
 It all runs on your own PC. Budget about 10 minutes and ~1.5 GB of free disk space.
 
-There are three levels. Pick the one you want — you can always do more later.
+There are three levels. Pick the one you want - you can always do more later.
 
 | Level | What you get | Time | Needs |
 |---|---|---|---|
 | **A. Just run it** | The real browser, straight from the source folder | 3 min | Node.js |
-| **B. Portable exe** | `build\payload\PsychoVault.exe` — a rebranded, double-clickable browser | 5 min | Node.js |
-| **C. Full installer** | `PsychoVault-Setup-1.0.35.exe` — shortcuts, uninstall entry | 8 min | Node.js + NSIS |
+| **B. Portable exe** | `build\payload\PsychoVault.exe` - a rebranded, double-clickable browser | 5 min | Node.js |
+| **C. Full installer** | `PsychoVault-Setup-<version>.exe` - shortcuts, uninstall entry | 8 min | Node.js + NSIS |
 
 The script does levels A→C automatically. If NSIS is missing it simply stops after level B and
 tells you.
 
 ---
 
-## Step 0 — the only two downloads you need
+## Step 0 - the only two downloads you need
 
 | What | Required? | Direct link | Alternative (one command in Terminal) |
 |---|---|---|---|
-| **Node.js LTS** (runs everything) | **Yes** | <https://nodejs.org/en/download> — pick **Windows Installer (.msi)**, 64-bit | `winget install OpenJS.NodeJS.LTS` |
-| **NSIS 3** (makes the Setup .exe) | Only for level C | <https://nsis.sourceforge.io/Download> — the big **Download NSIS** button | `winget install NSIS.NSIS` |
+| **Node.js LTS** (runs everything) | **Yes** | <https://nodejs.org/en/download> - pick **Windows Installer (.msi)**, 64-bit | `winget install OpenJS.NodeJS.LTS` |
+| **NSIS 3** (makes the Setup .exe) | Only for level C | <https://nsis.sourceforge.io/Download> - the big **Download NSIS** button | `winget install NSIS.NSIS` |
 
 Optional, only if you'd rather clone than download a ZIP:
 
@@ -31,15 +31,15 @@ Optional, only if you'd rather clone than download a ZIP:
 | GitHub CLI (needed for GitHub release operations) | <https://cli.github.com/> → `winget install GitHub.cli` |
 | 7-Zip (for looking inside a built .exe) | <https://7-zip.org/download.html> |
 
-Electron 45.1.0 is **not** something you download by hand — the build fetches it automatically
+Electron 45.1.0 is **not** something you download by hand - the build fetches it automatically
 (~120 MB, once). Its own page, if you ever want it: <https://github.com/electron/electron/releases/tag/v45.1.0>.
 
 ---
 
-## Step 1 — install Node.js
+## Step 1 - install Node.js
 
 Run the `.msi`, click Next through all of it. Leave the "Tools for Native Modules" checkbox
-**unticked** — this build does not need it.
+**unticked** - this build does not need it.
 
 Verify: press `Win+R`, type `cmd`, Enter, then type:
 
@@ -52,7 +52,7 @@ new one (Windows only picks up new PATH entries in new windows), or reboot.
 
 ---
 
-## Step 2 — get the code onto your PC
+## Step 2 - get the code onto your PC
 
 **Easiest (no Git):** while signed in to GitHub, open
 
@@ -77,7 +77,7 @@ You should end up with a folder that contains `PsychoVault_easy_build.bat`, `ins
 
 ---
 
-## Step 3 — run the build script
+## Step 3 - run the build script
 
 In that folder, **double-click `PsychoVault_easy_build.bat`**.
 
@@ -95,7 +95,7 @@ Electron. What it is doing:
    the unused 10 MB `app\tools\wireproxy.exe`
 6. checks the payload before packaging anything: every file the browser needs is present and
    non-empty, and the old `default_app.asar` is gone. If that check fails the build stops there
-7. if NSIS is installed, builds `PsychoVault-Setup-1.0.35.exe` in the repo root
+7. if NSIS is installed, builds `PsychoVault-Setup-<version>.exe` in the repo root
 8. writes `Release-Notes-<version>.txt` next to the script
 9. asks whether to publish the build as a GitHub release, then uploads the exe, its SHA-256 and
    the notes if you say yes
@@ -104,8 +104,8 @@ When it finishes you get:
 
 ```
 build\payload\PsychoVault.exe            <- just run this
-PsychoVault-Setup-1.0.35.exe             <- only if NSIS was installed
-Release-Notes-1.0.35.txt                 <- what changed, and the SHA-256 of both
+PsychoVault-Setup-<version>.exe             <- only if NSIS was installed
+Release-Notes-<version>.txt                 <- what changed, and the SHA-256 of both
 ```
 
 The release notes list the version, the Electron runtime, the SHA-256 of the portable exe and of
@@ -157,11 +157,11 @@ Add-MpPreference -ExclusionPath "D:\Blakes_SHIT\#Psycho-core_REPOS\PsychoVault"
 
 ### What Windows will say
 
-- **"Windows protected your PC" / SmartScreen** — expected for any unsigned executable. Click
+- **"Windows protected your PC" / SmartScreen** - expected for any unsigned executable. Click
   **More info → Run anyway**. This cannot be fixed without buying a code-signing certificate, and
   it is the same warning the official build would get.
 - Some antivirus products quarantine a freshly built unsigned exe. Restore it from quarantine and
-  add an exclusion for your build folder if you trust your own build (you should — you just made it).
+  add an exclusion for your build folder if you trust your own build (you should - you just made it).
 
 ### Your data
 
@@ -180,7 +180,7 @@ npm install
 npm start
 ```
 
-That is the real browser — tabs, ad blocking, extension manager, proxy shim all behave exactly as
+That is the real browser - tabs, ad blocking, extension manager, proxy shim all behave exactly as
 in the installer. Two differences: automatic updates are off (the updater only runs in a packaged
 Windows build) and your profile lives in `%APPDATA%\Electron` instead of `%APPDATA%\PsychoVault`.
 
@@ -211,7 +211,7 @@ its own.
 It is git-ignored, but can still be force-added. Never commit it. A token in app/ is included in the installer and can be extracted by anyone receiving it. Re-run the build script and the banner
 can then see new versions.
 
-The file is `app\update-token.json` — one line, inside the `app` folder, named exactly that.
+The file is `app\update-token.json` - one line, inside the `app` folder, named exactly that.
 Not `update-token.json.txt`: Explorer hides the extension, so turn on "File name extensions"
 in View if you are unsure.
 
@@ -228,7 +228,7 @@ creates (or updates) release `v<version>` with:
 - `update-manifest.json` and `update-manifest.sig`, if a signing key is present
 - the release notes from `release-notes/<version>.txt`, plus the size and SHA-256 of what it built
 
-It needs a token with **Contents: read and write** on this repository — the read-only token in
+It needs a token with **Contents: read and write** on this repository - the read-only token in
 `app\update-token.json` is not enough, and must not be reused. Put the write token in
 `publish-token.json` at the repo root:
 
@@ -265,7 +265,7 @@ or `PV_PUBLISH=n` before running the script.
 The updater only trusts a release whose `update-manifest.json` is signed with the key matching
 `app\update-public-key.pem`. Put the private key next to the script as `update-private-key.pem`
 (it is git-ignored), and step 9 signs the manifest before uploading. Without it the release is
-still published, but the banner will not offer it — the release body says which of the two
+still published, but the banner will not offer it - the release body says which of the two
 happened.
 
 ### Checking the token before a build
@@ -307,11 +307,11 @@ prints the exact release body and the assets it would upload, without contacting
 | `npm install` hangs or `ECONNRESET` | Corporate proxy/antivirus. Try `npm install --registry=https://registry.npmjs.org/` or turn off the AV web shield for 10 minutes |
 | `npm finished but there is no Electron runtime` / `up to date in 634ms` | The package folder exists but its download never finished, so npm thinks it is installed. Run the downloader itself: `cd app` then `node node_modules\electron\install.js`. The build script now does this automatically, then `npm rebuild electron`, then removes the folder and reinstalls |
 | `install.js` prints nothing and returns | That is what success looks like: it only prints on failure. Check for the file: `dir app\node_modules\electron\dist\electron.exe` |
-| `dist\version` exists but `electron.exe` does not | The runtime was unpacked and the exe then deleted — in practice antivirus quarantine. Re-extract with `rmdir /s /q app\node_modules\electron\dist` then `del app\node_modules\electron\path.txt` then `node node_modules\electron\install.js` from `app`. If the exe disappears again, restore it from Windows Security → Virus & threat protection → Protection history, or run `Add-MpPreference -ExclusionPath "D:\Blakes_SHIT\#Psycho-core_REPOS\PsychoVault"` from an administrator PowerShell |
+| `dist\version` exists but `electron.exe` does not | The runtime was unpacked and the exe then deleted - in practice antivirus quarantine. Re-extract with `rmdir /s /q app\node_modules\electron\dist` then `del app\node_modules\electron\path.txt` then `node node_modules\electron\install.js` from `app`. If the exe disappears again, restore it from Windows Security → Virus & threat protection → Protection history, or run `Add-MpPreference -ExclusionPath "D:\Blakes_SHIT\#Psycho-core_REPOS\PsychoVault"` from an administrator PowerShell |
 | The downloader fails too | Almost always `npm config get ignore-scripts` printing `true` (scripts that fetch the runtime are skipped), or the network blocking GitHub's release servers. Check with `curl -I https://github.com/electron/electron/releases/download/v45.1.0/electron-v45.1.0-win32-x64.zip` - it should print `HTTP/2 302`. If it does not: `set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/` then `node node_modules\electron\install.js` |
-| Build fails while copying | PsychoVault is running and holding the exe — close it, delete `build\`, run again |
+| Build fails while copying | PsychoVault is running and holding the exe - close it, delete `build\`, run again |
 | `makensis` not found | Optional. Install NSIS (<https://nsis.sourceforge.io/Download>), reopen the terminal, re-run |
-| Setup says *"Can't write ...PsychoVault.exe"* | The browser is open. Setup now offers to close it — accept |
+| Setup says *"Can't write ...PsychoVault.exe"* | The browser is open. Setup now offers to close it - accept |
 | Long-path / `ENAMETOOLONG` errors | The build stops at step 6 with the file it could not copy. Keep the repo out of Desktop and OneDrive, and enable long paths: `reg add HKLM\SYSTEM\CurrentControlSet\Control\FileSystem /v LongPathsEnabled /t REG_DWORD /d 1 /f` from an administrator prompt |
 | Everything fails and you want to start clean | Delete `app\node_modules`, `tools\node_modules`, `build\` and re-run |
 
@@ -319,7 +319,7 @@ prints the exact release body and the assets it would upload, without contacting
 
 ## For later: rebuilding after a code change
 
-Once the steps above have run once, a rebuild is fast — it reuses the Electron runtime:
+Once the steps above have run once, a rebuild is fast - it reuses the Electron runtime:
 
 ```
 PsychoVault_easy_build.bat

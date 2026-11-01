@@ -8,21 +8,21 @@ things I "should" have tested; this is the list of things that produced output.
 
 | Check | Result |
 | --- | --- |
-| App launches, window appears, blocklist loads | pass — `blocklist: 262 domains` in the log |
-| New tab page renders | pass — see `docs/screenshot-newtab.png` |
-| Custom window controls (min/max/close) | pass — `ipcMain` handlers wired, close exits cleanly |
+| App launches, window appears, blocklist loads | pass - `blocklist: 262 domains` in the log |
+| New tab page renders | pass - see `docs/screenshot-newtab.png` |
+| Custom window controls (min/max/close) | pass - `ipcMain` handlers wired, close exits cleanly |
 
 ## Navigation
 
 | Check | Result |
 | --- | --- |
 | `https://example.com` loads in a tab | pass |
-| `https://en.wikipedia.org/wiki/Web_browser` loads | pass — `docs/screenshot-split.png` left pane |
-| Bare hostname in omnibox gets `https://` | pass — `duckduckgo.com` resolved |
-| Query text goes to the selected engine | pass — `wiki` offered "Search for wiki" first |
-| Back / forward disable state | pass — both start disabled, back enables after navigation |
-| History records title, not just URL | pass — `{url: https://example.com/, title: "Example Domain"}` written to `history.json` |
-| Session restore reopens last tabs | pass — seeded `session.json` reopened the Wikipedia tab on launch |
+| `https://en.wikipedia.org/wiki/Web_browser` loads | pass - `docs/screenshot-split.png` left pane |
+| Bare hostname in omnibox gets `https://` | pass - `duckduckgo.com` resolved |
+| Query text goes to the selected engine | pass - `wiki` offered "Search for wiki" first |
+| Back / forward disable state | pass - both start disabled, back enables after navigation |
+| History records title, not just URL | pass - `{url: https://example.com/, title: "Example Domain"}` written to `history.json` |
+| Session restore reopens last tabs | pass - seeded `session.json` reopened the Wikipedia tab on launch |
 
 ## Blocking
 
@@ -35,7 +35,7 @@ BLOCKED 3
 Failed to load URL: https://google-analytics.com/x with error: ERR_BLOCKED_BY_CLIENT
 ```
 
-Pass — the three listed hosts were cancelled at the session level before the network was
+Pass - the three listed hosts were cancelled at the session level before the network was
 touched, the count on the shield went to 3, and the benign request was untouched.
 
 ## Video
@@ -49,10 +49,10 @@ widevine: missing
 ```
 
 Then an actual MP4 played in a tab: `Big_Buck_Bunny_720_10s_1MB.mp4` reached
-`0:10 / 0:10` with native controls — `docs/screenshot-...` and the frame at the end of
+`0:10 / 0:10` with native controls - `docs/screenshot-...` and the frame at the end of
 the ten seconds show real decoded picture, not a placeholder.
 
-H.264 + AAC means ordinary web video plays. HEVC and Widevine DRM do not — those are
+H.264 + AAC means ordinary web video plays. HEVC and Widevine DRM do not - those are
 codec-licence items, not settings I can flip.
 
 ## Settings, bookmarks, downloads
@@ -73,21 +73,21 @@ panel with a clear-list action. `docs/screenshot-downloads.png`
 
 | Check | Result |
 | --- | --- |
-| Private window opens on Ctrl+Shift+P | pass — separate window, violet chrome, "PsychoVault Private" |
-| Private window writes no history | pass — the private profile folder stays empty of `history.json` |
-| Split view on Ctrl+\ | pass — two live pages side by side, `docs/screenshot-split.png` |
-| Command palette on Ctrl+K | pass — filter works, `docs/screenshot-palette.png` |
-| Sidebar stack (bookmarks / history / downloads) | pass — panel takes its own column, page re-lays out |
-| Installer unpacks and contains the app | pass — payload extracted with 7z, `resources/app/main.js` present |
+| Private window opens on Ctrl+Shift+P | pass - separate window, violet chrome, "PsychoVault Private" |
+| Private window writes no history | pass - the private profile folder stays empty of `history.json` |
+| Split view on Ctrl+\ | pass - two live pages side by side, `docs/screenshot-split.png` |
+| Command palette on Ctrl+K | pass - filter works, `docs/screenshot-palette.png` |
+| Sidebar stack (bookmarks / history / downloads) | pass - panel takes its own column, page re-lays out |
+| Installer unpacks and contains the app | pass - payload extracted with 7z, `resources/app/main.js` present |
 
 ## Known failures found during testing and fixed
 
-- Menu button was under the window controls' region — moved below the tab strip.
+- Menu button was under the window controls' region - moved below the tab strip.
 - Settings page never received its bridge because the page preload only built the
-  contextBridge for the chrome document — `page-preload.js` now installs it for the two
+  contextBridge for the chrome document - `page-preload.js` now installs it for the two
   internal pages only.
 - Downloads queued forever behind Chromium's native save dialog on a machine with no
-  desktop portal — the app now sets the save path itself.
+  desktop portal - the app now sets the save path itself.
 - Private-window shortcut called a function that no longer existed. Rewritten.
 
 ## Not tested
@@ -1109,7 +1109,7 @@ matching private key from that rotation was later unavailable in this workspace.
 was generated after a subsequent signing attempt failed: the public key is in
 `app/update-public-key.pem`, and its private counterpart is outside the repository at
 `/home/user/.psychovault-update-signing-private.pem` (mode 0600). A local temporary-payload
-sign/verify smoke test passed. Save this latest matching key—not an earlier value—as
+sign/verify smoke test passed. Save this latest matching key - not an earlier value - as
 `UPDATE_SIGNING_PRIVATE_KEY_B64` before publishing.
 
 ## Round 35 - Proton VPN bundled from source, and the API that was missing

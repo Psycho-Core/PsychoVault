@@ -1,0 +1,5 @@
+www/icon.png
+android/app/src/main/assets/public/
+*.jks
+*.keystore
+build-notes/

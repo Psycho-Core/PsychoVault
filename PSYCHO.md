@@ -14,6 +14,7 @@ Keep changes focused on what I asked for. If a request has multiple parts, answe
 
 - `app/main.js` - windows, tabs, sessions, settings, IPC, extensions and browser services.
 - `app/preload.js` and `app/page-preload.js` - the separate, restricted IPC bridges for browser chrome and internal pages. Do not expose privileged APIs to ordinary websites.
+- `android-port/` - experimental Capacitor Android source and plan; not a released APK. Proton and extensions do not work in the preview.
 - `app/ui/` - browser chrome, internal pages, settings and styles. Electron child views can cover the chrome; check window layout as well as CSS when fixing overlays.
 - `app/auto-updater.js`, `app/update-*.js` and `app/update-install.ps1` - signed update checks, downloads, installer handoff, backup and cleanup.
 - `installer.nsi` and `tools/gen-filelist.mjs` - NSIS installer and its generated file list.
