@@ -77,3 +77,7 @@ No application code or GitHub Actions were changed in this follow-up.
 I updated the Capacitor packages from 8.3.4 to 8.6.0. `npm audit --omit=dev` now reports no vulnerabilities. A full `npm audit` still reports four moderate development dependency findings through the Capacitor CLI, glob and minimatch; those are not included in the Android runtime dependency audit. I did not use `npm audit fix --force` to downgrade the CLI.
 
 The Proton warning now has its own element, URL tests cover hostnames with ports, and navigation and toolbar commands pass explicit tab IDs. The duplicate-tab check now runs on the Android UI thread. These source changes need Android build and device verification. Other tab concurrency, lifecycle, extension support, privacy and UI parity findings remain open. The old findings above record the earlier audit, not the current state of these particular changes.
+
+## GitHub Actions debug build
+
+Run [41275853664](https://github.com/Psycho-Core/PsychoVault/actions/runs/41275853664) built the debug APK after correcting a Java compilation error. Actions passed the production dependency audit, source tests, APK archive check and Android signature verification, and uploaded the APK and build notes. The Actions artifact download was not accessible from this sandbox, so I did not independently inspect or install its contents locally. No phone, Proton traffic, extension, privacy or end-to-end security tests ran. This is not a release-signed APK.

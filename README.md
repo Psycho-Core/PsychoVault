@@ -13,8 +13,8 @@ Dark navy, cyan accents, everything in a rail down the left. Fast enough to forg
 This is an earlier capture of the new tab page - the current interface may look different.
 
 I am also experimenting with an Android port in [`android-port/`](android-port/README.md).
-It is source code only for now - no APK has been built or tested here, and Proton VPN
-and extensions do not work in that preview. My Windows browser is separate.
+An experimental debug APK has been built by GitHub Actions, but it has not been tested on a phone.
+Proton VPN and extensions do not work in that preview. My Windows browser is separate.
 
 Screenshots of the running app are in `docs/` - the new tab page, the command palette, a
 private window, Settings, the Performance panel, the extension manager, a tab held mid-drag,
