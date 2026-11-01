@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   android-preview:
@@ -69,7 +69,8 @@ jobs:
           unzip -t "$apk" > /dev/null
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$apk"
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" | head -20
-          sha256sum "$apk" > android/app/build/outputs/apk/debug/SHA256SUMS.txt
+          cp "$apk" android/app/build/outputs/apk/debug/PsychoVault-Android-Preview-debug.apk
+          (cd android/app/build/outputs/apk/debug && sha256sum PsychoVault-Android-Preview-debug.apk > SHA256SUMS.txt)
       - name: Write build notes
         if: always()
         env:
@@ -81,8 +82,13 @@ jobs:
             echo 'PsychoVault Android experimental debug build'
             echo "Job status before notes: $BUILD_STATUS"
             echo "Run: $RUN_URL"
-            echo 'This is not a release. Proton VPN, extensions and private browsing do not work.'
+            echo 'This is an experimental debug build, not a finished browser.'
+            echo 'Proton VPN, extensions, private browsing, the vault and the ad blocker do not work.'
+            echo 'Traffic is not protected by Proton. Do not use this for sensitive browsing.'
+            echo 'The interface is a simplified preview, not the complete desktop interface.'
             echo 'No device or network protection tests are performed by this workflow.'
+            echo 'This debug APK may not update a later build signed with a different key.'
+            echo 'I provide this without warranty.'
             if [ -f android/app/build/outputs/apk/debug/SHA256SUMS.txt ]; then
               cat android/app/build/outputs/apk/debug/SHA256SUMS.txt
             else
@@ -102,6 +108,23 @@ jobs:
         with:
           name: psychovault-android-debug-preview
           path: |
-            android-port/android/app/build/outputs/apk/debug/app-debug.apk
+            android-port/android/app/build/outputs/apk/debug/PsychoVault-Android-Preview-debug.apk
             android-port/android/app/build/outputs/apk/debug/SHA256SUMS.txt
           if-no-files-found: error
+      - name: Publish requested Android preview pre-release
+        if: github.event_name == 'push' && github.event.head_commit.message == 'Release Android preview for testing' && steps.verify.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          tag="android-preview-${GITHUB_RUN_ID}"
+          gh release create "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --latest=false \
+            --title "PsychoVault Android experimental preview" \
+            --notes-file build-notes/Release-Notes-Android.txt \
+            android/app/build/outputs/apk/debug/PsychoVault-Android-Preview-debug.apk \
+            android/app/build/outputs/apk/debug/SHA256SUMS.txt \
+            build-notes/Release-Notes-Android.txt
