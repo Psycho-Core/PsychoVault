@@ -1,5 +1,21 @@
 apply plugin: 'com.android.application'
 
+// Release keys are supplied outside the repository. Never fall back to a debug key.
+def signingValues = [
+    file: System.getenv('PSYCHO_ANDROID_KEYSTORE'),
+    storePassword: System.getenv('PSYCHO_ANDROID_STORE_PASSWORD'),
+    alias: System.getenv('PSYCHO_ANDROID_KEY_ALIAS'),
+    keyPassword: System.getenv('PSYCHO_ANDROID_KEY_PASSWORD')
+]
+def releaseRequested = gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') }
+if (releaseRequested && (signingValues.values().any { !it } || !file(signingValues.file).isFile())) {
+    throw new GradleException('Release signing is not configured. See android-port/SIGNING.md. No debug-key release will be produced.')
+}
+def configuredVersionCode = System.getenv('PSYCHO_ANDROID_VERSION_CODE') ?: '2'
+if (!(configuredVersionCode ==~ /[0-9]+/) || configuredVersionCode.toLong() < 2 || configuredVersionCode.toLong() > 2100000000L) {
+    throw new GradleException('PSYCHO_ANDROID_VERSION_CODE must be an integer between 2 and 2100000000.')
+}
+
 android {
     namespace = "com.psychocore.psychovault.experimental"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -7,7 +23,7 @@ android {
         applicationId "com.psychocore.psychovault.experimental"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
+        versionCode configuredVersionCode.toInteger()
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
@@ -16,8 +32,19 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        stableRelease {
+            if (signingValues.values().every { it }) {
+                storeFile file(signingValues.file)
+                storePassword signingValues.storePassword
+                keyAlias signingValues.alias
+                keyPassword signingValues.keyPassword
+            }
+        }
+    }
     buildTypes {
         release {
+            signingConfig signingConfigs.stableRelease
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

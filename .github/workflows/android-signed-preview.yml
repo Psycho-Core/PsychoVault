@@ -1,0 +1,110 @@
+name: Build signed Android preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_code:
+        description: Android version code - must increase for each published update
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: android-port
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Check Android SDK and install platform
+        run: |
+          test -n "${ANDROID_HOME:-}"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Install and audit
+        run: |
+          npm ci
+          npm audit --omit=dev --audit-level=moderate
+          npm test
+          npm run sync
+      - name: Build with my persistent signing key
+        id: build
+        env:
+          KEYSTORE_BASE64: ${{ secrets.PSYCHO_ANDROID_KEYSTORE_BASE64 }}
+          PSYCHO_ANDROID_STORE_PASSWORD: ${{ secrets.PSYCHO_ANDROID_STORE_PASSWORD }}
+          PSYCHO_ANDROID_KEY_ALIAS: ${{ secrets.PSYCHO_ANDROID_KEY_ALIAS }}
+          PSYCHO_ANDROID_KEY_PASSWORD: ${{ secrets.PSYCHO_ANDROID_KEY_PASSWORD }}
+          PSYCHO_ANDROID_VERSION_CODE: ${{ inputs.version_code }}
+        run: |
+          set -eu
+          mkdir -p build-notes
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$PSYCHO_ANDROID_STORE_PASSWORD" ] || [ -z "$PSYCHO_ANDROID_KEY_ALIAS" ] || [ -z "$PSYCHO_ANDROID_KEY_PASSWORD" ]; then
+            echo '::error::Android signing secrets are missing. See android-port/SIGNING.md. No debug APK will be released.'
+            exit 1
+          fi
+          export PSYCHO_ANDROID_KEYSTORE="$RUNNER_TEMP/psychovault-android-signing.p12"
+          trap 'rm -f "$PSYCHO_ANDROID_KEYSTORE"' EXIT
+          umask 077
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$PSYCHO_ANDROID_KEYSTORE"
+          unset KEYSTORE_BASE64
+          (cd android && ./gradlew assembleRelease)
+      - name: Verify APK
+        id: verify
+        env:
+          EXPECTED_VERSION: ${{ inputs.version_code }}
+        run: |
+          set -eu
+          apk=android/app/build/outputs/apk/release/app-release.apk
+          test -s "$apk"
+          unzip -t "$apk" > /dev/null
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$apk"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" > build-notes/package-info.txt
+          grep -F "package: name='com.psychocore.psychovault.experimental' versionCode='$EXPECTED_VERSION'" build-notes/package-info.txt
+          cp "$apk" build-notes/PsychoVault-Android-Preview.apk
+          (cd build-notes && sha256sum PsychoVault-Android-Preview.apk > SHA256SUMS.txt)
+      - name: Write build notes
+        if: always()
+        env:
+          BUILD_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          mkdir -p build-notes
+          {
+            echo 'PsychoVault Android experimental preview'
+            echo "Job status before notes: $BUILD_STATUS"
+            echo "Run: $RUN_URL"
+            echo 'This is not a finished browser. Proton VPN and extensions do not work.'
+            echo 'Traffic is not protected by Proton. Do not use this for sensitive browsing.'
+            echo 'This build has not been verified on a phone or tested for VPN leaks.'
+            echo 'An older preview with a different signing key cannot be updated in place.'
+            echo 'Uninstalling an existing app can delete its data. I provide this without warranty.'
+            if [ -f build-notes/SHA256SUMS.txt ]; then cat build-notes/SHA256SUMS.txt; else echo 'No verified APK checksum. Read the first failing step in Actions.'; fi
+          } > build-notes/Release-Notes-Android.txt
+      - name: Upload build notes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-signed-build-notes
+          path: android-port/build-notes/Release-Notes-Android.txt
+          if-no-files-found: warn
+      - name: Upload and publish requested pre-release
+        if: steps.verify.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          gh release create "android-signed-preview-${GITHUB_RUN_ID}" \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title 'PsychoVault Android experimental preview' \
+            --notes-file build-notes/Release-Notes-Android.txt \
+            build-notes/PsychoVault-Android-Preview.apk build-notes/SHA256SUMS.txt build-notes/Release-Notes-Android.txt

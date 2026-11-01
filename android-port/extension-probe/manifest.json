@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "PsychoVault Android extension compatibility probe",
+  "description": "Checks API availability without connecting to a VPN or changing browser settings.",
+  "version": "0.1.0",
+  "permissions": ["idle", "notifications", "privacy", "proxy", "scripting", "storage", "tabs", "webRequest", "webRequestAuthProvider"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "action": {"default_title": "Extension compatibility probe", "default_popup": "popup.html"}
+}

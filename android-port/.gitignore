@@ -3,3 +3,8 @@ android/app/src/main/assets/public/
 *.jks
 *.keystore
 build-notes/
+*.p12
+*.pfx
+www/blocklist.json
+www/scrypt.js
+www/scrypt-license.txt
