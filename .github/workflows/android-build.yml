@@ -2,6 +2,11 @@ name: Android source and build
 
 on:
   workflow_dispatch:
+    inputs:
+      attempt_apk:
+        description: Attempt the APK build (requires a runner with at least 100GB free)
+        type: boolean
+        default: false
   push:
     branches: [arena/4770266d-psychovault]
     paths:
@@ -42,10 +47,25 @@ jobs:
               javalang.parse.parse(open(path, encoding='utf-8').read())
               print('parsed', path)
           PY
+      - name: Write source notes
+        run: |
+          mkdir -p build-notes
+          {
+            echo "PsychoVault Android source notes"
+            echo "Status: source checks passed"
+            echo "No APK was produced by this job."
+            echo "Chromium compile, device, extension and VPN behaviour tests are still required."
+          } > build-notes/Release-Notes-Android.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-source-notes
+          path: build-notes/Release-Notes-Android.txt
+          retention-days: 7
 
   build-apk:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.attempt_apk }}
     needs: source-checks
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.ANDROID_BUILD_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
@@ -61,7 +81,7 @@ jobs:
           echo "Free disk: ${free_gb}GB"
           {
             echo "PsychoVault Android build notes"
-            echo "Status: source checks passed; APK build attempted"
+            echo "Status: APK build attempted"
             echo "Runner free disk: ${free_gb}GB"
           } > build-notes/Release-Notes-Android.txt
           if [ "$free_gb" -lt 100 ]; then
