@@ -1,77 +1,55 @@
-# PsychoVault Android experiment
+# Restarting PsychoVault for Android
 
-I am building an Android version separately from my Windows browser. This is an **experimental preview**, not a finished browser. I have published a debug APK for testing. The earlier preview was reported to open and browse on a phone; that does not verify the new changes or the missing features.
+I removed the experimental Capacitor/WebView Android source and started again using the extension-capable Chromium Android approach. The previously published preview APK is unchanged and does not have extension or Proton support. This folder does not yet produce a PsychoVault APK.
 
-**Proton VPN does not work in this preview.** It is not bundled, connected or protecting traffic. General extensions, Dark Reader and private browsing are not implemented either. The current unbuilt source includes an experimental, incomplete vault. The current unbuilt source has an experimental domain blocker; the previously published APK does not. Only a small subset of settings is available in the current source. Do not use this preview for sensitive browsing or assume it has the privacy or security features of the Windows browser.
+## Starting point
 
-## What is here
+`engine/titanium/` contains the unmodified browser build and extension-host patches from Titanium Browser for Android at commit `5e9070a98b48f6b6cb239bf90b8718b91795b7c5`. Titanium is GPL-2.0; its licence and upstream README are included. Its Vanadium submodule is pinned to commit `0202b7badff99434822ba5e32e0d738792868455` in `engine/UPSTREAM.json`. Chromium, Vanadium and individual extensions have their own licences and notices. Review all redistribution obligations and the effects of combining this code before distributing a build.
 
-- `www/` - a small responsive interface inspired by my desktop UI. It uses my desktop icon but does not yet reuse the full desktop interface or have visual parity.
-- `android/` - the Capacitor Android project and a custom browser-view plugin. Websites use separate Android WebViews without the Capacitor bridge.
-- `PLAN.md` - the work and test gates needed before this can become my Android browser.
-- `BUILD-ANDROID.bat` - my experimental Windows debug build entry point. It writes `Release-Notes-Android.txt` even if a prerequisite or build step fails.
+The upstream source is a full Chromium Android browser, not a drop-in WebView library. It still contains Titanium branding and settings. It is not PsychoVault's interface, has not been built here, and does not yet bundle or verify Dark Reader or Proton. I must integrate the desktop-style interface and features and test extension installation rather than claiming the upstream code completes the port. See `EXTENSION-ENGINE-DECISION.md` for the engine comparison and outstanding work.
 
-This preview uses Android WebView to test the shell, navigation and view placement. Android WebView is not a general extension host. My plan still requires Proton VPN inside PsychoVault and general extension support. I have not proven that the Firefox Proton extension works in GeckoView, and I will not call this preview protected.
+## Preparing source - not a build
 
-## Bookmarks, history and settings - source changes
+On Linux or WSL2, `scripts/prepare-engine.sh /absolute/path/outside/the/repository` copies the pinned Titanium inputs and downloads the pinned Vanadium revision into a new workspace. It refuses to overwrite an existing path. The script does not fetch Chromium or build, sign, publish or run an APK. It needs Git and network access to GitHub. The default workspace is `~/psychovault-android-engine`; keep large dependencies and keys outside this Git repository.
 
-The current source adds a bookmark button and a menu for bookmarks and history. I can remove individual bookmarks and history entries, or clear the history list. Settings has a search engine, theme selector and an optional open-tab restore switch. Restore is off by default. When enabled it saves up to 50 tab addresses and the selected tab, but not each tab's back/forward history. Turning it off clears the saved session from the browser data. The list and settings are stored locally in the trusted interface's WebView storage, not in the desktop profile or an encrypted vault. URL paths and query strings, including restored tab addresses, may contain sensitive information. There is no private mode; clearing history does not clear website cookies, cache or other site data.
+The upstream `.gclient` fetches Chromium build dependencies and filter lists from external services when its build runs. The preparation script replaces the mutable Titanium extension hook in the staged copy with a version-pinned, SHA-256-checked download; the actual CRX download has not been tested in this sandbox. Other build inputs are not all pinned or reviewed yet. The upstream `build.sh` installs packages, modifies its checkout and expects signing credentials; do not run it as a PsychoVault release build. I need to replace that flow with a pinned, auditable build and release process before it is ready.
 
-These changes passed JavaScript tests with mocked native calls. They have not been built into a new APK or verified on a phone. They are not yet equivalent to my desktop bookmark, history or settings features.
+## What still needs doing
 
-The Android launcher icon in the current source now uses my PsychoVault icon instead of the default Capacitor icon. It still needs a device check.
+- Integrate PsychoVault's own responsive desktop UI and features with Chromium's browser, tab and extension APIs.
+- Implement and test extension management, consent, updates and popups; integrate the real Dark Reader extension.
+- Port and verify the blocker, vault, privacy, downloads, settings and session behaviour. Include and verify Proton VPN as a default in-browser extension.
+- Establish licence compliance, secure signing, update compatibility, data migration, build notes and a repeatable Windows `.bat` workflow.
+- Build only after permission; test installation, updates, extensions, security and the UI on a phone.
 
-## Sidebar
+Chromium documents at least 100 GB free disk and an x86-64 Linux host; more than 16 GB RAM is recommended. A free self-hosted WSL2 or Linux build may be possible on suitable existing hardware; no successful build is claimed. The old Android GitHub workflows were removed because they built the deleted WebView prototype and would not build this engine.
 
-The sidebar starts hidden. I tap the menu button next to the logo to open it. It hides after five seconds, when I tap the menu button again, or when I touch the page, toolbar or tab strip. The web page should use the freed space. I still need to check the new behaviour on a phone.
+The old preview may be signed with an incompatible key. Changing to a new Android browser or signer can require a separate install or uninstall, and uninstalling can delete its local data. Do not uninstall without backing up anything important. Play Protect prompts cannot be guaranteed to disappear.
 
-## Build on Windows
+## Desktop UI adaptation in progress
 
-I need Node.js 22 or newer, Android Studio, Android SDK 36 and JDK 21 configured for the Android Gradle build. The Gradle wrapper and npm need network access on a first build. I can use my existing repository path - I do not need to move it. I should update Android Studio and install the SDK versions requested by the build.
+`scripts/prepare-ui.cjs` creates a separate copy of the existing desktop chrome, keeping its HTML, CSS and renderer rather than replacing them with a new mobile design. It adds a phone layout and an auto-hiding rail controller. The rail starts hidden, opens from the tab strip, closes after five seconds or an outside touch, and closes when a rail button is selected. The future Chromium host must forward website touches to it. Unit tests cover the controller; no phone or Chromium integration has been tested.
 
-Double-click `BUILD-ANDROID.bat`. If it succeeds, the debug APK should be at `android\app\build\outputs\apk\debug\app-debug.apk`. If it fails, I read the **first error** in the window and the generated release notes. I have not run this batch file on Windows or verified the APK in this environment.
+`ui/desktop-bridge.js` and `ui/internal-page-bridge.js` map the desktop chrome and internal-page preloads to native transport channels, respectively. It is an adapter contract, not a native implementation. The generated UI deliberately does not start the desktop renderer when `window.pv` is absent. The Chromium-side trusted UI, bridge transport, page touch forwarding and layout integration are not implemented yet. Some native tab-controller commands exist as source, but they are not connected to the UI or tested on Android. The bridge must never be exposed to arbitrary websites. No browser or extension functionality follows from this UI preparation alone.
 
-For a manual build from this folder:
+To generate the UI for development without touching the repository or building an APK: `node scripts/prepare-ui.cjs /absolute/path/to/new/output`. The target must not already exist. This output is not a working browser and is not packaged by the current engine scripts.
 
-```bat
-npm ci
-npm run sync
-npm test
-cd android
-gradlew.bat assembleDebug
-```
+## Desktop feature verification
 
-A debug APK is for testing. See [SIGNING.md](SIGNING.md) for the stable signing plan and the warning about losing app data on uninstall. The signing workflow has not been verified yet. I must not commit signing keys, credentials or real browser data.
+The new Chromium foundation is not yet a PsychoVault browser. `scripts/audit-desktop-settings.cjs` inventories the desktop default settings and marks each user-facing setting as missing its PsychoVault Android host implementation; Chromium upstream may independently provide some similar features. The inventories and adapter tests check coverage, not actual functionality. The chrome and internal-page bridge contracts now match the desktop preload methods and argument shapes, but neither adapter is wired to a native host. Generated assets include the desktop new-tab, settings and recovery pages; those pages are not yet connected or secured by a Chromium internal-page handler.
 
-## Current limits
+## Pinned extension build input
 
-- A tab is a separate Android WebView, but storage is not isolated per tab. This is not private browsing or a container implementation.
-- Only HTTP and HTTPS navigation is accepted; the Android network policy may block cleartext HTTP. Other schemes and external-app links do not work yet.
-- File picker and download support is unbuilt and unverified. Popups, media permissions and Android back-button integration are not implemented. Website data is not migrated from Windows.
-- Opt-in tab-address restoration has mock tests only; it does not restore navigation history. Process death, site security, WebView layering, keyboard and rotation need real-device testing.
-- The app starts at Google. Searches use Google by default; the current source lets me choose DuckDuckGo or Bing. Do not enter confidential information into this prototype.
-- This project uses an experimental application ID, so it is not an upgrade path for a future release until the final ID and signing plan are decided.
+The staged engine source uses the upstream Titanium companion extension `v0.0.1` with its release SHA-256 recorded in `engine/psychovault/dependencies.json`. The download is size-limited and the hash is checked before the upstream bundler reads it. Unit tests cover successful verification, mismatches and size limits using synthetic data; staging the pinned Vanadium checkout and hook was also tested. I could not download the real GitHub release asset in this environment, so I have not verified the artifact bytes, bundle, Chromium signature handling or an APK. This companion extension is not Dark Reader or Proton.
 
-## Checks
+## Library data code
 
-I can run `npm test` for the small URL helper test and `npm run sync` to copy the web assets to Android. Passing those alone does not prove the Android app compiles or works on a device. The earlier APK built in Actions and was reported working on a phone, but I still need the checks in `PLAN.md` before calling this a finished browser.
+The restart includes a bookmarks and history data module and an IndexedDB storage adapter. The desktop and internal-page bridge contracts can route their library calls through it, and it avoids recording private or non-remembered visits when the host supplies those profile facts. It serializes changes within one owner and does not replace good data on a write failure. This isn't connected to Chromium yet. Before using it, the browser host must provide a dedicated trusted origin, own a single library instance, and supply genuine profile and committed-navigation events. Otherwise private history isolation and cross-window consistency are not established. No Android device has tested this code.
 
-## GitHub Actions preview
+The staged GN configuration now uses `com.psychocore.psychovault` rather than Titanium's package or the former experimental preview package. That means it is a separate app from the earlier preview; it does not migrate that app's data. Package naming does not fix a signer mismatch, and signing, update compatibility and the reported install conflict still need device verification.
 
-The Android preview workflow builds only a debug APK and uploads it as an Actions artifact. The requested preview can also be published as a GitHub pre-release; it is not a release-signed APK. It audits production dependencies, runs the source tests, checks the APK archive and verifies its signing. It also uploads build notes on failure. Passing those checks does not prove the app works on a phone or that any VPN protection exists.
+## Chromium tab controller source
 
-## Upload and download work - source only
+The staged source now adds `PsychoTabController.java` to Chromium's Android Java target and gives `ChromeTabbedActivity` a way to create it after the tab model exists. The controller has a strict operation allowlist for opening, selecting and closing tabs and for HTTP/HTTPS navigation, back, forward, reload and stop. It uses the currently selected Chromium tab model, so tab IDs from the other profile aren't acted on. It can produce a snapshot of that model. Calls must be made on Chromium's UI thread.
 
-The Android source now attempts file uploads through the Android file picker and starts ordinary HTTP and HTTPS downloads with Android DownloadManager. This is not yet built or phone-tested. Uploads accept selected content URIs with read access; capture and folder selection are not implemented. Closing a tab cancels its pending upload callback.
-
-Downloads do not forward browser cookies or authorization headers, so signed-in downloads can fail. Blob and data downloads are not supported. Android 10 and newer use the public Downloads folder; on Android 9 and older downloads use app-specific storage and are deleted if the app is uninstalled. This is not yet the desktop downloads manager, and a started message does not mean the transfer completed.
-
-## Domain blocker - source only
-
-The source now copies the desktop domain list at sync and applies domain matching in Android WebView request interception. The blocker panel has switches for blocking and the bundled list, plus custom blocked domains and allowed top-level sites. This code has not been built or device-tested. Android WebView does not intercept all redirect and service-worker requests, so it cannot be assumed to match desktop coverage. It does not implement cosmetic filtering or a general extension blocker. If the list cannot load, the source reports that blocking is unavailable rather than claiming it is enabled.
-
-## Vault work - source only
-
-The current source has an experimental password-protected local vault with create, unlock, lock, add and remove controls. Its encrypted records use scrypt and AES-GCM in the desktop backup format; synthetic interoperability tests run in both directions against the desktop codec. The source has not been compiled, security-reviewed or tested on a phone. Do not put real passwords in it yet.
-
-There is no autofill, editing, vault backup import/export UI, desktop profile migration, Android Keystore integration, configurable auto-lock timer or recovery if the master password is lost. Closing the panel and page lifecycle events request a lock, but memory erasure and background locking are not verified. Uninstalling the app removes its local vault, and there is no export UI yet. The included `scrypt-js` dependency is MIT licensed; its licence is copied into the app assets at sync.
+This is native controller source, not a connected browser UI. The privileged host must authenticate the UI document before invoking it, resolve address-bar text and internal PsychoVault pages, deliver state changes, and connect the desktop-style chrome to the real browser layout. The new-tab method currently opens Chromium's own page, not the PsychoVault new tab. I checked that the source installer applies to the pinned Chromium files and parses as Java, but I have not compiled it against Chromium or tested the controller on Android.
