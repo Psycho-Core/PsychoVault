@@ -43,7 +43,7 @@ export DEBIAN_FRONTEND=noninteractive
 
 step "install host build tools"
 sudo apt-get update
-sudo apt-get install -y file git curl python3 python3-pillow imagemagick librsvg2-bin lsb-release
+sudo apt-get install -y file git curl python3 python3-pil imagemagick librsvg2-bin lsb-release
 sudo dpkg --add-architecture i386
 sudo apt-get update
 sudo apt-get install -y libgcc-s1:i386
@@ -59,6 +59,8 @@ if [[ ! -d .git ]]; then
   git init -q
   git remote add origin https://chromium.googlesource.com/chromium/src.git
 fi
+git config --global user.name "PsychoVault CI"
+git config --global user.email "ci@psychovault.local"
 git fetch --depth 1 origin "+refs/tags/$VERSION:refs/tags/$VERSION"
 git checkout --detach "$VERSION"
 CHROMIUM_COMMIT="$(git rev-parse HEAD)"
