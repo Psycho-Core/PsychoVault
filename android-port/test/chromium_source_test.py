@@ -19,7 +19,7 @@ class ChromiumSourceTests(unittest.TestCase):
         gn.write_text('chrome_java_sources = [\n  "java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java",\n]\n')
         (path / 'chrome/android/BUILD.gn').write_text('  android_library("chrome_java") {\n    deps = [\n    ]\n    srcjar_deps += [ ":chrome_jni_headers" ]\n}\n  chrome_public_apk_or_module_tmpl("chrome_public_apk") {\n    target_type = "android_apk"\n}\n')
         ui = path / 'chrome/browser/ui'; ui.mkdir(parents=True)
-        (ui / 'BUILD.gn').write_text('static_library("ui") {\n  public_deps = [\n    # WARNING WARNING WARNING\n  ]\n}\n')
+        (ui / 'BUILD.gn').write_text('static_library("ui") {\n  public_deps = [\n    # WARNING WARNING WARNING\n  ]\n  deps = [\n    ":browser_element_identifiers",\n  ]\n}\n')
         webui = ui / 'webui'; webui.mkdir()
         (webui / 'chrome_web_ui_configs.cc').write_text('#include "chrome/browser/ui/webui/chrome_web_ui_configs.h"\nvoid RegisterChromeWebUIConfigs() {\n  auto& map = content::WebUIConfigMap::GetInstance();\n}\n')
         content = path / 'chrome/browser/chrome_content_browser_client.cc'
