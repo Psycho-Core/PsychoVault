@@ -1,6 +1,6 @@
 # Bundled extensions
 
-## Proton VPN: Fast & Secure 1.3.6 — `proton-vpn/`
+## Proton VPN: Fast & Secure 1.3.6 - `proton-vpn/`
 
 This folder is a build of Proton AG's own browser extension, **not** a copy taken from the
 Chrome Web Store. It is here because Proton publishes the extension under GPL-3.0, which
@@ -13,7 +13,7 @@ PsychoVault cannot install from is a VPN most users will never turn on.
 | Pinned commit | `71d7d86f164a2ee8e50ce5a389c9e5cbe0fd6883` (2026-10-09) |
 | Version | 1.3.6, Manifest V3 |
 | Built with | `npm ci --legacy-peer-deps && npm run build`, Node 22, no source changes |
-| Licence | GPL-3.0 — full text in `proton-vpn/LICENSE` |
+| Licence | GPL-3.0 - full text in `proton-vpn/LICENSE` |
 
 The build is reproducible from that commit with the two commands above. `npm ci` needs
 `--legacy-peer-deps` because the upstream lockfile has a `ts-jest`/`@babel/core` peer
@@ -33,13 +33,13 @@ could drift from upstream. Each release states this version and commit in `VERIF
 ### What it does here, and what it is honest about
 
 The extension sends browser traffic through Proton's proxy. It needs two Chrome APIs that
-Electron does not implement — `chrome.proxy` and `chrome.privacy`. PsychoVault supplies both
+Electron does not implement - `chrome.proxy` and `chrome.privacy`. PsychoVault supplies both
 itself (`app/ext-shim.js`), backed by `session.setProxy()` and Chromium's WebRTC policy
 setter. **You still need your own Proton account**: no credentials, no subscription, and no
 server list are bundled, and the extension talks to Proton's API directly the way it does in
 Chrome.
 
-Removing the extension is allowed and permanent — PsychoVault records the removal and does
+Removing the extension is allowed and permanent - PsychoVault records the removal and does
 not put it back on the next launch. **Settings → Extensions → Restore** brings it back.
 
 ### Not covered by PsychoVault's MIT licence

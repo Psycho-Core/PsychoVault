@@ -1,8 +1,8 @@
 # PsychoVault
 
 I'm Psycho-Core. This is the browser I wanted: one I actually wrote, not someone else's
-browser with a new coat of paint. The application — the tabs, the omnibox, the session
-store, the blocker, the sidebar, the command palette, the split view — is code in this
+browser with a new coat of paint. The application - the tabs, the omnibox, the session
+store, the blocker, the sidebar, the command palette, the split view - is code in this
 repository. The rendering engine underneath is Chromium, shipped with Electron, the same
 way Brave uses Chromium and Vivaldi uses Chromium.
 
@@ -11,6 +11,11 @@ Dark navy, cyan accents, everything in a rail down the left. Fast enough to forg
 ![PsychoVault new tab page](docs/screenshot-newtab.png)
 
 This is an earlier capture of the new tab page - the current interface may look different.
+
+I am also experimenting with an Android port in [`android-port/`](android-port/README.md).
+I published an experimental debug APK, and the earlier preview was reported working on a phone.
+It is not a finished browser, and new changes still need testing.
+Proton VPN and extensions do not work in that preview. My Windows browser is separate.
 
 Screenshots of the running app are in `docs/` - the new tab page, the command palette, a
 private window, Settings, the Performance panel, the extension manager, a tab held mid-drag,
@@ -492,7 +497,7 @@ scripts have already read the canvas, so the probe value came back unchanged in 
 measured test. A patch you can detect is a stronger signal than no patch, and I am not
 shipping a placebo to fill a row in a feature table (headers and cookie policy only). The vault has no import from another manager yet, and no password
 health checks (reuse, weak, breached lists).
-Widevine is not in Electron, so DRM video (Netflix, Spotify web) will not play — that is
+Widevine is not in Electron, so DRM video (Netflix, Spotify web) will not play - that is
 a licence problem, not a code problem, and I'm not going to fake it.
 
 ## Licence

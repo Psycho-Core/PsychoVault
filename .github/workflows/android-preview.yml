@@ -1,0 +1,132 @@
+name: Build Android preview APK
+
+on:
+  push:
+    branches:
+      - arena/ce33705b-psychovault
+    paths:
+      - 'android-port/**'
+      - 'app/ui/icon.png'
+      - '.github/workflows/android-preview.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  android-preview:
+    name: Audit and build Android debug preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: android-port
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Check Android SDK and install platform
+        run: |
+          test -n "${ANDROID_HOME:-}"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Install dependencies
+        run: npm ci
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=moderate
+      - name: Run source tests
+        run: npm test
+      - name: Sync Capacitor assets
+        run: npm run sync
+      - name: Build debug APK
+        id: build
+        run: |
+          mkdir -p ../build-notes
+          set +e
+          ./gradlew assembleDebug --stacktrace > ../build-notes/gradle-build.txt 2>&1
+          result=$?
+          set -e
+          cat ../build-notes/gradle-build.txt
+          if [ "$result" -ne 0 ]; then
+            error=$(grep -m 1 -E 'error:|Execution failed|Could not|FAILURE:' ../build-notes/gradle-build.txt || true)
+            echo "::error title=First Gradle error::$error"
+            exit "$result"
+          fi
+        working-directory: android-port/android
+      - name: Inspect APK and verify signing
+        id: verify
+        run: |
+          set -eu
+          apk=android/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$apk"
+          unzip -t "$apk" > /dev/null
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$apk"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" | head -20
+          cp "$apk" android/app/build/outputs/apk/debug/PsychoVault-Android-Preview-debug.apk
+          (cd android/app/build/outputs/apk/debug && sha256sum PsychoVault-Android-Preview-debug.apk > SHA256SUMS.txt)
+      - name: Write build notes
+        if: always()
+        env:
+          BUILD_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          mkdir -p build-notes
+          {
+            echo 'PsychoVault Android experimental debug build'
+            echo "Job status before notes: $BUILD_STATUS"
+            echo "Run: $RUN_URL"
+            echo 'This is an experimental debug build, not a finished browser.'
+            echo 'Proton VPN, extensions, private browsing, the vault and the ad blocker do not work.'
+            echo 'Traffic is not protected by Proton. Do not use this for sensitive browsing.'
+            echo 'The sidebar starts hidden. Use the menu button next to the logo to open it.'
+            echo 'The sidebar hides after five seconds or when touching the page, toolbar or tabs.'
+            echo 'The interface is a simplified preview, not the complete desktop interface.'
+            echo 'No device or network protection tests are performed by this workflow.'
+            echo 'This debug APK may not update a later build signed with a different key.'
+            echo 'I provide this without warranty.'
+            if [ -f android/app/build/outputs/apk/debug/SHA256SUMS.txt ]; then
+              cat android/app/build/outputs/apk/debug/SHA256SUMS.txt
+            else
+              echo 'No verified APK checksum was generated. Read the first failing step in the Actions log.'
+            fi
+          } > build-notes/Release-Notes-Android.txt
+      - name: Upload build notes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-preview-build-notes
+          path: android-port/build-notes/
+          if-no-files-found: warn
+      - name: Upload verified debug APK
+        if: steps.verify.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: psychovault-android-debug-preview
+          path: |
+            android-port/android/app/build/outputs/apk/debug/PsychoVault-Android-Preview-debug.apk
+            android-port/android/app/build/outputs/apk/debug/SHA256SUMS.txt
+          if-no-files-found: error
+      - name: Publish requested Android preview pre-release
+        if: github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Release Android preview for testing') && steps.verify.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          tag="android-preview-${GITHUB_RUN_ID}"
+          gh release create "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --latest=false \
+            --title "PsychoVault Android experimental preview" \
+            --notes-file build-notes/Release-Notes-Android.txt \
+            android/app/build/outputs/apk/debug/PsychoVault-Android-Preview-debug.apk \
+            android/app/build/outputs/apk/debug/SHA256SUMS.txt \
+            build-notes/Release-Notes-Android.txt
