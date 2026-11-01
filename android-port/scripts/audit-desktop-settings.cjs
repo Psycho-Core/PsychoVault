@@ -13,7 +13,8 @@ const implemented = new Set(['search','customSearchEngines','homepage','remember
   'blockAds','blockUseBundled','blockCustomDomains','blockAllowSites','workspacesEnabled','restore','translateTarget',
   'blockAutoplay','blockThirdPartyCookies','sendDNT','cpuLimit','sleepExclude','sleepTabsMin','batterySaver',
   'vaultEnabled','vaultLockMin','enhanceVideo','enhanceImages','askSaveLocation','panicEnabled','panicUrl',
-  'services','railIcons','spellCheck','spellBuiltin','spellLangs','webRtc','doh','dohTemplate','stripReferrer','denyPerms','modCss']);
+  'services','railIcons','spellCheck','spellBuiltin','spellLangs','webRtc','doh','dohTemplate','stripReferrer','denyPerms','modCss',
+  'clearOnExit','batteryAuto','uiSounds','soundVol']);
 const inventory = Object.keys(sandbox.defaults).map(key => ({
   key,
   status: key === 'settingsVersion' ? 'desktop-internal-migration-marker'

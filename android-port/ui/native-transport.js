@@ -8,6 +8,29 @@
     if (!native || typeof native.post !== 'function' || !resolver) throw new TypeError('Native host transport required');
     const pending = new Map(), listeners = new Map();
     let sequence = 0, ready = false, disposed = false, settings = {};
+    let soundContext = null;
+    function keySound() {
+      if (!settings.uiSounds || typeof window === 'undefined') return;
+      try {
+        const Audio = window.AudioContext || window.webkitAudioContext;
+        if (!Audio) return;
+        soundContext = soundContext || new Audio();
+        if (soundContext.state === 'suspended') soundContext.resume();
+        const now = soundContext.currentTime;
+        const osc = soundContext.createOscillator(), gain = soundContext.createGain();
+        const vol = Math.max(0, Math.min(1, Number(settings.soundVol) || 0.4));
+        osc.type = 'triangle'; osc.frequency.setValueAtTime(1800, now);
+        gain.gain.setValueAtTime(Math.max(0.0001, vol * 0.08), now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.035);
+        osc.connect(gain); gain.connect(soundContext.destination);
+        osc.start(now); osc.stop(now + 0.04);
+      } catch { /* Audio is optional; a blocked context must not break chrome input. */ }
+    }
+    function onKeyDown(event) {
+      if (!event || event.repeat || event.ctrlKey || event.altKey || event.metaKey) return;
+      keySound();
+    }
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') window.addEventListener('keydown', onKeyDown);
     function invoke(channel, args = []) {
       if (disposed) return Promise.reject(new Error('Android chrome is closed'));
       if (!ready && channel !== 'ui:ready') return Promise.reject(new Error('Android chrome is not ready'));
@@ -30,7 +53,7 @@
       cancel(request.timer); pending.delete(id);
       let value;
       try { value = encoded === 'null' ? null : JSON.parse(encoded); } catch { request.reject(new Error('Invalid Android browser reply')); return; }
-      if (ok && request.channel === 'settings:get' && value && typeof value === 'object') settings = value;
+      if (ok && (request.channel === 'settings:get' || request.channel === 'settings:set') && value && typeof value === 'object') settings = value;
       if (ok) request.resolve(value); else request.reject(new Error(typeof value === 'string' ? value : 'Android browser operation failed'));
     }
     function emit(event, payload) {
@@ -55,6 +78,8 @@
       disposed = true;
       for (const request of pending.values()) { cancel(request.timer); request.reject(new Error('Android chrome is closed')); }
       pending.clear(); listeners.clear();
+      if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') window.removeEventListener('keydown', onKeyDown);
+      if (soundContext) { try { soundContext.close(); } catch {} soundContext = null; }
     }
     return {invoke, reply, emit, subscribe, dispose, start: () => invoke('ui:ready').then(state => { ready = true; emit('state', state); return state; }),
       get ready() { return ready; }};

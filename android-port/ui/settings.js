@@ -28,16 +28,16 @@
 
   const BOOLS = ['remember','hideSidebar','highContrast','reduceMotion','showTabCloseButtons','restore',
     'blockAds','blockUseBundled','workspacesEnabled','blockAutoplay','blockThirdPartyCookies','sendDNT',
-    'batterySaver','vaultEnabled','enhanceVideo','enhanceImages','askSaveLocation','panicEnabled','railIcons',
-    'spellCheck','spellBuiltin','stripReferrer'];
-  const SELECTS = ['search','theme','accent','cpuLimit','webRtc','doh','translateTarget','vaultLockMin'];
+    'batterySaver','batteryAuto','vaultEnabled','enhanceVideo','enhanceImages','askSaveLocation','panicEnabled','railIcons',
+    'spellCheck','spellBuiltin','stripReferrer','uiSounds'];
+  const SELECTS = ['search','theme','accent','cpuLimit','webRtc','doh','translateTarget','vaultLockMin','clearOnExit'];
   const TEXTS = ['homepage','blockAllowSites','blockCustomDomains','sleepExclude','panicUrl','dohTemplate','denyPerms','modCss','spellLangs'];
   const SUPPORTED = new Set([...BOOLS, ...SELECTS, ...TEXTS,
     'customSearchEngines','customSearchSave','tiles','tileAdd','tileSave','sleepTabsMin','blockSaveLists',
     'extList','extReload','extAddFolder','extAddCrx','protonVpnRestore','protonVpnStatus','vpnCheckOpen',
     'vstat','vunlock','vpw','vgo','vmaster','vmasterHint','vnew','vset','vBackup','vRestore','vImport',
     'vbackupPassword','vbackupConfirm','vTransferMsg','vlist','eSite','eUser','ePass','eGen','eSave','vLock','vRefresh','vnote',
-    'downloadDir']);
+    'downloadDir','soundVol']);
   for (const el of document.querySelectorAll('input,select,textarea,button')) {
     if (el.hasAttribute('data-category') || SUPPORTED.has(el.id)) continue;
     el.disabled = true;
@@ -45,7 +45,7 @@
   }
   const note = document.createElement('p');
   note.className = 'hint';
-  note.textContent = 'Android source build: enabled controls have native handlers. Disabled controls are not implemented yet. Network limits, containers, custom dictionaries and clear-on-exit are not available on this Android engine.';
+  note.textContent = 'Android source build: enabled controls have native handlers. Disabled controls are not implemented yet. Network limits, containers, custom dictionaries, arbitrary download folders and media keys are not available on this Android engine.';
   document.querySelector('.settings-main').prepend(note);
   if (isPrivate) {
     const privateNote = document.createElement('p'); privateNote.className = 'hint';
@@ -64,6 +64,7 @@
     for (const id of TEXTS) if (s(id)) s(id).value = st[id] || '';
     if (s('homepage')) s('homepage').value = st.homepage || 'psychovault://newtab';
     if (s('sleepTabsMin')) s('sleepTabsMin').value = String(st.sleepTabsMin || 0);
+    if (s('soundVol')) s('soundVol').value = String(st.soundVol === undefined ? 0.4 : st.soundVol);
     if (s('customSearchEngines')) s('customSearchEngines').value = (st.customSearchEngines || []).map(e => [e.shortcut, e.name, e.url].join(' | ')).join('\n');
     renderTiles(st.speedDial || []);
     if (s('downloadDir')) { s('downloadDir').value = 'System Downloads folder'; s('downloadDir').readOnly = true; }
@@ -81,6 +82,7 @@
   for (const id of SELECTS) { const el = s(id); if (el) el.onchange = () => save({[id]: id === 'vaultLockMin' ? Number(el.value) : el.value}); }
   for (const id of TEXTS) { const el = s(id); if (el && id !== 'blockAllowSites' && id !== 'blockCustomDomains') el.onchange = () => save({[id]: el.value.trim()}); }
   if (s('sleepTabsMin')) s('sleepTabsMin').onchange = () => save({sleepTabsMin: Math.max(0, Math.min(1440, Number(s('sleepTabsMin').value) || 0))});
+  if (s('soundVol')) s('soundVol').onchange = () => save({soundVol: Math.max(0, Math.min(1, Number(s('soundVol').value) || 0))});
   if (s('blockSaveLists')) s('blockSaveLists').onclick = async () => {
     await save({blockAllowSites: s('blockAllowSites').value, blockCustomDomains: s('blockCustomDomains').value});
     if (s('blockListsMsg')) s('blockListsMsg').textContent = 'Blocker lists saved. Counts apply to new requests; they are not a leak test.';

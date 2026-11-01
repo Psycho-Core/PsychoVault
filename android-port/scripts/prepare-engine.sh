@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Prepare an isolated copy of the pinned engine inputs. Does not build or sign an APK.
 set -Eeuo pipefail
+trap 'echo "prepare-engine failed at line $LINENO" >&2' ERR
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 port_dir="$(cd -- "$script_dir/.." && pwd -P)"
 destination="${1:-$HOME/psychovault-android-engine}"
@@ -25,7 +26,12 @@ cp "$repo_root/app/blocklist.json" "$stage/psychovault/bundled/blocklist.json"
 python3 "$stage/psychovault/configure_stage.py"
 git init -q "$stage/vanadium"
 git -C "$stage/vanadium" remote add origin https://github.com/GrapheneOS/Vanadium.git
-git -C "$stage/vanadium" fetch --depth 1 origin 0202b7badff99434822ba5e32e0d738792868455
+attempt=0
+until git -C "$stage/vanadium" fetch --depth 1 origin 0202b7badff99434822ba5e32e0d738792868455; do
+  attempt=$((attempt + 1))
+  if [[ "$attempt" -ge 3 ]]; then echo "Vanadium fetch failed after 3 attempts." >&2; exit 1; fi
+  sleep 5
+done
 git -C "$stage/vanadium" checkout -q --detach FETCH_HEAD
 if [[ "$(git -C "$stage/vanadium" rev-parse HEAD)" != 0202b7badff99434822ba5e32e0d738792868455 ]]; then echo 'Vanadium revision mismatch.' >&2; exit 1; fi
 # A second check protects existing paths if one appeared while fetching.

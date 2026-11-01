@@ -31,12 +31,14 @@ final class PsychoProfileStore {
             "sleepExclude", "sleepTabsMin", "batterySaver", "vaultEnabled", "vaultLockMin",
             "enhanceVideo", "enhanceImages", "askSaveLocation", "panicEnabled", "panicUrl",
             "services", "railIcons", "spellCheck", "spellBuiltin", "spellLangs", "webRtc", "doh",
-            "dohTemplate", "stripReferrer", "denyPerms", "modCss", "restore");
+            "dohTemplate", "stripReferrer", "denyPerms", "modCss", "restore",
+            "clearOnExit", "batteryAuto", "uiSounds", "soundVol");
     private static final Set<String> INTERNAL = Set.of("removedBundledExtensions", "extensions", "workspaceOrder", "workspaceActive");
     private static final Set<String> BOOL_KEYS = Set.of("remember", "restore", "hideSidebar", "highContrast", "reduceMotion", "showTabCloseButtons",
             "blockAds", "blockUseBundled", "workspacesEnabled", "blockAutoplay", "blockThirdPartyCookies", "sendDNT", "batterySaver",
-            "vaultEnabled", "enhanceVideo", "enhanceImages", "askSaveLocation", "panicEnabled", "railIcons", "spellCheck", "spellBuiltin", "stripReferrer");
-    private static final Set<String> NUMBER_KEYS = Set.of("sleepTabsMin", "vaultLockMin");
+            "vaultEnabled", "enhanceVideo", "enhanceImages", "askSaveLocation", "panicEnabled", "railIcons", "spellCheck", "spellBuiltin", "stripReferrer",
+            "batteryAuto", "uiSounds");
+    private static final Set<String> NUMBER_KEYS = Set.of("sleepTabsMin", "vaultLockMin", "soundVol");
     private static final Set<String> ARRAY_KEYS = Set.of("customSearchEngines", "speedDial", "services", "extensions", "workspaceOrder", "removedBundledExtensions");
     private final Context mContext;
 
@@ -136,6 +138,10 @@ final class PsychoProfileStore {
         out.put("sleepExclude", text(saved, "sleepExclude", "", 20000));
         out.put("sleepTabsMin", Math.max(0, Math.min(1440, saved.optInt("sleepTabsMin", 0))));
         out.put("batterySaver", saved.optBoolean("batterySaver", false));
+        out.put("batteryAuto", saved.optBoolean("batteryAuto", false));
+        out.put("clearOnExit", enumValue(saved, "clearOnExit", "nothing", Set.of("nothing", "cache", "all")));
+        out.put("uiSounds", saved.optBoolean("uiSounds", false));
+        out.put("soundVol", Math.max(0.0, Math.min(1.0, saved.optDouble("soundVol", 0.4))));
         out.put("vaultEnabled", saved.optBoolean("vaultEnabled", true));
         out.put("vaultLockMin", Math.max(0, Math.min(1440, saved.optInt("vaultLockMin", 5))));
         out.put("enhanceVideo", saved.optBoolean("enhanceVideo", false));

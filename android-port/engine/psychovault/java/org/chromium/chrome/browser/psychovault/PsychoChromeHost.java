@@ -1,10 +1,12 @@
 package org.chromium.chrome.browser.psychovault;
 
 import android.app.Activity;
+import android.content.BroadcastReceiver;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.net.Uri;
@@ -19,6 +21,9 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VersionInfo;
+import org.chromium.chrome.browser.browsing_data.BrowsingDataBridge;
+import org.chromium.chrome.browser.browsing_data.BrowsingDataType;
+import org.chromium.chrome.browser.browsing_data.TimePeriod;
 import org.chromium.chrome.browser.compositor.CompositorViewHolder;
 import org.chromium.chrome.browser.content.WebContentsFactory;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -79,6 +84,19 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
     private JSONArray mPanicTabs;
     private final OnBackPressedCallback mBack = new OnBackPressedCallback(false) {
         @Override public void handleOnBackPressed() { if (mActive != null) mActive.bridge.emit("native-back", new JSONObject()); }
+    };
+    private final BroadcastReceiver mPowerReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (mDestroyed || intent == null || intent.getAction() == null) return;
+            boolean onBattery = Intent.ACTION_POWER_DISCONNECTED.equals(intent.getAction());
+            if (!onBattery && !Intent.ACTION_POWER_CONNECTED.equals(intent.getAction())) return;
+            try {
+                JSONObject settings = mStore.read(profile());
+                if (!settings.optBoolean("batteryAuto", false)) return;
+                if (settings.optBoolean("batterySaver", false) == onBattery) return;
+                saveSettings(new JSONObject().put("batterySaver", onBattery));
+            } catch (Exception ignored) { /* Private profiles do not persist power changes. */ }
+        }
     };
     private final Runnable mPublish = () -> { mPublishQueued = false; publish(); };
     private final Runnable mDownloadPublish = () -> { mDownloadQueued = false; publishDownloads(); };
@@ -143,7 +161,26 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
         ViewGroup root = activity.findViewById(android.R.id.content);
         root.addView(mOverlay, new FrameLayout.LayoutParams(-1, -1));
         activity.getOnBackPressedDispatcher().addCallback(activity, mBack);
+        IntentFilter power = new IntentFilter();
+        power.addAction(Intent.ACTION_POWER_CONNECTED);
+        power.addAction(Intent.ACTION_POWER_DISCONNECTED);
+        try { activity.registerReceiver(mPowerReceiver, power); } catch (Exception ignored) { }
         selectSession();
+    }
+
+    private void clearOnExitIfNeeded() {
+        if (!mActivity.isFinishing()) return;
+        try {
+            Profile profile = profile();
+            if (profile == null || profile.isOffTheRecord()) return;
+            String mode = mStore.read(profile).optString("clearOnExit", "nothing");
+            if ("nothing".equals(mode)) return;
+            int[] types = "all".equals(mode)
+                    ? new int[] {BrowsingDataType.HISTORY, BrowsingDataType.CACHE, BrowsingDataType.SITE_DATA,
+                            BrowsingDataType.SITE_SETTINGS, BrowsingDataType.FORM_DATA}
+                    : new int[] {BrowsingDataType.CACHE};
+            BrowsingDataBridge.getForProfile(profile).clearBrowsingData(null, types, TimePeriod.ALL_TIME);
+        } catch (Exception ignored) { /* Exit cleanup is best-effort; never block activity teardown. */ }
     }
 
     private boolean hit(int x, int y) { for (Rect region : mHitRegions) if (region.contains(x, y)) return true; return false; }
@@ -476,6 +513,8 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
     }
     public void destroy() {
         ThreadUtils.assertOnUiThread(); if (mDestroyed) return; mDestroyed = true; mBack.remove();
+        try { mActivity.unregisterReceiver(mPowerReceiver); } catch (Exception ignored) { }
+        clearOnExitIfNeeded();
         if (mShowingToken != -1) mCompositor.getBrowserControlsManager().getBrowserVisibilityDelegate().releasePersistentShowingToken(mShowingToken);
         mOverlay.removeCallbacks(mPublish); mOverlay.removeCallbacks(mDownloadPublish); mSelector.removeObserverFromAllModels(mModelObserver);
         for (TabModel model : mSelector.getModels()) for (int i = 0; i < model.getCount(); i++) model.getTabAt(i).removeObserver(mTabObserver);

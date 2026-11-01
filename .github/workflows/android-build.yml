@@ -66,7 +66,7 @@ jobs:
 
   build-apk:
     needs: source-checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
@@ -105,11 +105,27 @@ jobs:
             exit 1
           fi
       - name: Prepare pinned engine workspace
-        run: bash android-port/scripts/prepare-engine.sh "${{ steps.paths.outputs.engine_root }}"
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          notes="${{ steps.paths.outputs.notes_dir }}"
+          if ! bash android-port/scripts/prepare-engine.sh "${{ steps.paths.outputs.engine_root }}" 2>&1 | tee "$notes/prepare.log"; then
+            msg="$(tail -n 25 "$notes/prepare.log" | sed 's/%/%25/g; s/\r/%0D/g' | sed ':a;N;$!ba;s/\n/%0A/g')"
+            echo "::error::prepare-engine failed: $msg"
+            exit 1
+          fi
       - name: Build and validate APK
         env:
           PSYCHO_NOTES_DIR: ${{ steps.paths.outputs.notes_dir }}
-        run: bash "${{ steps.paths.outputs.engine_root }}/build-engine.sh"
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          notes="${{ steps.paths.outputs.notes_dir }}"
+          if ! bash "${{ steps.paths.outputs.engine_root }}/build-engine.sh"; then
+            msg="$(tail -n 35 "$notes/build.log" | sed 's/%/%25/g; s/\r/%0D/g' | sed ':a;N;$!ba;s/\n/%0A/g')"
+            echo "::error::build-engine failed: $msg"
+            exit 1
+          fi
       - name: Upload APK and release inputs
         if: success()
         uses: actions/upload-artifact@v4
