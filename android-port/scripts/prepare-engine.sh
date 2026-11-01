@@ -12,12 +12,13 @@ parent="$(cd -- "$parent" && pwd -P)"
 destination="$parent/$(basename -- "$destination")"
 repo_root="$(cd -- "$port_dir/.." && pwd -P)"
 case "$destination/" in "$repo_root/"*) echo 'Choose a workspace outside the PsychoVault repository.' >&2; exit 1 ;; esac
-if ! command -v git >/dev/null || ! command -v python3 >/dev/null; then echo 'Git and Python 3 are required.' >&2; exit 1; fi
+if ! command -v git >/dev/null || ! command -v python3 >/dev/null || ! command -v node >/dev/null; then echo 'Git, Python 3 and Node.js are required.' >&2; exit 1; fi
 stage="$(mktemp -d "$parent/.psychovault-engine.XXXXXXXX")"
 cleanup() { if [[ -n "${stage:-}" && -d "$stage" ]]; then rm -rf -- "$stage"; fi; }
 trap cleanup EXIT
 cp -R "$port_dir/engine/titanium/." "$stage/"
 cp -R "$port_dir/engine/psychovault" "$stage/psychovault"
+node "$port_dir/scripts/prepare-ui.cjs" "$stage/psychovault/ui"
 python3 "$stage/psychovault/configure_stage.py"
 git init -q "$stage/vanadium"
 git -C "$stage/vanadium" remote add origin https://github.com/GrapheneOS/Vanadium.git
@@ -30,4 +31,4 @@ mv -T -n -- "$stage" "$destination"
 if [[ -e "$stage" ]]; then echo "Workspace appeared during preparation; not overwriting: $destination" >&2; exit 1; fi
 stage=''
 echo "Prepared pinned upstream source in $destination"
-echo 'No APK was built. This is upstream Titanium, not yet a PsychoVault browser.'
+echo 'No APK was built. PsychoVault source additions are staged. No APK or device validation is implied.'

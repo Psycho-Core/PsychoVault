@@ -80,4 +80,4 @@ The current Android folder is a restart, not a working PsychoVault Android brows
 
 ## Current status
 
-Only the source-preparation and UI-adapter starting work exists. No complete Chromium host, integrated desktop features, extension manager, Dark Reader integration or Proton integration has been verified. There is no test-ready PsychoVault APK from this restart.
+The trusted Chromium chrome/new-tab origins, origin/profile-checked Java bridge, first tab/navigation loop, state observers, native overlay/layout source and activity lifecycle installer now exist. The focused source/transport tests pass, but Java/C++ have not been compiled against Chromium and the native layout/touch path has not run on a phone. Settings persistence and the bookmarks/history library are now connected in source, with committed-navigation gating and per-profile settings storage; downloads/find, blocker controls, extension management, Dark Reader and Proton remain disconnected. Phase 2 is only partially complete; there is no test-ready PsychoVault APK from this restart.

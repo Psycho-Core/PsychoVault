@@ -1,0 +1,40 @@
+import("//build/config/android/rules.gni")
+import("//third_party/jni_zero/jni_zero.gni")
+
+generate_jni("jni_headers") {
+  sources = [ "java/org/chromium/chrome/browser/psychovault/PsychoProfileStore.java" ]
+}
+
+
+android_assets("ui_assets") {
+  disable_compression = true
+  renaming_sources = [
+    "ui/index.html", "ui/style.css", "ui/mobile.css", "ui/renderer.js",
+    "ui/sidebar.js", "ui/mobile-shell.js", "ui/desktop-bridge.js",
+    "ui/internal-page-bridge.js", "ui/navigation-resolver.js",
+    "ui/native-transport.js", "ui/host-layout.js", "ui/chrome-bootstrap.js",
+    "ui/newtab.html", "ui/newtab.js", "ui/page-bootstrap.js", "ui/icon.png",
+    "ui/settings.html", "ui/settings.js", "ui/library.js", "ui/library-transport.js", "ui/indexeddb-storage.js",
+  ]
+  renaming_destinations = [
+    "psychovault/ui/index.html", "psychovault/ui/style.css", "psychovault/ui/mobile.css", "psychovault/ui/renderer.js",
+    "psychovault/ui/sidebar.js", "psychovault/ui/mobile-shell.js", "psychovault/ui/desktop-bridge.js",
+    "psychovault/ui/internal-page-bridge.js", "psychovault/ui/navigation-resolver.js",
+    "psychovault/ui/native-transport.js", "psychovault/ui/host-layout.js", "psychovault/ui/chrome-bootstrap.js",
+    "psychovault/ui/newtab.html", "psychovault/ui/newtab.js", "psychovault/ui/page-bootstrap.js", "psychovault/ui/icon.png",
+    "psychovault/ui/settings.html", "psychovault/ui/settings.js", "psychovault/ui/library.js", "psychovault/ui/library-transport.js", "psychovault/ui/indexeddb-storage.js",
+  ]
+}
+
+source_set("native") {
+  sources = [ "native/psycho_ui.cc", "native/psycho_ui.h", "native/psycho_profile.cc" ]
+  deps = [
+    ":jni_headers",
+    "//base",
+    "//chrome/browser/profiles:profile",
+    "//content/public/browser",
+    "//services/network/public/mojom",
+    "//third_party/skia",
+    "//url",
+  ]
+}

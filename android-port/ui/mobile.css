@@ -13,3 +13,9 @@ body.no-rail #rail:not([hidden]) { display:flex; }
 #omnibox-wrap { min-width:0; flex:1 1 auto; }
 #panel { max-width:calc(100vw - 12px); }
 #menu { max-width:calc(100vw - 12px); max-height:75vh; overflow-y:auto; }
+
+/* The native compositor shows through the page rectangle. Only chrome is opaque. */
+html, body, #app { background:transparent !important; pointer-events:none; }
+#top, #rail, #mobile-rail-toggle, #panel, #menu, #palette, #toast, #suggest, #findbar { pointer-events:auto; }
+#top { background:var(--bg); }
+#statusbar { display:none; }

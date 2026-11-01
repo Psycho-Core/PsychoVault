@@ -17,6 +17,8 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.function.Supplier;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /** Native tab operations for the browser chrome, not an API for web content.
  *
@@ -28,6 +30,7 @@ import java.util.function.Supplier;
 public final class PsychoTabController {
     private final TabModelSelector mSelector;
     private final Supplier<ChromeTabCreator> mCreator;
+    private final List<Runnable> mListeners = new CopyOnWriteArrayList<>();
 
     public PsychoTabController(TabModelSelector selector, Supplier<ChromeTabCreator> creator) {
         if (selector == null || creator == null) throw new IllegalArgumentException("Tab model unavailable");
@@ -51,19 +54,28 @@ public final class PsychoTabController {
         return url.getSpec();
     }
 
+    private String requireNavigationUrl(String raw) {
+        boolean incognito = model().isIncognito();
+        String suffix = "?private=" + (incognito ? "1" : "0");
+        if (("chrome://psychovault-pages/newtab.html" + suffix).equals(raw)
+                || ("chrome://psychovault-pages/settings.html" + suffix).equals(raw)) return raw;
+        return requireWebUrl(raw);
+    }
+
     /** Create a tab in the currently selected regular or incognito model. */
     public int openWebTab(String raw) {
         TabModel current = model();
-        String url = requireWebUrl(raw);
+        String url = requireNavigationUrl(raw);
         Tab tab = mCreator.get().createNewTab(new LoadUrlParams(url), TabLaunchType.FROM_CHROME_UI, current.getTabAt(current.index()));
         if (tab == null) throw new IllegalStateException("Chromium did not create a tab");
         return tab.getId();
     }
 
-    /** Open Chromium's new-tab page until PsychoVault's new-tab host is integrated. */
+    /** Open PsychoVault's internal new-tab page in the selected profile. */
     public void openNewTab() {
         model();
-        mCreator.get().launchNtp(TabLaunchType.FROM_CHROME_UI);
+        Tab tab = mCreator.get().createNewTab(new LoadUrlParams(requireNavigationUrl("")), TabLaunchType.FROM_CHROME_UI, null);
+        if (tab == null) throw new IllegalStateException("Chromium did not create a tab");
     }
 
     public boolean activate(int id) {
@@ -87,7 +99,7 @@ public final class PsychoTabController {
     public boolean navigate(String raw) {
         Tab tab = currentTab();
         if (tab == null) return false;
-        tab.loadUrl(new LoadUrlParams(requireWebUrl(raw)));
+        tab.loadUrl(new LoadUrlParams(requireNavigationUrl(raw)));
         return true;
     }
 
@@ -115,6 +127,23 @@ public final class PsychoTabController {
         tab.stopLoading(); return true;
     }
 
+    public boolean navigateTab(int id, String raw) {
+        Tab tab = model().getTabById(id);
+        if (tab == null) return false;
+        tab.loadUrl(new LoadUrlParams(requireNavigationUrl(raw)));
+        return true;
+    }
+
+    public Runnable subscribe(Runnable listener) {
+        mListeners.add(listener);
+        return () -> mListeners.remove(listener);
+    }
+
+    public void stateChanged() {
+        ThreadUtils.assertOnUiThread();
+        for (Runnable listener : mListeners) listener.run();
+    }
+
     private Tab currentTab() {
         model();
         return mSelector.getCurrentTab();
@@ -131,12 +160,16 @@ public final class PsychoTabController {
                     openNewTab(); return JSONObject.NULL;
                 }
                 return openWebTab(requireString(args, 0));
+            case "tab:open":
+                requireCount(args, 1); return openWebTab(requireString(args, 0));
             case "tab:activate":
                 requireCount(args, 1); return activate(requireTabId(args, 0));
             case "tab:close":
                 requireCount(args, 1); return close(requireTabId(args, 0));
             case "nav:go":
                 requireCount(args, 1); return navigate(requireString(args, 0));
+            case "nav:home":
+                requireCount(args, 0); return navigate("psychovault://newtab");
             case "nav:back":
                 requireCount(args, 0); return back();
             case "nav:forward":

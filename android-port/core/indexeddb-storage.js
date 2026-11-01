@@ -35,7 +35,25 @@
     }
     return Object.freeze({
       read: () => transaction('readonly', store => store.get('library')),
-      write: data => transaction('readwrite', store => store.put(data, 'library'))
+      write: data => transaction('readwrite', store => store.put(data, 'library')),
+      // Read-modify-write inside one readwrite transaction so two chrome windows
+      // cannot lose each other's updates. The mutator must be synchronous.
+      update: async mutator => {
+        const database = await db();
+        return new Promise((resolve, reject) => {
+          const tx = database.transaction('data', 'readwrite');
+          const store = tx.objectStore('data');
+          let next;
+          const request = store.get('library');
+          request.onsuccess = () => {
+            try { next = mutator(request.result === undefined ? null : request.result); store.put(next, 'library'); }
+            catch (error) { tx.abort(); }
+          };
+          tx.oncomplete = () => resolve(next);
+          tx.onerror = () => reject(tx.error || new Error('Library transaction failed'));
+          tx.onabort = () => reject(tx.error || new Error('Library transaction aborted'));
+        });
+      }
     });
   }
   return Object.freeze({create});

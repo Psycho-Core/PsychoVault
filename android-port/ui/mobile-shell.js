@@ -3,7 +3,7 @@
   'use strict';
   const controller = window.PsychoMobileSidebar.create({
     rail: document.getElementById('rail'), toggle: document.getElementById('mobile-rail-toggle'), document,
-    setTimer: window.setTimeout.bind(window), clearTimer: window.clearTimeout.bind(window), delay: 5000
+    setTimer: window.setTimeout.bind(window), clearTimer: window.clearTimeout.bind(window), delay: 5000, onVisibility: () => window.syncChrome && window.syncChrome()
   });
   // A native Chromium view is separate from the UI document; it must forward page touches.
   window.addEventListener('psychovault-page-touch', controller.pageTouched);
@@ -17,5 +17,5 @@
     status.textContent = 'Android Chromium bridge not connected - browser controls are unavailable.';
     return;
   }
-  const script = document.createElement('script'); script.src = 'renderer.js'; document.body.appendChild(script);
+  const script = document.createElement('script'); script.src = 'renderer.js'; script.onload = () => window.syncChrome && window.syncChrome(); document.body.appendChild(script);
 })();

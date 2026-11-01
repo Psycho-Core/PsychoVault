@@ -4,7 +4,7 @@ The desktop checks below were executed against an earlier build in `release/`, o
 
 ## Android restart source checks - 1 November 2026
 
-I ran 24 Node source tests and 6 Python source tests for the Android restart, plus 185 desktop Node tests and `node tools/audit.mjs`. The pinned Vanadium workspace preparation and Chromium source-installer anchors were checked separately; the controller was parsed as Java, not compiled against Chromium. The real Titanium companion CRX could not be downloaded in this environment. No new Android APK, Android SDK compilation, GitHub Actions build, extension install, Proton traffic test or phone test was run for the restart. See `android-port/README.md` for the limitations.
+I ran 29 Node source tests and 12 Python source tests for the Android restart, plus 185 desktop Node tests and `node tools/audit.mjs`. The pinned Vanadium workspace preparation and Chromium source-installer anchors were checked separately; all four Android Java files were parsed with javalang, not compiled against Chromium. The trusted-host/navigation source slice now exists; its native layout, profile switching and touch path remain unverified on Android. The real Titanium companion CRX could not be downloaded in this environment. No new Android APK, Android SDK compilation, GitHub Actions build, extension install, Proton traffic test or phone test was run for the restart. See `android-port/README.md` for the limitations.
 
 ## Smoke
 

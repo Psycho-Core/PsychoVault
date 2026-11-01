@@ -48,3 +48,33 @@ test('desktop and internal bridge contracts route library operations while nativ
   await page.history.clear();assert.deepEqual(await chrome.history.list(),[]);
   assert.equal(await chrome.nav.back(),'native');assert.deepEqual(calls,[['nav:back',[]]]);
 });
+test('atomic storage update serializes two library owners without losing writes', async () => {
+  let data = null;
+  const storage = {
+    read: async () => structuredClone(data),
+    write: async v => { data = structuredClone(v); },
+    update: async fn => { data = fn(structuredClone(data)); return structuredClone(data); }
+  };
+  const a = create(storage, {now: () => 1}), b = create(storage, {now: () => 2});
+  await Promise.all([a.addBookmark({url: 'https://a.test'}), b.addBookmark({url: 'https://b.test'})]);
+  assert.equal((await a.listBookmarks()).length, 2);
+  assert.equal((await b.listBookmarks()).length, 2);
+});
+test('settings page generation disables unsupported controls and keeps CSP-safe scripts', () => {
+  const fs = require('node:fs'), os = require('node:os'), path = require('node:path'), {spawnSync} = require('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pv-settings-'));
+  try {
+    const dest = path.join(dir, 'ui');
+    const result = spawnSync(process.execPath, [path.join(__dirname, '../scripts/prepare-ui.cjs'), dest], {encoding: 'utf8'});
+    assert.equal(result.status, 0, result.stderr);
+    const html = fs.readFileSync(path.join(dest, 'settings.html'), 'utf8');
+    assert.doesNotMatch(html, /<script>/);
+    assert.match(html, /settings\.js/);
+    const js = fs.readFileSync(path.join(dest, 'settings.js'), 'utf8');
+    assert.match(js, /Not connected on Android yet/);
+    assert.match(js, /SUPPORTED/);
+    const chrome = fs.readFileSync(path.join(dest, 'index.html'), 'utf8');
+    assert.match(chrome, /library\.js/);
+    assert.match(fs.readFileSync(path.join(dest, 'chrome-bootstrap.js'), 'utf8'), /library:visit/);
+  } finally { fs.rmSync(dir, {recursive: true, force: true}); }
+});
