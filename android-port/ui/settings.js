@@ -34,21 +34,35 @@
   const TEXTS = ['homepage','blockAllowSites','blockCustomDomains','sleepExclude','panicUrl','dohTemplate','denyPerms','modCss','spellLangs','spellDictUrl'];
   const SUPPORTED = new Set([...BOOLS, ...SELECTS, ...TEXTS,
     'customSearchEngines','customSearchSave','tiles','tileAdd','tileSave','sleepTabsMin','blockSaveLists',
-    'extList','extReload','extAddFolder','extAddCrx','protonVpnRestore','protonVpnStatus','vpnCheckOpen',
+    'extList','extReload','extAddFolder','extAddCrx','protonVpnOpen','protonVpnRestore','protonVpnStatus','vpnCheckOpen',
     'vstat','vunlock','vpw','vgo','vmaster','vmasterHint','vnew','vset','vBackup','vRestore','vImport',
     'vbackupPassword','vbackupConfirm','vTransferMsg','vlist','eSite','eUser','ePass','eGen','eSave','vLock','vRefresh','vnote',
     'downloadDir','downloadDirPick','soundVol','permOrigin','permLoad','permCamera','permMicrophone','permLocation','permNotifications','permSave','permRemove',
     'spellUserWords','spellWordsSave','spellWordsRefresh','contList','contAdd','contSave','updateCheckNow','updateDismiss',
     'clear','dataRefresh','dataFiles','dataCookies','modSave','modClear','svcList','svcAdd','svcSave','svcCat',
     'proxySelfTest','proxyStatus','proxySelfTestResult','proxyStatusResult','diagnosticsRefresh','diagnosticsCopy','diagnosticsReport','diagnosticsResult','appVersion','appElectron']);
+  const PLACEHOLDERS = {
+    relaunch: 'Desktop relaunch is not connected on Android. Restart the app from Android if needed.',
+    vforget: 'No OS-keychain vault fallback is enabled on Android; the master-password vault remains available.',
+    openErrorLog: 'Android does not expose the desktop errors.log file. Use the troubleshooting report instead.',
+    updateToken: 'Public GitHub releases do not need an update token.',
+    updateTokenSave: 'Public GitHub releases do not need an update token.',
+    updateTokenForget: 'Public GitHub releases do not need an update token.'
+  };
   for (const el of document.querySelectorAll('input,select,textarea,button')) {
     if (el.hasAttribute('data-category') || el.hasAttribute('data-clear') || SUPPORTED.has(el.id)) continue;
     el.disabled = true;
-    if (!el.title) el.title = 'Not connected on Android yet';
+    el.dataset.androidPlaceholder = 'true';
+    el.classList.add('android-placeholder');
+    el.title = PLACEHOLDERS[el.id] || 'Not connected on Android yet - visible placeholder';
+    if (Object.hasOwn(PLACEHOLDERS, el.id)) { el.hidden = false; el.removeAttribute('hidden'); }
   }
+  const placeholderStyle = document.createElement('style');
+  placeholderStyle.textContent = '.android-placeholder{opacity:.6;cursor:not-allowed}';
+  document.head.appendChild(placeholderStyle);
   const note = document.createElement('p');
   note.className = 'hint';
-  note.textContent = 'Android source build: enabled controls have native handlers. Containers use ephemeral off-the-record profiles, download folders are limited to Chromium\'s available directories, media keys depend on Android routing, and the dictionary mirror must use HTTPS. Proton connection state must be checked inside Proton.';
+  note.textContent = 'Android source build: enabled controls have native handlers. Disabled controls are visible placeholders for desktop-only features. Containers use ephemeral off-the-record profiles, download folders are limited to Chromium\'s available directories, media keys depend on Android routing, and the dictionary mirror must use HTTPS. Proton connection state must be checked inside Proton.';
   document.querySelector('.settings-main').prepend(note);
   if (isPrivate) {
     const privateNote = document.createElement('p'); privateNote.className = 'hint';
@@ -200,6 +214,16 @@
     } catch (e) { box.textContent = e.message || 'Extensions unavailable.'; }
   }
   if (s('extReload')) s('extReload').onclick = paintExtensions;
+  if (s('protonVpnOpen')) s('protonVpnOpen').onclick = async () => {
+    try {
+      const st = await window.pv.extensions.status();
+      const proton = st.proton || (st.items || []).find(x => x.builtin === 'proton-vpn');
+      if (!proton) { status.textContent = 'Proton VPN is not installed. Use Restore / reinstall Proton VPN.'; return; }
+      if (!proton.enabled || !proton.loaded) { status.textContent = 'Proton VPN is not enabled and loaded. Check the extension list below.'; return; }
+      await window.pv.extensions.openpage({id: proton.id, page: proton.popup || 'popup.html'});
+      status.textContent = 'Proton opened. Connect inside Proton; protection is not verified.';
+    } catch (e) { status.textContent = e.message || 'Could not open Proton VPN.'; }
+  };
   if (s('protonVpnStatus')) s('protonVpnStatus').onclick = async () => {
     try { const st = await window.pv.extensions.status(); status.textContent = st.lastError ? 'Extension engine: ' + st.lastError : 'Extension registry refreshed. Proton connection state must be checked inside Proton.'; paintExtensions(); }
     catch (e) { status.textContent = e.message; }

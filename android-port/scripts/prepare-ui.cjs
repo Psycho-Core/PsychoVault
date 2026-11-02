@@ -17,6 +17,7 @@ try {
   }
   replaceOnce('<meta charset="utf-8">', '<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">');
   replaceOnce('<link rel="stylesheet" href="style.css">', '<link rel="stylesheet" href="style.css">\n<link rel="stylesheet" href="mobile.css">');
+  replaceOnce('<button data-cmd="settings">Settings</button>', '<button data-cmd="extensions">Extensions</button>\n    <button data-cmd="settings">Settings</button>');
   replaceOnce('<div id="logo"></div>', '<button id="mobile-rail-toggle" type="button" aria-label="Show sidebar" aria-controls="rail" aria-expanded="false">☰</button>\n      <div id="logo"></div>');
   replaceOnce('<script src="renderer.js"></script>', '<script src="sidebar.js"></script>\n<script src="navigation-resolver.js"></script>\n<script src="desktop-bridge.js"></script>\n<script src="native-transport.js"></script>\n<script src="host-layout.js"></script>\n<script src="library.js"></script>\n<script src="indexeddb-storage.js"></script>\n<script src="library-transport.js"></script>\n<script src="chrome-bootstrap.js"></script>');
   fs.writeFileSync(path.join(target,'index.html'), html);
@@ -29,6 +30,7 @@ try {
   replaceRenderer('window.pv.downloads.open(d.path)', 'window.pv.downloads.open(d.id)');
   replaceRenderer("const show = document.createElement('button'); show.className = 'mini'; show.textContent = 'Show in folder'; show.onclick = () => window.pv.downloads.reveal(d.path)", "const show = document.createElement('button'); show.className = 'mini'; show.textContent = 'Show in folder'; show.disabled = true; show.title = 'Folder reveal is unavailable on Android';");
   replaceRenderer('row.title = d.path', 'row.title = d.file || d.name || d.id');
+  replaceRenderer("else if (cmd === 'settings') window.pv.tab.new('psychovault://settings')", "else if (cmd === 'settings') window.pv.tab.new('psychovault://settings')\n  else if (cmd === 'extensions') window.pv.tab.new('psychovault://settings#extensions')");
   fs.writeFileSync(path.join(target,'renderer.js'), renderer);
   // WebUI CSP forbids inline scripts. Adapt the copied new tab, not the desktop source.
   let newtab = fs.readFileSync(path.join(ui,'newtab.html'),'utf8');
@@ -45,6 +47,8 @@ try {
     if (settingsHtml.split(before).length !== 2) throw new Error('Desktop settings prose changed: ' + before);
     settingsHtml = settingsHtml.replace(before, after);
   }
+  replaceSettings('<button class="mini" id="vpnCheckOpen" type="button">Open VPN checks</button>', '<button class="mini" id="protonVpnOpen" type="button">Open Proton VPN</button>\n      <button class="mini" id="vpnCheckOpen" type="button">Open VPN checks</button>');
+  replaceSettings('Use the VPN button on the sidebar to connect or disconnect; right-click it to open Proton.', 'Use the Proton button on the sidebar to open Proton; connect or disconnect inside Proton. The button does not verify protection.');
   replaceSettings("through PsychoVault's own shim", "through Chromium's extension proxy API");
   replaceSettings('Electron can only run script in a page', 'This Android build can only run script in a page');
   replaceSettings('Electron gives no byte-rate hook', 'Android gives no byte-rate hook');

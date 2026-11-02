@@ -63,6 +63,14 @@ check('settings controls and data handlers', () => {
   const downloads = read('engine/psychovault/native/psycho_downloads.cc');
   assert(!downloads.includes('for (auto* item :'), 'raw_ptr range-for cannot deduce auto*');
 });
+check('visible settings, extensions and VPN placeholders', () => {
+  const prep = read('scripts/prepare-ui.cjs');
+  assert(prep.includes('data-cmd="extensions"'), 'Extensions menu entry missing');
+  assert(prep.includes('protonVpnOpen'), 'Open Proton VPN button missing');
+  const settings = read('ui/settings.js');
+  assert(settings.includes('android-placeholder'), 'disabled placeholders are not marked');
+  for (const id of ['relaunch','vforget','openErrorLog','updateToken','updateTokenSave','updateTokenForget']) assert(settings.includes(id), 'placeholder control missing '+id);
+});
 check('no committed secrets or build outputs', () => {
   const files = require('node:child_process').execSync('git ls-files', {cwd:path.resolve(root,'..'), encoding:'utf8'}).split('\n');
   for (const f of files) assert(!/(\.apk|\.aab|\.jks|\.keystore|__pycache__|\.pyc|node_modules)/.test(f), 'tracked generated/sensitive file '+f);
