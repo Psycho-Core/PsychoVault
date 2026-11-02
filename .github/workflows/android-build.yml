@@ -5,21 +5,23 @@ name: Android source and build
 on:
   workflow_dispatch:
   push:
-    branches: [arena/93b8960d-psychovault]
+    branches: [arena/882adae6-psychovault]
     paths:
       - 'android-port/**'
       - 'app/ui/**'
       - 'app/builtin/**'
       - 'app/blocklist.json'
       - '.github/workflows/android-build.yml'
+      - '.github/workflows/android-build-segment.yml'
 
 permissions:
   contents: read
 
 concurrency:
   group: psychovault-android-build
-  # Protect a running APK build. A newer pending run replaces older pending work.
-  cancel-in-progress: false
+  # Protect running APK builds by default. An explicitly authorized restart can
+  # include [restart build] in the push commit message to replace the old run.
+  cancel-in-progress: ${{ github.event_name == 'push' && contains(github.event.head_commit.message || '', '[restart build]') }}
 
 jobs:
   source-checks:
@@ -67,108 +69,40 @@ jobs:
           path: build-notes/Release-Notes-Android.txt
           retention-days: 7
 
-  build-apk:
+  # A free hosted job is limited to six hours. Each segment compiles for at most
+  # 240 minutes, then checkpoints the workspace so the next segment can resume
+  # Ninja instead of throwing the cold build away. This does not make a cold
+  # compile faster; it makes a multi-hour compile survivable on free runners.
+  segment-1:
     needs: source-checks
-    # Free standard hosted runner by default. Set repository variable ANDROID_RUNNER
-    # to a larger GitHub-hosted runner label only if I explicitly choose paid capacity.
-    runs-on: ${{ vars.ANDROID_RUNNER || 'ubuntu-24.04' }}
-    timeout-minutes: 360
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-      - name: Set up sccache
-        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-        with:
-          version: v0.16.0
-      - name: Free hosted-runner disk and choose engine workspace
-        id: paths
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          notes="$RUNNER_TEMP/psychovault-build-notes"
-          mkdir -p "$notes"
-          echo "notes_dir=$notes" >> "$GITHUB_OUTPUT"
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift /usr/local/.ghcup || true
-          sudo apt-get clean || true
-          sudo docker system prune -af || true
-          parent=/mnt
-          if [[ ! -w "$parent" ]]; then parent="$RUNNER_TEMP"; fi
-          # Stable path improves compiler-cache reuse across disposable hosted runners.
-          engine="$parent/psychovault-engine"
-          if [[ -e "$engine" || -L "$engine" ]]; then
-            echo "Engine workspace already exists; refusing to overwrite: $engine" >&2
-            exit 1
-          fi
-          echo "engine_root=$engine" >> "$GITHUB_OUTPUT"
-          free_gb=$(df -BG --output=avail "$parent" | tail -1 | tr -dc '0-9')
-          df -h "$parent" "$RUNNER_TEMP" | tee "$notes/disk.txt"
-          {
-            echo "PsychoVault Android build notes"
-            echo "Status: APK build attempted"
-            echo "Runner free disk: ${free_gb}GB"
-            echo "Engine workspace: $engine"
-            echo "Compiler cache: sccache via GitHub Actions cache"
-          } > "$notes/Release-Notes-Android.txt"
-          # A single arm64, no-PGO/no-ThinLTO, symbol-stripped build is smaller
-          # than the upstream dual-arch/AAB build. Fail early if even that cannot fit.
-          # sccache stores compiler outputs in the separate 10GB Actions cache; it
-          # does not try to preserve the whole Chromium workspace.
-          if [[ "$free_gb" -lt 60 ]]; then
-            echo "This runner has less than 60GB free after cleanup. No APK was produced." >> "$notes/Release-Notes-Android.txt"
-            exit 1
-          fi
-      - name: Prepare pinned engine workspace
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          notes="${{ steps.paths.outputs.notes_dir }}"
-          if ! bash android-port/scripts/prepare-engine.sh "${{ steps.paths.outputs.engine_root }}" 2>&1 | tee "$notes/prepare.log"; then
-            msg="$(tail -n 25 "$notes/prepare.log" | sed 's/%/%25/g; s/\r/%0D/g' | sed ':a;N;$!ba;s/\n/%0A/g')"
-            echo "::error::prepare-engine failed: $msg"
-            exit 1
-          fi
-      - name: Build and validate APK
-        env:
-          PSYCHO_NOTES_DIR: ${{ steps.paths.outputs.notes_dir }}
-          PSYCHO_CC_WRAPPER: sccache
-          PSYCHO_BUILD_JOBS: ${{ vars.ANDROID_BUILD_JOBS }}
-          SCCACHE_GHA_ENABLED: "true"
-          SCCACHE_GHA_VERSION: android-arm64-v1
-          SCCACHE_IDLE_TIMEOUT: "0"
-          SCCACHE_BASEDIRS: ${{ steps.paths.outputs.engine_root }}/chromium/src
-          SCCACHE_ERROR_LOG: ${{ steps.paths.outputs.notes_dir }}/sccache-error.log
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          notes="${{ steps.paths.outputs.notes_dir }}"
-          if ! bash "${{ steps.paths.outputs.engine_root }}/build-engine.sh"; then
-            msg="$(tail -n 35 "$notes/build.log" | sed 's/%/%25/g; s/\r/%0D/g' | sed ':a;N;$!ba;s/\n/%0A/g')"
-            echo "::error::build-engine failed: $msg"
-            exit 1
-          fi
-      - name: Upload APK and release inputs
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-release
-          path: ${{ steps.paths.outputs.engine_root }}/dist/
-          if-no-files-found: error
-          retention-days: 14
-      - name: Upload build notes and failure log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-build-notes
-          path: ${{ steps.paths.outputs.notes_dir }}/
-          if-no-files-found: warn
-          retention-days: 14
+    uses: ./.github/workflows/android-build-segment.yml
+    with:
+      segment: 1
+  segment-2:
+    needs: segment-1
+    if: always() && needs.segment-1.outputs.status == 'checkpoint'
+    uses: ./.github/workflows/android-build-segment.yml
+    with:
+      segment: 2
+      resume_artifact: ${{ needs.segment-1.outputs.checkpoint_artifact }}
+  segment-3:
+    needs: segment-2
+    if: always() && needs.segment-2.outputs.status == 'checkpoint'
+    uses: ./.github/workflows/android-build-segment.yml
+    with:
+      segment: 3
+      resume_artifact: ${{ needs.segment-2.outputs.checkpoint_artifact }}
+  segment-4:
+    needs: segment-3
+    if: always() && needs.segment-3.outputs.status == 'checkpoint'
+    uses: ./.github/workflows/android-build-segment.yml
+    with:
+      segment: 4
+      resume_artifact: ${{ needs.segment-3.outputs.checkpoint_artifact }}
 
   publish-release:
-    needs: build-apk
+    needs: [segment-1, segment-2, segment-3, segment-4]
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -177,6 +111,20 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
+      - name: Require a completed APK segment
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          status1="${{ needs.segment-1.outputs.status }}"
+          status2="${{ needs.segment-2.outputs.status }}"
+          status3="${{ needs.segment-3.outputs.status }}"
+          status4="${{ needs.segment-4.outputs.status }}"
+          echo "Segment statuses: $status1 $status2 $status3 $status4"
+          if [[ "$status1" == completed || "$status2" == completed || "$status3" == completed || "$status4" == completed ]]; then
+            exit 0
+          fi
+          echo "::error::No Android build segment completed an APK. Check the segment notes and failure logs."
+          exit 1
       - uses: actions/download-artifact@v4
         with:
           name: android-release

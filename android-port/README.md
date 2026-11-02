@@ -29,9 +29,11 @@ Chromium documents at least 100 GB free disk and an x86-64 Linux host; more than
 
 I kept the APK build on GitHub Actions. The workflow uses a stable engine path, all available runner cores, and `sccache` backed by the GitHub Actions cache so later builds can reuse compiler outputs. The default runner is still the free standard hosted runner. If I explicitly choose paid capacity, I can set the repository variable `ANDROID_RUNNER` to a larger GitHub-hosted runner label, and optionally `ANDROID_BUILD_JOBS` to cap Ninja concurrency.
 
-This does not preserve the whole Chromium workspace between hosted runs. GitHub's Actions cache is a separate 10 GB allowance, so a cold Chromium build can still take hours and cache entries can be evicted. The workflow records sccache hit/miss stats with the build notes so I can see whether the cache is actually helping. A running APK build is protected from cancellation by newer pushes; docs-only pushes should use `[skip ci]`.
+A free hosted job is limited to six hours, so the APK build is split into resumable segments. Each segment compiles for at most 240 minutes, then packs the engine workspace into a checksummed short-retention artifact if Ninja is not finished. The next segment restores that workspace at the same absolute path and resumes Ninja. This does not make a cold Chromium compile faster; it stops a long compile from being thrown away at the job deadline. GitHub's Actions cache is a separate 10 GB allowance, so sccache entries can still be evicted. The workflow records sccache hit/miss stats with the build notes so I can see whether the cache is actually helping.
 
-On 2 November 2026 I checked this speed pass with 36 Android Node tests, 28 Python source tests, 185 desktop Node tests, desktop and Android static audits with no defects, ShellCheck on the engine scripts, and a workflow YAML parse. No Chromium compile or APK speed measurement has run yet, so I am not claiming a measured speedup.
+A running APK build is protected from cancellation by newer pushes unless the push commit message explicitly contains `[restart build]`. Docs-only pushes should use `[skip ci]`.
+
+On 2 November 2026 I checked this speed pass with Android Node tests, Python source tests, desktop Node tests, desktop and Android static audits, ShellCheck on the engine scripts, and a workflow YAML parse. No Chromium compile or APK speed measurement has run yet, so I am not claiming a measured speedup.
 
 The old preview may be signed with an incompatible key. Changing to a new Android browser or signer can require a separate install or uninstall, and uninstalling can delete its local data. Do not uninstall without backing up anything important. Play Protect prompts cannot be guaranteed to disappear.
 
