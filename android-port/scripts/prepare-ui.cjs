@@ -41,6 +41,18 @@ try {
   const settingsScript = settingsHtml.match(/<script>([\s\S]*?)<\/script>/);
   if (!settingsScript || settingsHtml.split('<script>').length !== 2) throw new Error('Settings script structure changed');
   settingsHtml = settingsHtml.replace(settingsScript[0],'').replace('<meta charset="utf-8">','<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">').replace('</body>','<script src="navigation-resolver.js"></script>\n<script src="internal-page-bridge.js"></script>\n<script src="native-transport.js"></script>\n<script src="settings.js"></script>\n</body>');
+  function replaceSettings(before, after) {
+    if (settingsHtml.split(before).length !== 2) throw new Error('Desktop settings prose changed: ' + before);
+    settingsHtml = settingsHtml.replace(before, after);
+  }
+  replaceSettings("through PsychoVault's own shim", "through Chromium's extension proxy API");
+  replaceSettings('Electron can only run script in a page', 'This Android build can only run script in a page');
+  replaceSettings('Electron gives no byte-rate hook', 'Android gives no byte-rate hook');
+  replaceSettings('Electron builds ship no dictionary and cannot download one, so without this the spellchecker is a flag with nothing behind it. Turn it off only if you have patched dictionaries in yourself.', 'Android uses Chromium spellcheck and HTTPS bdic dictionary mirrors. The built-in word list is a fallback, not the only checker.');
+  replaceSettings('A folder or mirror holding <code>&lt;lang&gt;.dic</code> and <code>&lt;lang&gt;.aff</code> Hunspell files. Kept because it is the knob Chromium documents, but an Electron build has no dictionary downloader: nothing is fetched from here, and <code>&lt;profile&gt;/Dictionaries</code> is not read either - all three were tested. The built-in checker above is what makes the feature work.', 'An HTTPS mirror holding <code>&lt;lang&gt;.bdic</code> files. Chromium downloads dictionaries from this mirror; plain HTTP and file URLs are refused.');
+  replaceSettings('Rendering engine: Chromium, via Electron <span id="appElectron">45</span>.', 'Rendering engine: Chromium <span id="appElectron">156</span> on Android.');
+  replaceSettings('Bookmark, history and settings files live in your user data folder.', 'Bookmarks, history and settings live in Android app storage.');
+  replaceSettings('If an update fails while Proton VPN is on, disconnect it and retry. PsychoVault does not bypass the VPN automatically. It removes an updater-downloaded installer only after the new version starts and the file is verified unchanged; older untracked installers are kept.', 'Android checks GitHub Releases and opens the release page. It does not self-install APKs; install updates through Android. If a download fails while Proton VPN is on, disconnect it and retry.');
   fs.writeFileSync(path.join(target,'settings.html'),settingsHtml);
   for (const file of ['settings.js','recovery.html','recovery.js','mobile.css','sidebar.js','mobile-shell.js','desktop-bridge.js','internal-page-bridge.js','navigation-resolver.js','native-transport.js','host-layout.js','chrome-bootstrap.js','page-bootstrap.js']) fs.copyFileSync(path.join(repo,'android-port/ui',file),path.join(target,file));
   for (const file of ['library.js','indexeddb-storage.js','library-transport.js']) fs.copyFileSync(path.join(repo,'android-port/core',file),path.join(target,file));

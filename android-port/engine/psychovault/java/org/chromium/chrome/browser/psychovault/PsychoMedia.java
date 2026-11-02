@@ -93,7 +93,7 @@ final class PsychoMedia {
     }
 
     private Tab mediaTab() {
-        if (mModel == null) return null;
+        if (mModel == null || mModel.getCount() == 0) return null;
         Tab service = null, current = mModel.getTabAt(mModel.index());
         Set<String> hosts = serviceHosts();
         for (int i = 0; i < mModel.getCount(); i++) {

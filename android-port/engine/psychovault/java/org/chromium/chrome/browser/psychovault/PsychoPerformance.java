@@ -61,7 +61,8 @@ final class PsychoPerformance {
         if (tab == null) throw new IllegalArgumentException("Tab is not in this profile");
         String action = request.optString("action");
         if ("sleep".equals(action)) {
-            if (id == model.getTabAt(model.index()).getId()) throw new IllegalStateException("Select another tab before sleeping this one");
+            Tab active = model.getTabAt(model.index());
+            if (active != null && id == active.getId()) throw new IllegalStateException("Select another tab before sleeping this one");
             tab.discard();
         } else if ("wake".equals(action)) model.setIndex(model.indexOf(tab), org.chromium.chrome.browser.tab.TabSelectionType.FROM_USER);
         else throw new IllegalArgumentException("Unknown tab performance action");

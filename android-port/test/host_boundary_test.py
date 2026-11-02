@@ -43,6 +43,15 @@ class HostBoundaryTests(unittest.TestCase):
         self.assertIn('navigateTab(tabId', page)
         self.assertNotIn('mController.invoke', page)
         self.assertNotIn('layout(args', page)
+        for channel in ('history:clear', 'data:clear', 'data:report', 'app:diagnostics', 'app:diagnosticsCopy', 'proxy:status', 'proxy:selftest', 'update:tokenstate', 'rail:icons', 'catalogue:list', 'catalogue:toggle'):
+            self.assertIn(channel, page)
+        self.assertIn('library:clear', host)
+        self.assertIn('!profile().isOffTheRecord()', host)
+        settings = (ROOT / 'ui/settings.js').read_text()
+        for control in ('clear', 'dataRefresh', 'modSave', 'modClear', 'svcAdd', 'svcSave', 'proxySelfTest', 'proxyStatus', 'diagnosticsRefresh', 'diagnosticsCopy'):
+            self.assertIn(control, settings)
+        self.assertIn("el.hasAttribute('data-clear')", settings)
+        self.assertIn('paintCatalogue(); refreshData(); refreshDiagnostics();', settings)
     def test_assets_are_allowlisted_and_uncompressed(self):
         native = (ROOT / 'engine/psychovault/native/psycho_ui.cc').read_text()
         gn = (ROOT / 'engine/psychovault/BUILD.gn').read_text()
@@ -120,6 +129,13 @@ class HostBoundaryTests(unittest.TestCase):
         ui = (native_dir / 'psycho_ui.cc').read_text()
         self.assertIn('base::MakeRefCounted<base::RefCountedString>', ui)
         self.assertIn('base::File asset_file(fd)', ui)
+        downloads = (native_dir / 'psycho_downloads.cc').read_text()
+        self.assertNotIn('for (auto* item :', downloads)
+        self.assertIn('for (auto& item : items) Watch(item.get());', downloads)
+        performance = (native_dir / 'psycho_performance.cc').read_text()
+        self.assertIn('components/viz/common/frame_sinks/copy_output_result.h', performance)
+        installer = (ROOT / 'engine/psychovault/install_chromium_source.py').read_text()
+        self.assertIn('//components/viz/common', installer)
 
     def test_performance_does_not_fabricate_metrics(self):
         java = (JAVA / 'psychovault/PsychoPerformance.java').read_text()
@@ -129,5 +145,6 @@ class HostBoundaryTests(unittest.TestCase):
         native = (ROOT / 'engine/psychovault/native/psycho_performance.cc').read_text()
         self.assertIn('ExecuteJavaScriptInIsolatedWorld', native)
         self.assertIn('CopyFromSurface', native)
+
 
 if __name__ == '__main__': unittest.main()

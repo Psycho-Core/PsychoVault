@@ -52,6 +52,17 @@ check('asset parity', () => {
   const served = new Set([...native.matchAll(/\{"([^"]+)", "[^"]+"\}/g)].map(m=>m[1]));
   assert(staged.size === served.size && [...staged].every(x=>served.has(x)), 'staged/served asset mismatch');
 });
+check('settings controls and data handlers', () => {
+  const host = read('engine/psychovault/java/org/chromium/chrome/browser/psychovault/PsychoChromeHost.java');
+  const page = host.split('private void pageCommand')[1].split('private void chromeCommand')[0];
+  for (const channel of ['history:clear','data:clear','data:report','app:diagnostics','app:diagnosticsCopy','proxy:status','proxy:selftest','update:tokenstate','rail:icons','catalogue:list','catalogue:toggle']) assert(page.includes(channel), 'missing page handler '+channel);
+  const settings = read('ui/settings.js');
+  for (const id of ['clear','dataRefresh','modSave','modClear','svcAdd','svcSave','proxySelfTest','proxyStatus','diagnosticsRefresh','diagnosticsCopy']) assert(settings.includes(id), 'missing settings control '+id);
+  assert(settings.includes("el.hasAttribute('data-clear')"), 'data-clear buttons would be disabled');
+  assert(host.includes('library:clear'), 'library history clear event missing');
+  const downloads = read('engine/psychovault/native/psycho_downloads.cc');
+  assert(!downloads.includes('for (auto* item :'), 'raw_ptr range-for cannot deduce auto*');
+});
 check('no committed secrets or build outputs', () => {
   const files = require('node:child_process').execSync('git ls-files', {cwd:path.resolve(root,'..'), encoding:'utf8'}).split('\n');
   for (const f of files) assert(!/(\.apk|\.aab|\.jks|\.keystore|__pycache__|\.pyc|node_modules)/.test(f), 'tracked generated/sensitive file '+f);

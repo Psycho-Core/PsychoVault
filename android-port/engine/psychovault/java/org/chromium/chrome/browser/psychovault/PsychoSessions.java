@@ -68,6 +68,11 @@ final class PsychoSessions {
         throw new IllegalArgumentException("Recovery snapshot not found");
     }
 
+    void clearAll() throws Exception {
+        ThreadUtils.assertOnUiThread();
+        if (!prefs().edit().putString("slots", "[]").commit()) throw new IllegalStateException("Recovery snapshots could not be cleared");
+    }
+
     void remove(String id) throws Exception {
         JSONArray slots = readSlots(), next = new JSONArray();
         for (int i = 0; i < slots.length(); i++) if (!slots.getJSONObject(i).optString("id").equals(id)) next.put(slots.getJSONObject(i));

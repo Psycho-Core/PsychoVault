@@ -38,9 +38,11 @@
     'vstat','vunlock','vpw','vgo','vmaster','vmasterHint','vnew','vset','vBackup','vRestore','vImport',
     'vbackupPassword','vbackupConfirm','vTransferMsg','vlist','eSite','eUser','ePass','eGen','eSave','vLock','vRefresh','vnote',
     'downloadDir','downloadDirPick','soundVol','permOrigin','permLoad','permCamera','permMicrophone','permLocation','permNotifications','permSave','permRemove',
-    'spellUserWords','spellWordsSave','spellWordsRefresh','contList','contAdd','contSave','updateCheckNow','updateDismiss']);
+    'spellUserWords','spellWordsSave','spellWordsRefresh','contList','contAdd','contSave','updateCheckNow','updateDismiss',
+    'clear','dataRefresh','dataFiles','dataCookies','modSave','modClear','svcList','svcAdd','svcSave','svcCat',
+    'proxySelfTest','proxyStatus','proxySelfTestResult','proxyStatusResult','diagnosticsRefresh','diagnosticsCopy','diagnosticsReport','diagnosticsResult','appVersion','appElectron']);
   for (const el of document.querySelectorAll('input,select,textarea,button')) {
-    if (el.hasAttribute('data-category') || SUPPORTED.has(el.id)) continue;
+    if (el.hasAttribute('data-category') || el.hasAttribute('data-clear') || SUPPORTED.has(el.id)) continue;
     el.disabled = true;
     if (!el.title) el.title = 'Not connected on Android yet';
   }
@@ -68,6 +70,9 @@
     if (s('soundVol')) s('soundVol').value = String(st.soundVol === undefined ? 0.4 : st.soundVol);
     if (s('customSearchEngines')) s('customSearchEngines').value = (st.customSearchEngines || []).map(e => [e.shortcut, e.name, e.url].join(' | ')).join('\n');
     renderTiles(st.speedDial || []);
+    renderServices(st.services || []);
+    if (s('appVersion')) s('appVersion').textContent = 'PsychoVault Android';
+    if (s('appElectron')) s('appElectron').textContent = 'Chromium 156';
     if (s('downloadDir')) { s('downloadDir').value = st.downloadDir || 'Chromium default directory'; s('downloadDir').readOnly = true; }
     if (s('downloadDirPick')) { s('downloadDirPick').disabled = isPrivate; s('downloadDirPick').title = 'Choose among the download directories Chromium exposes on this device.'; }
     if (s('spellUserWords')) s('spellUserWords').value = (st.spellUserWords || []).join('\n');
@@ -119,6 +124,57 @@
     rows.push({title: 'New', url: 'https://'}); renderTiles(rows);
   };
   if (s('tileSave')) s('tileSave').onclick = () => save({speedDial: [...s('tiles').querySelectorAll('.tile-row')].map(r => ({title: r.querySelector('.t').value.trim(), url: r.querySelector('.u').value.trim()})).filter(t => t.title && t.url)});
+
+  function renderServices(list) {
+    const wrap = s('svcList'); if (!wrap) return; wrap.replaceChildren();
+    for (const t of list) {
+      const row = document.createElement('div'); row.className = 'tile-row';
+      const name = document.createElement('input'); name.className = 't'; name.value = t.name || ''; name.placeholder = 'Name';
+      const url = document.createElement('input'); url.className = 'u'; url.value = t.url || ''; url.placeholder = 'https://...';
+      const del = document.createElement('button'); del.className = 'mini'; del.textContent = 'Remove'; del.onclick = () => row.remove();
+      row.append(name, url, del); wrap.appendChild(row);
+    }
+  }
+  function servicesValue() {
+    return [...s('svcList').querySelectorAll('.tile-row')].map(r => ({name: r.querySelector('.t').value.trim(), url: r.querySelector('.u').value.trim()})).filter(t => t.name && t.url);
+  }
+  if (s('svcAdd')) s('svcAdd').onclick = () => { const rows = servicesValue(); rows.push({name: 'New', url: 'https://'}); renderServices(rows); };
+  if (s('svcSave')) s('svcSave').onclick = () => save({services: servicesValue()});
+  async function paintCatalogue() {
+    const wrap = s('svcCat'); if (!wrap) return;
+    try {
+      const items = await window.pv.rail.catalogue(); wrap.replaceChildren();
+      for (const item of items) {
+        const button = document.createElement('button'); button.className = 'mini'; button.textContent = (item.on ? '✓ ' : '') + item.name;
+        button.onclick = async () => { try { await window.pv.rail.toggle(item.name); paintCatalogue(); const st = await window.pv.settings.get(); renderServices(st.services || []); } catch (e) { status.textContent = e.message; } };
+        wrap.appendChild(button);
+      }
+    } catch (e) { wrap.textContent = e.message || 'Catalogue unavailable.'; }
+  }
+  if (s('modSave')) s('modSave').onclick = () => save({modCss: s('modCss') ? s('modCss').value : ''});
+  if (s('modClear')) s('modClear').onclick = () => { if (s('modCss')) s('modCss').value = ''; save({modCss: ''}); };
+  if (s('clear')) s('clear').onclick = async () => { try { await window.pv.history.clear(); status.textContent = 'History cleared.'; } catch (e) { status.textContent = e.message || 'Could not clear history.'; } };
+  async function refreshData() {
+    try {
+      const r = await window.pv.data.report();
+      if (s('dataFiles')) { s('dataFiles').replaceChildren(); const row = document.createElement('tr'); const cell = document.createElement('td'); cell.colSpan = 2; cell.textContent = r.note || 'Android manages profile storage.'; row.appendChild(cell); s('dataFiles').appendChild(row); }
+      if (s('dataCookies')) s('dataCookies').textContent = r.cookies == null ? 'Cookie counts are not exposed by Android.' : String(r.cookies) + ' cookies';
+    } catch (e) { if (s('dataCookies')) s('dataCookies').textContent = e.message || 'Storage report unavailable.'; }
+  }
+  if (s('dataRefresh')) s('dataRefresh').onclick = refreshData;
+  for (const button of document.querySelectorAll('[data-clear]')) button.onclick = async () => {
+    const what = button.dataset.clear;
+    try { await window.pv.data.clear({[what]: true}); status.textContent = 'Cleared ' + what + '.'; refreshData(); }
+    catch (e) { status.textContent = e.message || 'Could not clear ' + what + '.'; }
+  };
+  if (s('proxySelfTest')) { s('proxySelfTest').textContent = 'Check proxy configuration'; s('proxySelfTest').onclick = async () => { try { const r = await window.pv.proxy.selftest(); if (s('proxySelfTestResult')) s('proxySelfTestResult').textContent = r.message || (r.proxyConfigured ? 'Proxy preference is configured; routing is not verified.' : 'No extension proxy preference is configured.'); } catch (e) { status.textContent = e.message; } }; }
+  if (s('proxyStatus')) s('proxyStatus').onclick = async () => { try { const r = await window.pv.proxy.status(); if (s('proxyStatusResult')) s('proxyStatusResult').textContent = r.proxyConfigured ? 'A proxy preference is configured. This does not prove Proton is connected or that DNS/WebRTC are leak-free.' : 'No extension proxy preference is configured.'; } catch (e) { status.textContent = e.message; } };
+  async function refreshDiagnostics() {
+    try { const r = await window.pv.app.diagnostics(); if (s('diagnosticsReport')) s('diagnosticsReport').value = Object.entries(r).map(([k, v]) => k + ': ' + v).join('\n'); }
+    catch (e) { if (s('diagnosticsResult')) s('diagnosticsResult').textContent = e.message || 'Diagnostics unavailable.'; }
+  }
+  if (s('diagnosticsRefresh')) s('diagnosticsRefresh').onclick = refreshDiagnostics;
+  if (s('diagnosticsCopy')) s('diagnosticsCopy').onclick = async () => { try { await window.pv.app.diagnosticsCopy(); if (s('diagnosticsResult')) s('diagnosticsResult').textContent = 'Report copied.'; } catch (e) { status.textContent = e.message; } };
 
   async function paintExtensions() {
     const box = s('extList'); if (!box) return;
@@ -302,6 +358,6 @@
   recoveryLink.onclick = () => window.pv.nav.go('psychovault://recovery');
   document.querySelector('.settings-main').prepend(recoveryLink);
 
-  transport.start().then(() => window.pv.settings.get()).then(st => { paint(st); paintExtensions(); refreshVault(); }).catch(e => { status.textContent = e.message || 'Android settings are unavailable.'; });
+  transport.start().then(() => window.pv.settings.get()).then(st => { paint(st); paintExtensions(); refreshVault(); paintCatalogue(); refreshData(); refreshDiagnostics(); }).catch(e => { status.textContent = e.message || 'Android settings are unavailable.'; });
   window.addEventListener('pagehide', () => transport.dispose(), {once:true});
 })();

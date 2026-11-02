@@ -120,6 +120,7 @@ def install(src):
         '    "//components/download/public/common:public",\n'
         '    "//components/proxy_config",\n'
         '    "//components/spellcheck/browser",\n'
+        '    "//components/viz/common",\n'
         '    "//extensions/browser",\n'
         '    "//extensions/common",\n'
         '    "//services/network/public/cpp",\n'

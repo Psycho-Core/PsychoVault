@@ -12,6 +12,7 @@
   window.pv = bridge;
   // Unsupported controls stay visible in their desktop order, but cannot pretend to work.
   function markUnavailable() {
+    for (const button of document.querySelectorAll('.wc')) { button.disabled = true; button.title = 'Android manages windows'; }
     for (const button of document.querySelectorAll('#btn-split')) {
       button.disabled = true; button.title = 'Not connected on Android yet';
     }
@@ -24,6 +25,7 @@
   transport.subscribe('state', layout.setState);
   // The native host emits this only for committed regular-profile navigations
   // while remember=true. The library still re-checks the context before writing.
+  transport.subscribe('library:clear', () => { library.clearHistory().catch(() => {}); });
   transport.subscribe('library:visit', visit => {
     library.recordVisit(visit, {profile: isPrivate ? 'private' : 'regular', remember: true}).catch(() => {});
   });

@@ -83,6 +83,7 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
     private PsychoContainers mContainers;
     private PsychoMedia mMedia;
     private String mLastUpdateRelease = "";
+    private String mLastUpdateUrl = "";
     private boolean mDestroyed, mPublishQueued, mTouchInChrome, mWorkspaceBusy, mDownloadQueued;
     private int mTouchPointer = -1, mTop, mLeft, mBottom, mShowingToken = -1, mPanicTabId = Tab.INVALID_TAB_ID;
     private JSONArray mPanicTabs;
@@ -355,12 +356,24 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
         if (channel.startsWith("vault:") && settings) { vaultCommand(channel, args, result); return; }
         if (channel.startsWith("ext:") && settings) { extensionCommand(channel, args, result); return; }
         if (channel.startsWith("recovery:") && recovery) { recoveryCommand(channel, args, result); return; }
+        if (channel.equals("history:clear") && settings) { clearHistory(result); return; }
+        if (channel.equals("data:clear") && settings) { clearData(arg(args), result); return; }
+        if (channel.equals("data:report") && settings) { result.send(true, dataReport()); return; }
+        if (channel.equals("app:diagnostics") && settings) { result.send(true, diagnostics()); return; }
+        if (channel.equals("app:diagnosticsCopy") && settings) { String text = diagnosticsText(); ClipboardManager clip = (ClipboardManager) mActivity.getSystemService(Context.CLIPBOARD_SERVICE); clip.setPrimaryClip(ClipData.newPlainText("PsychoVault", text)); result.send(true, text); return; }
+        if (channel.equals("proxy:status") && settings) { result.send(true, PsychoNetwork.status(profile(), currentTab() == null ? null : currentTab().getWebContents())); return; }
+        if (channel.equals("proxy:selftest") && settings) { result.send(true, proxySelfTest()); return; }
+        if (channel.equals("update:tokenstate") && settings) { result.send(true, new JSONObject().put("ok", true).put("required", false).put("message", "Public GitHub releases do not need an update token.")); return; }
+        if (channel.equals("rail:icons") && settings) { result.send(true, railIcons()); return; }
+        if (channel.equals("catalogue:list") && settings) { result.send(true, catalogue()); return; }
+        if (channel.equals("catalogue:toggle") && settings) { result.send(true, toggleService(str(args))); return; }
         result.send(false, "This internal page control is not connected on Android yet");
     }
 
     private void chromeCommand(String channel, JSONArray args, PsychoBridge.Result result) throws Exception {
         switch (channel) {
             case "ui:layout": layout(arg(args)); result.send(true, null); return;
+            case "ui:menu": showMenu(result); return;
             case "ui:back": mBack.setEnabled(arg(args).optBoolean("handled")); result.send(true, null); return;
             case "settings:get": result.send(true, mStore.read(profile())); return;
             case "settings:set": result.send(true, saveSettings(arg(args))); return;
@@ -379,6 +392,12 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
             case "downloads:dir": result.send(true, PsychoDownloads.directory(mActivity, mStore.read(profile()))); return;
             case "downloads:pickdir": pickDownloadDirectory(result); return;
             case "update:check": checkUpdates(result); return;
+            case "update:install": {
+                if (mLastUpdateUrl.isEmpty()) { result.send(false, "Run an update check first; Android installs from Releases, not in-place."); return; }
+                mActivity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(mLastUpdateUrl)));
+                result.send(true, new JSONObject().put("ok", true).put("opened", true).put("message", "Opened Releases. Android does not self-install APKs.")); return;
+            }
+            case "update:later": result.send(true, new JSONObject().put("ok", true)); return;
             case "update:banners": { String dismissed = mStore.read(profile()).optString("dismissedUpdate"); result.send(true, new JSONObject().put("dismissed", !dismissed.isEmpty()).put("version", dismissed)); return; }
             case "update:dismiss": dismissUpdate(args, result); return;
             case "spell:status": result.send(true, new JSONObject().put("enabled", mStore.read(profile()).optBoolean("spellCheck")).put("words", mStore.read(profile()).optJSONArray("spellUserWords"))); return;
@@ -509,6 +528,7 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
     private void checkUpdates(PsychoBridge.Result result) throws Exception {
         PsychoUpdates.check(mStore.read(profile()).optString("dismissedUpdate"), answer -> {
             mLastUpdateRelease = answer.optString("release", "");
+            mLastUpdateUrl = answer.optString("url", "");
             result.send(true, answer);
         });
     }
@@ -560,6 +580,70 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
             } catch (Exception ignored) { }
         }).show();
         result.send(true, new JSONObject().put("ok", true));
+    }
+
+    private void showMenu(PsychoBridge.Result result) {
+        String[] labels = {"New tab", "Private tab", "Reopen closed tab", "Bookmarks", "History", "Downloads", "Settings", "Extensions", "Find in page", "Translate page", "Zoom in", "Zoom out", "Reset zoom"};
+        String[] commands = {"newtab", "private", "reopen", "bookmarks", "history", "downloads", "settings", "extensions", "find", "translate", "zoomin", "zoomout", "zoomreset"};
+        new AlertDialog.Builder(mActivity).setTitle("PsychoVault").setItems(labels, (dialog, which) -> {
+            if (mActive != null) mActive.bridge.emit("menu-command", commands[which]);
+        }).show();
+        result.send(true, new JSONObject().put("ok", true));
+    }
+
+    private void clearHistory(PsychoBridge.Result result) {
+        BrowsingDataBridge.getForProfile(profile()).clearBrowsingData(() -> {
+            if (!profile().isOffTheRecord()) { Session regular = mSessions.get(false); if (regular != null) regular.bridge.emit("library:clear", new JSONObject()); }
+            result.send(true, new JSONObject().put("ok", true).put("cleared", "history"));
+        }, new int[] {BrowsingDataType.HISTORY}, TimePeriod.ALL_TIME);
+    }
+
+    private void clearData(JSONObject what, PsychoBridge.Result result) throws Exception {
+        java.util.ArrayList<Integer> types = new java.util.ArrayList<>();
+        if (what.optBoolean("cache")) types.add(BrowsingDataType.CACHE);
+        if (what.optBoolean("cookies") || what.optBoolean("storage")) types.add(BrowsingDataType.SITE_DATA);
+        if (what.optBoolean("history")) types.add(BrowsingDataType.HISTORY);
+        if (what.optBoolean("downloads") && mDownloads != null) mDownloads.clear();
+        if (what.optBoolean("session") && mRecovery != null) mRecovery.clearAll();
+        if (what.optBoolean("history") && !profile().isOffTheRecord()) { Session regular = mSessions.get(false); if (regular != null) regular.bridge.emit("library:clear", new JSONObject()); }
+        if (types.isEmpty()) { result.send(true, new JSONObject().put("ok", true)); return; }
+        int[] data = new int[types.size()]; for (int i = 0; i < data.length; i++) data[i] = types.get(i);
+        BrowsingDataBridge.getForProfile(profile()).clearBrowsingData(() -> result.send(true, new JSONObject().put("ok", true)), data, TimePeriod.ALL_TIME);
+    }
+
+    private JSONObject dataReport() throws Exception {
+        return new JSONObject().put("ok", true).put("files", new JSONArray()).put("cookies", JSONObject.NULL)
+                .put("note", "Android manages profile storage inside the app sandbox. Use the clear buttons for browsing data; a desktop-style file list is not exposed.");
+    }
+
+    private JSONObject diagnostics() throws Exception {
+        JSONObject settings = mStore.read(profile());
+        JSONObject network = PsychoNetwork.status(profile(), currentTab() == null ? null : currentTab().getWebContents());
+        JSONObject out = new JSONObject().put("app", "PsychoVault").put("version", VersionInfo.getProductVersion())
+                .put("platform", "android").put("engine", "Chromium 156.0.8078.79")
+                .put("private", profile().isOffTheRecord())
+                .put("proxyConfigured", network.optBoolean("proxyConfigured"))
+                .put("vpnProtectionVerified", false)
+                .put("blocked", network.optInt("blocked"))
+                .put("extensions", mExtensions.list(profile()).length())
+                .put("downloads", mDownloads == null ? 0 : mDownloads.list().length())
+                .put("vaultEnabled", settings.optBoolean("vaultEnabled"))
+                .put("workspacesEnabled", settings.optBoolean("workspacesEnabled", true));
+        return out;
+    }
+
+    private String diagnosticsText() throws Exception {
+        StringBuilder text = new StringBuilder("PsychoVault troubleshooting report\n");
+        JSONObject report = diagnostics();
+        for (java.util.Iterator<String> it = report.keys(); it.hasNext();) { String key = it.next(); text.append(key).append(": ").append(report.opt(key)).append('\n'); }
+        return text.toString();
+    }
+
+    private JSONObject proxySelfTest() throws Exception {
+        JSONObject status = PsychoNetwork.status(profile(), currentTab() == null ? null : currentTab().getWebContents());
+        return new JSONObject().put("ok", true).put("verified", false)
+                .put("proxyConfigured", status.optBoolean("proxyConfigured"))
+                .put("message", "Android checks the saved proxy preference only. It does not run the desktop loopback routing test. Connect inside Proton, then use an external IP/DNS/WebRTC check.");
     }
 
     private static boolean web(GURL url) { return url != null && url.isValid() && ("https".equals(url.getScheme()) || "http".equals(url.getScheme())); }

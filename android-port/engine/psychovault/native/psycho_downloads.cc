@@ -34,18 +34,18 @@ class Observer final : public content::DownloadManager::Observer,
     manager_->AddObserver(this);
     std::vector<raw_ptr<DownloadItem, VectorExperimental>> items;
     manager_->GetAllDownloads(&items);
-    for (auto* item : items) Watch(item);
+    for (auto& item : items) Watch(item.get());
   }
   ~Observer() override {
     if (manager_) manager_->RemoveObserver(this);
-    for (auto* item : items_) item->RemoveObserver(this);
+    for (auto& item : items_) item->RemoveObserver(this);
   }
   std::string List() {
     std::vector<raw_ptr<DownloadItem, VectorExperimental>> downloads;
     if (manager_) manager_->GetAllDownloads(&downloads);
     std::sort(downloads.begin(), downloads.end(), [](const auto& a, const auto& b) { return a->GetStartTime() > b->GetStartTime(); });
     base::ListValue out;
-    for (auto* item : downloads) {
+    for (auto& item : downloads) {
       if (out.size() >= 200) break;
       base::DictValue row;
       row.Set("id", item->GetGuid());
@@ -86,14 +86,14 @@ class Observer final : public content::DownloadManager::Observer,
   void Clear() {
     std::vector<raw_ptr<DownloadItem, VectorExperimental>> downloads;
     if (manager_) manager_->GetAllDownloads(&downloads);
-    for (auto* item : downloads) if (item->GetState() != DownloadItem::IN_PROGRESS) item->Remove();
+    for (auto& item : downloads) if (item->GetState() != DownloadItem::IN_PROGRESS) item->Remove();
   }
  private:
   void Watch(DownloadItem* item) { if (items_.insert(item).second) item->AddObserver(this); }
   void Unwatch(DownloadItem* item) { if (items_.erase(item)) item->RemoveObserver(this); }
   void OnDownloadCreated(content::DownloadManager*, DownloadItem* item) override { Watch(item); Changed(); }
   void ManagerGoingDown(content::DownloadManager*) override {
-    for (auto* item : items_) item->RemoveObserver(this);
+    for (auto& item : items_) item->RemoveObserver(this);
     items_.clear(); manager_ = nullptr; Changed();
   }
   void OnDownloadUpdated(DownloadItem*) override { Changed(); }
