@@ -17,7 +17,7 @@ class ChromiumSourceTests(unittest.TestCase):
         activity.write_text('public class ChromeTabbedActivity extends ChromeActivity implements PreAttachIntentObserver {\n}\nvoid onResumeWithNative() {\n        super.onResumeWithNative();\n}\n    public void onPauseWithNative() {\n}\n    public void onDestroyInternal() {\n}\n    public void onActivityResult(int requestCode, int resultCode, Intent data) {\n            super.onActivityResult(requestCode, resultCode, data);\n}\n')
         gn = path / 'chrome/android/chrome_java_sources.gni'
         gn.write_text('chrome_java_sources = [\n  "java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java",\n]\n')
-        (path / 'chrome/android/BUILD.gn').write_text('  android_library("chrome_java") {\n    deps = [\n    ]\n    srcjar_deps += [ ":chrome_jni_headers" ]\n}\n  chrome_public_apk_or_module_tmpl("chrome_public_apk") {\n    target_type = "android_apk"\n}\n')
+        (path / 'chrome/android/BUILD.gn').write_text('  android_library("chrome_java") {\n    deps = [\n    ]\n    srcjar_deps += [ ":chrome_jni_headers" ]\n}\n  chrome_public_apk_or_module_tmpl("chrome_public_apk") {\n    target_type = "android_apk"\n}\n  generate_jni("chrome_jni_headers") {\n    public_deps = [\n      ":base_module_jni",\n    ]\n}\n')
         ui = path / 'chrome/browser/ui'; ui.mkdir(parents=True)
         (ui / 'BUILD.gn').write_text('static_library("ui") {\n  public_deps = [\n    # WARNING WARNING WARNING\n  ]\n  deps = [\n    ":browser_element_identifiers",\n  ]\n}\n')
         webui = ui / 'webui'; webui.mkdir()
@@ -55,6 +55,8 @@ class ChromiumSourceTests(unittest.TestCase):
             self.assertIn('asset_deps', chrome_gn)
             self.assertIn('//psychovault:bundled_extensions_assets', chrome_gn)
             self.assertNotIn('//psychovault:jni_headers_java', chrome_gn)
+            self.assertIn('//psychovault:jni_headers', chrome_gn)
+            self.assertNotIn('//chrome/browser/profiles/android:java', (ROOT / 'BUILD.gn').read_text())
             ui_gn = (root / 'chrome/browser/ui/BUILD.gn').read_text()
             self.assertIn('//psychovault/native/psycho_ui.cc', ui_gn)
             self.assertIn('//psychovault:jni_headers', ui_gn)

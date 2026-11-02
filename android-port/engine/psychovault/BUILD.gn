@@ -2,10 +2,12 @@ import("//build/config/android/rules.gni")
 import("//third_party/jni_zero/jni_zero.gni")
 
 generate_jni("jni_headers") {
-  deps = [
-    "//chrome/browser/profiles/android:java",
-    "//content/public/android:content_java",
-  ]
+  # These bindings intentionally use JNI Zero's default JavaRef<jobject> and
+  # JavaRef<jstring> parameters. Do not depend on the Profile/Content Java
+  # compilation targets here: chrome_java consumes our generated Java source,
+  # so pulling those targets into this generator creates a header dependency
+  # cycle through base_java. The native implementations convert the object
+  # references explicitly in the browser target that already owns those types.
   sources = [
     "java/org/chromium/chrome/browser/psychovault/PsychoProfileStore.java",
     "java/org/chromium/chrome/browser/psychovault/PsychoExtensions.java",

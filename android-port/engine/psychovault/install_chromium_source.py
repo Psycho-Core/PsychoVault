@@ -92,6 +92,13 @@ def install(src):
         '  chrome_public_apk_or_module_tmpl("chrome_public_apk") {\n    target_type = "android_apk"\n'
         '    asset_deps = [\n      "//psychovault:ui_assets",\n      "//psychovault:bundled_extensions_assets",\n    ]',
         'APK assets')
+    # Register the generated Java shim through Chromium's existing JNI group.
+    # Its public_deps propagate the srcjar to chrome_java without putting the
+    # Profile/Content Java compilation targets on the chrome header path.
+    chrome_build = replace_once(chrome_build,
+        '    public_deps = [\n      ":base_module_jni",\n',
+        '    public_deps = [\n      ":base_module_jni",\n      "//psychovault:jni_headers",\n',
+        'PsychoVault JNI registration')
     ui_build = texts['ui_build']
     # Compile the host inside Chromium's existing browser/UI target. A separate
     # native target would create dependency cycles with factories implemented by
