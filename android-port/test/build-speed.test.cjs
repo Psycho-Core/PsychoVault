@@ -62,5 +62,5 @@ test('long hosted compiles checkpoint before the six-hour job limit and resume N
   assert.match(segment, /sha256sum -c SHA256SUMS/);
   assert.match(segment, /compression-level: 0/);
   assert.match(workflow, /resume_artifact: \$\{\{ needs\.segment-1\.outputs\.checkpoint_artifact \}\}/);
-  assert.match(workflow, /needs\.segment-1\.outputs\.status == 'checkpoint'/);
+  assert.match(workflow, /needs\.segment-1\.result == 'success' && needs\.segment-1\.outputs\.status == 'checkpoint'/);
 });

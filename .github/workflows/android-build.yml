@@ -80,21 +80,21 @@ jobs:
       segment: 1
   segment-2:
     needs: segment-1
-    if: always() && needs.segment-1.outputs.status == 'checkpoint'
+    if: always() && needs.segment-1.result == 'success' && needs.segment-1.outputs.status == 'checkpoint'
     uses: ./.github/workflows/android-build-segment.yml
     with:
       segment: 2
       resume_artifact: ${{ needs.segment-1.outputs.checkpoint_artifact }}
   segment-3:
     needs: segment-2
-    if: always() && needs.segment-2.outputs.status == 'checkpoint'
+    if: always() && needs.segment-2.result == 'success' && needs.segment-2.outputs.status == 'checkpoint'
     uses: ./.github/workflows/android-build-segment.yml
     with:
       segment: 3
       resume_artifact: ${{ needs.segment-2.outputs.checkpoint_artifact }}
   segment-4:
     needs: segment-3
-    if: always() && needs.segment-3.outputs.status == 'checkpoint'
+    if: always() && needs.segment-3.result == 'success' && needs.segment-3.outputs.status == 'checkpoint'
     uses: ./.github/workflows/android-build-segment.yml
     with:
       segment: 4
