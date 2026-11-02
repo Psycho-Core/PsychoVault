@@ -1,5 +1,6 @@
 name: Android source and build
 
+# Keep the push trigger on the active development branch so an authorized build can start from a push.
 on:
   workflow_dispatch:
   push:
