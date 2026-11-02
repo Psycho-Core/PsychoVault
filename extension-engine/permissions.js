@@ -57,10 +57,18 @@ function contextAllowed(method, kind) {
   return !!policy && policy.contexts.includes(kind);
 }
 
-function escapeRegExp(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
-function pathToRegExp(path) {
-  // Match-pattern paths allow '*' as a glob. Everything else is literal.
-  return new RegExp('^' + path.split('*').map(escapeRegExp).join('.*') + '$');
+function globMatch(pattern, value) {
+  // Linear-time '*' glob. A regex built from many '*' segments can backtrack
+  // catastrophically on a long hostile path, so match iteratively instead.
+  let p = 0, v = 0, star = -1, mark = 0;
+  while (v < value.length) {
+    if (p < pattern.length && pattern[p] === '*') { star = p++; mark = v; continue; }
+    if (p < pattern.length && pattern[p] === value[v]) { p++; v++; continue; }
+    if (star !== -1) { p = star + 1; v = ++mark; continue; }
+    return false;
+  }
+  while (p < pattern.length && pattern[p] === '*') p++;
+  return p === pattern.length;
 }
 function matchPattern(pattern, rawUrl, options = {}) {
   let url;
@@ -90,7 +98,7 @@ function matchPattern(pattern, rawUrl, options = {}) {
   // Chromium's short form must not become a one-path-only VPN permission.
   if (options.ignorePath) return true;
   const path = rawPath === '' ? '/*' : '/' + rawPath;
-  return pathToRegExp(path).test(url.pathname);
+  return globMatch(path, url.pathname);
 }
 function hasHostAccess(requirements, url, grantedOptionalHosts = []) {
   const patterns = [...(requirements.hostPermissions || []), ...grantedOptionalHosts];

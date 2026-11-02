@@ -6,7 +6,7 @@ This is my own extension-engine core for PsychoVault. It is MIT licensed and con
 
 - A Manifest V3 reader that rejects duplicate keys, unsafe resource paths, remote/unsafe extension CSP, malformed match patterns and oversized manifests.
 - A default-deny permission policy for the first Proton/Dark Reader API surface.
-- A profile-scoped request dispatcher with opaque context tokens, request size limits, in-flight limits, timeouts and JSON-only parameters/results.
+- A profile-scoped request dispatcher with opaque context tokens, request/result size limits, in-flight limits, timeouts with `AbortSignal`, and JSON-only parameters/results. A timed-out handler keeps its slot until it settles.
 - Unit tests for the policy boundary.
 
 ## What it is not yet

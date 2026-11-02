@@ -12,6 +12,8 @@ on:
       - 'tools/build-installer.sh'
       - 'tools/gen-filelist.mjs'
       - 'tools/*.test.cjs'
+      - 'tools/ownership-audit.mjs'
+      - 'extension-engine/**'
       - 'tools/*-electron-smoke.cjs'
       - 'tools/patch-exe.mjs'
       - 'tools/package*.json'
@@ -20,6 +22,12 @@ on:
 
 permissions:
   contents: read
+
+# Queue behind any active Android/Windows build instead of running a second
+# heavy build in parallel.
+concurrency:
+  group: psychovault-android-build
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -32,7 +40,9 @@ jobs:
       - name: Audit and test
         run: |
           node tools/audit.mjs
+          node tools/ownership-audit.mjs
           node --test tools/*.test.cjs
+          node --test extension-engine/test/*.test.cjs
       - name: Install NSIS and 7-Zip
         run: |
           sudo apt-get update

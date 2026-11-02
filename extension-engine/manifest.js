@@ -31,11 +31,11 @@ function strings(value, label, maxItems = 512) {
 }
 function safeResourcePath(value, label = 'resource path') {
   text(value, label, 1024);
-  let decoded;
-  try { decoded = decodeURIComponent(value); } catch { fail(`${label} has invalid escaping`); }
-  if (value.startsWith('/') || value.includes('\\') || /^[a-z][a-z0-9+.-]*:/i.test(value) ||
-      /[?#]/.test(value) || /[\u0000-\u001f]/.test(decoded) ||
-      decoded.split('/').some(part => part === '..' || part === '.' || part === '')) {
+  // Manifest resource paths are literal package-relative paths. Percent escapes
+  // are refused so a loader cannot decode them a second time into traversal.
+  if (value.startsWith('/') || value.includes('\\') || value.includes('%') ||
+      /^[a-z][a-z0-9+.-]*:/i.test(value) || /[?#]/.test(value) ||
+      value.split('/').some(part => part === '..' || part === '.' || part === '')) {
     fail(`${label} must stay inside the extension package`);
   }
   return value;
@@ -48,7 +48,12 @@ function matchPattern(value) {
   const [, scheme, host, path] = match;
   if (scheme !== '*' && !SCHEMES.has(scheme)) fail('unsupported match-pattern scheme');
   if (scheme === 'file' ? host !== '' : !host) fail('invalid match-pattern host');
-  if (host && host !== '*' && !/^(\*\.)?[^*@:/\\]+$/.test(host)) fail('invalid match-pattern host');
+  if (host && host !== '*') {
+    const base = host.startsWith('*.') ? host.slice(2) : host;
+    if (!base || base.includes('*') || !/^[a-z0-9.-]+$/.test(base) || base.startsWith('.') || base.endsWith('.') || base.includes('..')) {
+      fail('invalid match-pattern host');
+    }
+  }
   // Chromium accepts "https://*/" (a slash with an empty path) as well as
   // "https://*/*". Proton's published manifest uses the shorter form.
   if (/[?#\\]/.test(path)) fail('invalid match-pattern path');
@@ -105,11 +110,16 @@ function csp(manifest) {
     if (directives.has(directive)) fail('duplicate CSP directive');
     directives.set(directive, tokens.slice(1).map(token => token.toLowerCase()));
   }
-  // Check the effective source list, not just an explicit script-src. A remote
-  // default-src with no script-src must not become a remote-code hole.
   const fallback = directives.get('default-src') || ["'self'"];
-  for (const directive of ['script-src', 'script-src-elem', 'script-src-attr', 'worker-src', 'object-src']) {
-    const values = directives.get(directive) || fallback;
+  const effective = {
+    'script-src': directives.get('script-src') || fallback,
+    'script-src-elem': directives.get('script-src-elem') || directives.get('script-src') || fallback,
+    'script-src-attr': directives.get('script-src-attr') || directives.get('script-src') || fallback,
+    'worker-src': directives.get('worker-src') || directives.get('child-src') || fallback,
+    'object-src': directives.get('object-src') || fallback
+  };
+  for (const values of Object.values(effective)) {
+    if (!values.length) fail('extension CSP has an empty code-source directive');
     if (values.some(token => !["'self'", "'none'"].includes(token))) {
       fail('extension CSP permits remote or unsafe code');
     }

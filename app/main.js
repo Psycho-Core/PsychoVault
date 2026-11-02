@@ -44,6 +44,7 @@ const { captureWindows, selectWindows } = require('./session-recovery')
 const { recover: recoverVaultMigration, migrate: migrateVault } = require('./vault-migration')
 const { hostname, parseHosts, siteExcluded, isDomainBlocked } = require('./blocking-rules')
 const { matchesProxyChallenge, allowsProxyAuth } = require('./ext-proxy-auth')
+const { recordedDownloadPath } = require('./download-open')
 const { inspectProtonPopup, clickProtonPopup } = require('./proton-toggle')
 
 // An uncaught throw in the main process used to pop Electron's modal "A JavaScript
@@ -689,6 +690,18 @@ function shimRegister(ses) {
   } catch (e) { logMainError(e) }
 }
 
+// The shim exposes capabilities Electron does not gate with Chrome's extension
+// permission system. Check the installed manifest as well as the sender id.
+function shimManifestForId(real) {
+  const rec = extRecords().find((x) => x.id === real)
+  if (!rec || !rec.dir) return null
+  try { return extReadManifest(rec.dir) } catch (e) { return null }
+}
+function shimHasPermission(real, permission) {
+  const manifest = shimManifestForId(real)
+  return !!(manifest && Array.isArray(manifest.permissions) && manifest.permissions.includes(permission))
+}
+
 // The extension id a message really came from - never the id the message claims.
 function shimSenderId(event) {
   try {
@@ -761,6 +774,8 @@ async function onShimCall(event, payload, channel) {
     if (claimed && claimed !== real) return { ok: false, error: 'sender does not match the extension id in the request' }
 
     channel = String(channel || '')
+    if (channel.startsWith('extshim:proxy:') && !shimHasPermission(real, 'proxy')) return { ok: false, error: 'proxy permission is required' }
+    if (channel.startsWith('extshim:webrtc:') && !shimHasPermission(real, 'privacy')) return { ok: false, error: 'privacy permission is required' }
     if (channel === 'extshim:auth:reply') {
       // Only the actual owning service worker may answer this one pending challenge.
       const pending = proxyAuthPending.get(String(payload && payload.requestId || ''))
@@ -771,12 +786,17 @@ async function onShimCall(event, payload, channel) {
     }
 
     if (channel === 'extshim:proxy:get') {
+      if (extProxyOwner && extProxyOwner !== real) return { ok: true, value: { mode: 'system' }, levelOfControl: 'controlled_by_other_extension' }
       return { ok: true, ...getResult(extProxyValues.has(real), extProxyValues.get(real)) }
     }
 
     if (channel === 'extshim:proxy:set') {
+      if (extProxyOwner && extProxyOwner !== real) return { ok: false, error: 'another extension is controlling the proxy', levelOfControl: 'controlled_by_other_extension' }
       // Throws on a malformed config rather than quietly going DIRECT.
       const config = toElectronProxy(payload && payload.value)
+      const previousOwner = extProxyOwner
+      const previousValue = previousOwner ? extProxyValues.get(previousOwner) : null
+      const rollbackConfig = previousValue ? toElectronProxy(previousValue) : { mode: 'system' }
       const applied = []
       const leaks = []
       for (const ses of extSessions()) {
@@ -797,12 +817,19 @@ async function onShimCall(event, payload, channel) {
       extProxyState = { value: (payload && payload.value) || null, at: Date.now(), applied: applied.length, leaks }
       if (!applied.length || leaks.length) {
         // Never report extension control when any browsing partition rejected the setting.
-        extProxyValues.delete(real)
-        if (extProxyOwner === real) extProxyOwner = ''
+        // Restore the previous proxy state everywhere so a partial apply cannot leave some
+        // profiles proxied and others direct while the extension is told it failed.
+        const rollbackLeaks = []
+        for (const ses of extSessions()) {
+          try { await ses.setProxy(rollbackConfig) } catch (e) { rollbackLeaks.push(String((e && e.message) || e)); logMainError(e) }
+        }
+        if (previousOwner && previousValue) { extProxyOwner = previousOwner; extProxyValues.set(previousOwner, previousValue) }
+        else { extProxyOwner = ''; extProxyValues.delete(real) }
+        extProxyState = { value: previousValue || null, at: Date.now(), applied: 0, leaks: rollbackLeaks }
         for (const w of mainWindows) w.sendState()
         const why = leaks[0] ? (leaks[0].reason || leaks[0].error || 'unknown') : 'no session accepted the proxy configuration'
         logMainError(new Error('proxy not applied: ' + why))
-        return { ok: false, error: why, leaks }
+        return { ok: false, error: why + (rollbackLeaks.length ? '; rollback failed' : '; previous proxy state restored'), leaks }
       }
       extProxyValues.set(real, (payload && payload.value) || { mode: 'system' })
       extProxyOwner = real
@@ -811,14 +838,16 @@ async function onShimCall(event, payload, channel) {
     }
 
     if (channel === 'extshim:proxy:clear') {
+      if (extProxyOwner && extProxyOwner !== real) return { ok: false, error: 'another extension is controlling the proxy', levelOfControl: 'controlled_by_other_extension' }
+      const failures = []
       for (const ses of extSessions()) {
-        try { await ses.setProxy({ mode: 'system' }) } catch (e) { logMainError(e) }
+        try { await ses.setProxy({ mode: 'system' }) } catch (e) { failures.push(String((e && e.message) || e)); logMainError(e) }
       }
       extProxyValues.delete(real)
-      if (extProxyOwner === real) extProxyOwner = ''
+      extProxyOwner = ''
       for (const w of mainWindows) w.sendState()
-      extProxyState = { value: null, at: Date.now(), applied: 0, leaks: [] }
-      return { ok: true }
+      extProxyState = { value: null, at: Date.now(), applied: 0, leaks: failures }
+      return failures.length ? { ok: false, error: 'proxy was not cleared in every profile', leaks: failures } : { ok: true }
     }
 
     if (channel === 'extshim:log') {
@@ -853,7 +882,10 @@ async function onShimCall(event, payload, channel) {
       if (q.currentWindow || q.active) list = list.filter((t) => !String(t.url || '').startsWith('chrome-extension://'))
       if (q.active) list = list.filter((t) => t.active)
       if (q.currentWindow) { /* there is one window per w, already scoped */ }
-      if (typeof q.url === 'string') list = list.filter((t) => t.url === q.url)
+      const hasTabs = shimHasPermission(real, 'tabs')
+      if (typeof q.url === 'string') list = hasTabs ? list.filter((t) => t.url === q.url) : []
+      // Without the tabs permission Chrome redacts URL/title. Match that.
+      if (!hasTabs) list = list.map((t) => ({ ...t, url: '', title: '', favIconUrl: '' }))
       return { ok: true, tabs: list }
     }
 
@@ -1045,6 +1077,8 @@ function extCrxPayload(file) {
 // a zip64 archive is refused rather than half-read.
 function extUnzip(zip, dest) {
   const zlib = require('zlib')
+  const MAX_FILES = 10000, MAX_TOTAL_BYTES = 256 * 1024 * 1024, MAX_ENTRY_BYTES = 64 * 1024 * 1024
+  let totalBytes = 0
   const EOCD = 0x06054b50
   let eocd = -1
   for (let i = zip.length - 22; i >= Math.max(0, zip.length - 70000); i--) {
@@ -1055,9 +1089,10 @@ function extUnzip(zip, dest) {
   let p = zip.readUInt32LE(eocd + 16)
   if (count === 0xffff || p === 0xffffffff) throw new Error('zip64 archives are not supported')
   const root = path.resolve(dest)
-  let files = 0
+  let files = 0, entries = 0
   for (let n = 0; n < count; n++) {
-    if (zip.readUInt32LE(p) !== 0x02014b50) throw new Error('zip: bad central directory record')
+    if (p + 46 > zip.length || zip.readUInt32LE(p) !== 0x02014b50) throw new Error('zip: bad central directory record')
+    if (++entries > MAX_FILES) throw new Error('zip: too many entries')
     const method = zip.readUInt16LE(p + 10)
     const csize = zip.readUInt32LE(p + 20)
     const usize = zip.readUInt32LE(p + 24)
@@ -1065,19 +1100,25 @@ function extUnzip(zip, dest) {
     const extraLen = zip.readUInt16LE(p + 30)
     const commentLen = zip.readUInt16LE(p + 32)
     const local = zip.readUInt32LE(p + 42)
+    if (p + 46 + nameLen + extraLen + commentLen > zip.length) throw new Error('zip: truncated central directory record')
     const name = zip.slice(p + 46, p + 46 + nameLen).toString('utf8').replace(/\\/g, '/')
     p += 46 + nameLen + extraLen + commentLen
     const target = path.resolve(root, name)
     if (target !== root && !target.startsWith(root + path.sep)) throw new Error('zip: entry escapes the destination: ' + name)
     if (/\/$/.test(name)) { fs.mkdirSync(target, { recursive: true }); continue }
+    if (usize > MAX_ENTRY_BYTES) throw new Error('zip: entry is too large: ' + name)
+    totalBytes += usize
+    if (totalBytes > MAX_TOTAL_BYTES) throw new Error('zip: unpacked archive is too large')
     // local header is 30 bytes: sig(4) ver(2) flags(2) method(2) time(2) date(2) crc(4) csize(4) usize(4) nameLen(2) extraLen(2)
+    if (local + 30 > zip.length || zip.readUInt32LE(local) !== 0x04034b50) throw new Error('zip: bad local header')
     const lh = local + 30 + zip.readUInt16LE(local + 26) + zip.readUInt16LE(local + 28)
+    if (lh + csize > zip.length) throw new Error('zip: truncated entry data')
     const data = zip.slice(lh, lh + csize)
     let out
     if (method === 0) out = data
-    else if (method === 8) out = zlib.inflateRawSync(data)
+    else if (method === 8) out = zlib.inflateRawSync(data, { maxOutputLength: MAX_ENTRY_BYTES })
     else throw new Error('zip: unsupported compression method ' + method + ' for ' + name)
-    if (usize && out.length !== usize) throw new Error('zip: size mismatch for ' + name)
+    if (out.length !== usize) throw new Error('zip: size mismatch for ' + name)
     fs.mkdirSync(path.dirname(target), { recursive: true })
     fs.writeFileSync(target, out)
     files++
@@ -3625,10 +3666,12 @@ ipcMain.handle('downloads:control', (_e, o) => {
   } catch (err) { return { ok: false, error: String(err.message || err) } }
 })
 ipcMain.handle('downloads:open', (e, filePath) => {
-  if (typeof filePath === 'string' && filePath) shell.openPath(filePath)
+  const allowed = recordedDownloadPath(downloads, filePath)
+  if (allowed) shell.openPath(allowed)
 })
 ipcMain.handle('downloads:reveal', (e, filePath) => {
-  if (typeof filePath === 'string' && filePath) shell.showItemInFolder(filePath)
+  const allowed = recordedDownloadPath(downloads, filePath)
+  if (allowed) shell.showItemInFolder(allowed)
 })
 ipcMain.handle('downloads:dir', () => downloadDir())
 ipcMain.handle('downloads:pickdir', (e) => {
