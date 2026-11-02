@@ -1,0 +1,47 @@
+{
+  "capturedAt": "2026-11-02T11:37:36.263Z",
+  "sourceCommit": "4a223b9c7e5d79a145564e059922d8d872c9d81c",
+  "profile": "throwaway",
+  "categories": [
+    {
+      "id": "general",
+      "label": "01General"
+    },
+    {
+      "id": "privacy",
+      "label": "02Privacy & security"
+    },
+    {
+      "id": "downloads",
+      "label": "03Downloads"
+    },
+    {
+      "id": "extensions",
+      "label": "04Extensions"
+    },
+    {
+      "id": "performance",
+      "label": "05Performance"
+    },
+    {
+      "id": "appearance",
+      "label": "06Appearance"
+    },
+    {
+      "id": "spelling",
+      "label": "07Spelling"
+    },
+    {
+      "id": "passwords",
+      "label": "08Passwords"
+    },
+    {
+      "id": "accessibility",
+      "label": "09Accessibility & language"
+    },
+    {
+      "id": "about",
+      "label": "10About"
+    }
+  ]
+}
