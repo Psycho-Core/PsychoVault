@@ -31,6 +31,7 @@ try {
   replaceRenderer("const show = document.createElement('button'); show.className = 'mini'; show.textContent = 'Show in folder'; show.onclick = () => window.pv.downloads.reveal(d.path)", "const show = document.createElement('button'); show.className = 'mini'; show.textContent = 'Open Downloads'; show.onclick = () => window.pv.downloads.reveal(d.id).catch(e => alert(e.message || 'Could not open Downloads'));");
   replaceRenderer('row.title = d.path', 'row.title = d.file || d.name || d.id');
   replaceRenderer("toast(result.action === 'connect' ? 'Proton proxy configured - connection not verified' : 'Proton VPN disconnected')", "toast(result.message || 'Proton opened. Connect inside Proton; protection is not verified.')");
+  replaceRenderer("window.pv.perf.snapshot('pdf').then((r) => toast(r.ok ? 'Saved ' + r.file : 'PDF failed: ' + (r.reason || '')))", "window.pv.perf.snapshot('pdf').then((r) => toast(r.ok ? (r.message || 'Android print dialog opened. Choose Save as PDF.') : 'PDF failed: ' + (r.reason || '')))");
   replaceRenderer("else if (cmd === 'settings') window.pv.tab.new('psychovault://settings')", "else if (cmd === 'settings') window.pv.tab.new('psychovault://settings')\n  else if (cmd === 'extensions') window.pv.tab.new('psychovault://settings#extensions')");
   fs.writeFileSync(path.join(target,'renderer.js'), renderer);
   // WebUI CSP forbids inline scripts. Adapt the copied new tab, not the desktop source.

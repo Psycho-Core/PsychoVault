@@ -3,7 +3,7 @@ name: Android source and build
 on:
   workflow_dispatch:
   push:
-    branches: [arena/4770266d-psychovault]
+    branches: [arena/3561bcd7-psychovault]
     paths:
       - 'android-port/**'
       - 'app/ui/**'
@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: android-${{ github.ref }}
+  group: psychovault-android-build
   cancel-in-progress: true
 
 jobs:

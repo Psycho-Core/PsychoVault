@@ -21,7 +21,10 @@ final class PsychoVpnCheck {
         if (mDestroyed || profile == null) { callback.onResult(fail("VPN check is unavailable")); return; }
         int id = ++mSequence;
         mPending.put(id, callback);
-        PsychoVpnCheckJni.get().check(profile, this, id);
+        if (!PsychoVpnCheckJni.get().check(profile, this, id)) {
+            mPending.remove(id);
+            callback.onResult(fail("VPN check is unavailable for this profile"));
+        }
     }
 
     @CalledByNative
@@ -50,7 +53,7 @@ final class PsychoVpnCheck {
 
     @NativeMethods
     interface Natives {
-        void check(Profile profile, PsychoVpnCheck owner, int requestId);
+        boolean check(Profile profile, PsychoVpnCheck owner, int requestId);
         void cancelAll(PsychoVpnCheck owner);
     }
 }

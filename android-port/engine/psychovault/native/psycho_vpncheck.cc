@@ -1,5 +1,6 @@
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -10,6 +11,8 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/no_destructor.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/browser_thread.h"
@@ -18,7 +21,7 @@
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/simple_url_loader.h"
-#include "third_party/blink/public/mojom/loader/resource_load_info.mojom-shared.h"
+#include "services/network/public/mojom/url_loader_factory.mojom.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -27,7 +30,6 @@
 namespace {
 using base::android::JavaRef;
 using base::android::ScopedJavaGlobalRef;
-using base::android::ScopedJavaLocalRef;
 
 struct Request {
   ScopedJavaGlobalRef<jobject> owner;
@@ -39,7 +41,14 @@ std::map<Key, std::unique_ptr<Request>>& Live() {
   static base::NoDestructor<std::map<Key, std::unique_ptr<Request>>> live;
   return *live;
 }
-void Finish(Request* request, std::unique_ptr<std::string> body) {
+void Finish(Request* request, std::optional<std::string> body) {
+  auto it = Live().find(Key{request->owner.obj(), request->id});
+  if (it == Live().end() || it->second.get() != request) return;
+  // Take ownership out of the map before calling Java, but do not destroy the
+  // SimpleURLLoader inside its own callback. Delete it on the next UI task.
+  std::unique_ptr<Request> owned = std::move(it->second);
+  Live().erase(it);
+
   JNIEnv* env = base::android::AttachCurrentThread();
   std::string json = "{\"ok\":false}";
   if (body && request->loader->NetError() == net::OK) {
@@ -60,15 +69,17 @@ void Finish(Request* request, std::unique_ptr<std::string> body) {
   }
   Java_PsychoVpnCheck_onNativeResult(env, request->owner, request->id,
       base::android::ConvertUTF8ToJavaString(env, json));
-  Live().erase(Key{request->owner.obj(), request->id});
+  base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(FROM_HERE,
+                                                             std::move(owned));
 }
 }  // namespace
 
-void JNI_PsychoVpnCheck_Check(JNIEnv* env, const JavaRef<jobject>& jprofile,
-                              const JavaRef<jobject>& owner, jint id) {
+jboolean JNI_PsychoVpnCheck_Check(JNIEnv* env,
+                                  const JavaRef<jobject>& jprofile,
+                                  const JavaRef<jobject>& owner, jint id) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   Profile* profile = Profile::FromJavaObject(jprofile);
-  if (!profile) return;
+  if (!profile) return false;
   auto resource = std::make_unique<network::ResourceRequest>();
   resource->url = GURL("https://ipapi.co/json/");
   resource->method = "GET";
@@ -93,16 +104,23 @@ void JNI_PsychoVpnCheck_Check(JNIEnv* env, const JavaRef<jobject>& jprofile,
   request->id = id;
   request->loader = network::SimpleURLLoader::Create(std::move(resource), kAnnotation);
   request->loader->SetTimeoutDuration(base::Seconds(15));
-  auto* factory = profile->GetDefaultStoragePartition()->GetURLLoaderFactoryForBrowserProcess().get();
+  // Keep the factory alive for the synchronous DownloadToString call. The
+  // loader clones the mojo remote it needs; the scoped_refptr itself need not
+  // outlive this function, but a temporary .get() is easy to misread.
+  scoped_refptr<network::mojom::URLLoaderFactory> factory =
+      profile->GetDefaultStoragePartition()->GetURLLoaderFactoryForBrowserProcess();
   network::SimpleURLLoader* loader = request->loader.get();
   Request* raw = request.get();
   // The map owns the request. Replacing or erasing it cancels the loader before
   // the callback can run; Finish erases only this owner/id.
   Live()[Key{raw->owner.obj(), id}] = std::move(request);
-  loader->DownloadToString(factory, base::BindOnce(&Finish, base::Unretained(raw)), 64 * 1024);
+  loader->DownloadToString(factory.get(), base::BindOnce(&Finish, base::Unretained(raw)), 64 * 1024);
+  return true;
 }
-void JNI_PsychoVpnCheck_CancelAll(JNIEnv*, const JavaRef<jobject>& owner) {
+void JNI_PsychoVpnCheck_CancelAll(JNIEnv* env, const JavaRef<jobject>& owner) {
   for (auto it = Live().begin(); it != Live().end();) {
-    if (it->first.first == owner.obj()) it = Live().erase(it); else ++it;
+    // owner.obj() may be a local ref while the map key is a global ref; pointer
+    // equality is not Java object identity.
+    if (env->IsSameObject(it->first.first, owner.obj())) it = Live().erase(it); else ++it;
   }
 }

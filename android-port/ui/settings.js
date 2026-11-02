@@ -44,14 +44,15 @@
     'downloadDir','downloadDirPick','soundVol','permOrigin','permLoad','permCamera','permMicrophone','permLocation','permNotifications','permSave','permRemove',
     'spellUserWords','spellWordsSave','spellWordsRefresh','contList','contAdd','contSave','updateCheckNow','updateDismiss',
     'clear','dataRefresh','dataFiles','dataCookies','modSave','modClear','svcList','svcAdd','svcSave','svcCat',
-    'openErrorLog','errorLogResult','proxySelfTest','proxyStatus','proxySelfTestResult','proxyStatusResult','diagnosticsRefresh','diagnosticsCopy','diagnosticsReport','diagnosticsResult','appVersion','appElectron']);
+    'relaunch','openErrorLog','errorLogResult','proxySelfTest','proxyStatus','proxySelfTestResult','proxyStatusResult','diagnosticsRefresh','diagnosticsCopy','diagnosticsReport','diagnosticsResult','appVersion','appElectron']);
   // The copied desktop switches rely on adjacent text; give Android TalkBack an explicit name.
   for (const input of document.querySelectorAll('.switch input[type=checkbox]')) {
     const label = input.closest('.row')?.querySelector('.lbl')?.textContent?.trim();
     if (label && !input.getAttribute('aria-label')) input.setAttribute('aria-label', label);
   }
+  // Android relaunch is connected; keep the hardening restart note visible.
+  if (s('restartNote')) s('restartNote').style.display = 'block';
   const PLACEHOLDERS = {
-    relaunch: 'Desktop relaunch is not connected on Android. Restart the app from Android if needed.',
     vforget: 'No OS-keychain vault fallback is enabled on Android; the master-password vault remains available.',
     updateToken: 'Public GitHub releases do not need an update token.',
     updateTokenSave: 'Public GitHub releases do not need an update token.',
@@ -250,6 +251,7 @@
   };
   if (s('protonVpnRestore')) s('protonVpnRestore').onclick = async () => { try { await window.pv.extensions.restorebuiltin(); paintExtensions(); status.textContent = 'Bundled extensions restore requested; check the list for Chromium load results.'; } catch (e) { status.textContent = e.message; } };
   if (s('vpnCheckOpen')) s('vpnCheckOpen').onclick = () => window.pv.vpncheck.open().catch(e => status.textContent = e.message);
+  if (s('relaunch')) s('relaunch').onclick = async () => { if (!confirm('Restart PsychoVault now? Tabs are kept, but unsaved page state may be lost.')) return; try { const r = await window.pv.perf.relaunch(); status.textContent = r.message || 'Restarting PsychoVault.'; } catch (e) { status.textContent = e.message; } };
   if (s('openErrorLog')) { s('openErrorLog').textContent = 'View Android error log'; s('openErrorLog').onclick = async () => { try { const r = await window.pv.data.openErrorLog(); const rows = (r.entries || []).map(x => new Date(x.at).toISOString() + ' ' + x.channel + ' ' + x.error); if (s('errorLogResult')) s('errorLogResult').textContent = r.message + (rows.length ? '\n' + rows.join('\n') : ''); } catch (e) { status.textContent = e.message; } }; }
   if (s('extAddFolder')) { s('extAddFolder').textContent = 'Import extension ZIP'; s('extAddFolder').onclick = async () => { try { const r = await window.pv.extensions.addfolder(); status.textContent = r.ok ? 'Extension installed.' : (r.error || 'Import failed.'); paintExtensions(); } catch (e) { status.textContent = e.message; } }; }
   if (s('extAddCrx')) { s('extAddCrx').textContent = 'Install CRX'; s('extAddCrx').onclick = async () => { try { const r = await window.pv.extensions.addcrx(); status.textContent = r.ok ? 'Extension installed.' : (r.error || 'Install failed.'); paintExtensions(); } catch (e) { status.textContent = e.message; } }; }

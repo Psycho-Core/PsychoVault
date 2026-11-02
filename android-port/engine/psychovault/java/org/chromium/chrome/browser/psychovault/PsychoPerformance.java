@@ -8,6 +8,7 @@ import android.os.Looper;
 import android.provider.MediaStore;
 
 import org.chromium.base.ThreadUtils;
+import org.chromium.chrome.browser.printing.PrintHelper;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.content_public.browser.ChildProcessImportance;
@@ -83,7 +84,15 @@ final class PsychoPerformance {
     }
 
     void snapshot(Tab tab, String kind, Consumer<JSONObject> callback) {
-        if (!"png".equals(kind)) { callback.accept(reason("PDF export is not connected on Android yet")); return; }
+        if ("pdf".equals(kind)) {
+            if (tab == null || !tab.isInitialized()) { callback.accept(reason("Select a live page first")); return; }
+            boolean started = PrintHelper.printTab(tab);
+            callback.accept(started
+                    ? ok("Android print dialog opened. Choose Save as PDF to export the page.")
+                    : reason("Android could not start printing for this page"));
+            return;
+        }
+        if (!"png".equals(kind)) { callback.accept(reason("Unknown snapshot format")); return; }
         WebContents contents = tab == null ? null : tab.getWebContents();
         if (contents == null || contents.isDestroyed() || !web(tab.getUrl())) { callback.accept(reason("Select a live web page first")); return; }
         int id = ++mSequence; mSnapshots.put(id, callback);
@@ -125,6 +134,10 @@ final class PsychoPerformance {
     private void completeSnapshot(int id, JSONObject result) {
         Consumer<JSONObject> callback = mSnapshots.remove(id);
         if (callback != null) callback.accept(result == null ? reason("Snapshot failed or timed out") : result);
+    }
+    private static JSONObject ok(String message) {
+        try { return new JSONObject().put("ok", true).put("message", message); }
+        catch (Exception e) { throw new IllegalStateException(e); }
     }
     private static JSONObject reason(String text) { try { return new JSONObject().put("ok", false).put("reason", text); } catch (Exception e) { throw new IllegalStateException(e); } }
 

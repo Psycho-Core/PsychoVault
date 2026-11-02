@@ -365,6 +365,7 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
         if (channel.equals("history:clear") && settings) { clearHistory(result); return; }
         if (channel.equals("data:clear") && settings) { clearData(arg(args), result); return; }
         if (channel.equals("data:report") && settings) { result.send(true, dataReport()); return; }
+        if (channel.equals("app:relaunch") && settings) { relaunch(result); return; }
         if (channel.equals("app:diagnostics") && settings) { result.send(true, diagnostics()); return; }
         if (channel.equals("app:diagnosticsCopy") && settings) { String text = diagnosticsText(); ClipboardManager clip = (ClipboardManager) mActivity.getSystemService(Context.CLIPBOARD_SERVICE); clip.setPrimaryClip(ClipData.newPlainText("PsychoVault", text)); result.send(true, text); return; }
         if (channel.equals("proxy:status") && settings) { result.send(true, PsychoNetwork.status(profile(), currentTab() == null ? null : currentTab().getWebContents())); return; }
@@ -383,6 +384,8 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
             case "ui:back": mBack.setEnabled(arg(args).optBoolean("handled")); result.send(true, null); return;
             case "settings:get": result.send(true, mStore.read(profile())); return;
             case "settings:set": result.send(true, saveSettings(arg(args))); return;
+            case "win:minimize": case "win:maximize": case "win:close": result.send(false, "Android manages application windows."); return;
+            case "view:split": result.send(false, "Split view is not available in the Android single-compositor layout."); return;
             case "win:private": mSelector.selectModel(true); selectSession(); mController.openNewTab(); result.send(true, null); changed(); return;
             case "tab:reopen": { String url = mClosedTabs.pollFirst(); if (url == null) { result.send(false, "No recently closed tab"); return; } result.send(true, mController.openWebTab(url)); changed(); return; }
             case "tab:move": { JSONObject o = arg(args); result.send(true, mController.move(o.getInt("id"), o.isNull("before") ? -1 : o.getInt("before"))); changed(); return; }
@@ -428,6 +431,7 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
             case "proxy:status": result.send(true, PsychoNetwork.status(profile(), currentTab() == null ? null : currentTab().getWebContents())); return;
             case "vpncheck:open": result.send(true, new JSONObject().put("ok", true).put("tab", mController.openWebTab("psychovault://vpncheck"))); changed(); return;
             case "app:info": result.send(true, new JSONObject().put("version", VersionInfo.getProductVersion()).put("platform", "android")); return;
+            case "app:relaunch": relaunch(result); return;
             case "proton:toggle": { String id = mExtensions.resolveId(profile(), PsychoExtensions.PROTON_ID); String page = mExtensions.resolvePage(profile(), id, "popup.html"); mController.openExtensionPage(id, page); result.send(true, new JSONObject().put("ok", true).put("action", "open").put("message", "Proton opened. Connect inside Proton; protection is not verified.")); changed(); return; }
             default:
                 if (channel.startsWith("ext:")) { extensionCommand(channel, args, result); return; }
@@ -567,6 +571,14 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
         result.send(true, saveSettings(new JSONObject().put("spellUserWords", next)));
     }
 
+    private void relaunch(PsychoBridge.Result result) throws Exception {
+        result.send(true, new JSONObject().put("ok", true).put("message", "Restarting PsychoVault."));
+        // Let the bridge reply reach the settings page before the activity is
+        // recreated. Android keeps the process/profile; this restarts the UI and
+        // re-reads startup hardening preferences, not a forced process kill.
+        mOverlay.postDelayed(() -> { if (!mDestroyed) mActivity.recreate(); }, 250);
+    }
+
     private void showTabMenu(int id, PsychoBridge.Result result) throws Exception {
         Tab tab = mSelector.getTabById(id);
         if (tab == null) { result.send(false, "Tab unavailable"); return; }
@@ -619,18 +631,20 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
 
     private JSONObject dataReport() throws Exception {
         JSONArray files = new JSONArray();
-        java.io.File root = mActivity.getFilesDir();
-        java.io.File[] children = root.listFiles();
-        if (children != null) for (java.io.File child : children) {
-            if (child.isDirectory() && "psychovault-vault".equals(child.getName())) collectDataFiles(child, "vault", files);
+        if (profile().isOffTheRecord()) {
+            return new JSONObject().put("ok", true).put("files", files).put("cookies", JSONObject.NULL)
+                    .put("note", "Private profiles do not expose regular-profile file names.");
         }
-        java.io.File prefs = new java.io.File(root.getParentFile(), "shared_prefs");
-        java.io.File[] prefFiles = prefs.listFiles();
-        if (prefFiles != null) for (java.io.File file : prefFiles) {
-            if (file.isFile() && file.getName().startsWith("psychovault_") && files.length() < 40) files.put(new JSONObject().put("name", "settings/" + file.getName()).put("bytes", file.length()));
+        String name = PsychoProfileStoreJni.get().getProfileName(profile());
+        java.io.File root = mActivity.getFilesDir();
+        if (name != null && name.matches("[A-Za-z0-9_.-]+")) {
+            java.io.File vault = new java.io.File(root, "psychovault-vault/" + name);
+            if (vault.isDirectory()) collectDataFiles(vault, "vault", files);
+            java.io.File prefs = new java.io.File(root.getParentFile(), "shared_prefs/psychovault_" + name + ".xml");
+            if (prefs.isFile()) files.put(new JSONObject().put("name", "settings/psychovault_" + name + ".xml").put("bytes", prefs.length()));
         }
         return new JSONObject().put("ok", true).put("files", files).put("cookies", JSONObject.NULL)
-                .put("note", "PsychoVault-owned files are listed without absolute paths. Chromium manages the rest of the profile sandbox; cookie counts are not exposed.");
+                .put("note", "Only this profile's PsychoVault-owned files are listed, without absolute paths. Chromium manages the rest of the profile sandbox; cookie counts are not exposed.");
     }
     private void collectDataFiles(java.io.File dir, String prefix, JSONArray out) {
         java.io.File[] children = dir.listFiles(); if (children == null) return;
