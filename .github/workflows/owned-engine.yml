@@ -42,6 +42,10 @@ jobs:
           New-Item -ItemType Directory -Force build | Out-Null
           python --version | Tee-Object build/toolchain.txt
           git rev-parse HEAD | Tee-Object -Append build/toolchain.txt
+      - name: Set up MSVC x64 environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        with:
+          arch: x64
       - name: Build browser, renderer and tests
         shell: pwsh
         run: |
