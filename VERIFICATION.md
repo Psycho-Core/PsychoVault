@@ -286,7 +286,7 @@ green. Kept here because "the test disagreed" is exactly where a real bug hides.
 ## Round 20 - the remaining Performance features, and an audit of the wiring
 
 This round added the features that were missing from the parity list (Performance, Tab
-Islands, containers, Snapshot, panic, RGX, sidebar services, media keys, sounds, the
+Islands, containers, Snapshot, panic, video/image enhancement, sidebar services, media keys, sounds, the
 stylesheet mod box, WebRTC/DoH/referrer/permission hardening) and built two checkers,
 because "I added 20 settings" is not the same statement as "those settings reach code".
 
@@ -323,13 +323,13 @@ on disk. Last run: **51 PASS / 0 FAIL / 0 ERROR**.
 | `remember` switch | history 1 → 1 with it off, 1 → 2 with it back on |
 | Containers | same site in a container gets a separate cookie jar (`tag=A-9` vs `tag=A-14`) and `localStorage === null` |
 | Snapshot | file starts `89 50 4E 47` (real PNG); "save as PDF" starts `%PDF-` |
-| RGX | computed style on the `<video>` is `contrast(1.06) saturate(1.10) brightness(1.03)`; one idempotent `#__pv_rgx` node; removed when switched off |
+| Video/image enhancement | computed style on the `<video>` is `contrast(1.06) saturate(1.10) brightness(1.03)`; one idempotent enhancement style node; removed when switched off |
 | Permissions | geolocation → `denied:1`; the deny list is a real setting, editable from the page |
 | Referrer | cross-port subresource arrives with **no** `referer` header when the switch is on, and the switch changes live behaviour, not just state |
 | WebRTC / DoH | `--force-webrtc-ip-handling-policy=default_public_interface_only` present in Chromium's own switch list; a DoH change reports `restartNeeded: true` and the restart note appears |
 | Performance | hot tabs report per-tab memory and CPU (`281MB`, `0%`...), panel sleeps a tab, panel wakes it again (`discarded` false after reload) |
 | Panic | `F12` → one tab on the configured escape page, `F11` → 6 → 6 tabs back, nothing written while panicked |
-| Sounds | `window.gxSound` exists and calls do not throw (audibility is not measurable headless - see below) |
+| Sounds | the keyboard-sound helper exists and calls do not throw (audibility is not measurable headless - see below) |
 | Mods | `:root{--accent:#ff0055}` in the mod box really repaints the chrome (computed `--accent` = `#ff0055`) |
 | Services rail | a rail service opens as an ordinary tab, marked `service`; media keys paused the real `<video>` (`how: "pause"`) |
 | Tab Islands | tab opened from a page carries `parentId`; strip renders one collapse control for the group; collapsing hides the children (`9..15`), expanding restores them (`9..16`); the tab you are on is exempt |

@@ -1120,7 +1120,7 @@ function toast(msg) {
 
 // one more rail button: Performance (CPU/RAM/bandwidth), the speedometer slot
 
-(function addGxButton() {
+(function addPerformanceButton() {
   const rail = document.getElementById('rail')
   if (!rail) return
   const b = document.createElement('button')
