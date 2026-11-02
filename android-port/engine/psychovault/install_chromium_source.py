@@ -110,7 +110,7 @@ def install(src):
     ui_build = replace_once(ui_build, '  deps = [\n    ":browser_element_identifiers",',
         '  deps = [\n    "//psychovault:jni_headers",\n'
         '    "//chrome/browser/spellchecker",\n'
-        '    "//components/download/public/common",\n'
+        '    "//components/download/public/common:public",\n'
         '    "//components/proxy_config",\n'
         '    "//components/spellcheck/browser",\n'
         '    "//extensions/browser",\n'
