@@ -39,7 +39,7 @@ class PsychoInstallPrompt final : public extensions::ExtensionInstallPromptClien
     callback_ = std::move(callback);
     base::ListValue permissions;
     for (const auto& message : extensions::PermissionMessageProvider::Get()->GetPermissionMessages(extensions::PermissionMessageProvider::Get()->GetAllPermissionIDs(extension->permissions_data()->active_permissions(), extension->GetType()))) permissions.Append(message.message());
-    std::string json; base::WriteJson(permissions, &json);
+    const std::string json = base::WriteJson(permissions).value_or("[]");
     JNIEnv* env = base::android::AttachCurrentThread();
     Java_PsychoExtensions_onInstallPrompt(env, owner_, reinterpret_cast<jlong>(this),
         base::android::ConvertUTF8ToJavaString(env, extension->name()), base::android::ConvertUTF8ToJavaString(env, json));
@@ -88,8 +88,7 @@ ScopedJavaLocalRef<jstring> JNI_PsychoExtensions_List(JNIEnv* env, const JavaRef
   AppendExtensions(registry->disabled_extensions(), "disabled", items);
   AppendExtensions(registry->terminated_extensions(), "terminated", items);
   AppendExtensions(registry->blocked_extensions(), "blocked", items);
-  std::string json; base::WriteJson(items, &json);
-  return base::android::ConvertUTF8ToJavaString(env, json);
+  return base::android::ConvertUTF8ToJavaString(env, base::WriteJson(items).value_or("[]"));
 }
 jboolean JNI_PsychoExtensions_SetEnabled(JNIEnv* env, const JavaRef<jobject>& jprofile,
                                          const JavaRef<jstring>& jid, jboolean enabled) {

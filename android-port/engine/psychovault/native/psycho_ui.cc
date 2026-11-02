@@ -6,8 +6,10 @@
 #include <utility>
 
 #include "base/android/apk_assets.h"
+#include "base/files/file.h"
 #include "base/files/memory_mapped_file.h"
 #include "base/functional/bind.h"
+#include "base/memory/ref_counted.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/strings/string_util.h"
 #include "chrome/browser/profiles/profile.h"
@@ -19,6 +21,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/webui_config_map.h"
+#include "services/network/public/mojom/content_security_policy.mojom.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "url/gurl.h"
 
@@ -82,13 +85,16 @@ class PsychoAssetSource : public content::URLDataSource {
     if (allowed) {
       base::MemoryMappedFile::Region region;
       int fd = base::android::OpenApkAsset("assets/psychovault/ui/" + path, &region);
-      base::MemoryMappedFile file;
-      if (fd >= 0 && file.Initialize(fd, region) && file.length() <= 4 * 1024 * 1024) {
-        bytes.assign(reinterpret_cast<const char*>(file.data()), file.length());
+      if (fd >= 0) {
+        base::File asset_file(fd);
+        base::MemoryMappedFile file;
+        if (asset_file.IsValid() && file.Initialize(std::move(asset_file), region) && file.length() <= 4 * 1024 * 1024) {
+          bytes.assign(reinterpret_cast<const char*>(file.data()), file.length());
+        }
       }
     }
     if (bytes.empty()) bytes = "<!doctype html><title>Unavailable</title><p>This Android UI asset is unavailable.</p>";
-    std::move(callback).Run(base::RefCountedString::TakeString(&bytes));
+    std::move(callback).Run(base::MakeRefCounted<base::RefCountedString>(std::move(bytes)));
   }
  private:
   std::string host_;

@@ -284,8 +284,7 @@ ScopedJavaLocalRef<jstring> JNI_PsychoNetwork_Status(JNIEnv* env, const JavaRef<
   }
   out.Set("proxyConfigured", configured);
   // Deliberately no public proxy host, PAC URL, credentials or connection claim.
-  std::string json; base::WriteJson(out, &json);
-  return base::android::ConvertUTF8ToJavaString(env, json);
+  return base::android::ConvertUTF8ToJavaString(env, base::WriteJson(out).value_or("{}"));
 }
 void JNI_PsychoNetwork_Forget(JNIEnv*, const JavaRef<jobject>& jprofile) {
   auto* profile = Profile::FromJavaObject(jprofile);

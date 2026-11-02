@@ -4,6 +4,7 @@ import android.content.Context;
 
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.content_public.browser.WebContents;
+import org.jni_zero.JNINamespace;
 import org.jni_zero.NativeMethods;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -13,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
 /** Profile policy hand-off to the native request throttle. It never claims a VPN connection. */
+@JNINamespace("psychovault")
 final class PsychoNetwork {
     private static JSONArray sBundled;
     private PsychoNetwork() {}

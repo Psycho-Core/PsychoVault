@@ -55,7 +55,7 @@ class Observer final : public content::DownloadManager::Observer,
       row.Set("url", item->GetOriginalUrl().GetAsReferrer().spec());
       row.Set("received", static_cast<double>(item->GetReceivedBytes()));
       row.Set("total", static_cast<double>(item->GetTotalBytes()));
-      row.Set("at", item->GetStartTime().InMillisecondsSinceUnixEpoch());
+      row.Set("at", static_cast<double>(item->GetStartTime().InMillisecondsSinceUnixEpoch()));
       row.Set("canResume", item->CanResume());
       row.Set("canOpen", item->CanOpenDownload());
       const char* state = "interrupted";
@@ -66,7 +66,7 @@ class Observer final : public content::DownloadManager::Observer,
       row.Set("danger", static_cast<int>(item->GetDangerType()));
       out.Append(std::move(row));
     }
-    std::string json; base::WriteJson(out, &json); return json;
+    return base::WriteJson(out).value_or("[]");
   }
   DownloadItem* Find(const std::string& guid) {
     return manager_ ? manager_->GetDownloadByGuid(guid) : nullptr;

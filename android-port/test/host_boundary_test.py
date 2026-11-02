@@ -104,6 +104,21 @@ class HostBoundaryTests(unittest.TestCase):
         self.assertIn('CancelWithError', native)
         self.assertIn('kPromptForDownloadAndroid', native)
         self.assertNotIn('modified_request_headers', native)
+    def test_native_code_uses_pinned_chromium_156_apis(self):
+        native_dir = ROOT / 'engine/psychovault/native'
+        for path in native_dir.glob('*.cc'):
+            text = path.read_text()
+            self.assertNotRegex(text, r'base::WriteJson\([^;]*&\w+\)', f'{path.name}: WriteJson now returns optional<string>')
+            self.assertNotIn('RefCountedString::TakeString', text)
+            self.assertNotIn('base::EscapeJSONString(', text)
+        downloads = (native_dir / 'psycho_downloads.cc').read_text()
+        self.assertIn('static_cast<double>(item->GetStartTime().InMillisecondsSinceUnixEpoch())', downloads)
+        network_java = (JAVA / 'psychovault/PsychoNetwork.java').read_text()
+        self.assertIn('@JNINamespace("psychovault")', network_java)
+        ui = (native_dir / 'psycho_ui.cc').read_text()
+        self.assertIn('base::MakeRefCounted<base::RefCountedString>', ui)
+        self.assertIn('base::File asset_file(fd)', ui)
+
     def test_performance_does_not_fabricate_metrics(self):
         java = (JAVA / 'psychovault/PsychoPerformance.java').read_text()
         self.assertIn('JSONObject.NULL', java)

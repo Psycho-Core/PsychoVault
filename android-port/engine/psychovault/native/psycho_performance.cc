@@ -57,7 +57,7 @@ void JNI_PsychoPerformance_Enhance(JNIEnv* env, const JavaRef<jobject>& jcontent
   std::string css = "html.pv-reduce-motion *,html.pv-reduce-motion *::before,html.pv-reduce-motion *::after{animation-duration:.001ms!important;transition-duration:.001ms!important;scroll-behavior:auto!important}";
   if (images) css += "img{image-rendering:auto}";
   if (video) css += "video{object-fit:contain}";
-  std::u16string script = u"(()=>{document.documentElement.classList.toggle('pv-reduce-motion'," + std::string(reduce ? "true" : "false") + ");let s=document.getElementById('psycho-page-enhancements');if(!s){s=document.createElement('style');s.id='psycho-page-enhancements';document.documentElement.appendChild(s);}s.textContent=" + base::EscapeJSONString(base::UTF8ToUTF16(css), false) + ";})();";
+  const std::string script = "(()=>{document.documentElement.classList.toggle('pv-reduce-motion'," + std::string(reduce ? "true" : "false") + ");let s=document.getElementById('psycho-page-enhancements');if(!s){s=document.createElement('style');s.id='psycho-page-enhancements';document.documentElement.appendChild(s);}s.textContent=" + base::GetQuotedJSONString(css) + ";})();";
   RunFixedScript(content::WebContents::FromJavaWebContents(jcontents), script);
 }
 void FinishSnapshot(const ScopedJavaGlobalRef<jobject>& owner, int id,
