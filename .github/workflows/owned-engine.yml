@@ -44,7 +44,9 @@ jobs:
           git rev-parse HEAD | Tee-Object -Append build/toolchain.txt
       - name: Build browser, renderer and tests
         shell: pwsh
-        run: python tools/build.py --compiler msvc --outdir build
+        run: |
+          python tools/build.py --compiler msvc --outdir build 2>&1 | Tee-Object build/build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run engine tests
         shell: pwsh
         run: .\build\pv-tests.exe | Tee-Object build/engine-tests.txt
@@ -84,6 +86,7 @@ jobs:
             build/*.exe
             build/*.txt
             build/*.json
+            build/*.log
             build/captures/*.png
           if-no-files-found: warn
           retention-days: 14

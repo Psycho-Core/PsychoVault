@@ -431,7 +431,7 @@ std::vector<Style> compute_styles(const Document &doc,
         matched.push_back(&r);
     for (auto &sheet : sheets)
       for (auto &r : sheet.rules)
-        if (matches_selector(doc, id, r.selector))
+        if (media_matches(r.media, viewport) && matches_selector(doc, id, r.selector))
           matched.push_back(&r);
     std::stable_sort(matched.begin(), matched.end(), [](auto a, auto b) {
       return specificity(a->selector) < specificity(b->selector);
