@@ -1,10 +1,11 @@
 name: Android source and build
 
 # Keep the push trigger on the active development branch so an authorized build can start from a push.
+# Use [skip ci] for docs-only pushes while an APK build is running.
 on:
   workflow_dispatch:
   push:
-    branches: [arena/3561bcd7-psychovault]
+    branches: [arena/93b8960d-psychovault]
     paths:
       - 'android-port/**'
       - 'app/ui/**'
@@ -17,7 +18,8 @@ permissions:
 
 concurrency:
   group: psychovault-android-build
-  cancel-in-progress: true
+  # Protect a running APK build. A newer pending run replaces older pending work.
+  cancel-in-progress: false
 
 jobs:
   source-checks:
@@ -67,7 +69,9 @@ jobs:
 
   build-apk:
     needs: source-checks
-    runs-on: ubuntu-24.04
+    # Free standard hosted runner by default. Set repository variable ANDROID_RUNNER
+    # to a larger GitHub-hosted runner label only if I explicitly choose paid capacity.
+    runs-on: ${{ vars.ANDROID_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
@@ -76,6 +80,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: v0.16.0
       - name: Free hosted-runner disk and choose engine workspace
         id: paths
         shell: bash
@@ -89,7 +97,12 @@ jobs:
           sudo docker system prune -af || true
           parent=/mnt
           if [[ ! -w "$parent" ]]; then parent="$RUNNER_TEMP"; fi
-          engine="$parent/psychovault-engine-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          # Stable path improves compiler-cache reuse across disposable hosted runners.
+          engine="$parent/psychovault-engine"
+          if [[ -e "$engine" || -L "$engine" ]]; then
+            echo "Engine workspace already exists; refusing to overwrite: $engine" >&2
+            exit 1
+          fi
           echo "engine_root=$engine" >> "$GITHUB_OUTPUT"
           free_gb=$(df -BG --output=avail "$parent" | tail -1 | tr -dc '0-9')
           df -h "$parent" "$RUNNER_TEMP" | tee "$notes/disk.txt"
@@ -98,9 +111,12 @@ jobs:
             echo "Status: APK build attempted"
             echo "Runner free disk: ${free_gb}GB"
             echo "Engine workspace: $engine"
+            echo "Compiler cache: sccache via GitHub Actions cache"
           } > "$notes/Release-Notes-Android.txt"
           # A single arm64, no-PGO/no-ThinLTO, symbol-stripped build is smaller
           # than the upstream dual-arch/AAB build. Fail early if even that cannot fit.
+          # sccache stores compiler outputs in the separate 10GB Actions cache; it
+          # does not try to preserve the whole Chromium workspace.
           if [[ "$free_gb" -lt 60 ]]; then
             echo "This runner has less than 60GB free after cleanup. No APK was produced." >> "$notes/Release-Notes-Android.txt"
             exit 1
@@ -118,6 +134,13 @@ jobs:
       - name: Build and validate APK
         env:
           PSYCHO_NOTES_DIR: ${{ steps.paths.outputs.notes_dir }}
+          PSYCHO_CC_WRAPPER: sccache
+          PSYCHO_BUILD_JOBS: ${{ vars.ANDROID_BUILD_JOBS }}
+          SCCACHE_GHA_ENABLED: "true"
+          SCCACHE_GHA_VERSION: android-arm64-v1
+          SCCACHE_IDLE_TIMEOUT: "0"
+          SCCACHE_BASEDIRS: ${{ steps.paths.outputs.engine_root }}/chromium/src
+          SCCACHE_ERROR_LOG: ${{ steps.paths.outputs.notes_dir }}/sccache-error.log
         shell: bash
         run: |
           set -Eeuo pipefail

@@ -21,9 +21,17 @@ The upstream `.gclient` fetches Chromium build dependencies and filter lists fro
 - Device-test the blocker, vault, privacy, downloads, workspaces, recovery and performance handlers. Verify Proton sign-in, proxy routing, failure behaviour and DNS/WebRTC leaks before claiming protection.
 - Device-test the remaining Android adaptations: named OTR containers, exact-origin permission rules, Chromium download-directory picking, background download notifications, download duty-cycle caps, media-session keys/auto-pause, HTTPS dictionary mirrors/custom words and release dismissal. These now have source handlers, but Android cannot promise desktop persistence or OS-level media routing.
 - Establish licence compliance, secure signing, update compatibility, data migration, build notes and a repeatable Windows `.bat` workflow.
-- The GitHub Actions source-check workflow is authorised. The APK job is manual and requires a runner with enough disk; no APK has been produced yet.
+- The GitHub Actions source-check and APK workflow is authorised. It needs a runner with enough disk; no current-source APK has been verified yet.
 
-Chromium documents at least 100 GB free disk and an x86-64 Linux host; more than 16 GB RAM is recommended. A free self-hosted WSL2 or Linux build may be possible on suitable existing hardware; no successful build is claimed. The old Android GitHub workflows were removed because they built the deleted WebView prototype and would not build this engine.
+Chromium documents at least 100 GB free disk and an x86-64 Linux host; more than 16 GB RAM is recommended. The old Android GitHub workflows were removed because they built the deleted WebView prototype and would not build this engine.
+
+## Hosted build speed
+
+I kept the APK build on GitHub Actions. The workflow uses a stable engine path, all available runner cores, and `sccache` backed by the GitHub Actions cache so later builds can reuse compiler outputs. The default runner is still the free standard hosted runner. If I explicitly choose paid capacity, I can set the repository variable `ANDROID_RUNNER` to a larger GitHub-hosted runner label, and optionally `ANDROID_BUILD_JOBS` to cap Ninja concurrency.
+
+This does not preserve the whole Chromium workspace between hosted runs. GitHub's Actions cache is a separate 10 GB allowance, so a cold Chromium build can still take hours and cache entries can be evicted. The workflow records sccache hit/miss stats with the build notes so I can see whether the cache is actually helping. A running APK build is protected from cancellation by newer pushes; docs-only pushes should use `[skip ci]`.
+
+On 2 November 2026 I checked this speed pass with 36 Android Node tests, 28 Python source tests, 185 desktop Node tests, desktop and Android static audits with no defects, ShellCheck on the engine scripts, and a workflow YAML parse. No Chromium compile or APK speed measurement has run yet, so I am not claiming a measured speedup.
 
 The old preview may be signed with an incompatible key. Changing to a new Android browser or signer can require a separate install or uninstall, and uninstalling can delete its local data. Do not uninstall without backing up anything important. Play Protect prompts cannot be guaranteed to disappear.
 
