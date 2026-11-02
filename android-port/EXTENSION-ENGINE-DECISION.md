@@ -1,5 +1,7 @@
 # Android extension engine - research and decision
 
+> Superseded direction: I want PsychoVault's own browser shell and extension engine, not Titanium/Vanadium or GeckoView/Firefox as the product foundation. The owned extension-engine core has started in `extension-engine/`; see `docs/OWN-BROWSER-PLAN.md`. The Titanium-based Android build remains an unfinished experiment and a source of reusable feature/UI work, not the final ownership boundary. Proton must still be proven on a device before any replacement is accepted.
+
 Research date: 1 November 2026; source status updated 2 November 2026. The source now contains general extension ZIP/CRX import, a native permission prompt, Chromium-reported load/uninstall results, bundled-extension staging and the broader feature handlers described in `README.md`. No Android extension install or device test has passed. Proton VPN is required in the Android port and remains unverified.
 
 ## What I need

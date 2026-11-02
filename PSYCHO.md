@@ -6,7 +6,7 @@ This is my project guide for people and coding agents working on PsychoVault. Re
 
 ## What I am building
 
-PsychoVault is my desktop browser application, built with Electron and Chromium. The browser UI and features are in this repository; Electron supplies the rendering engine. The Windows x64 installer is the main release target. An experimental Android debug APK has been built and the earlier preview was reported working on a phone. Do not describe it as a finished Android browser or claim that untested features work.
+PsychoVault is my own browser application. The Windows x64 installer is the main release target. The current Windows app is built with Electron and Chromium: my browser UI, features, vault and extension-compatibility code are in this repository, while Electron supplies the runtime and Chromium supplies webpage rendering. I want the browser shell, services and extension engine to be my own, not another browser's shell rebadged; see `docs/OWN-BROWSER-PLAN.md`. Do not replace the working Windows app until the owned host passes feature, migration, installer, updater and Proton gates. An experimental Android debug APK has been built and the earlier preview was reported working on a phone. Do not describe it as a finished Android browser or claim that untested features work.
 
 Keep changes focused on what I asked for. If a request has multiple parts, answer them in order. When I report a bug, use the installed version I give you, read the first error in a transcript, and do not assume a screenshot or generic notification identifies the cause.
 
@@ -21,6 +21,8 @@ Keep changes focused on what I asked for. If a request has multiple parts, answe
 - `PsychoVault_easy_build.bat` - my double-click Windows build entry point. `tools/build-installer.sh` is the CI/Linux installer path.
 - `tools/*.test.cjs` - Node tests. `tools/*-electron-smoke.cjs` and the Windows PowerShell smoke tests exercise Electron and the installer.
 - `app/builtin/` - bundled extensions and their provenance. Read its README and `THIRD-PARTY-NOTICES.md` before changing third-party code.
+- `extension-engine/` - my own default-deny extension policy/dispatch core. It is not yet a sandbox, not wired into the browser, and not proof that Proton works.
+- `docs/OWN-BROWSER-PLAN.md` - ownership, Proton, security, privacy, performance and migration gates for the owned browser/extension engine.
 - `release-notes/<version>.txt` - version-specific changes. `VERIFICATION.md` records test evidence; do not treat older entries as proof of a new change.
 
 ## How I want changes made
@@ -41,6 +43,7 @@ From the repository root, the quick checks are:
 ```sh
 node tools/audit.mjs
 node --test tools/*.test.cjs
+node --test extension-engine/test/*.test.cjs
 node --test android-port/test/*.test.cjs
 python3 -m unittest discover -s android-port/test -p '*_test.py'
 ```
