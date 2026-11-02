@@ -78,17 +78,21 @@ async function run() {
   }
 
   // Return to the new tab and capture the Performance panel if it is present.
-  await settings.executeJavaScript("window.pv.tabs.create({ url: 'psychovault://newtab', active: true }).catch(() => {})");
-  await sleep(600);
-  const perfButton = await chrome.executeJavaScript(`(() => {
-    const button = document.getElementById('btn-performance') || document.querySelector('[data-cmd="performance"]');
-    if (button) { button.click(); return true; }
-    return false;
-  })()`);
-  if (perfButton) {
+  try {
+    await chrome.executeJavaScript("window.pv.tab.new('psychovault://newtab')");
     await sleep(600);
-    await captureWindow(win, '90-performance-panel');
-  }
+  } catch (error) { console.error('new-tab return failed:', error.message); }
+  try {
+    const perfButton = await chrome.executeJavaScript(`(() => {
+      const button = document.getElementById('btn-performance') || document.querySelector('[data-cmd="performance"]');
+      if (button) { button.click(); return true; }
+      return false;
+    })()`);
+    if (perfButton) {
+      await sleep(600);
+      await captureWindow(win, '90-performance-panel');
+    }
+  } catch (error) { console.error('performance capture failed:', error.message); }
   fs.writeFileSync(path.join(outDir, 'CAPTURE.json'), JSON.stringify({
     capturedAt: new Date().toISOString(),
     sourceCommit: process.env.GITHUB_SHA || 'local',

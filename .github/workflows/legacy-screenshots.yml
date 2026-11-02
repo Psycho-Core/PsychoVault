@@ -8,7 +8,7 @@ on:
       - 'tools/capture-legacy-screenshots.cjs'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   capture:
@@ -25,7 +25,24 @@ jobs:
           sudo apt-get install -y xvfb libnss3 libatk-bridge2.0-0 libgtk-3-0 libgbm1 libasound2t64
           npm install --prefix app --no-audit --no-fund
       - name: Capture current browser UI
-        run: xvfb-run -a app/node_modules/.bin/electron --no-sandbox tools/capture-legacy-screenshots.cjs
+        id: capture
+        continue-on-error: true
+        run: |
+          mkdir -p screenshots/legacy
+          xvfb-run -a app/node_modules/.bin/electron --no-sandbox tools/capture-legacy-screenshots.cjs > screenshots/legacy/capture.log 2>&1
+          cat screenshots/legacy/capture.log
+      - name: Save screenshots and log to the working branch
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add screenshots/legacy
+          if git diff --cached --quiet; then
+            echo "No screenshot files to save."
+          else
+            git commit -m "Save legacy UI screenshots [skip ci]"
+            git push origin HEAD:arena/9fe5182a-psychovault
+          fi
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
@@ -34,3 +51,6 @@ jobs:
           path: screenshots/legacy
           if-no-files-found: error
           retention-days: 30
+      - name: Fail if capture failed
+        if: steps.capture.outcome != 'success'
+        run: exit 1
