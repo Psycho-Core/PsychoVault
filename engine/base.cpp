@@ -4,8 +4,8 @@
 #include <fstream>
 #ifdef _WIN32
 #define NOMINMAX
-#include <bcrypt.h>
 #include <windows.h>
+#include <bcrypt.h>
 #else
 #include <fcntl.h>
 #include <unistd.h>
