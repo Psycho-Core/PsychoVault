@@ -24,6 +24,9 @@ class ChromiumSourceTests(unittest.TestCase):
         (webui / 'chrome_web_ui_configs.cc').write_text('#include "chrome/browser/ui/webui/chrome_web_ui_configs.h"\nvoid RegisterChromeWebUIConfigs() {\n  auto& map = content::WebUIConfigMap::GetInstance();\n}\n')
         content = path / 'chrome/browser/chrome_content_browser_client.cc'
         content.write_text('#include "chrome/browser/chrome_content_browser_client.h"\nvoid f() {\n  DCHECK(browser_context);\n  Profile* profile = Profile::FromBrowserContext(browser_context);\n  DCHECK(profile);\n\n  ChromeNavigationUIData* chrome_navigation_ui_data =\n      nullptr;\n}\n')
+        spell = path / 'chrome/browser/spellchecker'; spell.mkdir(parents=True)
+        (spell / 'spellcheck_hunspell_dictionary.h').write_text('  // Tests use this method to set a custom URL for downloading dictionaries.\n  static void SetDownloadURLForTesting(const GURL url);\n')
+        (spell / 'spellcheck_hunspell_dictionary.cc').write_text('GURL& GetDownloadUrlForTesting() {\n  static base::NoDestructor<GURL> download_url_for_testing;\n  return *download_url_for_testing;\n}\nvoid SpellcheckHunspellDictionary::SetDownloadURLForTesting(const GURL url) {\n  GetDownloadUrlForTesting() = url;\n}\nGURL SpellcheckHunspellDictionary::GetDictionaryURL() {\n  if (GetDownloadUrlForTesting() != GURL()) {\n    return GetDownloadUrlForTesting();\n  }\n}\n')
         return java, activity, gn
 
     def test_controller_is_added_to_activity_and_gn(self):
@@ -50,12 +53,18 @@ class ChromiumSourceTests(unittest.TestCase):
             self.assertIn('CreateNetworkThrottle', (root / 'chrome/browser/chrome_content_browser_client.cc').read_text())
             chrome_gn = (root / 'chrome/android/BUILD.gn').read_text()
             self.assertIn('asset_deps', chrome_gn)
-            self.assertIn('//psychovault:bundled_extensions', chrome_gn)
+            self.assertIn('//psychovault:bundled_extensions_assets', chrome_gn)
             self.assertIn('//psychovault:jni_headers_java', chrome_gn)
             ui_gn = (root / 'chrome/browser/ui/BUILD.gn').read_text()
             self.assertIn('//psychovault/native/psycho_ui.cc', ui_gn)
             self.assertIn('//psychovault:jni_headers', ui_gn)
+            self.assertIn('//chrome/browser/spellchecker', ui_gn)
             self.assertNotIn('//psychovault:native', ui_gn)
+            self.assertIn('SetDownloadURLMirror', (root / 'chrome/browser/spellchecker/spellcheck_hunspell_dictionary.h').read_text())
+            self.assertIn('GetDownloadUrlMirror', (root / 'chrome/browser/spellchecker/spellcheck_hunspell_dictionary.cc').read_text())
+            self.assertIn('PsychoContainers.java', gn.read_text())
+            self.assertIn('PsychoMedia.java', gn.read_text())
+            self.assertIn('PsychoUpdates.java', gn.read_text())
             self.assertEqual((java / 'PsychoTabController.java').read_bytes(), (ROOT / 'java/org/chromium/chrome/browser/PsychoTabController.java').read_bytes())
             old = activity.read_bytes()
             result = subprocess.run(['python3', str(staged / 'install_chromium_source.py'), str(root)], capture_output=True)

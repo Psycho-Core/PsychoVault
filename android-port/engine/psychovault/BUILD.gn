@@ -17,7 +17,7 @@ generate_jni("jni_headers") {
 }
 
 
-android_assets("bundled_extensions") {
+android_assets("bundled_extensions_assets") {
   disable_compression = true
   renaming_sources = [ "bundled/proton-vpn.zip", "bundled/dark-reader.zip", "bundled/blocklist.json" ]
   renaming_destinations = [ "psychovault/bundled/proton-vpn.zip", "psychovault/bundled/dark-reader.zip", "psychovault/bundled/blocklist.json" ]

@@ -2,9 +2,9 @@
 
 The desktop checks below were executed against an earlier build in `release/`, on Linux with Electron 45.1.0 and Xvfb, with screenshots taken from the live window. They are historical evidence, not proof that every later release or Android port has been tested. I am not listing things I "should" have tested; this is the list of things that produced output.
 
-## Android restart source checks - 1 November 2026
+## Android Chromium source checks - 2 November 2026
 
-I ran 29 Node source tests and 12 Python source tests for the Android restart, plus 185 desktop Node tests and `node tools/audit.mjs`. The pinned Vanadium workspace preparation and Chromium source-installer anchors were checked separately; all four Android Java files were parsed with javalang, not compiled against Chromium. The trusted-host/navigation source slice now exists; its native layout, profile switching and touch path remain unverified on Android. The real Titanium companion CRX could not be downloaded in this environment. No new Android APK, Android SDK compilation, GitHub Actions build, extension install, Proton traffic test or phone test was run for the restart. See `android-port/README.md` for the limitations.
+I ran 31 Android Node tests, 19 Python source tests, 185 desktop Node tests, `node tools/audit.mjs`, the Android static source audit and the desktop settings inventory. The inventory now reports 57 Android-source-implemented settings, 1 extension-manager setting, 1 internal migration marker and 0 missing host handlers. I parsed all 14 Android Java files with javalang; that is syntax parsing, not Chromium compilation. The pinned Vanadium workspace preparation and Chromium source-installer anchors are covered by unit tests, including the new spellcheck mirror hook and the `bundled_extensions_assets` naming fix. GitHub Actions run 41362307255 reached GN and failed with `Invalid java resource target name: //psychovault:bundled_extensions`; that target has been renamed to match Chromium's `*_assets` rule. No Android APK has been successfully built or published from this restart, and no device, extension-install, Proton-connection or leak test has passed. See `android-port/README.md` for the limitations.
 
 ## Smoke
 

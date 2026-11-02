@@ -1,6 +1,7 @@
 package org.chromium.chrome.browser.psychovault;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
 import android.content.ClipData;
 import android.content.ClipboardManager;
@@ -79,6 +80,9 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
     private PsychoSessions mRecovery;
     private PsychoVaultStore mVault;
     private PsychoDownloads mDownloads;
+    private PsychoContainers mContainers;
+    private PsychoMedia mMedia;
+    private String mLastUpdateRelease = "";
     private boolean mDestroyed, mPublishQueued, mTouchInChrome, mWorkspaceBusy, mDownloadQueued;
     private int mTouchPointer = -1, mTop, mLeft, mBottom, mShowingToken = -1, mPanicTabId = Tab.INVALID_TAB_ID;
     private JSONArray mPanicTabs;
@@ -219,7 +223,9 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
         mServicesProfile = profile; mWorkspaces = new PsychoWorkspaces(profile, mStore);
         mRecovery = profile.isOffTheRecord() ? null : new PsychoSessions(mActivity, profile);
         mVault = profile.isOffTheRecord() ? null : createVault(profile);
-        mDownloads = new PsychoDownloads(profile, this::queueDownloads);
+        mDownloads = new PsychoDownloads(profile, this::queueDownloads, mActivity);
+        mContainers = new PsychoContainers(profile);
+        mMedia = new PsychoMedia(mActivity, mPerformance);
         mClosedTabs.clear(); mPanicTabs = null; mPanicTabId = Tab.INVALID_TAB_ID;
         if (!profile.isOffTheRecord()) try { mExtensions.ensureBundled(profile, mStore); } catch (Exception e) { /* status reports registry, not a guessed success */ }
     }
@@ -271,6 +277,7 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
     private void tabsClosed(List<Tab> tabs) {
         for (Tab tab : tabs) {
             unbindPage(tab.getId()); mController.clearFind(tab.getId());
+            if (mContainers != null) mContainers.tabClosed(tab.getId());
             if (!tab.isOffTheRecord()) { String url = tab.getUrl().getSpec(); if (url.startsWith("http://") || url.startsWith("https://")) { mClosedTabs.addFirst(url); while (mClosedTabs.size() > 20) mClosedTabs.removeLast(); } }
             if (mWorkspaces != null && !mWorkspaceBusy) try { mWorkspaces.tabRemoved(tab); } catch (Exception ignored) { }
         }
@@ -289,6 +296,9 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
     private void applySettings() throws Exception {
         JSONObject settings = mStore.read(profile()); PsychoNetwork.update(mActivity, profile(), settings);
         mPerformance.update(model(), settings); if (mVault != null) mVault.configure(settings);
+        if (mDownloads != null) mDownloads.configure(settings);
+        if (mContainers != null) mContainers.update(settings);
+        if (mMedia != null) mMedia.update(model(), settings);
         if (mWorkspaces != null) mWorkspaces.bind(model());
     }
     private JSONObject saveSettings(JSONObject patch) throws Exception {
@@ -307,6 +317,8 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
             if (mWorkspaces != null) state = mWorkspaces.filter(state);
             JSONObject settings = mStore.read(profile()); Tab tab = mSelector.getCurrentTab();
             state.put("settings", settings).put("modCss", settings.optString("modCss")).put("title", tab == null ? "New Tab" : tab.getTitle());
+            state.put("containers", settings.optJSONArray("containers") == null ? new JSONArray() : settings.optJSONArray("containers"));
+            if (mContainers != null) { JSONArray tabs = state.optJSONArray("tabs"); if (tabs != null) for (int i = 0; i < tabs.length(); i++) { JSONObject item = tabs.getJSONObject(i); String container = mContainers.nameFor(item.getInt("id")); item.put("container", container == null ? JSONObject.NULL : container); } }
             state.put("private", profile() != null && profile().isOffTheRecord());
             state.put("nativeTopPx", mCompositor.getBrowserControlsManager().getTopControlsHeight());
             JSONObject network = PsychoNetwork.status(profile(), tab == null ? null : tab.getWebContents());
@@ -334,7 +346,12 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
         if (channel.equals("settings:get")) { result.send(true, mStore.read(profile())); return; }
         if (channel.equals("settings:set") && settings) { result.send(true, saveSettings(arg(args))); return; }
         if (channel.equals("tab:open") && settings) { result.send(true, mController.openWebTab(str(args))); changed(); return; }
-        if (channel.equals("downloads:dir") && settings) { result.send(true, PsychoDownloads.directory(mActivity)); return; }
+        if (channel.equals("downloads:dir") && settings) { result.send(true, PsychoDownloads.directory(mActivity, mStore.read(profile()))); return; }
+        if (channel.equals("downloads:pickdir") && settings) { pickDownloadDirectory(result); return; }
+        if (channel.equals("update:check") && settings) { checkUpdates(result); return; }
+        if (channel.equals("update:dismiss") && settings) { dismissUpdate(args, result); return; }
+        if (channel.equals("spell:status") && settings) { result.send(true, new JSONObject().put("enabled", mStore.read(profile()).optBoolean("spellCheck")).put("words", mStore.read(profile()).optJSONArray("spellUserWords"))); return; }
+        if ((channel.equals("spell:add") || channel.equals("spell:remove")) && settings) { spellWord(channel, args, result); return; }
         if (channel.startsWith("vault:") && settings) { vaultCommand(channel, args, result); return; }
         if (channel.startsWith("ext:") && settings) { extensionCommand(channel, args, result); return; }
         if (channel.startsWith("recovery:") && recovery) { recoveryCommand(channel, args, result); return; }
@@ -359,8 +376,15 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
             case "downloads:control": { JSONObject o = arg(args); result.send(true, mDownloads.control(o.getString("id"), o.getString("action"))); return; }
             case "downloads:open": result.send(true, new JSONObject().put("ok", mDownloads.open(str(args)))); return;
             case "downloads:reveal": result.send(false, "Android opens the file with the system viewer; folder reveal is unavailable"); return;
-            case "downloads:dir": result.send(true, PsychoDownloads.directory(mActivity)); return;
-            case "downloads:pickdir": result.send(false, "Android uses the system Downloads folder. Use Ask where to save for a per-download choice."); return;
+            case "downloads:dir": result.send(true, PsychoDownloads.directory(mActivity, mStore.read(profile()))); return;
+            case "downloads:pickdir": pickDownloadDirectory(result); return;
+            case "update:check": checkUpdates(result); return;
+            case "update:banners": { String dismissed = mStore.read(profile()).optString("dismissedUpdate"); result.send(true, new JSONObject().put("dismissed", !dismissed.isEmpty()).put("version", dismissed)); return; }
+            case "update:dismiss": dismissUpdate(args, result); return;
+            case "spell:status": result.send(true, new JSONObject().put("enabled", mStore.read(profile()).optBoolean("spellCheck")).put("words", mStore.read(profile()).optJSONArray("spellUserWords"))); return;
+            case "spell:add": case "spell:remove": spellWord(channel, args, result); return;
+            case "tab:container": { JSONObject o = arg(args); Tab tab = mSelector.getTabById(o.getInt("id")); if (mContainers == null || tab == null) { result.send(false, "Tab unavailable"); return; } int id = mContainers.moveToContainer(model(), tab, o.optString("name")); result.send(true, new JSONObject().put("ok", true).put("tab", id)); changed(); return; }
+            case "tab:menu": { JSONObject o = arg(args); showTabMenu(o.getInt("id"), result); return; }
             case "ws:list": result.send(true, mWorkspaces.list()); return;
             case "ws:switch": mWorkspaces.switchTo(args.getInt(0)); result.send(true, mWorkspaces.list()); changed(); return;
             case "ws:new": { mWorkspaceBusy = true; try { int tabId = mController.createTab(mStore.read(profile()).optString("homepage", "psychovault://newtab")); mWorkspaces.create(str(args), model().getTabById(tabId)); } finally { mWorkspaceBusy = false; } result.send(true, mWorkspaces.list()); changed(); return; }
@@ -482,6 +506,62 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
         for (int i = 0; i < model().getCount(); i++) { Tab tab = model().getTabAt(i); if (web(tab.getUrl()) && tab.getUrl().getHost().equals(target.getHost())) { mController.activate(tab.getId()); result.send(true, new JSONObject().put("ok", true).put("reused", true)); changed(); return; } }
         mController.openWebTab(target.getSpec()); result.send(true, new JSONObject().put("ok", true)); changed();
     }
+    private void checkUpdates(PsychoBridge.Result result) throws Exception {
+        PsychoUpdates.check(mStore.read(profile()).optString("dismissedUpdate"), answer -> {
+            mLastUpdateRelease = answer.optString("release", "");
+            result.send(true, answer);
+        });
+    }
+
+    private void dismissUpdate(JSONArray args, PsychoBridge.Result result) throws Exception {
+        String version = args.length() == 1 && args.get(0) instanceof JSONObject ? args.getJSONObject(0).optString("version") : mLastUpdateRelease;
+        if (version == null || version.isEmpty()) { result.send(false, "Nothing to dismiss"); return; }
+        result.send(true, saveSettings(new JSONObject().put("dismissedUpdate", version)));
+    }
+
+    private void pickDownloadDirectory(PsychoBridge.Result result) {
+        PsychoDownloads.pickDirectory(mActivity, path -> {
+            try {
+                if (path == null) { result.send(false, "cancelled"); return; }
+                saveSettings(new JSONObject().put("downloadDir", path));
+                result.send(true, path);
+            } catch (Exception e) { result.send(false, PsychoBridge.safeMessage(e)); }
+        });
+    }
+
+    private void spellWord(String channel, JSONArray args, PsychoBridge.Result result) throws Exception {
+        String word = str(args).trim().toLowerCase(java.util.Locale.ROOT);
+        if (word.isEmpty() || word.length() > 99 || word.matches(".*\\s.*")) throw new IllegalArgumentException("Invalid dictionary word");
+        JSONObject settings = mStore.read(profile());
+        JSONArray words = settings.optJSONArray("spellUserWords"); if (words == null) words = new JSONArray();
+        java.util.TreeSet<String> set = new java.util.TreeSet<>();
+        for (int i = 0; i < words.length(); i++) set.add(words.getString(i));
+        if (channel.equals("spell:add")) set.add(word); else set.remove(word);
+        JSONArray next = new JSONArray(); for (String w : set) next.put(w);
+        result.send(true, saveSettings(new JSONObject().put("spellUserWords", next)));
+    }
+
+    private void showTabMenu(int id, PsychoBridge.Result result) throws Exception {
+        Tab tab = mSelector.getTabById(id);
+        if (tab == null) { result.send(false, "Tab unavailable"); return; }
+        JSONObject settings = mStore.read(profile());
+        JSONArray containers = settings.optJSONArray("containers"); if (containers == null) containers = new JSONArray();
+        java.util.ArrayList<String> labels = new java.util.ArrayList<>();
+        java.util.ArrayList<String> names = new java.util.ArrayList<>();
+        labels.add("No container (default profile)"); names.add("");
+        for (int i = 0; i < containers.length(); i++) { String name = containers.getJSONObject(i).getString("name"); labels.add("Container: " + name); names.add(name); }
+        labels.add("Close tab"); names.add(null);
+        new AlertDialog.Builder(mActivity).setTitle("Tab").setItems(labels.toArray(new String[0]), (dialog, which) -> {
+            try {
+                String name = names.get(which);
+                if (name == null) { model().getTabRemover().closeTabs(TabClosureParams.closeTab(tab).build(), true); }
+                else if (mContainers != null) { mContainers.moveToContainer(model(), tab, name); }
+                changed();
+            } catch (Exception ignored) { }
+        }).show();
+        result.send(true, new JSONObject().put("ok", true));
+    }
+
     private static boolean web(GURL url) { return url != null && url.isValid() && ("https".equals(url.getScheme()) || "http".equals(url.getScheme())); }
 
     private void layout(JSONObject value) throws Exception {
@@ -499,9 +579,10 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
     }
     private static int px(double value, float density, int limit) { if (!Double.isFinite(value) || value < 0 || value > 16384) throw new IllegalArgumentException("Invalid chrome layout"); return Math.min(limit, Math.round((float) value * density)); }
 
-    public void resume() { if (mActive != null) mActive.contents.updateWebContentsVisibility(Visibility.VISIBLE); }
+    public void resume() { if (mActive != null) mActive.contents.updateWebContentsVisibility(Visibility.VISIBLE); if (mDownloads != null) mDownloads.background(false); }
     public void pause() {
         if (mActive != null) mActive.contents.updateWebContentsVisibility(Visibility.OCCLUDED);
+        if (mDownloads != null) mDownloads.background(true);
         if (mVault != null) mVault.background();
         if (mRecovery != null) try { if (mStore.read(profile()).optBoolean("restore", true)) mRecovery.capture(model(), "background"); } catch (Exception ignored) { }
     }
@@ -520,7 +601,7 @@ public final class PsychoChromeHost implements PsychoBridge.Handler {
         for (TabModel model : mSelector.getModels()) for (int i = 0; i < model.getCount(); i++) model.getTabAt(i).removeObserver(mTabObserver);
         for (int id : new ArrayList<>(mNavigationObservers.keySet())) unobserveNavigation(id);
         for (int id : new ArrayList<>(mPages.keySet())) unbindPage(id);
-        if (mDownloads != null) mDownloads.destroy(); if (mVault != null) mVault.destroy(); mExtensions.destroy(); mPerformance.destroy(); mController.destroy();
+        if (mDownloads != null) mDownloads.destroy(); if (mVault != null) mVault.destroy(); if (mMedia != null) mMedia.destroy(); if (mContainers != null) mContainers.destroy(); mExtensions.destroy(); mPerformance.destroy(); mController.destroy();
         if (mServicesProfile != null) PsychoNetwork.forget(mServicesProfile);
         for (Session session : mSessions.values()) {
             JavascriptInjector injector = JavascriptInjector.fromWebContents(session.contents); if (injector != null) injector.removeInterface("PsychoVaultNative");

@@ -29,15 +29,16 @@
   const BOOLS = ['remember','hideSidebar','highContrast','reduceMotion','showTabCloseButtons','restore',
     'blockAds','blockUseBundled','workspacesEnabled','blockAutoplay','blockThirdPartyCookies','sendDNT',
     'batterySaver','batteryAuto','vaultEnabled','enhanceVideo','enhanceImages','askSaveLocation','panicEnabled','railIcons',
-    'spellCheck','spellBuiltin','stripReferrer','uiSounds'];
-  const SELECTS = ['search','theme','accent','cpuLimit','webRtc','doh','translateTarget','vaultLockMin','clearOnExit'];
-  const TEXTS = ['homepage','blockAllowSites','blockCustomDomains','sleepExclude','panicUrl','dohTemplate','denyPerms','modCss','spellLangs'];
+    'spellCheck','spellBuiltin','stripReferrer','uiSounds','downloadNotify','mediaKeys','mediaAutoPause'];
+  const SELECTS = ['search','theme','accent','cpuLimit','webRtc','doh','translateTarget','vaultLockMin','clearOnExit','netLimit'];
+  const TEXTS = ['homepage','blockAllowSites','blockCustomDomains','sleepExclude','panicUrl','dohTemplate','denyPerms','modCss','spellLangs','spellDictUrl'];
   const SUPPORTED = new Set([...BOOLS, ...SELECTS, ...TEXTS,
     'customSearchEngines','customSearchSave','tiles','tileAdd','tileSave','sleepTabsMin','blockSaveLists',
     'extList','extReload','extAddFolder','extAddCrx','protonVpnRestore','protonVpnStatus','vpnCheckOpen',
     'vstat','vunlock','vpw','vgo','vmaster','vmasterHint','vnew','vset','vBackup','vRestore','vImport',
     'vbackupPassword','vbackupConfirm','vTransferMsg','vlist','eSite','eUser','ePass','eGen','eSave','vLock','vRefresh','vnote',
-    'downloadDir','soundVol']);
+    'downloadDir','downloadDirPick','soundVol','permOrigin','permLoad','permCamera','permMicrophone','permLocation','permNotifications','permSave','permRemove',
+    'spellUserWords','spellWordsSave','spellWordsRefresh','contList','contAdd','contSave','updateCheckNow','updateDismiss']);
   for (const el of document.querySelectorAll('input,select,textarea,button')) {
     if (el.hasAttribute('data-category') || SUPPORTED.has(el.id)) continue;
     el.disabled = true;
@@ -45,7 +46,7 @@
   }
   const note = document.createElement('p');
   note.className = 'hint';
-  note.textContent = 'Android source build: enabled controls have native handlers. Disabled controls are not implemented yet. Network limits, containers, custom dictionaries, arbitrary download folders and media keys are not available on this Android engine.';
+  note.textContent = 'Android source build: enabled controls have native handlers. Containers use ephemeral off-the-record profiles, download folders are limited to Chromium\'s available directories, media keys depend on Android routing, and the dictionary mirror must use HTTPS. Proton connection state must be checked inside Proton.';
   document.querySelector('.settings-main').prepend(note);
   if (isPrivate) {
     const privateNote = document.createElement('p'); privateNote.className = 'hint';
@@ -67,10 +68,13 @@
     if (s('soundVol')) s('soundVol').value = String(st.soundVol === undefined ? 0.4 : st.soundVol);
     if (s('customSearchEngines')) s('customSearchEngines').value = (st.customSearchEngines || []).map(e => [e.shortcut, e.name, e.url].join(' | ')).join('\n');
     renderTiles(st.speedDial || []);
-    if (s('downloadDir')) { s('downloadDir').value = 'System Downloads folder'; s('downloadDir').readOnly = true; }
-    if (s('downloadDirPick')) { s('downloadDirPick').disabled = true; s('downloadDirPick').title = 'Android manages the Downloads folder; use Ask where to save for a per-download choice.'; }
-    if (s('spellStatus')) s('spellStatus').textContent = 'Spellcheck preferences are sent to Chromium. Available dictionaries depend on this build.';
-    if (s('spellAvail')) s('spellAvail').textContent = 'Dictionary enumeration is not exposed by this Android engine.';
+    if (s('downloadDir')) { s('downloadDir').value = st.downloadDir || 'Chromium default directory'; s('downloadDir').readOnly = true; }
+    if (s('downloadDirPick')) { s('downloadDirPick').disabled = isPrivate; s('downloadDirPick').title = 'Choose among the download directories Chromium exposes on this device.'; }
+    if (s('spellUserWords')) s('spellUserWords').value = (st.spellUserWords || []).join('\n');
+    if (s('spellStatus')) s('spellStatus').textContent = 'Spellcheck preferences are sent to Chromium. User words are written to the profile custom dictionary.';
+    if (s('spellAvail')) s('spellAvail').textContent = 'HTTPS dictionary mirrors supply <lang>.bdic files; platform languages may still use the Android spellchecker.';
+    paintPermissionSites(st);
+    renderContainers(st.containers || []);
     if (isPrivate) for (const el of document.querySelectorAll('input,select,textarea,button')) if (!el.hasAttribute('data-category')) el.disabled = true;
   }
   async function save(patch) {
@@ -79,7 +83,7 @@
     catch (e) { status.textContent = e.message || 'Could not save settings.'; try { paint(await window.pv.settings.get()); } catch {} }
   }
   for (const id of BOOLS) { const el = s(id); if (el) el.onchange = () => save({[id]: el.checked}); }
-  for (const id of SELECTS) { const el = s(id); if (el) el.onchange = () => save({[id]: id === 'vaultLockMin' ? Number(el.value) : el.value}); }
+  for (const id of SELECTS) { const el = s(id); if (el) el.onchange = () => save({[id]: (id === 'vaultLockMin' || id === 'netLimit') ? Number(el.value) : el.value}); }
   for (const id of TEXTS) { const el = s(id); if (el && id !== 'blockAllowSites' && id !== 'blockCustomDomains') el.onchange = () => save({[id]: el.value.trim()}); }
   if (s('sleepTabsMin')) s('sleepTabsMin').onchange = () => save({sleepTabsMin: Math.max(0, Math.min(1440, Number(s('sleepTabsMin').value) || 0))});
   if (s('soundVol')) s('soundVol').onchange = () => save({soundVol: Math.max(0, Math.min(1, Number(s('soundVol').value) || 0))});
@@ -203,6 +207,96 @@
   if (s('vBackup')) s('vBackup').onclick = () => transfer('backup');
   if (s('vRestore')) s('vRestore').onclick = () => transfer('restore');
   if (s('vImport')) s('vImport').onclick = () => transfer('csv');
+
+  const permFields = { camera: 'permCamera', microphone: 'permMicrophone', geolocation: 'permLocation', notifications: 'permNotifications' };
+  let editingOrigin = '';
+  function permissionOrigin(raw) {
+    try { const u = new URL(String(raw).trim()); return ['http:', 'https:'].includes(u.protocol) && !u.username && !u.password ? u.origin : ''; } catch { return ''; }
+  }
+  function paintPermissionSites(st) {
+    const box = s('permSaved'); if (!box) return; box.replaceChildren();
+    const sites = Object.keys(st.sitePermissions || {}).sort();
+    if (!sites.length) { box.textContent = 'No site-specific rules saved.'; return; }
+    box.append('Saved sites: ');
+    sites.forEach((site, i) => {
+      if (i) box.append(' · ');
+      const button = document.createElement('button'); button.className = 'mini'; button.textContent = site;
+      button.onclick = () => { s('permOrigin').value = site; loadPermissionSite(); };
+      box.appendChild(button);
+    });
+  }
+  function loadPermissionSite() {
+    const origin = permissionOrigin(s('permOrigin').value);
+    if (!origin) { if (s('permMsg')) s('permMsg').textContent = 'Enter a valid http or https site, such as https://example.com.'; if (s('permEditor')) s('permEditor').hidden = true; return; }
+    editingOrigin = origin; s('permOrigin').value = origin;
+    const rule = (settings.sitePermissions || {})[origin] || {};
+    for (const [key, id] of Object.entries(permFields)) if (s(id)) s(id).value = ['allow', 'deny'].includes(rule[key]) ? rule[key] : 'default';
+    if (s('permEditor')) s('permEditor').hidden = false;
+    if (s('permMsg')) s('permMsg').textContent = 'Editing ' + origin;
+  }
+  if (s('permLoad')) s('permLoad').onclick = loadPermissionSite;
+  if (s('permSave')) s('permSave').onclick = async () => {
+    if (!editingOrigin) return;
+    const rules = { ...(settings.sitePermissions || {}) }; const rule = {};
+    for (const [key, id] of Object.entries(permFields)) if (s(id) && s(id).value !== 'default') rule[key] = s(id).value;
+    if (Object.keys(rule).length) rules[editingOrigin] = rule; else delete rules[editingOrigin];
+    await save({ sitePermissions: rules }); if (s('permMsg')) s('permMsg').textContent = 'Saved rules for ' + editingOrigin;
+  };
+  if (s('permRemove')) s('permRemove').onclick = async () => {
+    if (!editingOrigin) return;
+    const rules = { ...(settings.sitePermissions || {}) }; delete rules[editingOrigin];
+    await save({ sitePermissions: rules }); loadPermissionSite(); if (s('permMsg')) s('permMsg').textContent = 'Removed site-specific rules.';
+  };
+
+  function renderContainers(list) {
+    const wrap = s('contList'); if (!wrap) return; wrap.replaceChildren();
+    if (!list.length) { const hint = document.createElement('div'); hint.className = 'hint'; hint.textContent = 'No containers.'; wrap.appendChild(hint); return; }
+    for (const c of list) {
+      const row = document.createElement('div'); row.className = 'tile-row';
+      const name = document.createElement('input'); name.className = 't'; name.value = c.name || ''; name.placeholder = 'Name';
+      const color = document.createElement('input'); color.className = 'c'; color.value = c.color || '#38bdf8'; color.placeholder = '#rrggbb';
+      const del = document.createElement('button'); del.className = 'mini'; del.textContent = 'Remove'; del.onclick = () => row.remove();
+      row.append(name, color, del); wrap.appendChild(row);
+    }
+  }
+  function containersValue() {
+    return [...s('contList').querySelectorAll('.tile-row')].map(r => ({name: r.querySelector('.t').value.trim(), color: r.querySelector('.c').value.trim() || '#38bdf8'}));
+  }
+  if (s('contAdd')) s('contAdd').onclick = () => { const rows = containersValue(); rows.push({name: 'New', color: '#38bdf8'}); renderContainers(rows); };
+  if (s('contSave')) s('contSave').onclick = () => save({containers: containersValue().filter(c => c.name)});
+
+  if (s('downloadDirPick')) s('downloadDirPick').onclick = async () => {
+    try { const picked = await window.pv.downloads.pickdir(); if (picked && typeof picked === 'string') { await save({downloadDir: picked}); status.textContent = 'Download folder saved.'; } }
+    catch (e) { if (String(e.message || e) !== 'cancelled') status.textContent = e.message || 'Could not choose a folder.'; }
+  };
+  if (s('spellWordsSave')) s('spellWordsSave').onclick = async () => {
+    const want = s('spellUserWords').value.split(/[\n,]+/).map(x => x.trim().toLowerCase()).filter(Boolean).slice(0, 2000);
+    const now = (settings.spellUserWords || []).map(x => String(x).toLowerCase());
+    try {
+      for (const w of want) if (!now.includes(w)) await window.pv.spell.add(w);
+      for (const w of now) if (!want.includes(w)) await window.pv.spell.remove(w);
+      await save({spellUserWords: want}); status.textContent = want.length + ' words in the dictionary.';
+    } catch (e) { status.textContent = e.message || 'Could not save dictionary words.'; }
+  };
+  if (s('spellWordsRefresh')) s('spellWordsRefresh').onclick = async () => { try { const st = await window.pv.spell.status(); if (s('spellUserWords')) s('spellUserWords').value = ((st.words || [])).join('\n'); } catch (e) { status.textContent = e.message; } };
+  if (s('updateCheckNow') && !s('updateDismiss')) {
+    const dismiss = document.createElement('button'); dismiss.className = 'mini'; dismiss.id = 'updateDismiss'; dismiss.textContent = 'Dismiss this release'; dismiss.disabled = true;
+    s('updateCheckNow').after(dismiss);
+  }
+  if (s('updateCheckNow')) s('updateCheckNow').onclick = async () => {
+    s('updateCheckNow').disabled = true; if (s('updateCheckResult')) s('updateCheckResult').textContent = 'Checking…';
+    try {
+      const r = await window.pv.updates.check();
+      if (s('updateCheckResult')) s('updateCheckResult').textContent = !r.ok ? ('Check failed: ' + (r.message || 'unknown')) : r.release ? ('Current engine ' + r.version + '. Latest Android release: ' + r.release + (r.dismissed ? ' (dismissed)' : '') + '. Install from Releases; this build does not self-install.') : 'No Android release found.';
+      if (s('updateDismiss')) s('updateDismiss').disabled = !r.release;
+      if (r.release) s('updateDismiss').dataset.version = r.release;
+    } catch (e) { if (s('updateCheckResult')) s('updateCheckResult').textContent = e.message || 'Check failed.'; }
+    s('updateCheckNow').disabled = false;
+  };
+  if (s('updateDismiss')) s('updateDismiss').onclick = async () => {
+    const version = s('updateDismiss').dataset.version; if (!version) return;
+    try { await window.pv.updates.dismiss({version}); status.textContent = 'Dismissed ' + version + '.'; } catch (e) { status.textContent = e.message; }
+  };
 
   const recoveryLink = document.createElement('button'); recoveryLink.className = 'mini'; recoveryLink.textContent = 'Open session recovery';
   recoveryLink.onclick = () => window.pv.nav.go('psychovault://recovery');

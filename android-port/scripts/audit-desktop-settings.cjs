@@ -14,7 +14,12 @@ const implemented = new Set(['search','customSearchEngines','homepage','remember
   'blockAutoplay','blockThirdPartyCookies','sendDNT','cpuLimit','sleepExclude','sleepTabsMin','batterySaver',
   'vaultEnabled','vaultLockMin','enhanceVideo','enhanceImages','askSaveLocation','panicEnabled','panicUrl',
   'services','railIcons','spellCheck','spellBuiltin','spellLangs','webRtc','doh','dohTemplate','stripReferrer','denyPerms','modCss',
-  'clearOnExit','batteryAuto','uiSounds','soundVol']);
+  'clearOnExit','batteryAuto','uiSounds','soundVol',
+  // Android adaptations: exact-origin content settings, download duty-cycle cap,
+  // Chromium download directories, background notifications, HTTPS bdic mirror,
+  // custom dictionary words, release-tag dismissal, media session/auto-pause,
+  // and named ephemeral OTR containers.
+  'sitePermissions','netLimit','downloadDir','downloadNotify','spellDictUrl','spellUserWords','dismissedUpdate','mediaKeys','mediaAutoPause','containers']);
 const inventory = Object.keys(sandbox.defaults).map(key => ({
   key,
   status: key === 'settingsVersion' ? 'desktop-internal-migration-marker'

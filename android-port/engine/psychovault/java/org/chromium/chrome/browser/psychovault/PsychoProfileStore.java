@@ -32,14 +32,18 @@ final class PsychoProfileStore {
             "enhanceVideo", "enhanceImages", "askSaveLocation", "panicEnabled", "panicUrl",
             "services", "railIcons", "spellCheck", "spellBuiltin", "spellLangs", "webRtc", "doh",
             "dohTemplate", "stripReferrer", "denyPerms", "modCss", "restore",
-            "clearOnExit", "batteryAuto", "uiSounds", "soundVol");
+            "clearOnExit", "batteryAuto", "uiSounds", "soundVol",
+            "sitePermissions", "netLimit", "downloadDir", "downloadNotify",
+            "spellDictUrl", "spellUserWords", "dismissedUpdate", "mediaKeys",
+            "mediaAutoPause", "containers");
     private static final Set<String> INTERNAL = Set.of("removedBundledExtensions", "extensions", "workspaceOrder", "workspaceActive");
     private static final Set<String> BOOL_KEYS = Set.of("remember", "restore", "hideSidebar", "highContrast", "reduceMotion", "showTabCloseButtons",
             "blockAds", "blockUseBundled", "workspacesEnabled", "blockAutoplay", "blockThirdPartyCookies", "sendDNT", "batterySaver",
             "vaultEnabled", "enhanceVideo", "enhanceImages", "askSaveLocation", "panicEnabled", "railIcons", "spellCheck", "spellBuiltin", "stripReferrer",
-            "batteryAuto", "uiSounds");
-    private static final Set<String> NUMBER_KEYS = Set.of("sleepTabsMin", "vaultLockMin", "soundVol");
-    private static final Set<String> ARRAY_KEYS = Set.of("customSearchEngines", "speedDial", "services", "extensions", "workspaceOrder", "removedBundledExtensions");
+            "batteryAuto", "uiSounds", "downloadNotify", "mediaKeys", "mediaAutoPause");
+    private static final Set<String> NUMBER_KEYS = Set.of("sleepTabsMin", "vaultLockMin", "soundVol", "netLimit");
+    private static final Set<String> ARRAY_KEYS = Set.of("customSearchEngines", "speedDial", "services", "extensions", "workspaceOrder", "removedBundledExtensions", "spellUserWords", "containers");
+    private static final Set<String> OBJECT_KEYS = Set.of("sitePermissions");
     private final Context mContext;
 
     PsychoProfileStore(Context context) { mContext = context.getApplicationContext(); }
@@ -91,7 +95,8 @@ final class PsychoProfileStore {
             if (BOOL_KEYS.contains(key) && !(value instanceof Boolean)) throw new IllegalArgumentException("Expected a true/false value for " + key);
             if (NUMBER_KEYS.contains(key) && !(value instanceof Number)) throw new IllegalArgumentException("Expected a number for " + key);
             if (ARRAY_KEYS.contains(key) && !(value instanceof JSONArray)) throw new IllegalArgumentException("Expected a list for " + key);
-            if ((ALLOWED.contains(key) && !BOOL_KEYS.contains(key) && !NUMBER_KEYS.contains(key) && !ARRAY_KEYS.contains(key) || key.equals("workspaceActive")) && !(value instanceof String)) throw new IllegalArgumentException("Expected text for " + key);
+            if (OBJECT_KEYS.contains(key) && !(value instanceof JSONObject)) throw new IllegalArgumentException("Expected an object for " + key);
+            if ((ALLOWED.contains(key) && !BOOL_KEYS.contains(key) && !NUMBER_KEYS.contains(key) && !ARRAY_KEYS.contains(key) && !OBJECT_KEYS.contains(key) || key.equals("workspaceActive")) && !(value instanceof String)) throw new IllegalArgumentException("Expected text for " + key);
             current.put(key, value);
         }
         JSONObject validated = defaults(current);
@@ -162,6 +167,18 @@ final class PsychoProfileStore {
         out.put("stripReferrer", saved.optBoolean("stripReferrer", true));
         out.put("denyPerms", text(saved, "denyPerms", "geolocation, media, clipboard-read, midi, sync-xhr, wake-lock, notifications", 2000));
         out.put("modCss", text(saved, "modCss", "", 20000));
+        out.put("sitePermissions", sitePermissions(saved.optJSONObject("sitePermissions")));
+        out.put("netLimit", Math.max(0, Math.min(100000, saved.optInt("netLimit", 0))));
+        out.put("downloadDir", text(saved, "downloadDir", "", 4096));
+        out.put("downloadNotify", saved.optBoolean("downloadNotify", true));
+        String dictUrl = text(saved, "spellDictUrl", "", 2048);
+        if (!dictUrl.isEmpty() && !dictUrl.startsWith("https://")) throw new IllegalArgumentException("Dictionary mirror must use HTTPS on Android");
+        out.put("spellDictUrl", dictUrl);
+        out.put("spellUserWords", words(saved.optJSONArray("spellUserWords")));
+        out.put("dismissedUpdate", text(saved, "dismissedUpdate", "", 200));
+        out.put("mediaKeys", saved.optBoolean("mediaKeys", true));
+        out.put("mediaAutoPause", saved.optBoolean("mediaAutoPause", true));
+        out.put("containers", containers(saved.optJSONArray("containers")));
         if (saved.has("extensions")) out.put("extensions", saved.getJSONArray("extensions"));
         if (saved.has("workspaceOrder")) out.put("workspaceOrder", saved.getJSONArray("workspaceOrder"));
         if (saved.has("workspaceActive")) out.put("workspaceActive", saved.optString("workspaceActive"));
@@ -241,6 +258,67 @@ final class PsychoProfileStore {
             String title = t.optString("title", ""), url = t.optString("url", "");
             if (title.isEmpty() || title.length() > 80) throw new IllegalArgumentException("Invalid tile name");
             out.put(new JSONObject().put("title", title).put("url", homepage(url)));
+        }
+        return out;
+    }
+
+    private static JSONObject sitePermissions(JSONObject input) throws Exception {
+        JSONObject out = new JSONObject();
+        if (input == null) return out;
+        if (input.length() > 500) throw new IllegalArgumentException("Too many site permission rules");
+        java.util.Iterator<String> keys = input.keys();
+        while (keys.hasNext()) {
+            String origin = keys.next();
+            java.net.URI uri;
+            try { uri = new java.net.URI(origin); } catch (Exception e) { throw new IllegalArgumentException("Site rules need an exact http/https origin: " + origin); }
+            String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(java.util.Locale.ROOT);
+            String expected = uri.getHost() == null ? "" : scheme + "://" + uri.getHost().toLowerCase(java.util.Locale.ROOT) + (uri.getPort() == -1 ? "" : ":" + uri.getPort());
+            if (!("https".equals(scheme) || "http".equals(scheme)) || uri.getHost() == null || uri.getUserInfo() != null
+                    || (uri.getPath() != null && !uri.getPath().isEmpty()) || uri.getQuery() != null || uri.getFragment() != null || !expected.equals(origin)) {
+                throw new IllegalArgumentException("Site rules need an exact http/https origin: " + origin);
+            }
+            JSONObject rule = input.getJSONObject(origin), clean = new JSONObject();
+            java.util.Iterator<String> fields = rule.keys();
+            while (fields.hasNext()) {
+                String field = fields.next();
+                if (!Set.of("camera", "microphone", "geolocation", "notifications").contains(field)) throw new IllegalArgumentException("Unknown site permission: " + field);
+                String value = rule.getString(field);
+                if (!Set.of("allow", "deny").contains(value)) throw new IllegalArgumentException("Site permission must be allow or deny");
+                clean.put(field, value);
+            }
+            if (clean.length() > 0) out.put(origin, clean);
+        }
+        return out;
+    }
+
+    private static JSONArray words(JSONArray input) throws Exception {
+        JSONArray out = new JSONArray();
+        if (input == null) return out;
+        java.util.TreeSet<String> seen = new java.util.TreeSet<>();
+        for (int i = 0; i < input.length() && seen.size() < 2000; i++) {
+            String word = input.optString(i).trim().toLowerCase(java.util.Locale.ROOT);
+            if (!word.isEmpty() && word.length() <= 99 && !word.matches(".*\\s.*")) seen.add(word);
+        }
+        for (String word : seen) out.put(word);
+        return out;
+    }
+
+    private static JSONArray containers(JSONArray input) throws Exception {
+        JSONArray out = new JSONArray();
+        if (input == null) {
+            String[][] initial = {{"Work", "#f472b6"}, {"Shopping", "#38bdf8"}, {"Social", "#a78bfa"}, {"Banking", "#22c55e"}};
+            for (String[] item : initial) out.put(new JSONObject().put("name", item[0]).put("color", item[1]));
+            return out;
+        }
+        if (input.length() > 16) throw new IllegalArgumentException("Too many containers");
+        java.util.HashSet<String> seen = new java.util.HashSet<>();
+        for (int i = 0; i < input.length(); i++) {
+            JSONObject item = input.getJSONObject(i);
+            String name = item.optString("name").trim();
+            String color = item.optString("color", "#8b9bb4");
+            if (name.isEmpty() || name.length() > 40 || !seen.add(name.toLowerCase(java.util.Locale.ROOT))) throw new IllegalArgumentException("Invalid or duplicate container name");
+            if (!color.matches("#[0-9a-fA-F]{6}")) color = "#8b9bb4";
+            out.put(new JSONObject().put("name", name).put("color", color));
         }
         return out;
     }

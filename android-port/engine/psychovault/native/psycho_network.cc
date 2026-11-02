@@ -19,9 +19,14 @@
 #include "base/values.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/spellchecker/spellcheck_custom_dictionary.h"
+#include "chrome/browser/spellchecker/spellcheck_factory.h"
+#include "chrome/browser/spellchecker/spellcheck_hunspell_dictionary.h"
+#include "chrome/browser/spellchecker/spellcheck_service.h"
 #include "chrome/common/pref_names.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/content_settings.h"
+#include "components/content_settings/core/common/content_settings_pattern.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/content_settings/core/common/pref_names.h"
 #include "components/prefs/pref_service.h"
@@ -54,6 +59,7 @@ struct Counts { base::Lock lock; std::map<std::string, int> pages; int total = 0
 struct State {
   std::map<Profile*, std::shared_ptr<const Policy>> policies;
   std::map<Profile*, std::shared_ptr<Counts>> counts;
+  std::map<Profile*, std::set<std::string>> permission_origins;
 };
 State& GetState() { static base::NoDestructor<State> state; return *state; }
 std::string Site(const GURL& url) {
@@ -205,6 +211,45 @@ void JNI_PsychoNetwork_Update(JNIEnv* env, const JavaRef<jobject>& jprofile,
       {"media", ContentSettingsType::MEDIASTREAM_MIC}, {"notifications", ContentSettingsType::NOTIFICATIONS},
       {"clipboard-read", ContentSettingsType::CLIPBOARD_READ_WRITE}, {"midi", ContentSettingsType::MIDI_SYSEX}};
     for (const auto& [name, type] : types) map->SetDefaultContentSetting(type, deny.count(name) ? CONTENT_SETTING_BLOCK : CONTENT_SETTING_ASK);
+    const std::pair<const char*, ContentSettingsType> site_types[] = {
+      {"camera", ContentSettingsType::MEDIASTREAM_CAMERA}, {"microphone", ContentSettingsType::MEDIASTREAM_MIC},
+      {"geolocation", ContentSettingsType::GEOLOCATION}, {"notifications", ContentSettingsType::NOTIFICATIONS}};
+    auto& previous = GetState().permission_origins[profile];
+    for (const auto& origin : previous) {
+      auto pattern = ContentSettingsPattern::FromString(origin);
+      if (pattern.IsValid()) for (const auto& [name, type] : site_types) map->SetContentSettingCustomScope(pattern, ContentSettingsPattern::Wildcard(), type, CONTENT_SETTING_DEFAULT);
+    }
+    previous.clear();
+    if (const auto* sites = value.FindDict("sitePermissions")) {
+      for (const auto [origin, rule] : *sites) {
+        if (!rule.is_dict()) continue;
+        auto pattern = ContentSettingsPattern::FromString(origin);
+        if (!pattern.IsValid()) continue;
+        bool touched = false;
+        for (const auto& [name, type] : site_types) {
+          const std::string* setting = rule.GetDict().FindString(name);
+          if (!setting) continue;
+          ContentSetting parsed = *setting == "allow" ? CONTENT_SETTING_ALLOW : *setting == "deny" ? CONTENT_SETTING_BLOCK : CONTENT_SETTING_DEFAULT;
+          map->SetContentSettingCustomScope(pattern, ContentSettingsPattern::Wildcard(), type, parsed);
+          touched = true;
+        }
+        if (touched) previous.insert(origin);
+      }
+    }
+  }
+  if (const auto* mirror = value.FindString("spellDictUrl")) {
+    GURL url(*mirror);
+    SpellcheckHunspellDictionary::SetDownloadURLMirror(url.is_valid() && url.SchemeIsHTTPOrHTTPS() ? url : GURL());
+  }
+  if (const auto* words = value.FindList("spellUserWords")) {
+    if (auto* service = SpellcheckServiceFactory::GetForContext(profile)) {
+      if (auto* dictionary = service->GetCustomDictionary()) {
+        std::set<std::string> wanted;
+        for (const auto& item : *words) if (item.is_string() && item.GetString().size() <= 99) wanted.insert(item.GetString());
+        for (const auto& word : dictionary->GetWords()) if (!wanted.count(word)) dictionary->RemoveWord(word);
+        for (const auto& word : wanted) dictionary->AddWord(word);
+      }
+    }
   }
   prefs->CommitPendingWrite();
 }
@@ -244,7 +289,7 @@ ScopedJavaLocalRef<jstring> JNI_PsychoNetwork_Status(JNIEnv* env, const JavaRef<
 }
 void JNI_PsychoNetwork_Forget(JNIEnv*, const JavaRef<jobject>& jprofile) {
   auto* profile = Profile::FromJavaObject(jprofile);
-  GetState().policies.erase(profile); GetState().counts.erase(profile);
+  GetState().policies.erase(profile); GetState().counts.erase(profile); GetState().permission_origins.erase(profile);
 }
 }  // namespace
 std::unique_ptr<blink::URLLoaderThrottle> CreateNetworkThrottle(Profile* profile, content::WebContents* contents) {
@@ -258,5 +303,5 @@ void UpdateNetworkPolicy(Profile* profile, const std::string& json) {
   auto jprofile = profile->GetJavaObject();
   JNI_PsychoNetwork_Update(env, jprofile, base::android::ConvertUTF8ToJavaString(env, json));
 }
-void ForgetNetworkProfile(Profile* profile) { GetState().policies.erase(profile); GetState().counts.erase(profile); }
+void ForgetNetworkProfile(Profile* profile) { GetState().policies.erase(profile); GetState().counts.erase(profile); GetState().permission_origins.erase(profile); }
 }  // namespace psychovault
