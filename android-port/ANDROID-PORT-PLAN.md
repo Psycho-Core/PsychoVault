@@ -10,7 +10,7 @@ The current Android folder is a restart, not a working PsychoVault Android brows
 
 - Work on the Android source without pretending an adapter, button, source test or upstream feature is a working PsychoVault feature.
 - Keep the Windows application working and reuse its interface and logic where practical. Record Android-specific differences rather than inventing equivalent behaviour.
-- Don't build an APK or run GitHub Actions until I give permission after the code-side work is ready.
+- GitHub Actions source checks are authorised. APK builds remain manual until a runner meets the disk/memory needs; report the first real build error and fix it before retrying.
 - Use source, unit and integration tests available during development. These do not replace an Android build or phone test.
 - Keep keys, Chromium checkouts, build outputs and large downloads out of Git. Preserve notices and review licences before distribution.
 - No status should claim Proton protects traffic until routing and failure behaviour have actually been tested.
@@ -69,7 +69,7 @@ The current Android folder is a restart, not a working PsychoVault Android brows
 1. Recheck the full desktop feature/settings inventory, native handler implementations, interface, security boundaries, licences, build setup and signing/migration decisions.
 2. Run available automated tests, static checks and desktop regression tests; fix failures. Report exactly what each test does and doesn't prove.
 3. Record blockers or unavoidable Android differences. Don't label the source build-ready if the native host, feature handlers, dependency inputs or build workflow are still missing.
-4. Report readiness and ask permission before any APK build or Actions run.
+4. Report readiness honestly. Source-check Actions are authorised; APK builds still need a suitable runner and must produce build notes on success or failure.
 
 ## 7. Authorised GitHub Actions test build and phone feedback
 
@@ -80,4 +80,4 @@ The current Android folder is a restart, not a working PsychoVault Android brows
 
 ## Current status
 
-Only the source-preparation and UI-adapter starting work exists. No complete Chromium host, integrated desktop features, extension manager, Dark Reader integration or Proton integration has been verified. There is no test-ready PsychoVault APK from this restart.
+The trusted Chromium chrome/new-tab/settings/recovery origins, origin/profile-checked Java bridge, tab/navigation loop, state observers, native overlay/layout source, Android back callback and activity lifecycle installer exist. Source handlers now cover downloads, blocker/privacy policy, workspaces, session recovery, the master-password vault with backup/import/recovery, performance controls, general extension ZIP/CRX import with permission prompts, and 57 of the 59 desktop settings; the remaining two are the extension manager inventory and the internal settingsVersion marker, not missing host handlers. The last ten settings use Android adaptations (exact-origin permissions, download duty-cycle cap, available-directory picking, background notifications, HTTPS bdic mirror, custom dictionary words, release dismissal, media session/auto-pause and named ephemeral OTR containers). Proton and Dark Reader are staged for Chromium's unpacked loader; Proton opens its own popup, calls `chrome.proxy.settings` and `webRequest.onAuthRequired`, and has a real proxy-pref path, but connection/protection is unverified. Settings data/diagnostics/proxy-status/menu/update controls now have Android handlers; desktop-only relaunch/error-log/token controls remain disabled. The current checks are 31 Android Node tests, 20 Python source tests, 185 desktop Node tests, both static audits clean, and 14 Java files parsed with javalang (syntax only). Java/C++ have not been compiled against Chromium and the native layout/touch path has not run on a phone. There is no test-ready PsychoVault APK from this restart.

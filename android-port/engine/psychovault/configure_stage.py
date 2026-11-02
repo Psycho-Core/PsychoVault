@@ -13,7 +13,14 @@ old = """['python3',
 new = "['python3', '../psychovault/prepare_bundled_extension.py']"
 if text.count(old) != 1:
     raise SystemExit('Upstream extension hook changed; refusing to prepare a potentially unsafe build')
-path.write_text(text.replace(old, new), encoding='utf-8')
+text = text.replace(old, new)
+# The hosted build disables PGO, so do not spend disk/time fetching profile data.
+pgo_old = "'checkout_pgo_profiles': True,"
+pgo_new = "'checkout_pgo_profiles': False,"
+if text.count(pgo_old) != 1:
+    raise SystemExit('Upstream PGO checkout flag changed; refusing to guess')
+text = text.replace(pgo_old, pgo_new)
+path.write_text(text, encoding='utf-8')
 
 # Use a dedicated application ID for the restart, rather than impersonating Titanium
 # or silently replacing the differently implemented experimental WebView preview.

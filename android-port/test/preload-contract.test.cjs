@@ -15,9 +15,11 @@ for (const [name,file,factory] of [['chrome','preload.js',chromeBridge],['intern
   test(name+' adapter covers desktop method names and forwards the same channels and arguments',async()=>{
     const original=desktop(file), calls=[];const adapter=factory({invoke:(channel,args)=>{calls.push([channel,...args]);return Promise.resolve();},subscribe(){}});
     const groups=Object.keys(original.api).filter(k=>typeof original.api[k]==='object');
+    const androidOnly=name==='internal page'?{recovery:['remove'],vault:['recover']}:{};
     assert.deepEqual(Object.keys(adapter).sort(),Object.keys(original.api).sort());
     for (const group of groups) {
-      assert.deepEqual(Object.keys(adapter[group]).sort(),Object.keys(original.api[group]).sort(),group);
+      const expected=Object.keys(original.api[group]).concat(androidOnly[group]||[]).sort();
+      assert.deepEqual(Object.keys(adapter[group]).sort(),expected,group);
       for(const method of Object.keys(original.api[group])) {
         original.calls.length=0;calls.length=0;
         await original.api[group][method]('first','second');await adapter[group][method]('first','second');

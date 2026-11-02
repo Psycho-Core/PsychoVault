@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PsychoVault - Session recovery</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="mobile.css">
+</head>
+<body class="internal-page">
+<main class="wrap" style="max-width:760px;margin:0 auto;padding:20px">
+  <h1>Session recovery</h1>
+  <p class="hint">These snapshots are saved by PsychoVault when the browser goes to the background or before the panic button. Restoring opens the saved pages as new tabs; it does not overwrite your current tabs.</p>
+  <p id="recovery-status" class="hint" aria-live="polite">Loading snapshots…</p>
+  <div id="recovery-list"></div>
+  <p><button class="mini" id="recovery-refresh" type="button">Refresh</button> <button class="mini" id="recovery-settings" type="button">Open Settings</button></p>
+</main>
+<script src="navigation-resolver.js"></script>
+<script src="internal-page-bridge.js"></script>
+<script src="native-transport.js"></script>
+<script src="recovery.js"></script>
+</body>
+</html>

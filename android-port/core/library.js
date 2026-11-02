@@ -24,23 +24,32 @@
     const now = options.now || Date.now;
     let state;
     let queue = Promise.resolve();
-    async function load() {
-      if (state) return;
-      const saved = await storage.read();
-      if (saved === null) { state = {version: 1, bookmarks: [], history: []}; return; }
+    function validate(saved) {
+      if (saved === null) return {version: 1, bookmarks: [], history: []};
       if (!saved || saved.version !== 1 || !Array.isArray(saved.bookmarks) || !Array.isArray(saved.history)) throw new Error('Unsupported or corrupt library data; refusing to overwrite it');
       for (const item of [...saved.bookmarks, ...saved.history]) {
         if (!item || typeof item.url !== 'string' || typeof item.title !== 'string' || !Number.isFinite(item.at)) throw new Error('Corrupt library data; refusing to overwrite it');
         if (webUrl(item.url) !== item.url) throw new Error('Unsafe URL in library data; refusing to overwrite it');
       }
-      state = copy(saved);
+      return copy(saved);
     }
+    async function load() { state = validate(await storage.read()); }
     function run(work) {
       const result = queue.then(async () => { await load(); return work(); });
       queue = result.catch(() => {});
       return result;
     }
     async function change(fn) {
+      if (typeof storage.update === 'function') {
+        let result;
+        const saved = await storage.update(raw => {
+          const next = validate(raw);
+          result = fn(next);
+          return copy(next);
+        });
+        state = saved === null ? state : copy(saved);
+        return copy(result === undefined ? state : result);
+      }
       const next = copy(state);
       const result = fn(next);
       await storage.write(copy(next));

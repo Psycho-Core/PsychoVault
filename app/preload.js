@@ -86,7 +86,7 @@ contextBridge.exposeInMainWorld('pv', {
     icons: () => invoke('rail:icons'),
     catalogue: () => invoke('catalogue:list'),
     toggle: (name) => invoke('catalogue:toggle', name),
-    menu: (i) => invoke('gx:services', { i, action: 'menu' })
+    menu: (i) => invoke('perf:services', { i, action: 'menu' })
   },
   spell: {
     status: () => invoke('spell:status'),
@@ -110,13 +110,13 @@ contextBridge.exposeInMainWorld('pv', {
     restorebuiltin: (key) => invoke('ext:restorebuiltin', key),
     status: () => invoke('ext:status')
   },
-  gx: {
-    hot: (o) => invoke('gx:hot', o),
-    media: (cmd) => invoke('gx:media', cmd),
-    snapshot: (kind) => invoke('gx:snapshot', kind),
-    panic: (on) => invoke('gx:panic', on),
-    services: (o) => invoke('gx:services', o),
-    switches: () => invoke('gx:switches'),
+  perf: {
+    hot: (o) => invoke('perf:hot', o),
+    media: (cmd) => invoke('perf:media', cmd),
+    snapshot: (kind) => invoke('perf:snapshot', kind),
+    panic: (on) => invoke('perf:panic', on),
+    services: (o) => invoke('perf:services', o),
+    switches: () => invoke('perf:switches'),
     relaunch: () => invoke('app:relaunch')
   },
   vault: {

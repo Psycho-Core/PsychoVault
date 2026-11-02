@@ -2,9 +2,9 @@
 
 The desktop checks below were executed against an earlier build in `release/`, on Linux with Electron 45.1.0 and Xvfb, with screenshots taken from the live window. They are historical evidence, not proof that every later release or Android port has been tested. I am not listing things I "should" have tested; this is the list of things that produced output.
 
-## Android restart source checks - 1 November 2026
+## Android Chromium source checks - 2 November 2026
 
-I ran 24 Node source tests and 6 Python source tests for the Android restart, plus 185 desktop Node tests and `node tools/audit.mjs`. The pinned Vanadium workspace preparation and Chromium source-installer anchors were checked separately; the controller was parsed as Java, not compiled against Chromium. The real Titanium companion CRX could not be downloaded in this environment. No new Android APK, Android SDK compilation, GitHub Actions build, extension install, Proton traffic test or phone test was run for the restart. See `android-port/README.md` for the limitations.
+I ran 31 Android Node tests, 20 Python source tests, 185 desktop Node tests, `node tools/audit.mjs`, the Android static source audit and the desktop settings inventory. The inventory now reports 57 Android-source-implemented settings, 1 extension-manager setting, 1 internal migration marker and 0 missing host handlers. I parsed all 14 Android Java files with javalang; that is syntax parsing, not Chromium compilation. The pinned Vanadium workspace preparation and Chromium source-installer anchors are covered by unit tests, including the new spellcheck mirror hook and the `bundled_extensions_assets` naming fix. GitHub Actions run 41362307255 reached GN and failed with `Invalid java resource target name: //psychovault:bundled_extensions`; that target has been renamed to match Chromium's `*_assets` rule. The following feature build, run 41365642358, did not produce an APK and its GitHub run record is no longer retrievable, so I am rebuilding from the corrected source. The local audit also found and fixed a native `raw_ptr` range-for compile blocker, added the missing settings-page data/diagnostics/proxy-status/menu/update handlers, and kept unsupported controls visibly disabled. No Android APK has been successfully built or published from this restart, and no device, extension-install, Proton-connection or leak test has passed. See `android-port/README.md` for the limitations.
 
 ## Smoke
 
@@ -147,7 +147,7 @@ by real keyboard input into the real window.
 so the copy in `resources/app` shows a session-wide total instead. Everything else
 in that installer - blocking, downloads, settings, video - is the same code.
 
-## GX feature round (tabs, menus, governor, settings)
+## Performance feature round (tabs, menus, governor, settings)
 
 Driven by a temporary harness inside `main.js` (env-gated, removed afterwards), run on
 the real app in the real X session. Every line below is printed output.
@@ -190,7 +190,7 @@ Not verified, same limitation as before: this X server drops synthetic pointer e
 so no menu was opened with a real right-click here. The menus are the thin part - the
 template builders and the actions they run are what the table above exercises.
 
-## Installer rebuilt after the GX feature round
+## Installer rebuilt after the Performance feature round
 
 The package built for round 19 was **`PsychoVault-Setup-1.0.0.exe` - 105,252,645 bytes,
 sha256 `faf19fb71479914727e3bbb3b56f59314916ca965d49968dd9e4666b5a59564d`**, 39 files
@@ -283,9 +283,9 @@ green. Kept here because "the test disagreed" is exactly where a real bug hides.
 - Mouse gestures are absent by the platform's choice, not mine: Electron hands me page
   and window events, no raw pointer stream to interpret.
 
-## Round 20 - the rest of GX, and an audit of the wiring
+## Round 20 - the remaining Performance features, and an audit of the wiring
 
-This round added the features that were missing from the parity list (GX Control, Tab
+This round added the features that were missing from the parity list (Performance, Tab
 Islands, containers, Snapshot, panic, RGX, sidebar services, media keys, sounds, the
 stylesheet mod box, WebRTC/DoH/referrer/permission hardening) and built two checkers,
 because "I added 20 settings" is not the same statement as "those settings reach code".
@@ -327,7 +327,7 @@ on disk. Last run: **51 PASS / 0 FAIL / 0 ERROR**.
 | Permissions | geolocation → `denied:1`; the deny list is a real setting, editable from the page |
 | Referrer | cross-port subresource arrives with **no** `referer` header when the switch is on, and the switch changes live behaviour, not just state |
 | WebRTC / DoH | `--force-webrtc-ip-handling-policy=default_public_interface_only` present in Chromium's own switch list; a DoH change reports `restartNeeded: true` and the restart note appears |
-| GX Control | hot tabs report per-tab memory and CPU (`281MB`, `0%`...), panel sleeps a tab, panel wakes it again (`discarded` false after reload) |
+| Performance | hot tabs report per-tab memory and CPU (`281MB`, `0%`...), panel sleeps a tab, panel wakes it again (`discarded` false after reload) |
 | Panic | `F12` → one tab on the configured escape page, `F11` → 6 → 6 tabs back, nothing written while panicked |
 | Sounds | `window.gxSound` exists and calls do not throw (audibility is not measurable headless - see below) |
 | Mods | `:root{--accent:#ff0055}` in the mod box really repaints the chrome (computed `--accent` = `#ff0055`) |
@@ -339,7 +339,7 @@ on disk. Last run: **51 PASS / 0 FAIL / 0 ERROR**.
 ### Three real bugs the harness caught, all fixed here
 
 1. **"Wake this tab" was dead.** `revive(t)` expected a tab object; the tab menu and the
-   GX panel both pass an id, and `!7.discarded` on a number is `undefined` - so the guard
+   Performance panel both pass an id, and `!7.discarded` on a number is `undefined` - so the guard
    returned early and nothing happened. `revive` now resolves either form.
 2. **The referrer rule could not fire on IP hosts.** The cross-site test used the same
    registrable-domain logic as cookies, and `etld1('http://127.0.0.1:8799')` equals
@@ -588,7 +588,7 @@ applied as `_pvProxy` and reports both "what we told Chromium" and "what Chromiu
   hang while the peer is dead), not which address a site sees. `vpn:checkip` against a local
   server does prove the check reads through whatever proxy is set (`via: "direct (no tunnel)"`
   with no tunnel, `code: 200`).
-- **Opera's VPN product.** This is your config on your provider's key; it is not a free proxy
+- **A competing browser VPN product.** This is your config on your provider's key; it is not a free proxy
   run by me, and I am not going to imply that it is.
 
 ## Round 23 - the VPN panel stopped reporting a problem it could not fix
@@ -1267,16 +1267,16 @@ No change to PsychoVault's source affects it; a code-signing certificate does.
 
 ## Round 37 - the blank where the VPN should be, and a name that was not ours
 
-Two reports: the rail button says "GX Control", and the bundled extension does not appear.
+Two reports: the rail button used a borrowed panel name, and the bundled extension does not appear.
 
 ### The label
 
-The rail button was added with the Opera GX parity work and kept Opera's name for the panel -
-`renderer.js` hardcoded `'GX Control: hot tabs, memory, bandwidth cap'`. Renamed to
+The rail button was added during the Performance work and kept a borrowed name -
+`renderer.js` hardcoded a borrowed panel title. Renamed to
 **Performance** in the rail tooltip, its aria-label and the command palette, and the other
-Opera-facing strings in Settings ("GX power save", "GX red", "RGX") now say what they do
-instead of whose feature they mirror. The "Opera GX parity" table in the README keeps Opera's
-column headings, because there it is a comparison and the names are Opera's. No setting, id or
+Borrowed strings in Settings now say what they do
+instead of using another product's name. The public README no longer keeps a comparison
+table. No setting, id or
 behaviour changed - this is a label.
 
 ### The missing extension
@@ -2736,3 +2736,15 @@ informational and continues to fail; it does not certify uBlock as supported.
 The Node test suite includes local tests for search-template validation, exact-origin permissions, domain blocking and exceptions, private-window exclusion from recovery snapshots, encrypted backup authentication, CSV quoting and duplicate handling, vault migration rollback, and tracked installer cleanup. These tests do not by themselves demonstrate a live VPN or a Windows update.
 
 A new Electron smoke test uses a throwaway profile, synthetic crash snapshot and local HTTP download. It exercises the recovery page, vault import/backup/restore and download pause/resume without real passwords. In PR run 41218966819, that smoke test passed on Linux and Windows, including the local download pause/resume; the Windows installer build, Proton signed-out popup smoke and local proxy tests also passed. The separate informational uBlock Lite static-rule probe failed; uBlock Lite is not bundled or supported. The IP and DNS services are third-party services; their live results and actual Proton DNS/WebRTC leak protection have not been independently verified here.
+
+
+## Android source, extensions and public docs - 2 November 2026
+
+I rewrote the public README for users, removed the comparison section and renamed the legacy Performance IPC namespace away from a borrowed product name. I added Android find/pin/mute handlers, a regular-profile extension manager, bundled Proton/Dark Reader staging, private-settings write refusal and a static Android source audit. Proton keeps its manifest key; opening its popup is not a verified connection. Checks: 31 Android Node tests, 14 Python source tests, 185 desktop Node tests, desktop audit no defects, Android static audit no defects, five Java files parsed with javalang (syntax only). No Chromium compile, APK, device test, extension install or Proton/leak test has passed. The authorized Android Actions workflow is added; its build result is recorded by the run, not by this note.
+
+
+## Android feature-group source round - 2 November 2026
+
+I connected the remaining major Android feature groups in source: real Chromium downloads (GUID pause/resume/cancel/open/clear), a per-profile native blocker/privacy throttle, tab-group workspaces, additive session recovery, the existing master-password vault with encrypted backup/CSV import and migration recovery, performance controls (discard, renderer importance, fixed media scripts, PNG snapshots), general extension ZIP/CRX import with a native permission prompt, and Android back/lifecycle/profile-switch handling. The settings inventory now reports 43 source-implemented settings, 1 extension-manager setting, 1 desktop-internal marker and 14 explicitly unsupported Android settings. Unsupported controls are disabled or refused; I did not add fake CPU/bandwidth numbers or a fake VPN state.
+
+Checks run here: Android Node tests **31/31**, Python source tests **20/20**, desktop Node tests **185/185**, `node tools/audit.mjs` no defects, `node android-port/scripts/audit-android-source.cjs` no defects, and **11 Java files parsed with javalang** (syntax only, not compilation). The installer anchor tests pass against generated fixtures. No Chromium compile, GN generation, APK, device test, extension installation, Proton sign-in, proxy routing or DNS/WebRTC leak test has run. GitHub Actions evidence for `39c04b7`: Android source and build run **41355885856** completed with `source-checks` success and `build-apk` skipped (manual-only; the hosted runner disk preflight is below Chromium's documented 100 GB need). The Windows installer PR check **41355889789** completed successfully overall: Proton popup sign-in smoke, extension worker proxy test, installer build and real silent installer update passed; the separate informational uBlock Lite API probe failed as before and is not supported or bundled. I am not claiming feature parity or VPN protection from these source checks.

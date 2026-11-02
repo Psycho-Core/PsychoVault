@@ -1,6 +1,6 @@
 # Android extension engine - research and decision
 
-Research date: 1 November 2026. This is a recommendation, not an implemented engine or a successful device test. Proton VPN is required in the Android port.
+Research date: 1 November 2026; source status updated 2 November 2026. The source now contains general extension ZIP/CRX import, a native permission prompt, Chromium-reported load/uninstall results, bundled-extension staging and the broader feature handlers described in `README.md`. No Android extension install or device test has passed. Proton VPN is required in the Android port and remains unverified.
 
 ## What I need
 
@@ -32,7 +32,7 @@ A user reported Proton authentication loops; the Titanium maintainer later said 
 5. Bundle or install the actual Dark Reader extension with its existing MIT notice and source provenance, then test page transformation, per-site controls, popups, settings, updates and restart. The existing desktop copy is unpacked; Titanium's pinned bundled loader stages signed CRX files. Select a lawful supported distribution/update route and verify it retains the intended identity; do not invent Dark Reader's private key. A custom CSS darkener is not the extension.
 6. Implement the required Proton extension as part of the port. The current desktop Proton bundle is unpacked. For default in-browser installation, investigate a verified upstream signed artifact or a supported first-party store/update mechanism, identity and update behaviour, licences and trademarks. A newly signed CRX has a different extension ID; it cannot impersonate the original. Do not claim VPN routing or leak protection before testing.
 7. Reimplement/test browser features against the new host: navigation, private mode and storage isolation, native blocker, vault/autofill/backups, uploads/downloads, session recovery, settings and accessibility. Plan migration from the preview; simply using the same Android application ID does not migrate WebView data into Chromium profiles. An update also requires a compatible signing key and increasing version code. Never delete preview data without warning.
-8. Maintain Chromium security updates and rebase patches continuously. Build the APK and test on a real phone only after permission. Verify install/update signatures and run extension installation, permissions, Dark Reader, navigation, restart, network and privacy tests. An API probe or build alone is not proof.
+8. Maintain Chromium security updates and rebase patches continuously. Build the APK on a suitable runner and test on a real phone; source-check Actions are authorised, but an APK job must still meet the runner requirements. Verify install/update signatures and run extension installation, permissions, Dark Reader, navigation, restart, network and privacy tests. An API probe or build alone is not proof.
 
 ## Cost and build requirements
 

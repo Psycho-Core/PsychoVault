@@ -914,7 +914,7 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     renderCatalogue()
     renderServices(st.services || [])
     renderContainers(st.containers || [])
-    if (window.pv.gx) window.pv.gx.switches().then((r) => {
+    if (window.pv.perf) window.pv.perf.switches().then((r) => {
       s('restartNote').style.display = r.restartNeeded ? 'block' : 'none'
     }).catch(() => {})
     s('customSearchEngines').value = (Array.isArray(st.customSearchEngines) ? st.customSearchEngines : []).map(x => [x.shortcut, x.name, x.url].join(' | ')).join('\n')
@@ -1155,8 +1155,8 @@ body[data-theme="ocean"] { --bg:#091923; --bg2:#0d2633; --bg3:#133645; --bg4:#19
     }
     s('tileSave').onclick = () => save({ speedDial: tilesValue().filter(t => t.title && t.url) })
     for (const id of ['netLimit']) { const el = s(id); if (el) el.onchange = () => save({ netLimit: Number(el.value) }) }
-    for (const id of ['webRtc', 'doh']) { const el = s(id); if (el) el.onchange = () => { save({ [id]: el.value }).then(() => window.pv.gx.switches().then((r) => { s('restartNote').style.display = r.restartNeeded ? 'block' : 'none' })) } }
-    s('relaunch').onclick = () => window.pv.gx.relaunch()
+    for (const id of ['webRtc', 'doh']) { const el = s(id); if (el) el.onchange = () => { save({ [id]: el.value }).then(() => window.pv.perf.switches().then((r) => { s('restartNote').style.display = r.restartNeeded ? 'block' : 'none' })) } }
+    s('relaunch').onclick = () => window.pv.perf.relaunch()
     for (const id of ['dohTemplate', 'denyPerms', 'panicUrl']) { const el = s(id); if (el) el.onchange = () => save({ [id]: el.value.trim() }) }
     s('soundVol').onchange = () => save({ soundVol: Math.max(0, Math.min(1, Number(s('soundVol').value) || 0)) })
     s('modSave').onclick = () => save({ modCss: s('modCss').value }).then(() => flag('Mod applied'))

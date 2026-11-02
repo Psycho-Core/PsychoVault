@@ -21,6 +21,7 @@ class StagingTests(unittest.TestCase):
             self.assertIn('../psychovault/prepare_bundled_extension.py', text)
             self.assertNotIn('releases/latest/download/titanium.crx', text)
             self.assertIn('fetch_filter_lists', text)
+            self.assertIn("'checkout_pgo_profiles': False", text)
             self.assertIn('install_chromium_source.py', (stage / 'patch.sh').read_text())
             args = (stage / 'args.gn').read_text()
             self.assertIn('chrome_public_manifest_package = "com.psychocore.psychovault"', args)

@@ -12,7 +12,7 @@ let suggestItems = []
 
 // ------------------------------------------------------------------ tabs
 let audioCtx = null
-function gxSound(kind) {
+function uiSound(kind) {
   const cfg = state.sounds
   if (!cfg || !cfg.on) return
   try {
@@ -35,7 +35,7 @@ function gxSound(kind) {
 }
 window.addEventListener('keydown', (e) => {
   const tag = e.target && e.target.tagName
-  if (tag === 'INPUT' || tag === 'TEXTAREA') gxSound('key')
+  if (tag === 'INPUT' || tag === 'TEXTAREA') uiSound('key')
 })
 
 // Tab islands: children of a collapsed root are hidden, the root keeps a count.
@@ -155,13 +155,13 @@ function renderTabs() {
         if (active) active.focus()
       }).catch(() => {})
     }
-    el.onclick = () => { if (Date.now() < suppressTabClickUntil) return; gxSound('tab'); window.pv.tab.activate(t.id) }
+    el.onclick = () => { if (Date.now() < suppressTabClickUntil) return; uiSound('tab'); window.pv.tab.activate(t.id) }
     el.onauxclick = (e) => { if (e.button === 1 && !t.pinned) window.pv.tab.close(t.id) }
     el.oncontextmenu = (e) => {
       e.preventDefault()
       window.pv.tab.menu({ id: t.id, x: Math.round(e.clientX), y: Math.round(e.clientY) })
     }
-    // double-click pins, the way it does in Opera GX
+    // double-click pins, the way it does in the reference browser
     el.ondblclick = (e) => { e.preventDefault(); window.pv.tab.pin({ id: t.id, pinned: !t.pinned }) }
 
     // drag to reorder. Pointer events, not HTML5 drag and drop: the strip lives inside a
@@ -628,7 +628,7 @@ function renderRail() {
       b.appendChild(sp)
     }
     if (open.has((svc.url || '').replace(/\/$/, ''))) b.classList.add('live')
-    b.onclick = async () => { gxSound('tab'); await window.pv.gx.services({ i }) }
+    b.onclick = async () => { uiSound('tab'); await window.pv.perf.services({ i }) }
     b.oncontextmenu = (e) => { e.preventDefault(); window.pv.rail.menu(i) }
     box.appendChild(b)
   })
@@ -690,7 +690,7 @@ async function paintPanel(name) {
     act.appendChild(clr)
     body.appendChild(act)
   } else if (name === 'hot') {
-    const rows = await window.pv.gx.hot()
+    const rows = await window.pv.perf.hot()
     const head = document.createElement('div')
     head.className = 'hint'
     head.textContent = state.netLimit
@@ -711,7 +711,7 @@ async function paintPanel(name) {
       btn.className = 'nav'
       btn.style.cssText = 'width:auto;padding:3px 7px;font-size:11px'
       btn.textContent = r.discarded ? 'Wake' : 'Sleep'
-      btn.onclick = async () => { await window.pv.gx.hot({ action: r.discarded ? 'wake' : 'sleep', id: r.id }); openPanel('hot') }
+      btn.onclick = async () => { await window.pv.perf.hot({ action: r.discarded ? 'wake' : 'sleep', id: r.id }); openPanel('hot') }
       row.append(t, mem, cpu, btn)
       row.onclick = (e) => { if (e.target === row || e.target === t) window.pv.tab.activate(r.id) }
       body.appendChild(row)
@@ -960,15 +960,15 @@ const COMMANDS = [
   { id: 'ws4',      title: 'Switch to workspace 4', keys: 'Ctrl+4',    run: () => window.pv.ws.switch(3) },
   { id: 'vaultlock',title: 'Lock the password vault', keys: '',        run: () => window.pv.vault.lock().then(() => toast('Vault locked')) },
   { id: 'hottabs',  title: 'Performance: hot tabs, memory and CPU per tab', keys: '', run: () => openPanel('hot', null) },
-  { id: 'snap',     title: 'Snapshot: capture this page as PNG', keys: 'Ctrl+Shift+5', run: () => window.pv.gx.snapshot('png').then((r) => toast(r.ok ? 'Saved ' + r.file : 'Snapshot failed')) },
-  { id: 'pdf',      title: 'Save this page as PDF', keys: '',          run: () => window.pv.gx.snapshot('pdf').then((r) => toast(r.ok ? 'Saved ' + r.file : 'PDF failed: ' + (r.reason || ''))) },
-  { id: 'rgxv',     title: 'Enhance videos: contrast, saturation, brightness', keys: '',        run: () => window.pv.settings.get().then((st) => window.pv.settings.set({ enhanceVideo: !st.enhanceVideo })) },
-  { id: 'rgxi',     title: 'Enhance images: contrast, saturation, brightness', keys: '',        run: () => window.pv.settings.get().then((st) => window.pv.settings.set({ enhanceImages: !st.enhanceImages })) },
-  { id: 'panic',    title: 'Panic button: hide everything', keys: 'F12', run: () => window.pv.gx.panic(true) },
-  { id: 'unpanic',  title: 'Panic button: bring the tabs back', keys: 'F11', run: () => window.pv.gx.panic(false) },
-  { id: 'medpa',    title: 'Media: play or pause', keys: '',           run: () => window.pv.gx.media('toggle') },
-  { id: 'svc0',     title: 'Open service: sidebar app 1', keys: '',     run: () => window.pv.gx.services({ i: 0 }) },
-  { id: 'svc1',     title: 'Open service: sidebar app 2', keys: '',     run: () => window.pv.gx.services({ i: 1 }) },
+  { id: 'snap',     title: 'Snapshot: capture this page as PNG', keys: 'Ctrl+Shift+5', run: () => window.pv.perf.snapshot('png').then((r) => toast(r.ok ? 'Saved ' + r.file : 'Snapshot failed')) },
+  { id: 'pdf',      title: 'Save this page as PDF', keys: '',          run: () => window.pv.perf.snapshot('pdf').then((r) => toast(r.ok ? 'Saved ' + r.file : 'PDF failed: ' + (r.reason || ''))) },
+  { id: 'enhv',     title: 'Enhance videos: contrast, saturation, brightness', keys: '',        run: () => window.pv.settings.get().then((st) => window.pv.settings.set({ enhanceVideo: !st.enhanceVideo })) },
+  { id: 'enhi',     title: 'Enhance images: contrast, saturation, brightness', keys: '',        run: () => window.pv.settings.get().then((st) => window.pv.settings.set({ enhanceImages: !st.enhanceImages })) },
+  { id: 'panic',    title: 'Panic button: hide everything', keys: 'F12', run: () => window.pv.perf.panic(true) },
+  { id: 'unpanic',  title: 'Panic button: bring the tabs back', keys: 'F11', run: () => window.pv.perf.panic(false) },
+  { id: 'medpa',    title: 'Media: play or pause', keys: '',           run: () => window.pv.perf.media('toggle') },
+  { id: 'svc0',     title: 'Open service: sidebar app 1', keys: '',     run: () => window.pv.perf.services({ i: 0 }) },
+  { id: 'svc1',     title: 'Open service: sidebar app 2', keys: '',     run: () => window.pv.perf.services({ i: 1 }) },
   { id: 'zoomin',   title: 'Zoom in',            keys: 'Ctrl++',      run: () => window.pv.zoom.in() },
   { id: 'zoomout',  title: 'Zoom out',           keys: 'Ctrl+-',      run: () => window.pv.zoom.out() },
   { id: 'zoomreset',title: 'Reset zoom',         keys: 'Ctrl+0',      run: () => window.pv.zoom.reset() },
