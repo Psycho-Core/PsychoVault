@@ -10,15 +10,29 @@ def run(cmd,env=None):
     subprocess.run([str(x) for x in cmd],cwd=ROOT,env=env,check=True)
 def msvc_env():
     if shutil.which("cl"):return os.environ.copy()
-    vswhere=pathlib.Path(os.environ.get("ProgramFiles(x86)",r"C:\Program Files (x86)"))/"Microsoft Visual Studio/Installer/vswhere.exe"
-    if not vswhere.exists():raise RuntimeError("Visual Studio C++ tools not found")
-    install=subprocess.check_output([str(vswhere),"-latest","-products","*","-requires","Microsoft.VisualStudio.Component.VC.Tools.x86.x64","-property","installationPath"],text=True).strip().splitlines()[0]
+    candidates=[]
+    pf86=os.environ.get("ProgramFiles(x86)",r"C:\Program Files (x86)")
+    pf=os.environ.get("ProgramFiles",r"C:\Program Files")
+    candidates.append(pathlib.Path(pf86)/"Microsoft Visual Studio/Installer/vswhere.exe")
+    candidates.append(pathlib.Path(pf)/"Microsoft Visual Studio/Installer/vswhere.exe")
+    vswhere=next((p for p in candidates if p.exists()),None)
+    if vswhere is None:
+        raise RuntimeError("vswhere not found; looked in "+", ".join(str(p) for p in candidates))
+    try:
+        install=subprocess.check_output([str(vswhere),"-latest","-products","*","-requires","Microsoft.VisualStudio.Component.VC.Tools.x86.x64","-property","installationPath"],text=True).strip().splitlines()[0]
+    except Exception as e:
+        raise RuntimeError(f"vswhere failed at {vswhere}: {e}")
     dev=pathlib.Path(install)/"Common7/Tools/VsDevCmd.bat"
-    out=subprocess.check_output(f'cmd /c ""{dev}" -arch=x64 >nul && set"',shell=True,text=True)
+    if not dev.exists():raise RuntimeError(f"VsDevCmd.bat not found at {dev}")
+    try:
+        out=subprocess.check_output(["cmd","/c",f'"{dev}" -arch=x64 >nul && set'],text=True)
+    except Exception as e:
+        raise RuntimeError(f"VsDevCmd failed at {dev}: {e}")
     env=os.environ.copy()
     for line in out.splitlines():
         if "=" in line:
             k,v=line.split("=",1);env[k]=v
+    if not shutil.which("cl",path=env.get("PATH")):raise RuntimeError("cl still not found after VsDevCmd")
     return env
 def main():
     ap=argparse.ArgumentParser();ap.add_argument("--compiler",choices=["auto","msvc","gcc"],default="auto");ap.add_argument("--outdir",default="build");ap.add_argument("--sanitizers",action="store_true");args=ap.parse_args()

@@ -861,7 +861,8 @@ struct JsonParser {
     }
     auto token = s.substr(start, p - start);
     char *end = nullptr;
-    double n = std::strtod(std::string(token).c_str(), &end);
+    std::string number(token);
+    double n = std::strtod(number.c_str(), &end);
     if (!end || *end || !std::isfinite(n))
       throw std::runtime_error("JSON number range");
     return Json(n);
