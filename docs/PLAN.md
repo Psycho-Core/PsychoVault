@@ -38,9 +38,9 @@ I am done when all of these are true:
 
 ## 3. Architecture I am choosing
 
-I am choosing Rust for the browser core and Windows shell. I want memory safety, explicit ownership, fearless concurrency where it is real, and a compiler that stops large classes of engine bugs before they ship. I am not choosing Rust because it makes the engine easy. It does not. I am choosing it because writing a browser in an unsafe language would add risk I do not need.
+I am implementing the first engine in dependency-free C++20 for the browser core and Windows shell. This is a recorded change from my earlier Rust proposal. I chose it because the available compiler lets me compile and test the engine immediately, and the Windows SDK gives me direct access to the platform APIs I need. I am not claiming C++ gives me Rust's memory-safety guarantees. I am using RAII, bounded containers, explicit limits, compiler warnings, sanitizers and a restricted renderer process to reduce risk.
 
-I will use the Rust compiler and standard library. I will use Windows platform APIs through hand-written, reviewed FFI declarations. I will not add third-party runtime crates that supply HTML, CSS, JavaScript, TLS, networking, layout, rendering, extension behaviour, or sandboxing. Build-time tools may exist, but they must be pinned, audited, and kept out of the shipped browser.
+I will use the C++ compiler and standard library. I will use Windows platform APIs through reviewed SDK headers and explicit links. I will not add third-party runtime libraries that supply HTML, CSS, JavaScript, TLS, networking, layout, rendering, extension behaviour, or sandboxing. Build-time tools may exist, but they must be pinned, audited, and kept out of the shipped browser.
 
 The first target is Windows x64. Android comes later through the same core, not through a separate third-party browser.
 
@@ -301,7 +301,7 @@ Android is done only when the same ownership, UI, feature, Proton, security, pri
 | Phase | What I build | Exit gate |
 | --- | --- | --- |
 | P0 | Guide, research, inventory, plan, audit | This plan passes audit and is merged |
-| P1 | Repo skeleton, CI, IPC, process broker, sandbox smoke test | Hello-world renderer is sandboxed and cannot read profile or network directly |
+| P1 | Repo skeleton, CI, IPC, process broker, sandbox smoke test | Renderer is sandboxed and cannot read profile or network directly |
 | P2 | URL, Fetch model, HTML/DOM, CSS block/inline, JS interpreter core | Local corpus renders and passes pinned WPT/Test262 subsets |
 | P3 | Native chrome UI, tabs, windows, navigation, new tab, settings shell | Visual parity for chrome and new tab; settings navigation matches reference |
 | P4 | Network service, TLS, cookies, cache, proxy, PAC, storage | HTTP/HTTPS/proxy tests pass; fail-closed proxy test passes |
@@ -342,4 +342,4 @@ I am not giving a fake calendar estimate. The sequence is fixed; the duration de
 
 ## 17. Immediate next step after this plan
 
-The next implementation step is P1: create the Rust workspace, the typed IPC boundary, the broker/renderer process split, the Windows sandbox smoke test, and the first GitHub Actions check. I will not start P2 until P1 proves that a renderer can be isolated and that the build pipeline is honest.
+I have started P1 and the first P2 slices: the C++20 engine, framed IPC, broker/renderer split, Windows sandbox probe, native shell and GitHub Actions build. The current evidence and open gates are in `docs/IMPLEMENTATION-STATUS.md`. I will not call P1 or P2 complete until the hosted sandbox test, conformance subsets and stability gates pass.
