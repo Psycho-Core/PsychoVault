@@ -221,7 +221,7 @@ void JNI_PsychoNetwork_Update(JNIEnv* env, const JavaRef<jobject>& jprofile,
     }
     previous.clear();
     if (const auto* sites = value.FindDict("sitePermissions")) {
-      for (const auto [origin, rule] : *sites) {
+      for (const auto& [origin, rule] : *sites) {
         if (!rule.is_dict()) continue;
         auto pattern = ContentSettingsPattern::FromString(origin);
         if (!pattern.IsValid()) continue;
