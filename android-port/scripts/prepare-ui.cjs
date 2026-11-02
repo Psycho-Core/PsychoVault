@@ -28,8 +28,9 @@ try {
     renderer = renderer.replace(before, after);
   }
   replaceRenderer('window.pv.downloads.open(d.path)', 'window.pv.downloads.open(d.id)');
-  replaceRenderer("const show = document.createElement('button'); show.className = 'mini'; show.textContent = 'Show in folder'; show.onclick = () => window.pv.downloads.reveal(d.path)", "const show = document.createElement('button'); show.className = 'mini'; show.textContent = 'Show in folder'; show.disabled = true; show.title = 'Folder reveal is unavailable on Android';");
+  replaceRenderer("const show = document.createElement('button'); show.className = 'mini'; show.textContent = 'Show in folder'; show.onclick = () => window.pv.downloads.reveal(d.path)", "const show = document.createElement('button'); show.className = 'mini'; show.textContent = 'Open Downloads'; show.onclick = () => window.pv.downloads.reveal(d.id).catch(e => alert(e.message || 'Could not open Downloads'));");
   replaceRenderer('row.title = d.path', 'row.title = d.file || d.name || d.id');
+  replaceRenderer("toast(result.action === 'connect' ? 'Proton proxy configured - connection not verified' : 'Proton VPN disconnected')", "toast(result.message || 'Proton opened. Connect inside Proton; protection is not verified.')");
   replaceRenderer("else if (cmd === 'settings') window.pv.tab.new('psychovault://settings')", "else if (cmd === 'settings') window.pv.tab.new('psychovault://settings')\n  else if (cmd === 'extensions') window.pv.tab.new('psychovault://settings#extensions')");
   fs.writeFileSync(path.join(target,'renderer.js'), renderer);
   // WebUI CSP forbids inline scripts. Adapt the copied new tab, not the desktop source.
@@ -47,6 +48,7 @@ try {
     if (settingsHtml.split(before).length !== 2) throw new Error('Desktop settings prose changed: ' + before);
     settingsHtml = settingsHtml.replace(before, after);
   }
+  settingsHtml = settingsHtml.replace('</head>', '<link rel="stylesheet" href="settings-mobile.css">\n</head>');
   replaceSettings('<button class="mini" id="vpnCheckOpen" type="button">Open VPN checks</button>', '<button class="mini" id="protonVpnOpen" type="button">Open Proton VPN</button>\n      <button class="mini" id="vpnCheckOpen" type="button">Open VPN checks</button>');
   replaceSettings('Use the VPN button on the sidebar to connect or disconnect; right-click it to open Proton.', 'Use the Proton button on the sidebar to open Proton; connect or disconnect inside Proton. The button does not verify protection.');
   replaceSettings("through PsychoVault's own shim", "through Chromium's extension proxy API");
@@ -58,7 +60,13 @@ try {
   replaceSettings('Bookmark, history and settings files live in your user data folder.', 'Bookmarks, history and settings live in Android app storage.');
   replaceSettings('If an update fails while Proton VPN is on, disconnect it and retry. PsychoVault does not bypass the VPN automatically. It removes an updater-downloaded installer only after the new version starts and the file is verified unchanged; older untracked installers are kept.', 'Android checks GitHub Releases and opens the release page. It does not self-install APKs; install updates through Android. If a download fails while Proton VPN is on, disconnect it and retry.');
   fs.writeFileSync(path.join(target,'settings.html'),settingsHtml);
-  for (const file of ['settings.js','recovery.html','recovery.js','mobile.css','sidebar.js','mobile-shell.js','desktop-bridge.js','internal-page-bridge.js','navigation-resolver.js','native-transport.js','host-layout.js','chrome-bootstrap.js','page-bootstrap.js']) fs.copyFileSync(path.join(repo,'android-port/ui',file),path.join(target,file));
+  let vpnHtml = fs.readFileSync(path.join(ui,'vpncheck.html'),'utf8');
+  const vpnScript = vpnHtml.match(/<script>([\s\S]*?)<\/script>/);
+  if (!vpnScript || vpnHtml.split('<script>').length !== 2) throw new Error('VPN checks script structure changed');
+  fs.writeFileSync(path.join(target,'vpncheck.js'),vpnScript[1]);
+  vpnHtml = vpnHtml.replace(vpnScript[0],'').replace('<meta charset="utf-8">','<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">').replace('</body>','<script src="navigation-resolver.js"></script>\n<script src="internal-page-bridge.js"></script>\n<script src="native-transport.js"></script>\n<script src="vpncheck-bootstrap.js"></script>\n</body>');
+  fs.writeFileSync(path.join(target,'vpncheck.html'),vpnHtml);
+  for (const file of ['settings.js','settings-mobile.css','vpncheck-bootstrap.js','recovery.html','recovery.js','mobile.css','sidebar.js','mobile-shell.js','desktop-bridge.js','internal-page-bridge.js','navigation-resolver.js','native-transport.js','host-layout.js','chrome-bootstrap.js','page-bootstrap.js']) fs.copyFileSync(path.join(repo,'android-port/ui',file),path.join(target,file));
   for (const file of ['library.js','indexeddb-storage.js','library-transport.js']) fs.copyFileSync(path.join(repo,'android-port/core',file),path.join(target,file));
   console.log('Desktop UI adaptation prepared at ' + target + '. No APK was built.');
 } catch (error) {

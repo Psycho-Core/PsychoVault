@@ -13,8 +13,9 @@ test('mobile chrome is generated from the desktop UI and does not fabricate a na
     assert.ok(fs.existsSync(path.join(dest,'library.js'))); assert.ok(fs.existsSync(path.join(dest,'library-transport.js'))); assert.ok(fs.existsSync(path.join(dest,'indexeddb-storage.js')));
     let expectedRenderer=fs.readFileSync(path.join(repo,'app/ui/renderer.js'),'utf8');
     expectedRenderer=expectedRenderer.replace('window.pv.downloads.open(d.path)','window.pv.downloads.open(d.id)')
-      .replace("const show = document.createElement('button'); show.className = 'mini'; show.textContent = 'Show in folder'; show.onclick = () => window.pv.downloads.reveal(d.path)","const show = document.createElement('button'); show.className = 'mini'; show.textContent = 'Show in folder'; show.disabled = true; show.title = 'Folder reveal is unavailable on Android';")
+      .replace("const show = document.createElement('button'); show.className = 'mini'; show.textContent = 'Show in folder'; show.onclick = () => window.pv.downloads.reveal(d.path)","const show = document.createElement('button'); show.className = 'mini'; show.textContent = 'Open Downloads'; show.onclick = () => window.pv.downloads.reveal(d.id).catch(e => alert(e.message || 'Could not open Downloads'));")
       .replace('row.title = d.path','row.title = d.file || d.name || d.id')
+      .replace("toast(result.action === 'connect' ? 'Proton proxy configured - connection not verified' : 'Proton VPN disconnected')","toast(result.message || 'Proton opened. Connect inside Proton; protection is not verified.')")
       .replace("else if (cmd === 'settings') window.pv.tab.new('psychovault://settings')","else if (cmd === 'settings') window.pv.tab.new('psychovault://settings')\n  else if (cmd === 'extensions') window.pv.tab.new('psychovault://settings#extensions')");
     assert.equal(fs.readFileSync(path.join(dest,'renderer.js'),'utf8'),expectedRenderer);
     assert.ok(fs.existsSync(path.join(dest,'recovery.html'))); assert.ok(fs.existsSync(path.join(dest,'recovery.js')));
@@ -26,8 +27,12 @@ test('mobile chrome is generated from the desktop UI and does not fabricate a na
     for (const category of ['general','privacy','downloads','extensions','performance','appearance','spelling','passwords','accessibility','about']) assert.ok(settingsHtml.includes('data-category="'+category+'"'), 'missing settings tab '+category);
     for (const id of ['protonVpnOpen','vpnCheckOpen','protonVpnRestore','protonVpnStatus','proxySelfTest','proxyStatus','extAddFolder','extAddCrx','extReload']) assert.ok(settingsHtml.includes('id="'+id+'"'), 'missing extension/VPN control '+id);
     const settingsJs=fs.readFileSync(path.join(dest,'settings.js'),'utf8');
-    for (const id of ['relaunch','vforget','openErrorLog','updateToken','updateTokenSave','updateTokenForget']) { assert.ok(settingsJs.includes(id), 'missing visible placeholder '+id); assert.ok(settingsHtml.includes('id="'+id+'"'), 'placeholder not present in settings HTML '+id); }
+    for (const id of ['relaunch','vforget','updateToken','updateTokenSave','updateTokenForget']) { assert.ok(settingsJs.includes(id), 'missing visible placeholder '+id); assert.ok(settingsHtml.includes('id="'+id+'"'), 'placeholder not present in settings HTML '+id); }
     assert.match(settingsJs,/android-placeholder/);
+    assert.ok(settingsHtml.includes('settings-mobile.css'));
+    for (const file of ['vpncheck.html','vpncheck.js','vpncheck-bootstrap.js']) assert.ok(fs.existsSync(path.join(dest,file)), 'missing '+file);
+    assert.match(fs.readFileSync(path.join(dest,'settings.js'),'utf8'),/window\.pv\.vpncheck\.open/);
+    assert.match(fs.readFileSync(path.join(dest,'settings.js'),'utf8'),/window\.pv\.data\.openErrorLog/);
     const again=spawnSync(process.execPath,[script,dest],{encoding:'utf8'});assert.notEqual(again.status,0);assert.ok(fs.existsSync(path.join(dest,'index.html')));
   } finally {fs.rmSync(dir,{recursive:true,force:true});}
 });

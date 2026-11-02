@@ -18,6 +18,7 @@
 #include "extensions/browser/uninstall_reason.h"
 #include "extensions/browser/unpacked_installer.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/manifest_handlers/options_page_info.h"
 #include "extensions/common/mojom/manifest.mojom.h"
 #include "extensions/common/permissions/permission_message.h"
 #include "extensions/common/permissions/permission_message_provider.h"
@@ -77,6 +78,8 @@ void AppendExtensions(const extensions::ExtensionSet& set, const char* state, ba
     item.Set("bundled", proton || dark); item.Set("builtin", proton ? "proton-vpn" : dark ? "dark-reader" : "");
     item.Set("dir", proton ? "proton-vpn" : dark ? "dark-reader" : extension->path().BaseName().value());
     item.Set("popup", proton ? "popup.html" : dark ? "ui/popup/index.html" : "");
+    const GURL options = extensions::OptionsPageInfo::GetOptionsPage(extension.get());
+    item.Set("options", options.is_valid() ? options.path().substr(1) : "");
     out.Append(std::move(item));
   }
 }
