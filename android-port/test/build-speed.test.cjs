@@ -5,22 +5,23 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
 const workflow = fs.readFileSync(path.join(root, '../.github/workflows/android-build.yml'), 'utf8');
+const segment = fs.readFileSync(path.join(root, '../.github/workflows/android-build-segment.yml'), 'utf8');
 const build = fs.readFileSync(path.join(root, 'scripts/build-engine.sh'), 'utf8');
 const prepare = fs.readFileSync(path.join(root, 'scripts/prepare-engine.sh'), 'utf8');
 
 test('hosted APK build uses a pinned sccache action and GitHub-backed cache', () => {
-  assert.match(workflow, /mozilla-actions\/sccache-action@[a-f0-9]{40}/);
-  assert.match(workflow, /version: v0\.16\.0/);
-  assert.match(workflow, /PSYCHO_CC_WRAPPER: sccache/);
-  assert.match(workflow, /SCCACHE_GHA_ENABLED: "true"/);
-  assert.match(workflow, /SCCACHE_GHA_VERSION: android-arm64-v1/);
-  assert.match(workflow, /SCCACHE_BASEDIRS: \$\{\{ steps\.paths\.outputs\.engine_root \}\}\/chromium\/src/);
+  assert.match(segment, /mozilla-actions\/sccache-action@[a-f0-9]{40}/);
+  assert.match(segment, /version: v0\.16\.0/);
+  assert.match(segment, /PSYCHO_CC_WRAPPER: sccache/);
+  assert.match(segment, /SCCACHE_GHA_ENABLED: "true"/);
+  assert.match(segment, /SCCACHE_GHA_VERSION: android-arm64-v1/);
+  assert.match(segment, /SCCACHE_BASEDIRS: \$\{\{ steps\.paths\.outputs\.engine_root \}\}\/chromium\/src/);
 });
 
 test('hosted APK build keeps a stable engine path and refuses to overwrite it', () => {
-  assert.match(workflow, /engine="\$parent\/psychovault-engine"/);
-  assert.doesNotMatch(workflow, /psychovault-engine-\$\{GITHUB_RUN_ID\}/);
-  assert.match(workflow, /Engine workspace already exists; refusing to overwrite/);
+  assert.match(segment, /engine="\$parent\/psychovault-engine"/);
+  assert.doesNotMatch(segment, /psychovault-engine-\$\{GITHUB_RUN_ID\}/);
+  assert.match(segment, /Engine workspace already exists; refusing to overwrite/);
   assert.match(prepare, /not overwriting/);
 });
 
@@ -42,10 +43,24 @@ test('APK build records compiler-cache stats and keeps release limits', () => {
   assert.match(args, /android_static_analysis = "off"/);
 });
 
-test('running APK builds are protected and larger hosted runners are opt-in', () => {
+test('running APK builds are protected unless a restart is explicitly authorized', () => {
   assert.match(workflow, /group: psychovault-android-build/);
-  assert.match(workflow, /cancel-in-progress: false/);
-  assert.match(workflow, /runs-on: \$\{\{ vars\.ANDROID_RUNNER \|\| 'ubuntu-24\.04' \}\}/);
-  assert.match(workflow, /PSYCHO_BUILD_JOBS: \$\{\{ vars\.ANDROID_BUILD_JOBS \}\}/);
-  assert.match(workflow, /branches: \[arena\/93b8960d-psychovault\]/);
+  assert.match(workflow, /cancel-in-progress: \$\{\{ github\.event_name == 'push' && contains\(github\.event\.head_commit\.message \|\| '', '\[restart build\]'\) \}\}/);
+  assert.match(segment, /runs-on: \$\{\{ vars\.ANDROID_RUNNER \|\| 'ubuntu-24\.04' \}\}/);
+  assert.match(segment, /PSYCHO_BUILD_JOBS: \$\{\{ vars\.ANDROID_BUILD_JOBS \}\}/);
+  assert.match(workflow, /branches: \[arena\/882adae6-psychovault\]/);
+});
+
+test('long hosted compiles checkpoint before the six-hour job limit and resume Ninja', () => {
+  assert.match(segment, /timeout-minutes: 360/);
+  assert.match(segment, /PSYCHO_MAX_BUILD_MINUTES: '240'/);
+  assert.match(build, /timeout --signal=INT --kill-after=120s "\$\{MAX_BUILD_MINUTES\}m"/);
+  assert.match(build, /printf 'checkpoint\\n' > "\$STATUS_FILE"/);
+  assert.match(build, /PSYCHO_RESUME_ENGINE/);
+  assert.match(build, /\.psychovault-engine-ready/);
+  assert.match(segment, /android-engine-checkpoint-/);
+  assert.match(segment, /sha256sum -c SHA256SUMS/);
+  assert.match(segment, /compression-level: 0/);
+  assert.match(workflow, /resume_artifact: \$\{\{ needs\.segment-1\.outputs\.checkpoint_artifact \}\}/);
+  assert.match(workflow, /needs\.segment-1\.outputs\.status == 'checkpoint'/);
 });

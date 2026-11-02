@@ -7,6 +7,9 @@ STAGE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 NOTES="${PSYCHO_NOTES_DIR:-$STAGE/build-notes}"
 mkdir -p "$NOTES"
 LOG="$NOTES/build.log"
+STATUS_FILE="${PSYCHO_BUILD_STATUS_FILE:-$NOTES/build-status.txt}"
+RESUME="${PSYCHO_RESUME_ENGINE:-0}"
+MAX_BUILD_MINUTES="${PSYCHO_MAX_BUILD_MINUTES:-270}"
 exec > >(tee -a "$LOG") 2>&1
 
 STEP="starting"
@@ -21,6 +24,7 @@ finish() {
       echo "No APK was published by this script."
       echo "See build.log for the first actionable compiler/build error."
     } > "$NOTES/Release-Notes-Android.txt"
+    printf 'failed\n' > "$STATUS_FILE"
     tail -n 120 "$LOG" > "$NOTES/failure-tail.txt" || true
     if command -v sccache >/dev/null 2>&1; then
       sccache --show-stats > "$NOTES/sccache.txt" 2>&1 || true
@@ -30,6 +34,14 @@ finish() {
 }
 trap finish EXIT
 step() { STEP="$1"; echo; echo "=== $STEP ==="; }
+if [[ "$RESUME" != "0" && "$RESUME" != "1" ]]; then
+  echo "PSYCHO_RESUME_ENGINE must be 0 or 1." >&2
+  exit 1
+fi
+if ! [[ "$MAX_BUILD_MINUTES" =~ ^[1-9][0-9]*$ ]]; then
+  echo "PSYCHO_MAX_BUILD_MINUTES must be a positive integer." >&2
+  exit 1
+fi
 
 cd "$STAGE"
 [[ -f common.sh && -f patch.sh && -f args.gn && -d vanadium && -d psychovault ]] || {
@@ -51,45 +63,67 @@ sudo dpkg --add-architecture i386
 sudo apt-get update
 sudo apt-get install -y libgcc-s1:i386
 
-step "fetch depot_tools and pinned Chromium source"
-if [[ ! -d depot_tools ]]; then
-  git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git
+if [[ "$RESUME" == "0" ]]; then
+  step "fetch depot_tools and pinned Chromium source"
+  if [[ ! -d depot_tools ]]; then
+    git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git
+  fi
+  export PATH="$STAGE/depot_tools:$PATH"
+  mkdir -p chromium/src
+  cd chromium/src
+  if [[ ! -d .git ]]; then
+    git init -q
+    git remote add origin https://chromium.googlesource.com/chromium/src.git
+  fi
+  git config --global user.name "PsychoVault CI"
+  git config --global user.email "ci@psychovault.local"
+  git fetch --depth 1 origin "+refs/tags/$VERSION:refs/tags/$VERSION"
+  git checkout --detach "$VERSION"
+  CHROMIUM_COMMIT="$(git rev-parse HEAD)"
+  export CHROMIUM_COMMIT
+  cp "$STAGE/.gclient" ../.gclient
+
+  step "apply pinned Vanadium/Titanium source patches"
+  # Match the upstream build's patch exclusions without editing the vendored copy.
+  rm -rf "$STAGE"/vanadium/patches/*trichrome-{apk-build-targets,browser-apk-targets}.patch
+  rm -rf "$STAGE"/vanadium/patches/*{detailed,supported}-language*.patch
+  rm -rf "$STAGE"/vanadium/patches/*javascript-optimizer-{site-setting,settings-UI}.patch
+  rm -rf "$STAGE"/vanadium/patches/*component-updates.patch
+  rm -rf "$STAGE"/vanadium/patches/*{pdf,PDF,for-content-public,toolbar-button,configs-from-config-app,config-app-parsing,new-tab-card,predictive-back}*.patch
+  replace "$STAGE/vanadium/patches" "VANADIUM" "TITANIUM"
+  replace "$STAGE/vanadium/patches" "Vanadium" "Titanium"
+  replace "$STAGE/vanadium/patches" "vanadium" "titanium"
+  git am --whitespace=nowarn --keep-non-patch "$STAGE"/vanadium/patches/*.patch
+
+  step "sync Chromium dependencies and run hooks"
+  gclient sync -D --no-history --nohooks
+  gclient runhooks
+  ./build/install-build-deps.sh --no-prompt --no-chromeos-fonts --no-arm --no-nacl
+
+  step "apply Titanium and PsychoVault source hooks"
+  # shellcheck source=/dev/null
+  source "$STAGE/patch.sh"
+  printf '%s\n' "$CHROMIUM_COMMIT" > "$STAGE/.psychovault-engine-ready"
+else
+  step "resume checkpointed Chromium workspace"
+  [[ -f "$STAGE/.psychovault-engine-ready" ]] || {
+    echo "Checkpoint is missing the prepared-engine marker." >&2
+    exit 1
+  }
+  [[ -d "$STAGE/depot_tools" && -d chromium/src/.git && -f chromium/src/out/Default/build.ninja ]] || {
+    echo "Checkpoint is missing depot_tools, Chromium source, or Ninja build state." >&2
+    exit 1
+  }
+  export PATH="$STAGE/depot_tools:$PATH"
+  cd chromium/src
+  CHROMIUM_COMMIT="$(git rev-parse HEAD)"
+  export CHROMIUM_COMMIT
+  [[ "$CHROMIUM_COMMIT" == "$(cat "$STAGE/.psychovault-engine-ready")" ]] || {
+    echo "Checkpoint Chromium commit does not match the prepared-engine marker." >&2
+    exit 1
+  }
+  ./build/install-build-deps.sh --no-prompt --no-chromeos-fonts --no-arm --no-nacl
 fi
-export PATH="$STAGE/depot_tools:$PATH"
-mkdir -p chromium/src
-cd chromium/src
-if [[ ! -d .git ]]; then
-  git init -q
-  git remote add origin https://chromium.googlesource.com/chromium/src.git
-fi
-git config --global user.name "PsychoVault CI"
-git config --global user.email "ci@psychovault.local"
-git fetch --depth 1 origin "+refs/tags/$VERSION:refs/tags/$VERSION"
-git checkout --detach "$VERSION"
-CHROMIUM_COMMIT="$(git rev-parse HEAD)"
-export CHROMIUM_COMMIT
-cp "$STAGE/.gclient" ../.gclient
-
-step "apply pinned Vanadium/Titanium source patches"
-# Match the upstream build's patch exclusions without editing the vendored copy.
-rm -rf "$STAGE"/vanadium/patches/*trichrome-{apk-build-targets,browser-apk-targets}.patch
-rm -rf "$STAGE"/vanadium/patches/*{detailed,supported}-language*.patch
-rm -rf "$STAGE"/vanadium/patches/*javascript-optimizer-{site-setting,settings-UI}.patch
-rm -rf "$STAGE"/vanadium/patches/*component-updates.patch
-rm -rf "$STAGE"/vanadium/patches/*{pdf,PDF,for-content-public,toolbar-button,configs-from-config-app,config-app-parsing,new-tab-card,predictive-back}*.patch
-replace "$STAGE/vanadium/patches" "VANADIUM" "TITANIUM"
-replace "$STAGE/vanadium/patches" "Vanadium" "Titanium"
-replace "$STAGE/vanadium/patches" "vanadium" "titanium"
-git am --whitespace=nowarn --keep-non-patch "$STAGE"/vanadium/patches/*.patch
-
-step "sync Chromium dependencies and run hooks"
-gclient sync -D --no-history --nohooks
-gclient runhooks
-./build/install-build-deps.sh --no-prompt --no-chromeos-fonts --no-arm --no-nacl
-
-step "apply Titanium and PsychoVault source hooks"
-# shellcheck source=/dev/null
-source "$STAGE/patch.sh"
 
 step "configure single-architecture arm64 build"
 wrapper="${PSYCHO_CC_WRAPPER:-}"
@@ -114,12 +148,37 @@ if ! [[ "$jobs" =~ ^[1-9][0-9]*$ ]]; then
   exit 1
 fi
 echo "Ninja parallel jobs: $jobs"
+echo "Maximum compile time this job: ${MAX_BUILD_MINUTES} minutes"
 if [[ "$wrapper" == "sccache" ]]; then
   sccache --zero-stats || true
 fi
-autoninja -C out/Default -j "$jobs" chrome_public_apk
+# Stop before the hosted job's six-hour limit so the workflow can checkpoint the
+# workspace and resume Ninja in a fresh job. This does not make a cold compile
+# faster; it prevents a long compile from being discarded at the job deadline.
+set +e
+timeout --signal=INT --kill-after=120s "${MAX_BUILD_MINUTES}m" \
+  autoninja -C out/Default -j "$jobs" chrome_public_apk
+ninja_code=$?
+set -e
 if [[ "$wrapper" == "sccache" ]]; then
-  sccache --show-stats | tee "$NOTES/sccache.txt"
+  sccache --show-stats | tee "$NOTES/sccache.txt" || true
+fi
+if [[ "$ninja_code" -eq 124 || "$ninja_code" -eq 130 || "$ninja_code" -eq 137 ]]; then
+  step "checkpoint compile progress"
+  {
+    echo "PsychoVault Android build notes"
+    echo "Status: checkpoint"
+    echo "The compile reached this job's time budget before the APK was complete."
+    echo "No APK was published by this job. The workflow can resume this workspace in a fresh hosted job."
+    echo "This is not a device, extension, VPN, leak-protection or blocker behaviour test."
+  } > "$NOTES/Release-Notes-Android.txt"
+  printf 'checkpoint\n' > "$STATUS_FILE"
+  trap - EXIT
+  exit 0
+fi
+if [[ "$ninja_code" -ne 0 ]]; then
+  echo "Ninja failed with exit code $ninja_code." >&2
+  exit "$ninja_code"
 fi
 
 step "validate APK and write release metadata"
@@ -212,6 +271,7 @@ print(json.dumps(metadata, indent=2))
 PY
 cp "$NOTES/apksigner.txt" "$NOTES/apk-badging.txt" "$STAGE/dist/"
 trap - EXIT
+printf 'completed\n' > "$STATUS_FILE"
 {
   echo "PsychoVault Android build notes"
   echo "Status: passed"
