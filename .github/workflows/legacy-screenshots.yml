@@ -22,15 +22,15 @@ jobs:
       - name: Install Electron and virtual display
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb libnss3 libatk-bridge2.0-0 libgtk-3-0 libgbm1 libasound2t64
+          sudo apt-get install -y xvfb imagemagick libnss3 libatk-bridge2.0-0 libgtk-3-0 libgbm1 libasound2t64
           npm install --prefix app --no-audit --no-fund
       - name: Capture current browser UI
         id: capture
         continue-on-error: true
         run: |
           mkdir -p screenshots/legacy
-          xvfb-run -a app/node_modules/.bin/electron --no-sandbox tools/capture-legacy-screenshots.cjs > screenshots/legacy/capture.log 2>&1
-          cat screenshots/legacy/capture.log
+          xvfb-run -a -s "-screen 0 1600x1000x24" app/node_modules/.bin/electron --no-sandbox tools/capture-legacy-screenshots.cjs > screenshots/legacy/capture-log.txt 2>&1
+          cat screenshots/legacy/capture-log.txt
       - name: Save screenshots and log to the working branch
         if: always()
         run: |

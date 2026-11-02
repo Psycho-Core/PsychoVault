@@ -5,6 +5,7 @@ const { app, BrowserWindow, webContents } = require('electron');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 
 const outDir = path.resolve(__dirname, '../screenshots/legacy');
 fs.mkdirSync(outDir, { recursive: true });
@@ -38,9 +39,11 @@ async function captureWc(wc, name) {
   console.log('captured', name);
 }
 async function captureWindow(win, name) {
-  await sleep(350);
-  const image = await win.capturePage();
-  fs.writeFileSync(path.join(outDir, name + '.png'), image.toPNG());
+  await sleep(500);
+  try { win.focus(); } catch {}
+  // BrowserWindow.capturePage() does not include child WebContentsViews, so it
+  // produces a blank content area. Capture the actual X11 window instead.
+  execFileSync('import', ['-window', 'root', path.join(outDir, name + '.png')], { stdio: 'ignore' });
   console.log('captured', name);
 }
 
