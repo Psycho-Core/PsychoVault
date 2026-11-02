@@ -1,8 +1,0 @@
-{
-  "name": "psychovault-build-tools",
-  "private": true,
-  "type": "module",
-  "devDependencies": {
-    "resedit": "3.1.0"
-  }
-}
