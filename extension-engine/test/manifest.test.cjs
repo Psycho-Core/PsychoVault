@@ -65,3 +65,15 @@ test('validates match patterns and accepts Proton short host form', () => {
   assert.throws(() => matchPattern('javascript:alert(1)'), /invalid match pattern/);
   assert.throws(() => matchPattern('https://*example.com/*'), /invalid match-pattern host/);
 });
+
+test('rejects percent-encoded resource paths and empty CSP code-source directives', () => {
+  assert.throws(() => safeResourcePath('a/%252e%252e/b'), /inside the extension package/);
+  const base = { manifest_version: 3, name: 'x', version: '1' };
+  assert.throws(() => parseManifest(JSON.stringify({ ...base, content_security_policy: { extension_pages: "script-src; object-src 'self'" } })), /CSP/);
+});
+
+test('rejects malformed match-pattern hosts', () => {
+  for (const bad of ['https://example..com/*', 'https://.example.com/*', 'https://example.com.:/*', 'https://*.*/*']) {
+    assert.throws(() => matchPattern(bad), /invalid match-pattern host|invalid match pattern/);
+  }
+});

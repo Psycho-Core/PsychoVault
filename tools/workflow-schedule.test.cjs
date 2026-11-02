@@ -82,6 +82,6 @@ test('the release-exists check runs before anything it gates', () => {
 
 test('scheduled and push builds cannot publish at the same time', () => {
   assert.match(text, /^concurrency:$/m)
-  assert.match(text, /group: build-release-\$\{\{ github\.ref \}\}/)
+  assert.match(text, /group: psychovault-android-build/)
   assert.match(text, /cancel-in-progress: false/)
 })

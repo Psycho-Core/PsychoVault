@@ -16,7 +16,9 @@ on:
       - 'tools/sign-update-manifest.mjs'
       - 'tools/generate-update-keypair.mjs'
       - 'tools/audit.mjs'
+      - 'tools/ownership-audit.mjs'
       - 'tools/*.test.cjs'
+      - 'extension-engine/**'
       - '.github/release.yml'
       - 'tools/package.json'
       - 'tools/package-lock.json'
@@ -35,9 +37,11 @@ on:
 permissions:
   contents: write
 
-# A scheduled build and a push-triggered build must not publish at the same time.
+# Only one heavy PsychoVault build runs at a time, Windows or Android. The group
+# name is shared with android-build.yml so a Windows release queues behind an
+# active APK compile instead of racing it.
 concurrency:
-  group: build-release-${{ github.ref }}
+  group: psychovault-android-build
   cancel-in-progress: false
 
 jobs:
@@ -56,7 +60,9 @@ jobs:
       - name: Audit source and test download, translation, and update flows
         run: |
           node tools/audit.mjs
+          node tools/ownership-audit.mjs
           node --test tools/*.test.cjs
+          node --test extension-engine/test/*.test.cjs
 
       - name: Read release version
         id: version

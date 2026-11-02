@@ -19,21 +19,17 @@ The 262-domain list in `app/blocklist.json` is a hand-curated set of known adver
 and analytics hostnames, written for this project. It is not derived from EasyList or
 any other filter subscription, and it carries no licence obligation from them.
 
-## wireproxy (bundled for the VPN feature)
+## wireproxy (legacy file in the repository, not shipped)
 
-`app/tools/wireproxy.exe` inside the installer is windtf/wireproxy v1.1.3, an ISC-licensed
-userspace WireGuard client. PsychoVault runs it as a child process and talks to the SOCKS5
-listener it exposes on 127.0.0.1; nothing else in the app changes.
+`app/tools/wireproxy.exe` is a legacy windtf/wireproxy v1.1.3 binary, ISC-licensed. It is
+**not** packaged in the installer or the easy build, and PsychoVault does not start it. The
+VPN path is the bundled Proton VPN browser extension, not a local wireproxy child process.
 
 - Source: https://github.com/windtf/wireproxy (ISC)
-- `wireproxy_windows_amd64.tar.gz` - sha256 `bce041ea9fe0f8a3351301dcbe29cdf6a523bb25cf9c62f17ebb5699a8051d0f`
-- `wireproxy_linux_amd64.tar.gz` - sha256 `e88c1d090740373fc606c1bafd81d9a5eadc642cce5667616e20e9d7a444f51c`
-- The 10,666,496-byte exe extracted from the Windows tarball: sha256
+- The 10,666,496-byte exe kept in the repository: sha256
   `b176b561fd8bf15d828fcab484cfd5b4fb941cb9f61807901ca64b955af27e1f`
 
-Both tarball digests were checked against the `checksums.txt` published with the release
-before extraction, on 2026-10-28. WireGuard is a registered trademark of Jason A. Donenfeld;
-this project is not affiliated with it.
+WireGuard is a registered trademark of Jason A. Donenfeld; this project is not affiliated with it.
 
 ## Spell-check word list
 

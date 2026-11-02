@@ -48,7 +48,7 @@ test('running APK builds are protected unless a restart is explicitly authorized
   assert.match(workflow, /cancel-in-progress: \$\{\{ github\.event_name == 'push' && contains\(github\.event\.head_commit\.message \|\| '', '\[restart build\]'\) \}\}/);
   assert.match(segment, /runs-on: \$\{\{ vars\.ANDROID_RUNNER \|\| 'ubuntu-24\.04' \}\}/);
   assert.match(segment, /PSYCHO_BUILD_JOBS: \$\{\{ vars\.ANDROID_BUILD_JOBS \}\}/);
-  assert.match(workflow, /branches: \[arena\/882adae6-psychovault\]/);
+  assert.match(workflow, /branches: \[arena\/9f549138-psychovault\]/);
 });
 
 test('long hosted compiles checkpoint before the six-hour job limit and resume Ninja', () => {

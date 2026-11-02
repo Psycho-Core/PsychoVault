@@ -14,14 +14,15 @@ const PUBLIC_CODES = new Set([
   'invalid-params', 'invalid-request', 'invalid-context', 'invalid-profile', 'invalid-extension',
   'invalid-grant', 'invalid-handler', 'unsupported-permission', 'not-found', 'disabled',
   'unknown-method', 'duplicate-handler', 'context-denied', 'permission-denied', 'host-denied',
-  'busy', 'unimplemented', 'timeout', 'invalid-result'
+  'busy', 'unimplemented', 'timeout', 'invalid-result', 'result-too-large'
 ]);
 
 function fail(code, message) { const error = new Error(message); error.code = code; error.pvPublic = true; throw error; }
-function jsonClone(value, label) {
+function jsonClone(value, label, maxBytes) {
   let text;
   try { text = JSON.stringify(value); } catch { fail(label === 'result' ? 'invalid-result' : 'invalid-params', `${label} is not JSON-serializable`); }
   if (text === undefined) fail(label === 'result' ? 'invalid-result' : 'invalid-params', `${label} is not JSON-serializable`);
+  if (maxBytes && new TextEncoder().encode(text).length > maxBytes) fail(label === 'result' ? 'result-too-large' : 'invalid-params', `${label} exceeds the size limit`);
   return JSON.parse(text);
 }
 function key(profileId, extensionId) { return JSON.stringify([profileId, extensionId]); }
@@ -30,6 +31,7 @@ class ExtensionEngine {
   constructor(options = {}) {
     this.timeoutMs = Number.isInteger(options.timeoutMs) && options.timeoutMs > 0 ? options.timeoutMs : 30000;
     this.maxRequestBytes = Number.isInteger(options.maxRequestBytes) && options.maxRequestBytes > 0 ? options.maxRequestBytes : 1024 * 1024;
+    this.maxResultBytes = Number.isInteger(options.maxResultBytes) && options.maxResultBytes > 0 ? options.maxResultBytes : 1024 * 1024;
     this.maxInflight = Number.isInteger(options.maxInflight) && options.maxInflight > 0 ? options.maxInflight : 64;
     this.resolveTabUrl = typeof options.resolveTabUrl === 'function' ? options.resolveTabUrl : null;
     this.extensions = new Map();
@@ -123,6 +125,10 @@ class ExtensionEngine {
       if (typeof url !== 'string' || !hasHostAccess(context.record.parsed.requirements, url, context.record.grantedOptionalHosts)) {
         fail('host-denied', 'extension does not have access to the target page');
       }
+      // The resolver can await a navigation. Re-check live installation state
+      // before the handler runs so disable/remove cannot race the grant.
+      if (this.extensions.get(key(context.profileId, context.extensionId)) !== context.record) fail('not-found', 'extension is no longer installed in this profile');
+      if (!context.record.enabled) fail('disabled', 'extension is disabled');
     }
   }
 
@@ -150,21 +156,46 @@ class ExtensionEngine {
       const count = this.inflight.get(token) || 0;
       if (count >= this.maxInflight) fail('busy', 'too many in-flight extension requests');
       this.inflight.set(token, count + 1);
-      try {
-        await this._authorize(context, method, cleanParams);
-        const handler = this.handlers.get(method);
-        if (!handler) fail('unimplemented', 'the browser has not implemented this method');
-        const result = await new Promise((resolve, reject) => {
-          const timer = setTimeout(() => { try { fail('timeout', 'extension request timed out'); } catch (error) { reject(error); } }, this.timeoutMs);
-          Promise.resolve().then(() => handler(Object.freeze({
-            profileId: context.profileId, extensionId: context.extensionId,
-            kind: context.kind, origin: context.origin, record: context.record
-          }), cleanParams)).then(value => { clearTimeout(timer); resolve(value); }, error => { clearTimeout(timer); reject(error); });
-        });
-        return { id: requestId, ok: true, result: jsonClone(result === undefined ? null : result, 'result') };
-      } finally {
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
         const left = (this.inflight.get(token) || 1) - 1;
         if (left <= 0) this.inflight.delete(token); else this.inflight.set(token, left);
+      };
+      let handlerStarted = false;
+      try {
+        await this._authorize(context, method, cleanParams);
+        if (this.extensions.get(key(context.profileId, context.extensionId)) !== context.record) fail('not-found', 'extension is no longer installed in this profile');
+        if (!context.record.enabled) fail('disabled', 'extension is disabled');
+        const handler = this.handlers.get(method);
+        if (!handler) fail('unimplemented', 'the browser has not implemented this method');
+        const controller = new AbortController();
+        handlerStarted = true;
+        let timer;
+        const timeout = new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            controller.abort();
+            const error = new Error('extension request timed out');
+            error.code = 'timeout'; error.pvPublic = true;
+            reject(error);
+          }, this.timeoutMs);
+        });
+        const handlerPromise = Promise.resolve().then(() => handler(Object.freeze({
+          profileId: context.profileId, extensionId: context.extensionId,
+          kind: context.kind, origin: context.origin, record: context.record
+        }), cleanParams, controller.signal));
+        // A timeout rejects the caller, but the slot stays held until the
+        // handler actually settles. A handler that ignores AbortSignal cannot
+        // create unlimited background work by being timed out over and over.
+        handlerPromise.then(() => { clearTimeout(timer); release(); }, () => { clearTimeout(timer); release(); });
+        const result = await Promise.race([handlerPromise, timeout]);
+        return { id: requestId, ok: true, result: jsonClone(result === undefined ? null : result, 'result', this.maxResultBytes) };
+      } catch (error) {
+        // Once the handler has started, its settlement owns the slot. Releasing
+        // here on timeout would let a stuck handler be restarted without limit.
+        if (!handlerStarted) release();
+        throw error;
       }
     } catch (error) {
       const code = error && error.pvPublic === true && typeof error.code === 'string' && PUBLIC_CODES.has(error.code) ? error.code : 'internal';

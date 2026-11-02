@@ -5,7 +5,7 @@ name: Android source and build
 on:
   workflow_dispatch:
   push:
-    branches: [arena/882adae6-psychovault]
+    branches: [arena/9f549138-psychovault]
     paths:
       - 'android-port/**'
       - 'app/ui/**'
@@ -35,7 +35,9 @@ jobs:
       - name: Desktop audit and tests
         run: |
           node tools/audit.mjs
+          node tools/ownership-audit.mjs
           node --test tools/*.test.cjs
+          node --test extension-engine/test/*.test.cjs
       - name: Android source tests
         run: |
           node --test android-port/test/*.test.cjs

@@ -93,3 +93,41 @@ test('runtime.getURL cannot escape the package and unknown methods stay unimplem
   assert.equal((await engine.dispatch(worker, req('tabs.create'))).error.code, 'unimplemented');
   assert.equal((await engine.dispatch(worker, req('browser.makeCoffee'))).error.code, 'unknown-method');
 });
+
+test('a timed-out handler keeps its in-flight slot until it settles and receives an abort signal', async () => {
+  const engine = setup({ timeoutMs: 5, maxInflight: 1 });
+  let release, aborted = false;
+  engine.registerHandler('storage.local.get', (_context, _params, signal) => new Promise(resolve => {
+    release = resolve;
+    if (signal) {
+      aborted = signal.aborted;
+      signal.addEventListener('abort', () => { aborted = true; }, { once: true });
+    }
+  }));
+  const worker = token(engine);
+  assert.equal((await engine.dispatch(worker, req('storage.local.get', ['a'], 'first'))).error.code, 'timeout');
+  assert.equal(aborted, true);
+  assert.equal((await engine.dispatch(worker, req('storage.local.get', ['b'], 'second'))).error.code, 'busy');
+  release('done');
+  await new Promise(resolve => setImmediate(resolve));
+  const third = engine.dispatch(worker, req('storage.local.get', ['c'], 'third'));
+  await new Promise(resolve => setImmediate(resolve));
+  release('done');
+  assert.equal((await third).ok, true);
+});
+
+test('limits result size and re-checks disable/remove while host access is resolved', async () => {
+  const engine = setup({ maxResultBytes: 16, resolveTabUrl: async () => 'https://example.com/' });
+  engine.registerHandler('storage.local.get', () => ({ big: 'x'.repeat(100) }));
+  assert.equal((await engine.dispatch(token(engine), req('storage.local.get'))).error.code, 'result-too-large');
+
+  let releaseUrl;
+  const racing = setup({ resolveTabUrl: () => new Promise(resolve => { releaseUrl = resolve; }) });
+  racing.registerHandler('scripting.executeScript', () => []);
+  const worker = token(racing);
+  const pending = racing.dispatch(worker, req('scripting.executeScript', [{ target: { tabId: 1 } }]));
+  await new Promise(resolve => setImmediate(resolve));
+  racing.setEnabled('default', id, false);
+  releaseUrl('https://example.com/');
+  assert.equal((await pending).error.code, 'disabled');
+});
