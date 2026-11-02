@@ -1,0 +1,1203 @@
+Downloading Electron binary...
+[2925:1102/113717.291030:ERROR:dbus/bus.cc:406] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")
+[2925:1102/113717.292780:ERROR:dbus/bus.cc:406] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")
+(electron) 'session.getAllExtensions' is deprecated and will be removed. Please use 'session.extensions.getAllExtensions' instead.
+(electron) 'session.loadExtension' is deprecated and will be removed. Please use 'session.extensions.loadExtension' instead.
+[2925:1102/113717.384282:ERROR:dbus/object_proxy.cc:589] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[2925:1102/113717.384359:ERROR:dbus/bus.cc:406] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")
+[2925:1102/113717.386229:ERROR:dbus/object_proxy.cc:589] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[2925:1102/113717.396100:ERROR:dbus/object_proxy.cc:589] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+(node:2925) ExtensionLoadWarning: Warnings loading extension at /tmp/pv-legacy-capture-pPXP0r/extensions/proton-vpn:
+  Permission 'notifications' is unknown.
+  Permission 'privacy' is unknown.
+
+(Use `electron --trace-warnings ...` to show where the warning was created)
+(node:2925) ExtensionLoadWarning: Warnings loading extension at /tmp/pv-legacy-capture-pPXP0r/extensions/proton-vpn:
+  Permission 'notifications' is unknown.
+  Permission 'privacy' is unknown.
+
+(node:2925) ExtensionLoadWarning: Warnings loading extension at /tmp/pv-legacy-capture-pPXP0r/extensions/proton-vpn:
+  Permission 'notifications' is unknown.
+  Permission 'privacy' is unknown.
+
+(node:2925) ExtensionLoadWarning: Warnings loading extension at /tmp/pv-legacy-capture-pPXP0r/extensions/proton-vpn:
+  Permission 'notifications' is unknown.
+  Permission 'privacy' is unknown.
+
+(node:2925) ExtensionLoadWarning: Warnings loading extension at /tmp/pv-legacy-capture-pPXP0r/extensions/proton-vpn:
+  Permission 'notifications' is unknown.
+  Permission 'privacy' is unknown.
+
+(node:2925) ExtensionLoadWarning: Warnings loading extension at /tmp/pv-legacy-capture-pPXP0r/extensions/proton-vpn:
+  Permission 'notifications' is unknown.
+  Permission 'privacy' is unknown.
+
+(node:2925) ExtensionLoadWarning: Warnings loading extension at /tmp/pv-legacy-capture-pPXP0r/extensions/dark-reader:
+  Permission 'fontSettings' is unknown.
+  Permission 'contextMenus' is unknown.
+
+(node:2925) ExtensionLoadWarning: Warnings loading extension at /tmp/pv-legacy-capture-pPXP0r/extensions/dark-reader:
+  Permission 'fontSettings' is unknown.
+  Permission 'contextMenus' is unknown.
+
+(node:2925) ExtensionLoadWarning: Warnings loading extension at /tmp/pv-legacy-capture-pPXP0r/extensions/dark-reader:
+  Permission 'fontSettings' is unknown.
+  Permission 'contextMenus' is unknown.
+
+(node:2925) ExtensionLoadWarning: Warnings loading extension at /tmp/pv-legacy-capture-pPXP0r/extensions/dark-reader:
+  Permission 'fontSettings' is unknown.
+  Permission 'contextMenus' is unknown.
+
+(node:2925) ExtensionLoadWarning: Warnings loading extension at /tmp/pv-legacy-capture-pPXP0r/extensions/dark-reader:
+  Permission 'fontSettings' is unknown.
+  Permission 'contextMenus' is unknown.
+
+(node:2925) ExtensionLoadWarning: Warnings loading extension at /tmp/pv-legacy-capture-pPXP0r/extensions/dark-reader:
+  Permission 'fontSettings' is unknown.
+  Permission 'contextMenus' is unknown.
+
+[2925:1102/113717.671415:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.set
+[2925:1102/113717.692781:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.set
+[2925:1102/113717.700981:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.set
+[2925:1102/113717.701718:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.get
+[2925:1102/113717.701880:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Access to extension API denied.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.701896:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: "managed" is not available in this instance of Chrome
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.714205:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.get
+[2925:1102/113717.714595:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Access to extension API denied.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.714614:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: "managed" is not available in this instance of Chrome
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.722079:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Access to extension API denied.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.734578:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Access to extension API denied.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.743862:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.get
+[2925:1102/113717.750160:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: "managed" is not available in this instance of Chrome
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.750270:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Access to extension API denied.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.764969:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.set
+[2925:1102/113717.769154:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Access to extension API denied.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.774512:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.get
+[2925:1102/113717.779404:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Access to extension API denied.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.779427:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: "managed" is not available in this instance of Chrome
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.782326:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Access to extension API denied.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.801840:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unrecognized Content-Security-Policy directive 'navigate-to'.
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.801957:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unrecognized Content-Security-Policy directive 'navigate-to'.
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.807776:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unrecognized Content-Security-Policy directive 'navigate-to'.
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.807914:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unrecognized Content-Security-Policy directive 'navigate-to'.
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.809133:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unrecognized Content-Security-Policy directive 'navigate-to'.
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.814040:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.clear
+[2925:1102/113717.818462:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Access to extension API denied.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.818618:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.get
+[2925:1102/113717.819973:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.clear
+[2925:1102/113717.820211:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.clear
+[2925:1102/113717.824371:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Could not establish connection. Receiving end does not exist.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.824482:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Access to extension API denied.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.825560:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Access to extension API denied.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.828259:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.clear
+[2925:1102/113717.828657:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Could not establish connection. Receiving end does not exist.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.829992:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Could not establish connection. Receiving end does not exist.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.830833:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Access to extension API denied.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.840910:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.clear
+[2925:1102/113717.842130:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Could not establish connection. Receiving end does not exist.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.842778:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.clear
+[2925:1102/113717.843672:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Access to extension API denied.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.845287:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Access to extension API denied.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.849758:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.clear
+[2925:1102/113717.852755:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Access to extension API denied.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.854543:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.clear
+[2925:1102/113717.856189:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Access to extension API denied.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.905943:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.get
+[2925:1102/113717.908345:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.set
+[2925:1102/113717.915163:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.set
+[2925:1102/113717.915682:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.get
+[2925:1102/113717.926923:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.get
+[2925:1102/113717.927262:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Access to extension API denied.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.927281:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: "managed" is not available in this instance of Chrome
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.927638:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.get
+[2925:1102/113717.928392:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.get
+[2925:1102/113717.933031:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Access to extension API denied.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.936675:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unrecognized Content-Security-Policy directive 'navigate-to'.
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.952555:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Access to extension API denied.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.970500:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.get
+[2925:1102/113717.971068:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: "managed" is not available in this instance of Chrome
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.972656:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.get
+[2925:1102/113717.972961:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Access to extension API denied.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.978135:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113717.981135:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.clear
+[2925:1102/113717.984257:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.clear
+[2925:1102/113717.984725:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Access to extension API denied.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.984897:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Access to extension API denied.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.984958:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113717.985154:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Could not establish connection. Receiving end does not exist.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.985682:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Could not establish connection. Receiving end does not exist.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.987084:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.clear
+[2925:1102/113717.987488:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Access to extension API denied.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113717.992170:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113717.998509:ERROR:extensions/browser/extension_function_dispatcher.cc:550] Unknown Extension API - types.ChromeSetting.clear
+[2925:1102/113717.999023:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  
+  Message: Unchecked runtime.lastError: Access to extension API denied.
+  ID:      jplgfhpmjnbigmhklmmbgecoobifkmpa
+  Type:    RuntimeError
+  Context: 
+  Stack Trace: 
+    {
+      Line:     0
+      Column:   1
+      URL:      
+      Function: (anonymous function)
+    }
+[2925:1102/113718.005275:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.006559:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.008463:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.025587:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.025768:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.035061:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.039973:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.055011:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.055186:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.057758:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.058036:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.058971:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.058995:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.068989:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.072497:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.113184:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.113310:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.113923:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.113956:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.117827:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.118089:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.118664:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.118764:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.127238:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.127568:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.138479:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.140110:ERROR:extensions/browser/extensions_browser_client.cc:93] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Message: "sync" is not available in this instance of Chrome
+  ID:      ccelhdfmbcejglejhpdheiilflkakonn
+  Type:    RuntimeError
+  Context: chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+  Stack Trace: 
+    {
+      Line:     796
+      Column:   1
+      URL:      chrome-extension://ccelhdfmbcejglejhpdheiilflkakonn/background/index.js
+      Function: (anonymous function)
+    }
+[2925:1102/113718.672303:ERROR:dbus/bus.cc:406] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")
+[2925:1102/113718.672388:ERROR:dbus/object_proxy.cc:589] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[2925:1102/113718.672417:ERROR:dbus/bus.cc:406] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")
+[2925:1102/113718.672439:ERROR:dbus/object_proxy.cc:589] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[2925:1102/113718.672457:ERROR:dbus/bus.cc:406] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")
+[2925:1102/113718.672464:ERROR:dbus/object_proxy.cc:589] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[2925:1102/113718.672492:ERROR:dbus/bus.cc:406] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")
+[2925:1102/113718.672497:ERROR:dbus/object_proxy.cc:589] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[2925:1102/113718.672513:ERROR:dbus/bus.cc:406] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")
+[2925:1102/113718.672518:ERROR:dbus/object_proxy.cc:589] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+captured 01-browser-new-tab-home
+captured 02-browser-chrome
+captured 03-new-tab-page
+(electron) 'safeStorage.isEncryptionAvailable' is deprecated and will be removed. Please use 'safeStorage.isAsyncEncryptionAvailable' instead.
+captured 04-settings-general-window
+captured 04-settings-general
+captured 05-settings-privacy-window
+captured 05-settings-privacy
+captured 06-settings-downloads-window
+captured 06-settings-downloads
+captured 07-settings-extensions-window
+captured 07-settings-extensions
+captured 08-settings-performance-window
+captured 08-settings-performance
+captured 09-settings-appearance-window
+captured 09-settings-appearance
+captured 10-settings-spelling-window
+captured 10-settings-spelling
+captured 11-settings-passwords-window
+captured 11-settings-passwords
+captured 12-settings-accessibility-window
+captured 12-settings-accessibility
+captured 13-settings-about-window
+captured 13-settings-about
+LEGACY_CAPTURE_OK
