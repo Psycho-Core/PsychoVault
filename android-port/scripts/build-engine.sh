@@ -9,7 +9,6 @@ mkdir -p "$NOTES"
 LOG="$NOTES/build.log"
 exec > >(tee -a "$LOG") 2>&1
 
-STATUS=failed
 STEP="starting"
 finish() {
   local code=$?
@@ -23,6 +22,9 @@ finish() {
       echo "See build.log for the first actionable compiler/build error."
     } > "$NOTES/Release-Notes-Android.txt"
     tail -n 120 "$LOG" > "$NOTES/failure-tail.txt" || true
+    if command -v sccache >/dev/null 2>&1; then
+      sccache --show-stats > "$NOTES/sccache.txt" 2>&1 || true
+    fi
   fi
   exit "$code"
 }
@@ -33,6 +35,7 @@ cd "$STAGE"
 [[ -f common.sh && -f patch.sh && -f args.gn && -d vanadium && -d psychovault ]] || {
   echo "Run prepare-engine.sh before build-engine.sh." >&2; exit 1;
 }
+# shellcheck source=/dev/null
 source "$STAGE/common.sh"
 SCRIPT_DIR="$STAGE"
 export SCRIPT_DIR
@@ -64,6 +67,7 @@ git config --global user.email "ci@psychovault.local"
 git fetch --depth 1 origin "+refs/tags/$VERSION:refs/tags/$VERSION"
 git checkout --detach "$VERSION"
 CHROMIUM_COMMIT="$(git rev-parse HEAD)"
+export CHROMIUM_COMMIT
 cp "$STAGE/.gclient" ../.gclient
 
 step "apply pinned Vanadium/Titanium source patches"
@@ -84,39 +88,39 @@ gclient runhooks
 ./build/install-build-deps.sh --no-prompt --no-chromeos-fonts --no-arm --no-nacl
 
 step "apply Titanium and PsychoVault source hooks"
+# shellcheck source=/dev/null
 source "$STAGE/patch.sh"
 
 step "configure single-architecture arm64 build"
-python3 - <<'PY'
-from pathlib import Path
-p = Path('out/Default/args.gn')
-p.parent.mkdir(parents=True, exist_ok=True)
-args = Path('../../args.gn').read_text()
-replacements = {
-    'target_cpu = "arm"': 'target_cpu = "arm64"',
-    'symbol_level = 1': 'symbol_level = 0',
-    'use_siso = true': 'use_siso = false',
-    'generate_linker_map = true': 'generate_linker_map = false',
-}
-for old, new in replacements.items():
-    if args.count(old) != 1:
-        raise SystemExit(f'Expected one GN argument: {old}')
-    args = args.replace(old, new)
-args += '''
-# Keep the hosted build inside the runner's disk/RAM budget.
-chrome_pgo_phase = 0
-use_thin_lto = false
-blink_symbol_level = 0
-v8_symbol_level = 0
-enable_resource_allowlist_generation = false
-android_static_analysis = "off"
-'''
-p.write_text(args)
-PY
+wrapper="${PSYCHO_CC_WRAPPER:-}"
+if [[ -n "$wrapper" ]] && ! command -v "$wrapper" >/dev/null 2>&1; then
+  echo "Compiler wrapper not found on PATH: $wrapper" >&2
+  exit 1
+fi
+python3 "$STAGE/psychovault/configure_build_args.py" \
+  --upstream "$STAGE/args.gn" \
+  --output out/Default/args.gn \
+  --wrapper "$wrapper"
 gn gen out/Default
 
 step "compile chrome_public_apk"
-autoninja -C out/Default -j 4 chrome_public_apk
+# Use the runner's available cores instead of hard-coding four. A larger
+# GitHub-hosted runner can then finish the same graph sooner; the free standard
+# runner still uses its normal core count. PSYCHO_BUILD_JOBS can cap this if a
+# future runner needs a lower memory/concurrency limit.
+jobs="${PSYCHO_BUILD_JOBS:-$(nproc)}"
+if ! [[ "$jobs" =~ ^[1-9][0-9]*$ ]]; then
+  echo "PSYCHO_BUILD_JOBS must be a positive integer." >&2
+  exit 1
+fi
+echo "Ninja parallel jobs: $jobs"
+if [[ "$wrapper" == "sccache" ]]; then
+  sccache --zero-stats || true
+fi
+autoninja -C out/Default -j "$jobs" chrome_public_apk
+if [[ "$wrapper" == "sccache" ]]; then
+  sccache --show-stats | tee "$NOTES/sccache.txt"
+fi
 
 step "validate APK and write release metadata"
 mkdir -p "$STAGE/dist"
@@ -207,7 +211,6 @@ The repository source archive plus the pinned Chromium/Vanadium/Titanium inputs 
 print(json.dumps(metadata, indent=2))
 PY
 cp "$NOTES/apksigner.txt" "$NOTES/apk-badging.txt" "$STAGE/dist/"
-STATUS=passed
 trap - EXIT
 {
   echo "PsychoVault Android build notes"
