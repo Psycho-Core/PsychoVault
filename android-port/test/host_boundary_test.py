@@ -11,6 +11,7 @@ class HostBoundaryTests(unittest.TestCase):
         self.assertIn('current != own', bridge)
         self.assertIn('getLastCommittedUrl()', bridge)
         self.assertIn('recovery.html', bridge)
+        self.assertIn('vpncheck.html', bridge)
         self.assertIn("spec.indexOf('#')", bridge)
         self.assertIn('mDestroyed', bridge)
     def test_host_uses_exact_origins_and_cleans_up(self):
@@ -43,9 +44,12 @@ class HostBoundaryTests(unittest.TestCase):
         self.assertIn('navigateTab(tabId', page)
         self.assertNotIn('mController.invoke', page)
         self.assertNotIn('layout(args', page)
-        for channel in ('history:clear', 'data:clear', 'data:report', 'app:diagnostics', 'app:diagnosticsCopy', 'proxy:status', 'proxy:selftest', 'update:tokenstate', 'rail:icons', 'catalogue:list', 'catalogue:toggle'):
+        for channel in ('history:clear', 'data:clear', 'data:report', 'app:relaunch', 'app:diagnostics', 'app:diagnosticsCopy', 'proxy:status', 'proxy:selftest', 'update:tokenstate', 'rail:icons', 'catalogue:list', 'catalogue:toggle'):
             self.assertIn(channel, page)
         self.assertIn('library:clear', host)
+        self.assertIn('vpncheck:ip', host)
+        self.assertIn('data:openErrorLog', host)
+        self.assertIn('ACTION_VIEW_DOWNLOADS', host)
         self.assertIn('!profile().isOffTheRecord()', host)
         settings = (ROOT / 'ui/settings.js').read_text()
         for control in ('clear', 'dataRefresh', 'modSave', 'modClear', 'svcAdd', 'svcSave', 'proxySelfTest', 'proxyStatus', 'diagnosticsRefresh', 'diagnosticsCopy'):
@@ -68,6 +72,34 @@ class HostBoundaryTests(unittest.TestCase):
         self.assertEqual(staged, served)
         self.assertIn('chrome-bootstrap.js', served)
         self.assertIn('settings.html', served)
+    def test_vpn_check_uses_profile_network_and_cancels(self):
+        java = (JAVA / 'psychovault/PsychoVpnCheck.java').read_text()
+        native = (ROOT / 'engine/psychovault/native/psycho_vpncheck.cc').read_text()
+        self.assertIn('GetURLLoaderFactoryForBrowserProcess', native)
+        self.assertIn('CredentialsMode::kOmit', native)
+        self.assertIn('SetTimeoutDuration', native)
+        self.assertIn('cancelAll', java)
+        self.assertIn('boolean check', java)
+        self.assertNotIn('HttpURLConnection', java)
+        self.assertIn('IsSameObject', native)
+        self.assertIn('DeleteSoon', native)
+        self.assertIn('std::optional<std::string>', native)
+
+    def test_relaunch_pdf_and_profile_scoped_data_report(self):
+        host = (JAVA / 'psychovault/PsychoChromeHost.java').read_text()
+        self.assertIn('app:relaunch', host)
+        self.assertIn('mActivity.recreate()', host)
+        self.assertIn('Only this profile', host)
+        perf = (JAVA / 'psychovault/PsychoPerformance.java').read_text()
+        self.assertIn('PrintHelper.printTab', perf)
+        self.assertIn('Save as PDF', perf)
+
+    def test_error_log_is_bounded_and_redacted(self):
+        java = (JAVA / 'psychovault/PsychoErrorLog.java').read_text()
+        self.assertIn('LIMIT = 100', java)
+        self.assertIn('getSimpleName()', java)
+        self.assertNotIn('getMessage()', java)
+
     def test_extensions_are_regular_profile_and_id_checked(self):
         ext = (JAVA / 'psychovault/PsychoExtensions.java').read_text()
         self.assertIn('PROTON_ID', ext)

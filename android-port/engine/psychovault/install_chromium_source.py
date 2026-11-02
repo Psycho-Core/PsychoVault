@@ -24,6 +24,8 @@ JAVA_FILES = [
     'java/org/chromium/chrome/browser/psychovault/PsychoContainers.java',
     'java/org/chromium/chrome/browser/psychovault/PsychoMedia.java',
     'java/org/chromium/chrome/browser/psychovault/PsychoUpdates.java',
+    'java/org/chromium/chrome/browser/psychovault/PsychoVpnCheck.java',
+    'java/org/chromium/chrome/browser/psychovault/PsychoErrorLog.java',
 ]
 
 
@@ -108,7 +110,7 @@ def install(src):
         for name in (
             "psycho_ui.cc", "psycho_ui.h", "psycho_profile.cc",
             "psycho_extensions.cc", "psycho_network.cc", "psycho_network.h",
-            "psycho_downloads.cc", "psycho_vault.cc", "psycho_performance.cc",
+            "psycho_downloads.cc", "psycho_vault.cc", "psycho_performance.cc", "psycho_vpncheck.cc",
         )
     )
     ui_build = replace_once(ui_build, 'static_library("ui") {',

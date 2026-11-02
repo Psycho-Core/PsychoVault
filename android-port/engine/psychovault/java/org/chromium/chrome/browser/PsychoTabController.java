@@ -65,7 +65,8 @@ public final class PsychoTabController {
         String suffix = "?private=" + (incognito ? "1" : "0");
         if (("chrome://psychovault-pages/newtab.html" + suffix).equals(raw)
                 || ("chrome://psychovault-pages/settings.html" + suffix).equals(raw)
-                || ("chrome://psychovault-pages/recovery.html" + suffix).equals(raw)) return raw;
+                || ("chrome://psychovault-pages/recovery.html" + suffix).equals(raw)
+                || ("chrome://psychovault-pages/vpncheck.html" + suffix).equals(raw)) return raw;
         return requireWebUrl(raw);
     }
 

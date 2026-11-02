@@ -14,7 +14,7 @@
   function markUnavailable() {
     for (const button of document.querySelectorAll('.wc')) { button.disabled = true; button.title = 'Android manages windows'; }
     for (const button of document.querySelectorAll('#btn-split')) {
-      button.disabled = true; button.title = 'Not connected on Android yet';
+      button.disabled = true; button.title = 'Split view is not available in the Android single-compositor layout';
     }
     for (const button of document.querySelectorAll('#menu button')) {
       if (!['newtab','private','reopen','bookmarks','history','downloads','settings','extensions','find','translate','zoomin','zoomout','zoomreset'].includes(button.dataset.cmd)) { button.disabled = true; button.title = 'Not connected on Android yet'; }

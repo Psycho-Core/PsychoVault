@@ -52,7 +52,7 @@ final class PsychoBridge {
         boolean expectedPrivate = own.isOffTheRecord();
         String suffix = "?private=" + (expectedPrivate ? 1 : 0);
         return mChrome ? path.equals("/index.html" + suffix)
-                : path.equals("/newtab.html" + suffix) || path.equals("/settings.html" + suffix) || path.equals("/recovery.html" + suffix);
+                : path.equals("/newtab.html" + suffix) || path.equals("/settings.html" + suffix) || path.equals("/recovery.html" + suffix) || path.equals("/vpncheck.html" + suffix);
     }
 
     // This is the ONLY JavaScript-exposed method. Calls arrive off the UI thread.

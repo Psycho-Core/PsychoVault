@@ -55,13 +55,24 @@ check('asset parity', () => {
 check('settings controls and data handlers', () => {
   const host = read('engine/psychovault/java/org/chromium/chrome/browser/psychovault/PsychoChromeHost.java');
   const page = host.split('private void pageCommand')[1].split('private void chromeCommand')[0];
-  for (const channel of ['history:clear','data:clear','data:report','app:diagnostics','app:diagnosticsCopy','proxy:status','proxy:selftest','update:tokenstate','rail:icons','catalogue:list','catalogue:toggle']) assert(page.includes(channel), 'missing page handler '+channel);
+  for (const channel of ['history:clear','data:clear','data:report','app:relaunch','app:diagnostics','app:diagnosticsCopy','proxy:status','proxy:selftest','update:tokenstate','rail:icons','catalogue:list','catalogue:toggle']) assert(page.includes(channel), 'missing page handler '+channel);
   const settings = read('ui/settings.js');
   for (const id of ['clear','dataRefresh','modSave','modClear','svcAdd','svcSave','proxySelfTest','proxyStatus','diagnosticsRefresh','diagnosticsCopy']) assert(settings.includes(id), 'missing settings control '+id);
   assert(settings.includes("el.hasAttribute('data-clear')"), 'data-clear buttons would be disabled');
   assert(host.includes('library:clear'), 'library history clear event missing');
   const downloads = read('engine/psychovault/native/psycho_downloads.cc');
   assert(!downloads.includes('for (auto* item :'), 'raw_ptr range-for cannot deduce auto*');
+});
+check('visible settings, extensions and VPN placeholders', () => {
+  const prep = read('scripts/prepare-ui.cjs');
+  assert(prep.includes('data-cmd="extensions"'), 'Extensions menu entry missing');
+  assert(prep.includes('protonVpnOpen'), 'Open Proton VPN button missing');
+  const settings = read('ui/settings.js');
+  assert(settings.includes('android-placeholder'), 'disabled placeholders are not marked');
+  for (const id of ['vforget','updateToken','updateTokenSave','updateTokenForget']) assert(settings.includes(id), 'placeholder control missing '+id);
+  assert(settings.includes('window.pv.perf.relaunch'), 'relaunch control is not connected');
+  const perf = read('engine/psychovault/java/org/chromium/chrome/browser/psychovault/PsychoPerformance.java');
+  assert(perf.includes('PrintHelper.printTab'), 'PDF print path missing');
 });
 check('no committed secrets or build outputs', () => {
   const files = require('node:child_process').execSync('git ls-files', {cwd:path.resolve(root,'..'), encoding:'utf8'}).split('\n');

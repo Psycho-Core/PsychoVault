@@ -21,10 +21,14 @@
     const title = document.querySelector('.category-title'), desc = document.querySelector('.category-description');
     if (title) title.textContent = panel.dataset.title || 'Settings';
     if (desc) desc.textContent = panel.dataset.description || '';
-    try { history.replaceState(null, '', '#' + panel.dataset.categoryPanel); } catch {}
+    try { history.replaceState(null, '', '#' + panel.dataset.categoryPanel); localStorage.setItem('psychovault.settings.category', panel.dataset.categoryPanel); } catch {}
+    const active = buttons.find(b => b.dataset.category === panel.dataset.categoryPanel);
+    if (active && typeof active.scrollIntoView === 'function') active.scrollIntoView({block:'nearest', inline:'center'});
   }
   for (const b of buttons) b.addEventListener('click', () => select(b.dataset.category));
-  select(location.hash.slice(1) || 'general');
+  window.addEventListener('hashchange', () => select(location.hash.slice(1)));
+  let savedCategory = ''; try { savedCategory = localStorage.getItem('psychovault.settings.category') || ''; } catch {}
+  select(location.hash.slice(1) || savedCategory || 'general');
 
   const BOOLS = ['remember','hideSidebar','highContrast','reduceMotion','showTabCloseButtons','restore',
     'blockAds','blockUseBundled','workspacesEnabled','blockAutoplay','blockThirdPartyCookies','sendDNT',
@@ -34,21 +38,42 @@
   const TEXTS = ['homepage','blockAllowSites','blockCustomDomains','sleepExclude','panicUrl','dohTemplate','denyPerms','modCss','spellLangs','spellDictUrl'];
   const SUPPORTED = new Set([...BOOLS, ...SELECTS, ...TEXTS,
     'customSearchEngines','customSearchSave','tiles','tileAdd','tileSave','sleepTabsMin','blockSaveLists',
-    'extList','extReload','extAddFolder','extAddCrx','protonVpnRestore','protonVpnStatus','vpnCheckOpen',
+    'extList','extReload','extAddFolder','extAddCrx','protonVpnOpen','protonVpnRestore','protonVpnStatus','vpnCheckOpen',
     'vstat','vunlock','vpw','vgo','vmaster','vmasterHint','vnew','vset','vBackup','vRestore','vImport',
     'vbackupPassword','vbackupConfirm','vTransferMsg','vlist','eSite','eUser','ePass','eGen','eSave','vLock','vRefresh','vnote',
     'downloadDir','downloadDirPick','soundVol','permOrigin','permLoad','permCamera','permMicrophone','permLocation','permNotifications','permSave','permRemove',
     'spellUserWords','spellWordsSave','spellWordsRefresh','contList','contAdd','contSave','updateCheckNow','updateDismiss',
     'clear','dataRefresh','dataFiles','dataCookies','modSave','modClear','svcList','svcAdd','svcSave','svcCat',
-    'proxySelfTest','proxyStatus','proxySelfTestResult','proxyStatusResult','diagnosticsRefresh','diagnosticsCopy','diagnosticsReport','diagnosticsResult','appVersion','appElectron']);
+    'relaunch','openErrorLog','errorLogResult','proxySelfTest','proxyStatus','proxySelfTestResult','proxyStatusResult','diagnosticsRefresh','diagnosticsCopy','diagnosticsReport','diagnosticsResult','appVersion','appElectron']);
+  // The copied desktop switches rely on adjacent text; give Android TalkBack an explicit name.
+  for (const input of document.querySelectorAll('.switch input[type=checkbox]')) {
+    const label = input.closest('.row')?.querySelector('.lbl')?.textContent?.trim();
+    if (label && !input.getAttribute('aria-label')) input.setAttribute('aria-label', label);
+  }
+  // Android relaunch is connected; keep the hardening restart note visible.
+  if (s('restartNote')) s('restartNote').style.display = 'block';
+  const PLACEHOLDERS = {
+    vforget: 'No OS-keychain vault fallback is enabled on Android; the master-password vault remains available.',
+    updateToken: 'Public GitHub releases do not need an update token.',
+    updateTokenSave: 'Public GitHub releases do not need an update token.',
+    updateTokenForget: 'Public GitHub releases do not need an update token.'
+  };
   for (const el of document.querySelectorAll('input,select,textarea,button')) {
     if (el.hasAttribute('data-category') || el.hasAttribute('data-clear') || SUPPORTED.has(el.id)) continue;
     el.disabled = true;
-    if (!el.title) el.title = 'Not connected on Android yet';
+    el.dataset.androidPlaceholder = 'true';
+    el.classList.add('android-placeholder');
+    el.title = PLACEHOLDERS[el.id] || 'Not connected on Android yet - visible placeholder';
+    if (Object.hasOwn(PLACEHOLDERS, el.id)) {
+      el.hidden = false; el.removeAttribute('hidden');
+      for (let parent = el.parentElement; parent && parent !== document.body; parent = parent.parentElement) { if (parent.id === 'restartNote') parent.style.display = 'block'; }
+      const badge = document.createElement('span'); badge.className = 'android-placeholder-note'; badge.textContent = 'Not connected on Android';
+      el.insertAdjacentElement('afterend', badge);
+    }
   }
   const note = document.createElement('p');
   note.className = 'hint';
-  note.textContent = 'Android source build: enabled controls have native handlers. Containers use ephemeral off-the-record profiles, download folders are limited to Chromium\'s available directories, media keys depend on Android routing, and the dictionary mirror must use HTTPS. Proton connection state must be checked inside Proton.';
+  note.textContent = 'Android source build: enabled controls have native handlers. Disabled controls are visible placeholders for desktop-only features. Containers use ephemeral off-the-record profiles, download folders are limited to Chromium\'s available directories, media keys depend on Android routing, and the dictionary mirror must use HTTPS. Proton connection state must be checked inside Proton.';
   document.querySelector('.settings-main').prepend(note);
   if (isPrivate) {
     const privateNote = document.createElement('p'); privateNote.className = 'hint';
@@ -57,12 +82,18 @@
   }
 
   let settings = {};
+  function renderSearchOptions(st) {
+    const el = s('search'); if (!el) return;
+    for (const option of [...el.options]) if (option.value.startsWith('custom:')) option.remove();
+    for (const engine of st.customSearchEngines || []) { const option = document.createElement('option'); option.value = 'custom:' + engine.shortcut; option.textContent = engine.name + ' (' + engine.shortcut + ')'; el.appendChild(option); }
+  }
   function paint(st) {
     settings = st;
     document.body.dataset.theme = st.theme || 'midnight';
     document.body.classList.toggle('high-contrast', !!st.highContrast);
     document.body.classList.toggle('reduce-motion', !!st.reduceMotion);
     for (const id of BOOLS) if (s(id)) s(id).checked = !!st[id];
+    renderSearchOptions(st);
     for (const id of SELECTS) if (s(id)) s(id).value = String(st[id] === undefined ? s(id).options[0].value : st[id]);
     for (const id of TEXTS) if (s(id)) s(id).value = st[id] || '';
     if (s('homepage')) s('homepage').value = st.homepage || 'psychovault://newtab';
@@ -146,6 +177,7 @@
       const items = await window.pv.rail.catalogue(); wrap.replaceChildren();
       for (const item of items) {
         const button = document.createElement('button'); button.className = 'mini'; button.textContent = (item.on ? '✓ ' : '') + item.name;
+        button.disabled = isPrivate;
         button.onclick = async () => { try { await window.pv.rail.toggle(item.name); paintCatalogue(); const st = await window.pv.settings.get(); renderServices(st.services || []); } catch (e) { status.textContent = e.message; } };
         wrap.appendChild(button);
       }
@@ -157,7 +189,7 @@
   async function refreshData() {
     try {
       const r = await window.pv.data.report();
-      if (s('dataFiles')) { s('dataFiles').replaceChildren(); const row = document.createElement('tr'); const cell = document.createElement('td'); cell.colSpan = 2; cell.textContent = r.note || 'Android manages profile storage.'; row.appendChild(cell); s('dataFiles').appendChild(row); }
+      if (s('dataFiles')) { s('dataFiles').replaceChildren(); for (const file of r.files || []) { const row = document.createElement('tr'); const name = document.createElement('td'); name.textContent = file.name; const size = document.createElement('td'); size.textContent = String(file.bytes) + ' bytes'; row.append(name, size); s('dataFiles').appendChild(row); } if (!(r.files || []).length) { const row = document.createElement('tr'); const cell = document.createElement('td'); cell.colSpan = 2; cell.textContent = r.note || 'No PsychoVault-owned files were listed.'; row.appendChild(cell); s('dataFiles').appendChild(row); } }
       if (s('dataCookies')) s('dataCookies').textContent = r.cookies == null ? 'Cookie counts are not exposed by Android.' : String(r.cookies) + ' cookies';
     } catch (e) { if (s('dataCookies')) s('dataCookies').textContent = e.message || 'Storage report unavailable.'; }
   }
@@ -190,22 +222,37 @@
         head.append(name, ver); row.appendChild(head);
         const acts = document.createElement('div'); acts.className = 'ext-acts';
         const toggle = document.createElement('button'); toggle.className = 'mini'; toggle.textContent = x.enabled ? 'Disable' : 'Enable';
+        toggle.disabled = isPrivate;
         toggle.onclick = async () => { try { await window.pv.extensions.toggle({id: x.id, enabled: !x.enabled}); paintExtensions(); } catch (e) { status.textContent = e.message; } };
         const remove = document.createElement('button'); remove.className = 'mini'; remove.textContent = 'Remove';
+        remove.disabled = isPrivate;
         remove.onclick = async () => { try { await window.pv.extensions.remove(x.id); paintExtensions(); } catch (e) { status.textContent = e.message; } };
         acts.append(toggle, remove);
-        if (x.popup) { const open = document.createElement('button'); open.className = 'mini'; open.textContent = 'Open'; open.onclick = () => window.pv.extensions.openpage({id: x.id, page: x.popup}).catch(e => status.textContent = e.message); acts.append(open); }
+        if (x.popup) { const open = document.createElement('button'); open.className = 'mini'; open.textContent = 'Open'; open.disabled = isPrivate; open.onclick = () => window.pv.extensions.openpage({id: x.id, page: x.popup}).catch(e => status.textContent = e.message); acts.append(open); }
+        if (x.options) { const options = document.createElement('button'); options.className = 'mini'; options.textContent = 'Options'; options.disabled = isPrivate; options.onclick = () => window.pv.extensions.openpage({id: x.id, page: x.options}).catch(e => status.textContent = e.message); acts.append(options); }
         row.appendChild(acts); box.appendChild(row);
       }
     } catch (e) { box.textContent = e.message || 'Extensions unavailable.'; }
   }
   if (s('extReload')) s('extReload').onclick = paintExtensions;
+  if (s('protonVpnOpen')) s('protonVpnOpen').onclick = async () => {
+    try {
+      const st = await window.pv.extensions.status();
+      const proton = st.proton || (st.items || []).find(x => x.builtin === 'proton-vpn');
+      if (!proton) { status.textContent = 'Proton VPN is not installed. Use Restore / reinstall Proton VPN.'; return; }
+      if (!proton.enabled || !proton.loaded) { status.textContent = 'Proton VPN is not enabled and loaded. Check the extension list below.'; return; }
+      await window.pv.extensions.openpage({id: proton.id, page: proton.popup || 'popup.html'});
+      status.textContent = 'Proton opened. Connect inside Proton; protection is not verified.';
+    } catch (e) { status.textContent = e.message || 'Could not open Proton VPN.'; }
+  };
   if (s('protonVpnStatus')) s('protonVpnStatus').onclick = async () => {
     try { const st = await window.pv.extensions.status(); status.textContent = st.lastError ? 'Extension engine: ' + st.lastError : 'Extension registry refreshed. Proton connection state must be checked inside Proton.'; paintExtensions(); }
     catch (e) { status.textContent = e.message; }
   };
   if (s('protonVpnRestore')) s('protonVpnRestore').onclick = async () => { try { await window.pv.extensions.restorebuiltin(); paintExtensions(); status.textContent = 'Bundled extensions restore requested; check the list for Chromium load results.'; } catch (e) { status.textContent = e.message; } };
-  if (s('vpnCheckOpen')) s('vpnCheckOpen').onclick = () => window.pv.tab.open('https://browserleaks.com/webrtc').catch(e => status.textContent = e.message);
+  if (s('vpnCheckOpen')) s('vpnCheckOpen').onclick = () => window.pv.vpncheck.open().catch(e => status.textContent = e.message);
+  if (s('relaunch')) s('relaunch').onclick = async () => { if (!confirm('Restart PsychoVault now? Tabs are kept, but unsaved page state may be lost.')) return; try { const r = await window.pv.perf.relaunch(); status.textContent = r.message || 'Restarting PsychoVault.'; } catch (e) { status.textContent = e.message; } };
+  if (s('openErrorLog')) { s('openErrorLog').textContent = 'View Android error log'; s('openErrorLog').onclick = async () => { try { const r = await window.pv.data.openErrorLog(); const rows = (r.entries || []).map(x => new Date(x.at).toISOString() + ' ' + x.channel + ' ' + x.error); if (s('errorLogResult')) s('errorLogResult').textContent = r.message + (rows.length ? '\n' + rows.join('\n') : ''); } catch (e) { status.textContent = e.message; } }; }
   if (s('extAddFolder')) { s('extAddFolder').textContent = 'Import extension ZIP'; s('extAddFolder').onclick = async () => { try { const r = await window.pv.extensions.addfolder(); status.textContent = r.ok ? 'Extension installed.' : (r.error || 'Import failed.'); paintExtensions(); } catch (e) { status.textContent = e.message; } }; }
   if (s('extAddCrx')) { s('extAddCrx').textContent = 'Install CRX'; s('extAddCrx').onclick = async () => { try { const r = await window.pv.extensions.addcrx(); status.textContent = r.ok ? 'Extension installed.' : (r.error || 'Install failed.'); paintExtensions(); } catch (e) { status.textContent = e.message; } }; }
 

@@ -1,0 +1,33 @@
+/* Phone/tablet layout for the copied desktop Settings document. */
+html { -webkit-text-size-adjust:100%; }
+body { padding:calc(16px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) calc(40px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left)); }
+.wrap { width:100%; }
+.settings-layout { grid-template-columns:minmax(0,1fr); gap:12px; }
+.settings-nav { position:sticky; top:0; z-index:5; flex-direction:row; overflow-x:auto; padding:7px; scrollbar-width:thin; scroll-snap-type:x proximity; background:var(--bg2); }
+.settings-nav-label { display:none; }
+.settings-nav-button { width:auto; flex:0 0 auto; white-space:nowrap; min-height:44px; scroll-snap-align:center; }
+.settings-nav-index { width:auto; }
+button, select, input[type=text], input[type=password], input[type=number] { min-height:40px; }
+button.mini, button.danger { min-height:40px; }
+.btnrow { display:flex; flex-wrap:wrap; gap:8px; }
+.row { flex-wrap:wrap; align-items:flex-start; gap:10px; }
+.row > div:first-child { flex:1 1 100%; min-width:0; }
+.row select, .row input[type=text], .row input[type=number], .row input[type=password] { width:100%; min-width:0; max-width:100%; }
+.row > label.switch { margin-left:auto; }
+.tile-row { flex-wrap:wrap; gap:8px; align-items:stretch; }
+.tile-row input { flex:1 1 140px; min-width:0; max-width:100%; }
+.tile-row button { flex:0 0 auto; }
+#vunlock .tile-row input, #vmaster .tile-row input { flex:1 1 100%; }
+#eSite, #eUser, #ePass { flex:1 1 100%; }
+.ext-head { flex-wrap:wrap; }
+.ext-pill { margin-left:0; }
+.ext-acts button { flex:1 1 auto; }
+.proton-card button { margin-right:6px; }
+.android-placeholder { opacity:.65; cursor:not-allowed; }
+.android-placeholder-note { display:inline-block; margin-left:8px; color:var(--dim); font-size:11px; vertical-align:middle; }
+.switch input:disabled + .slider { opacity:.5; cursor:not-allowed; }
+textarea { max-width:100%; }
+@media (max-width:380px) { body { padding-left:8px; padding-right:8px; } section { padding:14px 12px; } .tile-row input { flex-basis:100%; } }
+/* Desktop inline widths must not force the download row off a phone screen. */
+#downloadDir { width:100% !important; min-width:0; flex:1 1 100%; }
+#downloadDirPick { flex:0 0 auto; margin-left:auto; }

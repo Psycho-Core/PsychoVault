@@ -44,6 +44,8 @@ const std::map<std::string, std::string>& Assets() {
       {"indexeddb-storage.js", "text/javascript"}, {"newtab.html", "text/html"},
       {"newtab.js", "text/javascript"}, {"page-bootstrap.js", "text/javascript"},
       {"settings.html", "text/html"}, {"settings.js", "text/javascript"},
+      {"settings-mobile.css", "text/css"}, {"vpncheck.html", "text/html"},
+      {"vpncheck.js", "text/javascript"}, {"vpncheck-bootstrap.js", "text/javascript"},
       {"recovery.html", "text/html"}, {"recovery.js", "text/javascript"},
       {"icon.png", "image/png"}};
   return *assets;
@@ -74,9 +76,11 @@ class PsychoAssetSource : public content::URLDataSource {
     const bool allowed = it != Assets().end() &&
         (chrome ? (path != "newtab.html" && path != "newtab.js" && path != "page-bootstrap.js" &&
                    path != "settings.html" && path != "settings.js" &&
-                   path != "recovery.html" && path != "recovery.js")
+                   path != "recovery.html" && path != "recovery.js" &&
+                   path != "vpncheck.html" && path != "vpncheck.js" && path != "vpncheck-bootstrap.js" && path != "settings-mobile.css")
                 : (path == "newtab.html" || path == "newtab.js" || path == "page-bootstrap.js" ||
-                  path == "settings.html" || path == "settings.js" ||
+                  path == "settings.html" || path == "settings.js" || path == "settings-mobile.css" ||
+                  path == "vpncheck.html" || path == "vpncheck.js" || path == "vpncheck-bootstrap.js" ||
                   path == "recovery.html" || path == "recovery.js" ||
                   path == "style.css" || path == "mobile.css" ||
                   path == "navigation-resolver.js" || path == "native-transport.js" ||
