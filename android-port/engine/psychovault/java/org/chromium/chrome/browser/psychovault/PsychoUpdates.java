@@ -1,7 +1,7 @@
 package org.chromium.chrome.browser.psychovault;
 
 import org.chromium.base.ThreadUtils;
-import org.chromium.base.VersionInfo;
+import org.chromium.base.version_info.VersionInfo;
 import org.chromium.base.Callback;
 import org.json.JSONArray;
 import org.json.JSONObject;

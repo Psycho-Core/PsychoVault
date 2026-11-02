@@ -115,6 +115,8 @@ class HostBoundaryTests(unittest.TestCase):
         self.assertIn('static_cast<double>(item->GetStartTime().InMillisecondsSinceUnixEpoch())', downloads)
         network_java = (JAVA / 'psychovault/PsychoNetwork.java').read_text()
         self.assertIn('@JNINamespace("psychovault")', network_java)
+        for name in ('PsychoChromeHost.java', 'PsychoUpdates.java'):
+            self.assertIn('import org.chromium.base.version_info.VersionInfo;', (JAVA / 'psychovault' / name).read_text())
         ui = (native_dir / 'psycho_ui.cc').read_text()
         self.assertIn('base::MakeRefCounted<base::RefCountedString>', ui)
         self.assertIn('base::File asset_file(fd)', ui)

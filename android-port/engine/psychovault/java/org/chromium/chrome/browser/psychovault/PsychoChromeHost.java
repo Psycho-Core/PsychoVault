@@ -21,7 +21,7 @@ import androidx.activity.OnBackPressedCallback;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.chromium.base.ThreadUtils;
-import org.chromium.base.VersionInfo;
+import org.chromium.base.version_info.VersionInfo;
 import org.chromium.chrome.browser.browsing_data.BrowsingDataBridge;
 import org.chromium.chrome.browser.browsing_data.BrowsingDataType;
 import org.chromium.chrome.browser.browsing_data.TimePeriod;
