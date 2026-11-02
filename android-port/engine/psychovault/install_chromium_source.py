@@ -92,8 +92,6 @@ def install(src):
         '  chrome_public_apk_or_module_tmpl("chrome_public_apk") {\n    target_type = "android_apk"\n'
         '    asset_deps = [\n      "//psychovault:ui_assets",\n      "//psychovault:bundled_extensions_assets",\n    ]',
         'APK assets')
-    chrome_build = replace_once(chrome_build, '    srcjar_deps += [ ":chrome_jni_headers" ]',
-        '    srcjar_deps += [ ":chrome_jni_headers", "//psychovault:jni_headers_java" ]', 'profile JNI')
     ui_build = texts['ui_build']
     # Compile the host inside Chromium's existing browser/UI target. A separate
     # native target would create dependency cycles with factories implemented by

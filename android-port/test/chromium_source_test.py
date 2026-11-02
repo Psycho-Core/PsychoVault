@@ -54,7 +54,7 @@ class ChromiumSourceTests(unittest.TestCase):
             chrome_gn = (root / 'chrome/android/BUILD.gn').read_text()
             self.assertIn('asset_deps', chrome_gn)
             self.assertIn('//psychovault:bundled_extensions_assets', chrome_gn)
-            self.assertIn('//psychovault:jni_headers_java', chrome_gn)
+            self.assertNotIn('//psychovault:jni_headers_java', chrome_gn)
             ui_gn = (root / 'chrome/browser/ui/BUILD.gn').read_text()
             self.assertIn('//psychovault/native/psycho_ui.cc', ui_gn)
             self.assertIn('//psychovault:jni_headers', ui_gn)
