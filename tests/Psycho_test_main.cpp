@@ -667,6 +667,27 @@ int main() {
     }
     CHECK(threw);
   }
+  // Classes, prototypes and explicit receivers.
+  {
+    CHECK(js_eval("class A{constructor(x){this.x=x}get(){return this.x}}new A(5).get()") == "5");
+    CHECK(js_eval("class A{constructor(){this.n=0}inc(){this.n++;return this}}var a=new A();a.inc().inc().n") == "2");
+    CHECK(js_eval("class A{static make(){return 42}}A.make()") == "42");
+    CHECK(js_eval("class A{get double(){return 21*2}}new A().double") == "42");
+    CHECK(js_eval("class A{x=5;constructor(y){this.y=y}}var a=new A(2);a.x+a.y") == "7");
+    CHECK(js_eval("class A{f(){return 1}}class B extends A{}new B().f()") == "1");
+    CHECK(js_eval("class A{f(){return 1}}class B extends A{f(){return super.f()+10}}new B().f()") == "11");
+    CHECK(js_eval("class A{constructor(x){this.x=x}}class B extends A{constructor(x){super(x*2)}}new B(3).x") == "6");
+    CHECK(js_eval("class A{constructor(x){this.x=x}}class B extends A{}new B(9).x") == "9");
+    CHECK(js_eval("class A{f(){return 1}}class B extends A{f(){return 12}}new B().f()") == "12");
+    CHECK(js_eval("class A{}class B extends A{}new B() instanceof A") == "true");
+    CHECK(js_eval("class A{}new A() instanceof A") == "true");
+    CHECK(js_eval("class A{}class B{}new A() instanceof B") == "false");
+    CHECK(js_eval("class A{constructor(){this.v=3}f(){return this.v}}var a=new A();var f=a.f;f.call(a)") == "3");
+    CHECK(js_eval("function f(a,b){return this.n+a+b}f.call({n:1},2,3)") == "6");
+    CHECK(js_eval("function f(a,b){return this.n+a+b}f.apply({n:1},[2,3])") == "6");
+    CHECK(js_eval("function f(a,b){return this.n+a+b}var g=f.bind({n:1},2);g(3)") == "6");
+    CHECK(js_eval("class A{f(x=4){return x}}new A().f()") == "4");
+  }
   std::cout << passed << " engine checks passed\n";
   return 0;
 }

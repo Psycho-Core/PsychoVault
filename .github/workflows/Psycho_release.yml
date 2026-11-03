@@ -149,14 +149,24 @@ jobs:
           }
           # I print my diagnostics before I decide, and I exit outside try/finally
           # so a finally block can never swallow my failure.
+          # I publish my diagnostics to the job summary because I can read that
+          # back through the API even when job logs and artifacts will not download.
+          "## My single-file exe gate" | Add-Content $env:GITHUB_STEP_SUMMARY
+          "render exit=$render sandbox exit=$sandbox" | Add-Content $env:GITHUB_STEP_SUMMARY
+          '```json' | Add-Content $env:GITHUB_STEP_SUMMARY
           if (Test-Path build/captures/standalone.png.failure.json) {
             Write-Host '--- my standalone render failure ---'
             Get-Content build/captures/standalone.png.failure.json | Tee-Object -FilePath build/standalone-failure.json
+            Get-Content build/captures/standalone.png.failure.json | Add-Content $env:GITHUB_STEP_SUMMARY
+          } else {
+            'no render failure report was written' | Add-Content $env:GITHUB_STEP_SUMMARY
           }
           if (Test-Path build/solo-sandbox.json) {
             Write-Host '--- my standalone sandbox report ---'
             Get-Content build/solo-sandbox.json
+            Get-Content build/solo-sandbox.json | Add-Content $env:GITHUB_STEP_SUMMARY
           }
+          '```' | Add-Content $env:GITHUB_STEP_SUMMARY
           Write-Host "standalone render exit=$render sandbox exit=$sandbox"
           if ($render -ne 0) { Write-Host "::error::My standalone exe failed to render a fetched page (exit $render)"; exit 1 }
           if ($sandbox -ne 0) { Write-Host "::error::My standalone exe failed its sandbox gate (exit $sandbox)"; exit 1 }

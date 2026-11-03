@@ -46,6 +46,8 @@ struct Object {
   // Accessors run instead of returning a stored value.
   Object *getter = nullptr;
   Object *setter = nullptr;
+  // A class constructor keeps its declaration so new can assign fields.
+  const Expr *class_ast = nullptr;
   bool marked = false;
 };
 struct Env : Object {
@@ -76,7 +78,8 @@ struct Expr {
     Member,
     New,
     Function,
-    Template
+    Template,
+    Class
   };
   Kind kind;
   Value literal;
@@ -87,6 +90,8 @@ struct Expr {
   std::vector<std::pair<std::string, std::unique_ptr<Expr>>> properties;
   // Computed keys are evaluated when the object is created.
   std::vector<std::pair<std::unique_ptr<Expr>, std::unique_ptr<Expr>>> computed_properties;
+  // Class fields are assigned to every new instance.
+  std::vector<std::pair<std::string, std::unique_ptr<Expr>>> fields;
   Function *function = nullptr;
   int line = 1;
   explicit Expr(Kind k) : kind(k) {}
@@ -206,6 +211,8 @@ private:
   Value declare(Env &env, const std::string &name, const Value &value);
   Value assign_identifier(Env &env, const std::string &name, const Value &value);
   Value construct(const Value &constructor, Values &args);
+  void init_instance(const Value &ctor, Value &object, Values &args);
+  Value run_init(const Value &ctor, Value &object, Values &args);
   void mark(Object *object);
 };
 bool strict_equals(const Value &a, const Value &b);

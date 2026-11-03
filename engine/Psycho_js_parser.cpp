@@ -427,6 +427,8 @@ public:
     return node;
   }
   std::unique_ptr<Expr> prefix(bool allow_call = true) {
+    if (is("class"))
+      return postfix(class_expression(), allow_call);
     // A bare-identifier arrow: x => x * 2
     if (tok(1).text == "=>" && !keyword(tok().text) && ident_start(tok().text.empty() ? ' ' : tok().text[0])) {
       auto fn = function_node();
@@ -707,6 +709,93 @@ public:
     }
     return e;
   }
+  // A class builds a constructor plus a prototype holding its methods.
+  std::unique_ptr<Expr> class_expression() {
+    expect("class");
+    auto e = make(Expr::Kind::Class);
+    if (!is("{") && !is("extends"))
+      e->text = identifier();
+    if (take("extends"))
+      e->left = postfix(prefix(false));
+    expect("{");
+    while (!is("}") && !is("<eof>")) {
+      if (take(";"))
+        continue;
+      bool is_static = false;
+      if (is("static") && tok(1).text != "(" && tok(1).text != "=" && tok(1).text != ";") {
+        is_static = true;
+        ++p;
+      }
+      std::string accessor;
+      if ((is("get") || is("set")) && tok(1).text != "(" && tok(1).text != ";" &&
+          tok(1).text != "}") {
+        accessor = tok().text;
+        ++p;
+      }
+      std::string name = tok().text;
+      if (starts(name, "string:")) name = name.substr(7);
+      if (name.empty() || name == "<eof>")
+        error("class member name expected");
+      ++p;
+      if (!is("(")) {
+        // A class field: name = value, assigned on every instance.
+        std::unique_ptr<Expr> value;
+        if (take("="))
+          value = expr();
+        take(";");
+        e->fields.emplace_back(name, std::move(value));
+        continue;
+      }
+      auto fn = function_node();
+      expect("(");
+      if (!is(")"))
+        do {
+          if (take("...")) { fn->params.push_back("..." + identifier()); break; }
+          auto param = identifier();
+          fn->params.push_back(param);
+          if (take("=")) {
+            auto check = std::make_unique<Stmt>(Stmt::Kind::If);
+            auto ident = std::make_unique<Expr>(Expr::Kind::Identifier);
+            ident->text = param;
+            auto undef = std::make_unique<Expr>(Expr::Kind::Identifier);
+            undef->text = "undefined";
+            auto same = std::make_unique<Expr>(Expr::Kind::Binary);
+            same->text = "===";
+            same->left = std::move(ident);
+            same->right = std::move(undef);
+            check->condition = std::move(same);
+            auto assign = std::make_unique<Expr>(Expr::Kind::Assign);
+            assign->text = "=";
+            auto target = std::make_unique<Expr>(Expr::Kind::Identifier);
+            target->text = param;
+            assign->left = std::move(target);
+            assign->right = expr();
+            auto body = std::make_unique<Stmt>(Stmt::Kind::Expression);
+            body->expression = std::move(assign);
+            check->body.push_back(std::move(body));
+            fn->defaults.push_back(std::move(check));
+          }
+        } while (take(","));
+      expect(")");
+      expect("{");
+      fn->body = block();
+      for (auto it = fn->defaults.rbegin(); it != fn->defaults.rend(); ++it)
+        fn->body.insert(fn->body.begin(), std::move(*it));
+      fn->defaults.clear();
+      auto value = make(Expr::Kind::Function);
+      value->function = fn;
+      if (name == "constructor" && accessor.empty() && !is_static)
+        e->function = fn;
+      else {
+        std::string key = (is_static ? "static:" : "") +
+                          (accessor.empty() ? "" : accessor + ":") + name;
+        e->properties.emplace_back(key, std::move(value));
+      }
+      take(";");
+    }
+    expect("}");
+    return e;
+  }
   std::unique_ptr<Expr> function_expression() {
     expect("function");
     auto fn = function_node();
@@ -776,6 +865,14 @@ public:
     if (take("{")) {
       s = statement_node(Stmt::Kind::Block);
       s->body = block();
+      --depth;
+      return s;
+    }
+    if (is("class")) {
+      auto value = class_expression();
+      s = statement_node(Stmt::Kind::Variables);
+      s->text = "let";
+      s->declarations.emplace_back(value->text, std::move(value));
       --depth;
       return s;
     }

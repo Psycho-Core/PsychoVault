@@ -509,6 +509,38 @@ Value Runtime::get_member(const Value &base, const std::string &key) {
       Value self = base;
       return call(accessor->second, none, self);
     }
+    if ((base.object->kind == Object::Kind::Function ||
+         base.object->kind == Object::Kind::Native) &&
+        (key == "call" || key == "apply" || key == "bind")) {
+      // I forward the receiver explicitly so a detached method keeps working.
+      Value fn = base;
+      Runtime &r = *this;
+      if (key == "call")
+        return make_native([&r, fn](Values &a) {
+          Value receiver = a.empty() ? Value() : a[0];
+          Values rest(a.begin() + (a.empty() ? 0 : 1), a.end());
+          return r.call(fn, rest, receiver);
+        });
+      if (key == "apply")
+        return make_native([&r, fn](Values &a) {
+          Value receiver = a.empty() ? Value() : a[0];
+          Values rest;
+          if (a.size() > 1)
+            append_spread(rest, a[1]);
+          return r.call(fn, rest, receiver);
+        });
+      return make_native([&r, fn](Values &a) {
+        Value receiver = a.empty() ? Value() : a[0];
+        Values bound(a.begin() + (a.empty() ? 0 : 1), a.end());
+        return r.make_native([&r, fn, receiver, bound](Values &a) mutable {
+          Values all = bound;
+          for (auto &v : a)
+            all.push_back(v);
+          Value self = receiver;
+          return r.call(fn, all, self);
+        });
+      });
+    }
     if (key == "hasOwnProperty") {
       auto props = base.object->properties;
       return make_native([props](Values &a) {
@@ -869,6 +901,29 @@ Value Runtime::get_member(const Value &base, const std::string &key) {
         return arr;
       });
   }
+  if (base.type == Value::Type::Object && base.object) {
+    auto own = base.object->properties.find(key);
+    if (own != base.object->properties.end())
+      return own->second;
+    // I walk the prototype chain my classes and new expressions build.
+    auto proto = base.object->properties.find("__proto__");
+    int guard = 0;
+    while (proto != base.object->properties.end() && guard++ < 64) {
+      if (proto->second.type != Value::Type::Object || !proto->second.object)
+        break;
+      Object *p = proto->second.object;
+      auto accessor = p->properties.find("get:" + key);
+      if (accessor != p->properties.end()) {
+        Values none;
+        Value self = base;
+        return call(accessor->second, none, self);
+      }
+      auto found = p->properties.find(key);
+      if (found != p->properties.end())
+        return found->second;
+      proto = p->properties.find("__proto__");
+    }
+  }
   return Value();
 }
 bool Runtime::set_member(const Value &base, const std::string &key, const Value &value) {
@@ -956,14 +1011,54 @@ Value Runtime::call(Value fn, const Values &args, Value this_value) {
   --depth_;
   return result;
 }
+// I link an instance to its own prototype once, then run initialisation from
+// the base class down. Linking must not be repeated by a base constructor or a
+// derived method would resolve against the base prototype instead of its own.
+void Runtime::init_instance(const Value &ctor, Value &object, Values &args) {
+  auto proto = ctor.object->properties.find("prototype");
+  if (proto != ctor.object->properties.end())
+    object.object->properties["__proto__"] = proto->second;
+  object.object->properties["__class__"] = ctor;
+  Value result = run_init(ctor, object, args);
+  if (result.type == Value::Type::Object && result.object && result.object != object.object)
+    object = result;
+}
+Value Runtime::run_init(const Value &ctor, Value &object, Values &args) {
+  auto super = ctor.object->properties.find("__super__");
+  bool has_super = super != ctor.object->properties.end();
+  auto assign_fields = [&]() {
+    if (const Expr *ast = ctor.object->class_ast) {
+      Env *scope = ctor.object->closure ? ctor.object->closure : global_;
+      for (auto &field : ast->fields) {
+        Value v = field.second ? evaluate(*field.second, *scope, object) : Value();
+        object.object->properties[field.first] = v;
+      }
+    }
+  };
+  if (ctor.object->function) {
+    // A derived constructor initialises its fields after super() has run.
+    if (!has_super)
+      assign_fields();
+    Value result = call(ctor, args, object);
+    if (has_super)
+      assign_fields();
+    return result;
+  }
+  if (has_super) {
+    Values same = args;
+    run_init(super->second, object, same);
+  }
+  assign_fields();
+  return Value();
+}
 Value Runtime::construct(const Value &constructor, Values &args) {
   if (constructor.type != Value::Type::Object || !constructor.object)
     throw JsError{Value("TypeError: invalid constructor")};
   if (constructor.object->kind == Object::Kind::Native)
     return constructor.object->native(args);
   Value object = make_object();
-  Value result = call(constructor, args, object);
-  return result.type == Value::Type::Object ? result : object;
+  init_instance(constructor, object, args);
+  return object;
 }
 void Runtime::hoist(const std::vector<std::unique_ptr<Stmt>> &statements, Env &env) {
   for (auto &s : statements) {
@@ -1161,6 +1256,33 @@ Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
           evaluate(*p.second, env, this_value);
     return o;
   }
+  case Expr::Kind::Class: {
+    Value ctor = make_object(Object::Kind::Function);
+    ctor.object->function = e.function;
+    ctor.object->closure = &env;
+    ctor.object->class_ast = &e;
+    Value proto = make_object();
+    if (e.left) {
+      Value super = evaluate(*e.left, env, this_value);
+      if (super.type != Value::Type::Object || !super.object)
+        throw JsError{Value("TypeError: class extends a non-constructor")};
+      ctor.object->properties["__super__"] = super;
+      Value super_proto = get_member(super, "prototype");
+      if (super_proto.type == Value::Type::Object)
+        proto.object->properties["__proto__"] = super_proto;
+    }
+    for (auto &m : e.properties) {
+      Value fn = evaluate(*m.second, env, this_value);
+      if (m.first.compare(0, 7, "static:") == 0)
+        ctor.object->properties[m.first.substr(7)] = fn;
+      else
+        proto.object->properties[m.first] = fn;
+    }
+    ctor.object->properties["prototype"] = proto;
+    if (!e.text.empty())
+      ctor.object->properties["name"] = Value(e.text);
+    return ctor;
+  }
   case Expr::Kind::Function: {
     Value fn = make_object(Object::Kind::Function);
     fn.object->function = e.function;
@@ -1290,12 +1412,28 @@ Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
   case Expr::Kind::Call: {
     Value fn, this_value_call;
     Values args;
+    if (e.left->kind == Expr::Kind::Identifier && e.left->text == "super") {
+      // super(...) runs the base constructor against the instance I am building.
+      Value cls = get_member(this_, "__class__");
+      Value base_ctor = get_member(cls, "__super__");
+      for (auto &a : e.items)
+        args.push_back(evaluate(*a, env, this_value));
+      Value self = this_;
+      run_init(base_ctor, self, args);
+      return Value();
+    }
     if (e.left->kind == Expr::Kind::Member) {
-      Value base = evaluate(*e.left->left, env, this_value);
+      Value base = e.left->left->kind == Expr::Kind::Identifier && e.left->left->text == "super"
+                       ? get_member(get_member(get_member(this_, "__class__"), "__super__"),
+                                    "prototype")
+                       : evaluate(*e.left->left, env, this_value);
       std::string key =
           e.left->computed ? evaluate(*e.left->right, env, this_value).to_string() : e.left->text;
       fn = get_member(base, key);
-      this_value_call = base;
+      this_value_call = e.left->left->kind == Expr::Kind::Identifier &&
+                                e.left->left->text == "super"
+                            ? this_
+                            : base;
     } else
       fn = evaluate(*e.left, env, this_value);
     for (auto &a : e.items) {
