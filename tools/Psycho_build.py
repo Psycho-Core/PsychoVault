@@ -6,7 +6,7 @@ ROOT=pathlib.Path(__file__).resolve().parents[1]
 ENGINE=["engine/Psycho_base.cpp","engine/Psycho_dom.cpp","engine/Psycho_css.cpp","engine/Psycho_js_parser.cpp","engine/Psycho_js_runtime.cpp","engine/Psycho_raster.cpp","engine/Psycho_image.cpp","engine/Psycho_layout.cpp","engine/Psycho_page.cpp"]
 PLATFORM=["platform/Psycho_process.cpp","platform/Psycho_network.cpp","platform/Psycho_profile.cpp",
           "platform/Psycho_proxy.cpp","platform/Psycho_extension.cpp","platform/Psycho_download.cpp",
-          "platform/Psycho_payload.cpp"]
+          "platform/Psycho_payload.cpp","platform/Psycho_ipc.cpp"]
 def run(cmd,env=None):
     print("+",subprocess.list2cmdline([str(x) for x in cmd]),flush=True)
     subprocess.run([str(x) for x in cmd],cwd=ROOT,env=env,check=True)
@@ -64,7 +64,11 @@ def main():
     winlibs=["kernel32","user32","gdi32","advapi32","userenv","bcrypt","winhttp","shell32","ole32","dwmapi","ws2_32"]
     target("pv-engine",ENGINE+["tools/Psycho_engine_cli.cpp"],winlibs if windows else [])
     target("pv-tests",ENGINE+PLATFORM+["tests/Psycho_test_main.cpp"],winlibs if windows else [])
-    target("pv-renderer",ENGINE+["platform/Psycho_process.cpp","tools/Psycho_renderer_main.cpp"],winlibs + ["ws2_32"] if windows else [],"WINDOWS" if windows else None,"mainCRTStartup" if windows else None)
+    # My renderer runs inside an AppContainer, so it imports only what it calls.
+    # It must not import user32: user32 initialisation is what fails
+    # with 0xC0000142 in a container. It needs gdi32 only to measure and draw text.
+    renderer_libs=["kernel32","advapi32","ws2_32","bcrypt","gdi32"] if windows else []
+    target("pv-renderer",ENGINE+["platform/Psycho_ipc.cpp","tools/Psycho_renderer_main.cpp"],renderer_libs,"WINDOWS" if windows else None,"mainCRTStartup" if windows else None)
     if windows:
         # I embed my renderer inside PsychoVault.exe so one file is enough to
         # browse. I compile the resource with the SDK tool, then link it in.

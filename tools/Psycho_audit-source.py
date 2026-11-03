@@ -25,7 +25,14 @@ for f in ['package.json','package-lock.json','Cargo.toml','vcpkg.json','conanfil
 engine_network=[f for f in source if f.startswith('engine/') and re.search(r'#\s*include[^\n]*(winhttp|winsock|curl|openssl)',(ROOT/f).read_text(errors='replace'),re.I)]
 check('engine has no direct network stack include',not engine_network,','.join(engine_network))
 build=(ROOT/'tools/Psycho_build.py').read_text()
-check('renderer target excludes broker networking','target("pv-renderer",ENGINE+["platform/Psycho_process.cpp","tools/Psycho_renderer_main.cpp"]' in build)
+check('renderer target excludes broker networking','target("pv-renderer",ENGINE+["platform/Psycho_ipc.cpp","tools/Psycho_renderer_main.cpp"]' in build)
+check('my renderer imports no UI or broker DLLs',
+      'renderer_libs=["kernel32","advapi32","ws2_32","bcrypt","gdi32"]' in build)
+check('my renderer links no broker process code',
+      'platform/Psycho_process.hpp' not in (ROOT/'tools/Psycho_renderer_main.cpp').read_text())
+check('my IPC framing has no UI dependency',
+      'user32' not in (ROOT/'platform/Psycho_ipc.cpp').read_text() and
+      'Psycho_process.hpp' not in (ROOT/'platform/Psycho_ipc.cpp').read_text())
 workflow=(ROOT/'.github/workflows/Psycho_owned-engine.yml').read_text()
 check('one heavy build concurrency group','group: psychovault-heavy' in workflow and 'cancel-in-progress: false' in workflow)
 check('hosted build is Windows','runs-on: windows-2022' in workflow)

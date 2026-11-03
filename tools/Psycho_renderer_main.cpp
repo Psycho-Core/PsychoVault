@@ -1,5 +1,5 @@
 #include "../engine/Psycho_page.hpp"
-#include "../platform/Psycho_process.hpp"
+#include "../platform/Psycho_ipc.hpp"
 #include <iostream>
 #ifdef _WIN32
 #define NOMINMAX

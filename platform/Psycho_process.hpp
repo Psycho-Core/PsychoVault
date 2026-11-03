@@ -1,4 +1,5 @@
 #pragma once
+#include "Psycho_ipc.hpp"
 #include "../engine/Psycho_base.hpp"
 #include <atomic>
 #include <mutex>
@@ -44,8 +45,6 @@ private:
   bool read_more(int timeout_ms);
   void close_transport();
 };
-bool write_frame(void *handle, const Json &message, std::string &error);
-std::optional<Json> read_frame(void *handle, int timeout_ms);
 std::string executable_path();
 std::string executable_dir();
 } // namespace pv
