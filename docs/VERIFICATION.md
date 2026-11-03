@@ -20,7 +20,7 @@ I fixed actual hosted failures instead of hiding them: MSVC environment discover
 
 ## Open or not run
 
-- AppContainer file isolation: I split the probe because the direct Winsock probe failed DLL initialization under AppContainer. The file/token probe is the gate; I will record its final hosted result here.
+- AppContainer file-isolation harness: blocked on the hosted console runner. The child process exits with STATUS_DLL_INIT_FAILED before it can report token/file state. My native GUI fetched-page smoke test does require a renderer frame and passed, but I am not counting that as a file-denial proof.
 - Direct network socket denial probe: not run in the current probe. I am not claiming direct network denial from the file-isolation test.
 - Proton VPN sign-in, proxy routing/auth, fail-closed behaviour, DNS and WebRTC policy: not run.
 - Full reference UI parity: not run.
