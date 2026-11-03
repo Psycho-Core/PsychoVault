@@ -181,7 +181,7 @@ static bool grant_object(HANDLE object, PSID sid, ACCESS_MASK access) {
   PACL old_dacl = nullptr;
   PSECURITY_DESCRIPTOR sd = nullptr;
   if (GetSecurityInfo(object, SE_WINDOW_OBJECT, DACL_SECURITY_INFORMATION, nullptr, nullptr,
-                      &old_dacl, &sd) != ERROR_SUCCESS)
+                      &old_dacl, nullptr, &sd) != ERROR_SUCCESS)
     return false;
   EXPLICIT_ACCESSW ea{};
   ea.grfAccessPermissions = access;
