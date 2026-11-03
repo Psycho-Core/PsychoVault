@@ -177,27 +177,7 @@ jobs:
       - name: Verify my packaged manifest before I publish
         shell: pwsh
         run: |
-          @'
-          import hashlib, json, pathlib, zipfile
-          out = pathlib.Path('build')
-          manifest = json.loads((out / 'PsychoVault-update.json').read_text(encoding='utf-8'))
-          assert manifest['product'] == 'PsychoVault'
-          assert manifest['platform'] == 'windows-x64'
-          for asset in manifest['assets']:
-              path = out / asset['name']
-              assert path.is_file(), f"missing {asset['name']}"
-              digest = hashlib.sha256(path.read_bytes()).hexdigest()
-              assert digest == asset['sha256'], f"hash mismatch for {asset['name']}"
-              assert path.stat().st_size == asset['size']
-          with zipfile.ZipFile(out / 'PsychoVault-windows-x64.zip') as z:
-              names = set(z.namelist())
-              for required in manifest['requires']:
-                  assert required in names, f"ZIP is missing {required}"
-              assert 'extensions/PsychoVault-VPN-Bridge/manifest.json' in names
-              assert not any(n.startswith(('build/', '.git/')) or 'test-profile' in n for n in names)
-          print('My manifest hashes and ZIP contents verified.')
-          '@ | Set-Content -Encoding utf8 verify_package.py
-          python verify_package.py
+          python tools/Psycho_verify_package.py --outdir build
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Write my release notes

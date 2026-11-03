@@ -148,6 +148,12 @@ jobs:
         run: |
           python tools/Psycho_package.py --outdir build --commit $env:GITHUB_SHA
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Prove my package and my verifier agree
+        shell: pwsh
+        run: |
+          python tools/Psycho_verify_package.py --outdir build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Write failure note
         if: failure()
         shell: pwsh

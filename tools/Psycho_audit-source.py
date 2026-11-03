@@ -44,7 +44,9 @@ if release_path.exists():
     check('release workflow shares my one-heavy-build group','group: psychovault-heavy' in release)
     check('I refuse to overwrite a published release','I do not overwrite a published release' in release)
     check('I refuse a tag that does not match my version file','does not match Psycho_VERSION.txt' in release)
-    check('I verify asset hashes before publishing','hash mismatch' in release)
+    check('I verify asset hashes before publishing',
+          'hash mismatch' in (ROOT/'tools/Psycho_verify_package.py').read_text() and
+          'tools/Psycho_verify_package.py' in release)
     check('I verify published assets after publishing','gh release view' in release)
     check('I mark the preview as a prerelease','--prerelease' in release)
     check('release notes state YouTube and Netflix do not play','YouTube and Netflix do not play' in release)
@@ -92,6 +94,16 @@ for wf in ('.github/workflows/Psycho_owned-engine.yml','.github/workflows/Psycho
     check('my gate rejects a capture that is not a real PNG: '+wf,'is not a real PNG' in body)
     check('my gates no longer claim a separate renderer: '+wf,
           'pv-renderer' not in body and '--sandbox-test' not in body)
+package_text=(ROOT/'tools/Psycho_package.py').read_text()
+check('my verifier is a real tool, not an inline copy',(ROOT/'tools/Psycho_verify_package.py').exists())
+check('my packager writes my checksums where my manifest names them',
+      'published_checksums = out / "SHA256SUMS.txt"' in package_text)
+check('my manifest points at those checksums',
+      'asset("SHA256SUMS.txt", published_checksums, "checksums")' in package_text)
+check('my development build verifies my package too',
+      'tools/Psycho_verify_package.py' in (ROOT/'.github/workflows/Psycho_owned-engine.yml').read_text())
+check('my release build verifies my package with the same tool',
+      'tools/Psycho_verify_package.py' in (ROOT/'.github/workflows/Psycho_release.yml').read_text())
 check('my update payload is the single executable',
       'asset("PsychoVault.exe", out / "PsychoVault.exe", "update")' in (ROOT/'tools/Psycho_package.py').read_text())
 instructions=(ROOT/'docs/Psycho_TEST-BUILD.md').read_text()

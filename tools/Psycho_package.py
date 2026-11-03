@@ -65,8 +65,15 @@ def main() -> None:
                 files[str(path.relative_to(ROOT)).replace("\\", "/")] = path
 
     sums = [f"{sha256(path)}  {name}" for name, path in sorted(files.items())]
+    text = "\n".join(sums) + "\n"
     checksums = stage / "SHA256SUMS.txt"
-    checksums.write_text("\n".join(sums) + "\n", encoding="utf-8")
+    checksums.write_text(text, encoding="utf-8")
+    # My manifest names assets by filename, so every asset has to exist under
+    # that name in my output folder as well as in my upload stage. I learned this
+    # the hard way: my first release gate failed because this file was only in
+    # the stage folder.
+    published_checksums = out / "SHA256SUMS.txt"
+    published_checksums.write_text(text, encoding="utf-8")
     files["SHA256SUMS.txt"] = checksums
 
     archive = out / "PsychoVault-windows-x64.zip"
@@ -102,7 +109,7 @@ def main() -> None:
         "assets": [
             asset("PsychoVault.exe", out / "PsychoVault.exe", "update"),
             asset("PsychoVault-windows-x64.zip", archive, "tools"),
-            asset("SHA256SUMS.txt", checksums, "checksums"),
+            asset("SHA256SUMS.txt", published_checksums, "checksums"),
         ],
     }
     manifest_path = out / "PsychoVault-update.json"
