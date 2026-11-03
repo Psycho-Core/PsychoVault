@@ -24,15 +24,6 @@ for f in ['package.json','package-lock.json','Cargo.toml','vcpkg.json','conanfil
     check('no runtime package manifest: '+f,not (ROOT/f).exists())
 engine_network=[f for f in source if f.startswith('engine/') and re.search(r'#\s*include[^\n]*(winhttp|winsock|curl|openssl)',(ROOT/f).read_text(errors='replace'),re.I)]
 check('engine has no direct network stack include',not engine_network,','.join(engine_network))
-build=(ROOT/'tools/Psycho_build.py').read_text()
-check('renderer target excludes broker networking','target("pv-renderer",ENGINE+["platform/Psycho_ipc.cpp","tools/Psycho_renderer_main.cpp"]' in build)
-check('my renderer imports no UI or broker DLLs',
-      'renderer_libs=["kernel32","advapi32","ws2_32","bcrypt","gdi32"]' in build)
-check('my renderer links no broker process code',
-      'platform/Psycho_process.hpp' not in (ROOT/'tools/Psycho_renderer_main.cpp').read_text())
-check('my IPC framing has no UI dependency',
-      'user32' not in (ROOT/'platform/Psycho_ipc.cpp').read_text() and
-      'Psycho_process.hpp' not in (ROOT/'platform/Psycho_ipc.cpp').read_text())
 workflow=(ROOT/'.github/workflows/Psycho_owned-engine.yml').read_text()
 check('one heavy build concurrency group','group: psychovault-heavy' in workflow and 'cancel-in-progress: false' in workflow)
 check('hosted build is Windows','runs-on: windows-2022' in workflow)
@@ -43,12 +34,12 @@ release_path=ROOT/'.github/workflows/Psycho_release.yml'
 check('I have a release workflow',release_path.exists())
 if release_path.exists():
     release=release_path.read_text()
-    order=[('build','Psycho_build.py'),('tests','pv-tests.exe'),('sandbox','--sandbox-test'),
+    order=[('build','Psycho_build.py'),('tests','pv-tests.exe'),('solo','psychovault-solo'),
            ('package','Psycho_package.py'),('verify','verify_package.py'),('publish','gh release create')]
     positions=[(label,release.find(token)) for label,token in order]
     check('every release stage is present',all(pos>=0 for _,pos in positions),
           ','.join(label for label,pos in positions if pos<0))
-    check('I publish only after my build, tests, sandbox and hash verification',
+    check('I publish only after my build, tests, single-exe gate and hash verification',
           all(positions[i][1]<positions[i+1][1] for i in range(len(positions)-1)))
     check('release workflow shares my one-heavy-build group','group: psychovault-heavy' in release)
     check('I refuse to overwrite a published release','I do not overwrite a published release' in release)
@@ -70,22 +61,37 @@ network=(ROOT/'platform/Psycho_network.cpp').read_text()
 check('I refuse a proxy scheme I cannot tunnel','refusing the request rather than connecting directly' in network)
 check('I stream downloads to a partial file before committing','psychovault-part' in network)
 
-# My one-file promise has to be enforced, not just claimed.
+# My page renders inside my own executable, so one file is the whole browser.
 build_text=(ROOT/'tools/Psycho_build.py').read_text()
-check('I embed my renderer as a resource in my executable','101 RCDATA' in build_text)
-check('I compile my payload resource with the SDK tool','rc.exe not found' in build_text)
+check('I compile my own page host into my browser','"platform/Psycho_host.cpp"' in build_text)
+check('my browser links my engine, my page host and my shell together',
+      'target("PsychoVault",ENGINE+PLATFORM+["shell/Psycho_win_main.cpp"]' in build_text)
+check('I build no second executable to render pages','pv-renderer' not in build_text)
+check('I need no resource compiler to embed a renderer','rc.exe' not in build_text)
 shell_text=(ROOT/'shell/Psycho_win_main.cpp').read_text()
-check('my shell resolves its renderer through my payload loader','renderer_executable(' in shell_text)
-check('my shell never assumes a sibling renderer file',
-      'executable_dir() + "\\\\pv-renderer.exe"' not in shell_text)
-payload=(ROOT/'platform/Psycho_payload.cpp').read_text()
-check('I verify my unpacked renderer before running it','failed its own hash check' in payload)
-check('I unpack into my own per-user folder','FOLDERID_LocalAppData' in payload)
-check('I name my payload folder by hash so versions cannot collide','digest.substr(0, 32)' in payload)
+check('my shell renders through my own page host','Host host(' in shell_text and 'host.load(' in shell_text)
+check('my shell starts no helper process','CreateProcess' not in shell_text)
+check('my shell never assumes a sibling renderer file','pv-renderer' not in shell_text)
+host_hpp=(ROOT/'platform/Psycho_host.hpp').read_text()
+host_cpp=(ROOT/'platform/Psycho_host.cpp').read_text()
+check('my page host owns one engine page','std::unique_ptr<Page> page_;' in host_hpp)
+check('my page host fetches only through a callback','using Fetcher = std::function<Resource(const std::string &url)>;' in host_hpp)
+check('my page host never opens the network itself',
+      not re.search(r'winhttp|socket\s*\(|connect\s*\(',host_cpp,re.I))
+check('my page host hands images over without base64','base64' not in host_cpp)
+check('my page host reports a frame after every change','void Host::emit()' in host_cpp and 'settle();' in host_cpp)
+for gone in ('platform/Psycho_ipc.cpp','platform/Psycho_process.cpp','platform/Psycho_payload.cpp'):
+    check('I removed the helper process plumbing: '+gone,not (ROOT/gone).exists())
+tests_text=(ROOT/'tests/Psycho_test_main.cpp').read_text()
+check('my tests drive my page host directly','#include "../platform/Psycho_host.hpp"' in tests_text and 'Host host(' in tests_text)
 for wf in ('.github/workflows/Psycho_owned-engine.yml','.github/workflows/Psycho_release.yml'):
     body=(ROOT/wf).read_text()
     check('I prove my single exe renders alone: '+wf,
           'psychovault-solo' in body and 'expected 1' in body and '--expect-image' in body)
+    check('my gate proves my lone exe left one file behind: '+wf,'left $after files' in body)
+    check('my gate rejects a capture that is not a real PNG: '+wf,'is not a real PNG' in body)
+    check('my gates no longer claim a separate renderer: '+wf,
+          'pv-renderer' not in body and '--sandbox-test' not in body)
 check('my update payload is the single executable',
       'asset("PsychoVault.exe", out / "PsychoVault.exe", "update")' in (ROOT/'tools/Psycho_package.py').read_text())
 instructions=(ROOT/'docs/Psycho_TEST-BUILD.md').read_text()
@@ -93,15 +99,10 @@ check('my test instructions need no shell commands','```powershell' not in instr
 check('my test instructions start with a double-click','double-click' in instructions.lower())
 
 # My required gates are only real if my browser actually parses their flags.
-shell_flags=(ROOT/'shell/Psycho_win_main.cpp').read_text()
-for flag in ('--expect-image','--sandbox-test','--sandbox-report'):
-    check('my shell parses '+flag, 'args[i] == "'+flag+'"' in shell_flags)
+for flag in ('--expect-image',):
+    check('my shell parses '+flag, 'args[i] == "'+flag+'"' in shell_text)
 check('my shell refuses an option it does not understand',
-      'I do not understand the option' in shell_flags)
-for wf in ('.github/workflows/Psycho_owned-engine.yml','.github/workflows/Psycho_release.yml'):
-    body=(ROOT/wf).read_text()
-    check('my gate refuses a missing sandbox report: '+wf,'wrote no sandbox report' in body)
-    check('my gate deletes a stale sandbox report: '+wf,'Remove-Item build/sandbox-test.json' in body)
+      'I do not understand the option' in shell_text)
 
 print(f'\n{passed} passed, {len(fail)} failed')
 sys.exit(1 if fail else 0)

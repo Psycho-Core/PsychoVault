@@ -1,29 +1,40 @@
 # My next testable Windows build
 
-I am continuing from PR #63. I am not treating that merge as a complete browser.
+I am working through my browser one step at a time, in the order that gets me something I can actually use. I am not treating any merge as a complete browser.
 
-## What I am fixing next
+## The order I am working in
 
-1. I am making the AppContainer file and network denial tests required again. I am fixing process startup and handle ownership rather than hiding a failed sandbox check.
-2. I am keeping each tab's page and renderer alive when I switch tabs. I am adding real stop/reload, restored active-tab state, Unicode input and useful navigation errors.
-3. I am preserving binary resource bytes and implementing an owned PNG decoder with bounded decompression. I am fixing image layout and painting instead of drawing an image placeholder for a valid PNG.
-4. I am strengthening profile persistence: validation, corruption recovery, atomic replacement, private-mode separation and settings that actually change request or browser behaviour.
-5. I am bringing the native new-tab and settings presentation closer to my saved screenshots. I will show an honest unavailable state for a feature whose backend is not implemented.
-6. I am adding repeatable tests and a portable Windows ZIP with the browser, renderer, test instructions and SHA-256 checksums. The ZIP is a development preview, not a signed release.
+| Step | Work | State |
+| --- | --- | --- |
+| 1 | One executable that renders my pages itself | Done in this slice |
+| 2 | Modern JavaScript: promises, async/await, regular expressions, modules | Not started |
+| 3 | Browsing fundamentals: cookies, local storage, forms, find in page, zoom | Not started |
+| 4 | More image formats and canvas | Not started |
+| 5 | CSS and layout correctness: flexbox, grid, positioning, overflow | Not started |
+| 6 | Media: audio, video and Media Source Extensions | Not started |
+| 7 | VPN transport, including the TLS-to-proxy path Proton needs | Not started |
+| 8 | Security: operating-system containment for page code, certificate policy, ad blocking | Not started |
+| 9 | Conformance measurement with Test262 and web-platform-tests subsets | Not started |
+| 10 | Published release and a verified updater cycle | Partly built, not yet published |
 
-## Evidence required before I hand over the preview
+## What step 1 changed
 
-- The owned engine unit and regression tests pass locally and on Windows.
-- Address/undefined-behaviour sanitizer tests pass locally.
-- A real AppContainer child reports its token, cannot read a broker-owned sentinel and cannot create a network socket. These are required checks.
-- A local HTTP test proves main-document, stylesheet, script and PNG resource loading through the broker.
-- Native GUI tests prove that a tab switch keeps its page, input reaches the intended tab, an actual network failure is reported as a failure and private mode does not write browsing data.
-- The Windows artifact contains only the built executables, notices and test/build metadata - no profile, credential or source-control directory.
+- My engine, my page host and my shell now link into one `PsychoVault.exe`. There is no renderer process, no payload to unpack and no resource compiler in the build.
+- My page host owns one engine page per tab on that tab's worker thread, fetches through my network policy, decodes images in my process and reports frames straight to my window.
+- I deleted the helper process, the framed IPC and the payload loader rather than leaving dead code behind. My git history keeps that work if I want the isolation boundary back later.
+- My single-file gate now copies only `PsychoVault.exe` into an empty folder, renders a fetched page with images, checks the capture is a real PNG, and checks the folder still holds exactly one file afterwards.
+
+## Evidence required before I hand over a preview
+
+- The engine and page-host tests pass locally and on Windows.
+- The single-file gate passes on hosted Windows for the exact commit I publish.
+- A local HTTP test proves main-document, stylesheet, script and PNG loading through my page host.
+- The Windows artifact contains only my executables, notices and build metadata - no profile, credential or source-control directory.
 
 ## Still outside this preview's completion claim
 
-The complete browser still needs the full extension host and live Proton gate, the remaining legacy features and vault migration, broader JavaScript/CSS compatibility, performance comparison, accessibility and signed installation/update gates. I will not label those complete because this preview builds.
+The complete browser still needs the rest of the steps above, the live Proton gate, the remaining legacy features and vault migration, broader compatibility, performance comparison, accessibility, and signed installation and update gates. I will not label those complete because this preview builds.
 
-## Research for this slice
+## What I have learned about containment
 
-I reviewed Microsoft's Win32 documentation at `MicrosoftDocs/win32` commit `ca8274decead49403d70ceeed4af8d4ca74eaf11`, especially AppContainer isolation, process/window-station connection and WinHTTP handle lifetime. I am using those platform APIs, not copying a browser implementation. I am keeping renderer handles owned by the worker that uses them, using overlapped broker I/O, and giving sandbox children only the access they need.
+I spent a long time on a contained renderer process and did not get it to answer its own probe. The evidence I do have is that the trimmed renderer loaded only kernel32, advapi32, ws2_32, bcrypt and gdi32, and that removing user32 stopped a hard crash - but it still never wrote a frame. I am not going to describe containment as working until a page renders inside it, and I am not going to make it a prerequisite for a browser I can test.

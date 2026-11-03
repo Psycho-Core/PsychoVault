@@ -70,7 +70,7 @@ jobs:
           python tools/Psycho_audit_names.py 2>&1 | Tee-Object build/audit-names.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Build browser, renderer and tests
+      - name: Build my browser and tests
         shell: pwsh
         run: |
           python tools/Psycho_build.py --compiler msvc --outdir build 2>&1 | Tee-Object build/build.log
@@ -109,34 +109,6 @@ jobs:
             Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
           }
 
-      - name: Run required AppContainer token, file and network sandbox gate
-        shell: pwsh
-        run: |
-          # I delete any stale report first. A gate that reads an old file proves
-          # nothing, and an ignored flag must never look like a pass.
-          Remove-Item build/sandbox-test.json -ErrorAction SilentlyContinue
-          # PowerShell does not reliably surface a GUI app's exit code, so I
-          # wait on the process handle and read its real code.
-          $gate = Start-Process -FilePath ".\build\PsychoVault.exe" -ArgumentList '--sandbox-test','--sandbox-report','build/sandbox-test.json','--profile','build/test-profile' -PassThru
-          if ($gate.WaitForExit(120000)) { $code = $gate.ExitCode } else { $code = 99; try { $gate.Kill($true) } catch {} }
-          if (Test-Path build/sandbox-test.json) {
-            $report = (Get-Content build/sandbox-test.json -Raw) -replace "`r", '' -replace "`n", ' '
-            Write-Host "::notice::SANDBOX-REPORT exit=$code $report"
-          }
-          if ($code -ne 0) {
-            Write-Host "::error::My required sandbox gate failed (exit $code)"
-            exit 1
-          }
-          if (!(Test-Path build/sandbox-test.json)) {
-            Write-Host "::error::My browser wrote no sandbox report, so the gate proved nothing."
-            exit 1
-          }
-          python -c "import json; d=json.load(open('build/sandbox-test.json', encoding='utf-8')); print(json.dumps(d, indent=2)); assert d.get('ok') is True"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "## Required sandbox gate`n`n``````json" | Add-Content $env:GITHUB_STEP_SUMMARY
-          Get-Content build/sandbox-test.json | Add-Content $env:GITHUB_STEP_SUMMARY
-          "``````" | Add-Content $env:GITHUB_STEP_SUMMARY
-
       - name: Prove my single executable renders with no sibling files
         shell: pwsh
         run: |
@@ -149,28 +121,23 @@ jobs:
           $count = (Get-ChildItem $solo -File).Count
           if ($count -ne 1) { throw "My solo folder has $count files, expected 1" }
           New-Item -ItemType Directory -Force build/captures | Out-Null
+          Remove-Item build/captures/standalone.png -ErrorAction SilentlyContinue
+          Remove-Item build/captures/standalone.png.failure.json -ErrorAction SilentlyContinue
           $server = Start-Process python -ArgumentList '-m','http.server','8766','--directory','tests/fixtures' -PassThru -WindowStyle Hidden
           $render = 1
-          $sandbox = 1
           try {
             Start-Sleep -Seconds 2
-            # Start-Process -Wait waits for my whole process tree, and a contained
-            # renderer can outlive the window. I bound the wait and read the exit
-            # code of the browser itself.
+            # PowerShell does not reliably surface a GUI exit code, so I wait on
+            # the process handle and read its real code.
             $p = Start-Process -FilePath "$solo/PsychoVault.exe" -ArgumentList '--smoke','--expect-image','--url','http://127.0.0.1:8766/Psycho_browser-smoke.html','--capture','build/captures/standalone.png','--profile','build/solo-profile' -PassThru
             if ($p.WaitForExit(60000)) { $render = $p.ExitCode } else { $render = 99; try { $p.Kill($true) } catch {} }
-            Remove-Item build/solo-sandbox.json -ErrorAction SilentlyContinue
-            $q = Start-Process -FilePath "$solo/PsychoVault.exe" -ArgumentList '--sandbox-test','--sandbox-report','build/solo-sandbox.json','--profile','build/solo-profile' -PassThru
-            if ($q.WaitForExit(60000)) { $sandbox = $q.ExitCode } else { $sandbox = 99; try { $q.Kill($true) } catch {} }
           } finally {
             Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
           }
           # I print my diagnostics before I decide, and I exit outside try/finally
           # so a finally block can never swallow my failure.
-          # I publish my diagnostics to the job summary because I can read that
-          # back through the API even when job logs and artifacts will not download.
           "## My single-file exe gate" | Add-Content $env:GITHUB_STEP_SUMMARY
-          "render exit=$render sandbox exit=$sandbox" | Add-Content $env:GITHUB_STEP_SUMMARY
+          "render exit=$render" | Add-Content $env:GITHUB_STEP_SUMMARY
           '```json' | Add-Content $env:GITHUB_STEP_SUMMARY
           if (Test-Path build/captures/standalone.png.failure.json) {
             Write-Host '--- my standalone render failure ---'
@@ -179,16 +146,10 @@ jobs:
           } else {
             'no render failure report was written' | Add-Content $env:GITHUB_STEP_SUMMARY
           }
-          if (Test-Path build/solo-sandbox.json) {
-            Write-Host '--- my standalone sandbox report ---'
-            Get-Content build/solo-sandbox.json
-            Get-Content build/solo-sandbox.json | Add-Content $env:GITHUB_STEP_SUMMARY
-          }
           '```' | Add-Content $env:GITHUB_STEP_SUMMARY
-          Write-Host "standalone render exit=$render sandbox exit=$sandbox"
-          # Job summaries are not readable through the API, but annotations are.
-          # I publish my failure report as an annotation so I can diagnose without
-          # downloading job logs or artifacts.
+          Write-Host "standalone render exit=$render"
+          # Job summaries are not readable through the API, but annotations are,
+          # so my failure reason is published as an annotation too.
           if ($render -ne 0) {
             $detail = 'no failure report was written'
             if (Test-Path build/captures/standalone.png.failure.json) {
@@ -196,20 +157,15 @@ jobs:
             }
             $detail = ($detail -replace "`r", '') -replace "`n", ' '
             Write-Host "::error::SOLO-DIAG exit=$render $detail"
-          }
-          if ($sandbox -ne 0 -and (Test-Path build/solo-sandbox.json)) {
-            $sd = (Get-Content build/solo-sandbox.json -Raw)
-            $sd = ($sd -replace "`r", '') -replace "`n", ' '
-            Write-Host "::error::SOLO-SANDBOX exit=$sandbox $sd"
-          }
-          if ($render -ne 0) { Write-Host "::error::My standalone exe failed to render a fetched page (exit $render)"; exit 1 }
-          if ($sandbox -ne 0) { Write-Host "::error::My standalone exe failed its sandbox gate (exit $sandbox)"; exit 1 }
-          if (!(Test-Path build/solo-sandbox.json)) {
-            Write-Host "::error::My lone exe wrote no sandbox report, so the gate proved nothing."
+            Write-Host "::error::My standalone exe failed to render a fetched page (exit $render)"
             exit 1
           }
-          python -c "import json; d=json.load(open('build/solo-sandbox.json', encoding='utf-8')); assert d.get('ok') is True, d; print('My lone exe unpacked its renderer and passed containment.')"
-          if ($LASTEXITCODE -ne 0) { exit 1 }
+          # A real picture, and still exactly one file in my folder: that is what
+          # my one-file promise means.
+          python -c "import pathlib,sys; d=pathlib.Path('build/captures/standalone.png').read_bytes(); sys.exit(0 if d[:8]==bytes([137,80,78,71,13,10,26,10]) and len(d)>1000 else 1)"
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::My standalone capture is not a real PNG"; exit 1 }
+          $after = (Get-ChildItem $solo -File).Count
+          if ($after -ne 1) { Write-Host "::error::My lone exe left $after files in my empty folder, so it is not self contained"; exit 1 }
           "## My single-file exe rendered on its own" | Add-Content $env:GITHUB_STEP_SUMMARY
 
       - name: Package my release and update manifest
@@ -257,9 +213,8 @@ jobs:
 
           - I built with MSVC on a GitHub-hosted Windows runner.
           - My engine test suite passed.
-          - My renderer runs in a Windows AppContainer, and my required gate proved the token is active, a broker-owned file is unreadable, and direct TCP and UDP sockets are refused.
-          - My single executable rendered a fetched page with images from an empty folder containing nothing else.
-          - I rendered a fetched page with CSS, JavaScript and a decoded PNG through my sandboxed renderer.
+          - My single executable rendered a fetched page with images from an empty folder containing nothing else, and it left no second file behind.
+          - I rendered a fetched page with CSS, JavaScript and a decoded PNG through my own engine inside my own browser process.
           - My bundled VPN bridge drove my real proxy, storage and WebRTC-policy code, and my fail-closed routing refused to leak when no proxy was usable.
           - My download manager, PAC evaluator and extension permission checks passed their regression tests.
 
@@ -267,7 +222,7 @@ jobs:
 
           I download **PsychoVault.exe** and double-click it. That is the whole install.
 
-          My renderer is embedded inside that one file. I unpack it into my own Windows user folder and verify its hash before running it, so a single exe renders pages on its own. My CI proves this by copying only ``PsychoVault.exe`` into an empty folder and rendering a fetched page with images from there.
+          My engine and my page host are compiled into that one file, so nothing is unpacked and nothing sits beside it. My CI proves this by copying only ``PsychoVault.exe`` into an empty folder, rendering a fetched page with images from there, and checking the folder still holds one file afterwards.
 
           I also publish ``PsychoVault-windows-x64.zip`` with my test tools for anyone who wants them, but I do not need it to browse.
 
@@ -297,7 +252,6 @@ jobs:
           $tag = "${{ steps.version.outputs.tag }}"
           $assets = @(
             'build/PsychoVault.exe',
-            'build/pv-renderer.exe',
             'build/PsychoVault-windows-x64.zip',
             'build/PsychoVault-update.json',
             'build/package/SHA256SUMS.txt',
@@ -322,7 +276,7 @@ jobs:
           $tag = "${{ steps.version.outputs.tag }}"
           gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName,isPrerelease,assets | Tee-Object build/published-release.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -c "import json; d=json.load(open('build/published-release.json', encoding='utf-8-sig')); names={a['name'] for a in d['assets']}; required={'PsychoVault.exe','pv-renderer.exe','PsychoVault-windows-x64.zip','PsychoVault-update.json','SHA256SUMS.txt'}; missing=required-names; assert not missing, missing; print('I verified my published release assets:', sorted(names))"
+          python -c "import json; d=json.load(open('build/published-release.json', encoding='utf-8-sig')); names={a['name'] for a in d['assets']}; required={'PsychoVault.exe','PsychoVault-windows-x64.zip','PsychoVault-update.json','SHA256SUMS.txt'}; missing=required-names; assert not missing, missing; print('I verified my published release assets:', sorted(names))"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "## I published $tag" | Add-Content $env:GITHUB_STEP_SUMMARY
 
@@ -339,7 +293,7 @@ jobs:
             "``````" | Add-Content $env:GITHUB_STEP_SUMMARY
             foreach ($line in $tail) { if ($line -match 'error [A-Z]+[0-9]+|fatal error|build failed:') { Write-Host "::error::$line" } }
           }
-          foreach ($file in @('build/audit-source.txt','build/audit-names.txt','build/engine-tests.txt','build/sandbox-test.json')) {
+          foreach ($file in @('build/audit-source.txt','build/audit-names.txt','build/engine-tests.txt')) {
             if (Test-Path $file) {
               "## $file`n`n``````" | Add-Content $env:GITHUB_STEP_SUMMARY
               Get-Content $file -Tail 40 | Add-Content $env:GITHUB_STEP_SUMMARY

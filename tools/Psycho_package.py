@@ -2,9 +2,9 @@
 """I package only verified Windows files and emit the manifest my updater reads.
 
 I never package a profile, a credential, a build tree or source control.
-My renderer is embedded inside PsychoVault.exe, so that one file is enough to
-browse and it is my update payload. I still publish a ZIP with my test tools and
-a standalone renderer for development, but nobody needs them to run my browser.
+My engine and my page host are linked inside PsychoVault.exe, so that one file is
+enough to browse and it is my update payload. I still publish a ZIP with my
+development tools, but nobody needs them to run my browser.
 """
 from __future__ import annotations
 import argparse
@@ -15,8 +15,8 @@ import pathlib
 import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-BINARIES = ["PsychoVault.exe", "pv-renderer.exe", "pv-engine.exe", "pv-tests.exe"]
-REQUIRED = ["PsychoVault.exe", "pv-renderer.exe"]
+BINARIES = ["PsychoVault.exe", "pv-engine.exe", "pv-tests.exe"]
+REQUIRED = ["PsychoVault.exe"]
 
 
 def sha256(path: pathlib.Path) -> str:
@@ -102,7 +102,6 @@ def main() -> None:
         "assets": [
             asset("PsychoVault.exe", out / "PsychoVault.exe", "update"),
             asset("PsychoVault-windows-x64.zip", archive, "tools"),
-            asset("pv-renderer.exe", out / "pv-renderer.exe", "renderer"),
             asset("SHA256SUMS.txt", checksums, "checksums"),
         ],
     }

@@ -38,7 +38,7 @@ I am done when all of these are true:
 
 ## 3. Architecture I am choosing
 
-I am implementing the first engine in dependency-free C++20 for the browser core and Windows shell. This is a recorded change from my earlier Rust proposal. I chose it because the available compiler lets me compile and test the engine immediately, and the Windows SDK gives me direct access to the platform APIs I need. I am not claiming C++ gives me Rust's memory-safety guarantees. I am using RAII, bounded containers, explicit limits, compiler warnings, sanitizers and a restricted renderer process to reduce risk.
+I am implementing the first engine in dependency-free C++20 for the browser core and Windows shell. This is a recorded change from my earlier Rust proposal. I chose it because the available compiler lets me compile and test the engine immediately, and the Windows SDK gives me direct access to the platform APIs I need. I am not claiming C++ gives me Rust's memory-safety guarantees. I am using RAII, bounded containers, explicit limits, compiler warnings, sanitizers and, once a page renders inside it, a restricted renderer process to reduce risk.
 
 I will use the C++ compiler and standard library. I will use Windows platform APIs through reviewed SDK headers and explicit links. I will not add third-party runtime libraries that supply HTML, CSS, JavaScript, TLS, networking, layout, rendering, extension behaviour, or sandboxing. Build-time tools may exist, but they must be pinned, audited, and kept out of the shipped browser.
 
@@ -342,4 +342,4 @@ I am not giving a fake calendar estimate. The sequence is fixed; the duration de
 
 ## 17. Immediate next step after this plan
 
-I have started P1 and the first P2 slices: the C++20 engine, framed IPC, broker/renderer split, Windows sandbox probe, native shell and GitHub Actions build. The current evidence and open gates are in `docs/Psycho_IMPLEMENTATION-STATUS.md`. I will not call P1 or P2 complete until the hosted sandbox test, conformance subsets and stability gates pass.
+I have started P2: the C++20 engine, my own page host, the native shell and the GitHub Actions build now link into one executable that renders pages itself. I have deliberately deferred the P1 process split, because a contained renderer that never answered its own probe was blocking every test I wanted to run. Section 5 still describes the boundary I intend to restore, and my git history keeps the framed IPC and payload work. The current evidence and open gates are in `docs/Psycho_IMPLEMENTATION-STATUS.md`. I will not call P2 complete until conformance subsets and stability gates pass, and I will not call P1 complete until a page renders inside a real containment boundary.

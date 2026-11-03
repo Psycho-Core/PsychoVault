@@ -1,16 +1,15 @@
-// PsychoVault original Windows shell. Website code runs in pv-renderer, not
-// here.
+// PsychoVault original Windows shell. I render my own pages inside this one
+// executable: no second program, no sibling files, nothing to unpack.
 #ifndef _WIN32
 #error "The native shell targets Windows. Use pv-engine for headless engine tests."
 #endif
 #define NOMINMAX
 #include "../engine/Psycho_page.hpp"
 #include "../platform/Psycho_network.hpp"
-#include "../platform/Psycho_process.hpp"
+#include "../platform/Psycho_host.hpp"
 #include "../platform/Psycho_profile.hpp"
 #include "../platform/Psycho_extension.hpp"
 #include "../platform/Psycho_download.hpp"
-#include "../platform/Psycho_payload.hpp"
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -36,6 +35,9 @@ struct Update {
   uint64_t generation;
   Json frame;
   std::string error, url, title;
+  // I hand page images over directly instead of encoding them, because my page
+  // now lives in this same process.
+  std::shared_ptr<const Image> image;
 };
 struct Session;
 struct Tab {
@@ -59,8 +61,21 @@ struct Hit {
   std::string value;
 };
 static std::string pick_folder(HWND owner);
+// My extensions sit beside my executable, so I resolve that folder myself.
+static std::string executable_dir() {
+  wchar_t buffer[MAX_PATH * 2];
+  DWORD length = GetModuleFileNameW(nullptr, buffer, DWORD(std::size(buffer)));
+  if (length == 0 || size_t(length) >= std::size(buffer))
+    return std::string();
+  int size = WideCharToMultiByte(CP_UTF8, 0, buffer, int(length), nullptr, 0, nullptr, nullptr);
+  std::string path(size_t(size), 0);
+  if (size > 0)
+    WideCharToMultiByte(CP_UTF8, 0, buffer, int(length), path.data(), size, nullptr, nullptr);
+  return std::filesystem::path(path).parent_path().string();
+}
+// I run one page per worker thread. My page host, my engine and my fetches all
+// stay on that thread; the window thread only ever reads finished frames.
 struct Session {
-  Process process;
   std::thread worker;
   HWND hwnd = nullptr;
   int tab = 0;
@@ -72,12 +87,13 @@ struct Session {
   std::mutex mutex;
   std::condition_variable changed;
   std::deque<Json> outgoing;
+  std::atomic<bool> stopping{false};
+  std::atomic<bool> ready{false};
+  std::vector<std::string> diagnostics;
   ~Session() {
-    process.request_stop();
-    changed.notify_all();
-    // The worker captures a shared_ptr to this Session, so its Process handles
-    // stay alive until run() returns. When the last reference is released on
-    // the worker itself, detaching avoids a self-join; other owners may join.
+    request_stop();
+    // The worker captures a shared_ptr to this Session, so the worker might be
+    // the last owner. Detaching avoids a self-join; other owners may join.
     if (worker.joinable()) {
       if (worker.get_id() == std::this_thread::get_id())
         worker.detach();
@@ -85,9 +101,13 @@ struct Session {
         worker.join();
     }
   }
+  void request_stop() {
+    stopping = true;
+    changed.notify_all();
+  }
   void send(Json j) {
     std::lock_guard lock(mutex);
-    if (process.stopping())
+    if (stopping)
       return;
     auto tag = j.str("tag");
     if (tag == "resize" || tag == "scroll") {
@@ -102,123 +122,119 @@ struct Session {
     outgoing.push_back(std::move(j));
     changed.notify_all();
   }
-  std::optional<Json> take() {
+  void note(const std::string &subsystem, const std::string &message) {
     std::lock_guard lock(mutex);
-    if (outgoing.empty())
-      return std::nullopt;
-    Json j = std::move(outgoing.front());
-    outgoing.pop_front();
-    return j;
+    if (diagnostics.size() >= 8)
+      return;
+    diagnostics.push_back(subsystem + ": " + message.substr(0, 512));
   }
+  std::vector<std::string> recent_diagnostics() {
+    std::lock_guard lock(mutex);
+    return diagnostics;
+  }
+  void deliver(HostEvent event);
+  void apply(Host &host, const Json &command);
   void run();
 };
+// I build my updates field by field so adding a field can never leave one
+// uninitialised in a brace list.
+static Update *make_update(int tab, uint64_t generation) {
+  auto *update = new Update();
+  update->tab = tab;
+  update->generation = generation;
+  return update;
+}
 static void post_update(HWND hwnd, UINT message, Update *update) {
   if (!hwnd || !PostMessageW(hwnd, message, WPARAM(update->tab), LPARAM(update)))
     delete update;
 }
+void Session::deliver(HostEvent event) {
+  auto *update = make_update(tab, generation);
+  if (event.tag == "frame") {
+    update->frame = std::move(event.frame);
+    post_update(hwnd, WM_FRAME, update);
+  } else if (event.tag == "image") {
+    update->url = std::move(event.url);
+    update->image = std::move(event.image);
+    post_update(hwnd, WM_IMAGE, update);
+  } else if (event.tag == "navigate") {
+    update->url = std::move(event.url);
+    post_update(hwnd, WM_NAVIGATE, update);
+  } else if (event.tag == "dialog") {
+    update->url = std::move(event.text);
+    post_update(hwnd, WM_DIALOG, update);
+  } else {
+    delete update;
+    if (event.tag == "log")
+      note(event.subsystem, event.text);
+  }
+}
+void Session::apply(Host &host, const Json &command) {
+  auto tag = command.str("tag");
+  if (tag == "resize") {
+    width = command.num("width", width);
+    height = command.num("height", height);
+    host.resize(width, height);
+  } else if (tag == "scroll") {
+    host.scroll(command.num("y"));
+  } else if (tag == "click") {
+    host.click(command.num("x"), command.num("y"));
+  } else if (tag == "key") {
+    host.key(command.str("key"), command.str("text"));
+  }
+}
 void Session::run() {
   auto fail = [&](const std::string &error) {
     start_error = error;
-    post_update(hwnd, WM_FRAME, new Update{tab, generation, Json(), error, {}, {}});
-    post_update(hwnd, WM_DONE, new Update{tab, generation, Json(), {}, {}, {}});
+    auto *update = make_update(tab, generation);
+    update->error = error;
+    post_update(hwnd, WM_FRAME, update);
+    post_update(hwnd, WM_DONE, make_update(tab, generation));
   };
-  std::string error;
-  std::string renderer_error;
-  auto renderer = renderer_executable(renderer_error);
-  if (renderer.empty()) {
-    fail(renderer_error);
-    return;
-  }
-  if (!process.start(renderer, "", true, error)) {
-    fail("Renderer sandbox failed: " + error);
-    return;
-  }
-  auto target = parse_url(url);
-  if (!target) {
+  if (!parse_url(url)) {
     fail("Invalid URL");
     return;
   }
-  Resource main = fetch_url(*target, policy);
-  if (process.stopping())
-    return;
-  if (!main.ok) {
-    fail(main.error.empty() ? "Navigation failed" : main.error);
+  // My page host fetches through the same policy my downloads and tabs use, and
+  // reports straight back to this thread.
+  Host host(
+      [this](const std::string &link) {
+        auto parsed = parse_url(link);
+        if (!parsed) {
+          Resource resource;
+          resource.url = link;
+          resource.ok = false;
+          resource.error = "Invalid resource URL";
+          return resource;
+        }
+        return fetch_url(*parsed, policy);
+      },
+      [this](HostEvent event) { deliver(std::move(event)); });
+  std::string error;
+  if (!host.load(url, error)) {
+    if (!stopping)
+      fail(error);
     return;
   }
-  Json load = Json::make_object();
-  load.set("tag", "load");
-  load.set("url", main.url);
-  load.set("width", width);
-  load.set("height", height);
-  load.set("mime", main.mime);
-  load.set("html", main.text);
-  if (!process.send(load, error)) {
-    fail(error);
-    return;
-  }
-  while (!process.stopping()) {
-    while (auto command = take()) {
-      if (process.stopping())
-        return;
-      if (!process.send(*command, error)) {
-        fail(error);
-        return;
-      }
+  ready = true;
+  std::unique_lock lock(mutex);
+  while (!stopping) {
+    while (!outgoing.empty() && !stopping) {
+      Json command = std::move(outgoing.front());
+      outgoing.pop_front();
+      lock.unlock();
+      apply(host, command);
+      lock.lock();
     }
-    auto message = process.receive(10);
-    if (process.stopping())
-      break;
-    if (!message) {
-      if (!process.alive()) {
-        auto code = process.exit_code();
-        fail("Renderer exited" + (code ? " (code " + std::to_string(*code) + ")" : "") +
-             (process.io_error().empty() ? "" : ": " + process.io_error()));
-        return;
-      }
+    lock.unlock();
+    bool worked = !stopping && host.pump();
+    lock.lock();
+    if (worked)
       continue;
-    }
-    auto tag = message->str("tag");
-    if (tag == "frame" || tag == "image") {
-      post_update(hwnd, tag == "frame" ? WM_FRAME : WM_IMAGE,
-                  new Update{tab, generation, std::move(*message), {}, {}, {}});
-    } else if (tag == "fetch") {
-      auto resource_url = parse_url(message->str("url"));
-      Resource r;
-      if (resource_url)
-        r = fetch_url(*resource_url);
-      else {
-        r.url = message->str("url");
-        r.ok = false;
-        r.error = "Invalid resource URL";
-      }
-      if (process.stopping())
-        return;
-      Json j = Json::make_object();
-      j.set("tag", "resource");
-      j.set("url", r.url);
-      j.set("ok", r.ok);
-      j.set("status", r.status);
-      j.set("mime", r.mime);
-      j.set("error", r.error);
-      if (!r.bytes.empty())
-        j.set("base64", base64_encode(r.bytes));
-      else
-        j.set("text", r.text);
-      if (!process.send(j, error)) {
-        fail(error);
-        return;
-      }
-    } else if (tag == "navigate" || tag == "dialog") {
-      post_update(
-          hwnd, tag == "navigate" ? WM_NAVIGATE : WM_DIALOG,
-          new Update{
-              tab, generation, Json(), {}, message->str(tag == "navigate" ? "url" : "text"), {}});
-    } else if (tag == "fatal") {
-      fail(message->str("message"));
-      return;
-    }
+    changed.wait_for(lock, std::chrono::milliseconds(16),
+                     [this] { return stopping.load() || !outgoing.empty(); });
   }
-  post_update(hwnd, WM_DONE, new Update{tab, generation, Json(), {}, {}, {}});
+  post_update(hwnd, WM_DONE, make_update(tab, generation));
 }
 struct Browser {
   HWND hwnd = nullptr;
@@ -371,7 +387,7 @@ struct Browser {
     }
     for (auto &tab : tabs)
       if (tab.session)
-        tab.session->process.request_stop();
+        tab.session->request_stop();
   }
   Tab &current() {
     return tabs[size_t(active)];
@@ -384,7 +400,7 @@ struct Browser {
   }
   void stop_session(Tab &tab) {
     if (tab.session) {
-      tab.session->process.request_stop();
+      tab.session->request_stop();
       tab.session.reset();
     }
   }
@@ -1461,20 +1477,13 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     std::unique_ptr<Update> up(reinterpret_cast<Update *>(lp));
     auto b = browser(hwnd);
     Tab *tab = b ? b->find_tab(int(wp)) : nullptr;
-    if (tab && up->generation == tab->generation) {
-      try {
-        Image image;
-        image.width = int(up->frame.num("width"));
-        image.height = int(up->frame.num("height"));
-        image.pixels = base64_decode(up->frame.str("base64"), kMaxIpcBytes);
-        if (image.valid() && tab->image_bytes + image.pixels.size() <= 128u * 1024u * 1024u) {
-          tab->image_bytes += image.pixels.size();
-          tab->images[up->frame.str("url")] = std::move(image);
-          if (tab == &b->current())
-            InvalidateRect(hwnd, nullptr, FALSE);
-        }
-      } catch (const std::exception &e) {
-        tab->error = std::string("Image transfer failed: ") + e.what();
+    // My page host already decoded this image in this process, so I only copy
+    // the pixels I have not shown yet.
+    if (tab && up->generation == tab->generation && up->image && up->image->valid()) {
+      const size_t bytes = up->image->pixels.size();
+      if (tab->image_bytes + bytes <= 128u * 1024u * 1024u) {
+        tab->image_bytes += bytes;
+        tab->images[up->url] = *up->image;
         if (tab == &b->current())
           InvalidateRect(hwnd, nullptr, FALSE);
       }
@@ -1522,7 +1531,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         InvalidateRect(hwnd, nullptr, FALSE);
     }
     // I finish as soon as my page is actually rendered, but I allow a slow
-    // unpack and sandbox start enough time before I call it a failure.
+    // first fetch enough time before I call it a failure.
     DWORD elapsed = b ? GetTickCount() - b->start_tick : 0;
     bool settled = b && b->current().frame.type == Json::Type::Object && !b->current().loading;
     if (b && b->smoke && (elapsed > 20000 || (settled && elapsed > 1500))) {
@@ -1531,7 +1540,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       bool web = starts(b->current().url, "http://") || starts(b->current().url, "https://");
       bool failed =
           web && (b->current().frame.type != Json::Type::Object || !b->current().error.empty() ||
-                  !b->current().session || !b->current().session->process.sandboxed() ||
+                  !b->current().session || !b->current().session->ready ||
                   (b->expect_image && b->current().images.empty()));
       if (failed) {
         // I record exactly why my smoke gate failed so CI shows a real reason
@@ -1541,23 +1550,18 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         why.set("error", b->current().error);
         why.set("hasFrame", b->current().frame.type == Json::Type::Object);
         why.set("hasSession", b->current().session != nullptr);
-        why.set("sandboxed", b->current().session && b->current().session->process.sandboxed());
+        why.set("pageReady", b->current().session && b->current().session->ready);
         why.set("imageCount", double(b->current().images.size()));
         why.set("expectImage", b->expect_image);
-        why.set("rendererEmbedded", renderer_is_embedded());
-        std::string renderer_error;
-        why.set("rendererPath", renderer_executable(renderer_error));
-        why.set("rendererError", renderer_error);
         why.set("sessionStartError",
                 b->current().session ? b->current().session->start_error : std::string());
-        why.set("processIoError", b->current().session
-                                      ? b->current().session->process.io_error()
-                                      : std::string());
         why.set("loading", b->current().loading);
         why.set("elapsedMs", double(GetTickCount() - b->start_tick));
         if (b->current().session) {
-          auto code = b->current().session->process.exit_code();
-          why.set("rendererExitCode", code ? double(*code) : -1.0);
+          Json notes = Json::make_array();
+          for (const auto &line : b->current().session->recent_diagnostics())
+            notes.array.push_back(Json(line));
+          why.set("diagnostics", std::move(notes));
         }
         auto report = b->capture_path.empty() ? std::string("smoke-failure.json")
                                              : b->capture_path + ".failure.json";
@@ -1592,85 +1596,10 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   return DefWindowProcW(hwnd, msg, wp, lp);
 }
 } // namespace pv
-static int run_sandbox_test(const std::string &report_path) {
-  using namespace pv;
-  std::filesystem::path sentinel;
-  Json result = Json::make_object();
-  bool ok = false;
-  try {
-    auto suffix = base64_encode(random_bytes(12));
-    for (char &c : suffix)
-      if (c == '+' || c == '/')
-        c = 'x';
-    sentinel = std::filesystem::temp_directory_path() /
-               ("psychovault-sandbox-sentinel-" + suffix + ".tmp");
-    std::string error;
-    if (!write_file_atomic(sentinel.string(), "broker-only sandbox sentinel\n", error))
-      throw std::runtime_error(error);
-    Process renderer;
-    // My sandbox gate must exercise the same renderer a real page uses, so it
-    // resolves my embedded payload too.
-    auto renderer_path = renderer_executable(error);
-    if (renderer_path.empty())
-      throw std::runtime_error(error);
-    bool started = renderer.start(renderer_path,
-                                  "--sandbox-probe \"" + sentinel.string() + "\"", true, error);
-    result.set("started", started);
-    result.set("startError", error);
-    if (started) {
-      // My renderer sends a boot marker first, so I read until the real report
-      // arrives rather than assuming the first frame is the answer.
-      std::optional<Json> report;
-      bool saw_boot = false;
-      for (int attempt = 0; attempt < 40; ++attempt) {
-        auto message = renderer.receive(500);
-        if (!message) {
-          if (renderer.exit_code())
-            break;
-          continue;
-        }
-        auto tag = message->str("tag", "");
-        if (tag == "boot") {
-          saw_boot = true;
-          continue;
-        }
-        if (tag == "sandbox") {
-          report = message;
-          break;
-        }
-      }
-      result.set("sawBoot", saw_boot);
-      result.set("sandboxed", renderer.sandboxed());
-      result.set("ioError", renderer.io_error());
-      auto exit = renderer.exit_code();
-      if (exit)
-        result.set("exitCode", double(*exit));
-      if (report) {
-        for (auto &entry : report->object)
-          result.set(entry.first, entry.second);
-        ok = renderer.sandboxed() && report->flag("appContainer") && report->flag("fileDenied") &&
-             report->flag("networkTested") && report->flag("networkDenied");
-      }
-      renderer.terminate();
-    }
-  } catch (const std::exception &e) {
-    result.set("exception", e.what());
-  }
-  if (!sentinel.empty()) {
-    std::error_code ignored;
-    std::filesystem::remove(sentinel, ignored);
-  }
-  result.set("ok", ok);
-  std::string error;
-  if (!report_path.empty() && !write_file_atomic(report_path, result.dump() + "\n", error))
-    return 1;
-  return ok ? 0 : 1;
-}
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
   using namespace pv;
   std::string capture, url = "psychovault://newtab", profile_dir;
-  bool smoke = false, private_mode = false, expect_image = false, sandbox_test = false;
-  std::string sandbox_report;
+  bool smoke = false, private_mode = false, expect_image = false;
   std::vector<std::string> args;
   int argc = 0;
   LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -1696,10 +1625,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
       profile_dir = args[++i];
     else if (args[i] == "--expect-image")
       expect_image = true;
-    else if (args[i] == "--sandbox-test")
-      sandbox_test = true;
-    else if (args[i] == "--sandbox-report" && i + 1 < args.size())
-      sandbox_report = args[++i];
     else if (starts(args[i], "--")) {
       // I refuse an option I do not understand. A silently ignored flag turns a
       // required gate into a pass that proves nothing.
@@ -1711,8 +1636,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
       return 2;
     }
   }
-  if (sandbox_test)
-    return run_sandbox_test(sandbox_report);
   WNDCLASSEXW wc{};
   wc.cbSize = sizeof(wc);
   wc.lpfnWndProc = wndproc;

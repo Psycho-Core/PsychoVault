@@ -3,6 +3,7 @@
 #include "../platform/Psycho_proxy.hpp"
 #include "../platform/Psycho_extension.hpp"
 #include "../platform/Psycho_download.hpp"
+#include "../platform/Psycho_host.hpp"
 #include "Psycho_image_fixtures.hpp"
 #include <filesystem>
 #include <cassert>
@@ -704,6 +705,198 @@ int main() {
     CHECK(js_eval("let {a}={a:4};a") == "4");
     CHECK(js_eval("const [a]=[6];a") == "6");
     CHECK(js_eval("function f(){return {x:3}}var {x}=f();x") == "3");
+  }
+  // My page host renders inside my own process. I check that it fetches what
+  // the page asks for, decodes images and reports frames without a renderer.
+  {
+    std::map<std::string, int> fetches;
+    std::vector<HostEvent> events;
+    Host::Fetcher fetcher = [&](const std::string &url) {
+      ++fetches[url];
+      Resource r;
+      r.url = url;
+      if (url == "https://example.test/") {
+        r.mime = "text/html";
+        r.text = "<!doctype html><html><head><title>Host</title></head><body>"
+                 "<h1>Hello host</h1><img src=\"/a.png\"><img src=\"/missing.png\">"
+                 "</body></html>";
+      } else if (url == "https://example.test/a.png") {
+        r.mime = "image/png";
+        r.bytes.assign(fixtures::rgb_fixed.begin(), fixtures::rgb_fixed.end());
+      } else {
+        r.ok = false;
+        r.status = 404;
+        r.error = "Not found";
+      }
+      return r;
+    };
+    Host host(fetcher, [&](HostEvent event) { events.push_back(std::move(event)); });
+    std::string error;
+    CHECK(host.load("https://example.test/", error));
+    CHECK(error.empty());
+    CHECK(host.loaded());
+    int frames = 0, images = 0;
+    int image_width = 0, image_height = 0;
+    std::string frame_title;
+    for (const auto &event : events) {
+      if (event.tag == "frame") {
+        ++frames;
+        frame_title = event.frame.str("title");
+        CHECK(event.frame.at("paint").type == Json::Type::Array);
+        CHECK(!event.frame.at("paint").array.empty());
+      }
+      if (event.tag == "image") {
+        ++images;
+        CHECK(event.image != nullptr);
+        if (event.image) {
+          image_width = event.image->width;
+          image_height = event.image->height;
+          CHECK(event.image->valid());
+        }
+      }
+    }
+    CHECK(frames == 1);
+    CHECK(images == 1);
+    CHECK(image_width == 2 && image_height == 1);
+    CHECK(frame_title == "Host");
+    // I ask for each subresource once, even the one that fails.
+    CHECK(fetches["https://example.test/"] == 1);
+    CHECK(fetches["https://example.test/a.png"] == 1);
+    CHECK(fetches["https://example.test/missing.png"] == 1);
+    // Nothing is due and nothing is pending, so my host idles instead of spinning.
+    CHECK(!host.pump());
+    CHECK(host.next_timer_delay() < 0);
+    // A resize reports a fresh frame.
+    events.clear();
+    host.resize(320, 200);
+    CHECK(events.size() == 1 && events[0].tag == "frame");
+    // Scrolling never runs past the top of the document.
+    events.clear();
+    host.scroll(-50);
+    CHECK(events.size() == 1 && events[0].frame.num("scroll") == 0);
+  }
+  // A redirect decides the base URL, so a relative link follows the final URL.
+  {
+    std::vector<HostEvent> events;
+    Host host(
+        [](const std::string &url) {
+          Resource r;
+          r.url = url;
+          r.mime = "text/html";
+          if (url == "https://example.test/old") {
+            r.url = "https://other.test/landing";
+            r.text = "<!doctype html><html><body style=\"margin:0\">"
+                     "<a href=\"child\" style=\"display:block;width:300px;height:60px\">child</a>"
+                     "</body></html>";
+          } else {
+            r.text = "<!doctype html><html><body>other</body></html>";
+          }
+          return r;
+        },
+        [&](HostEvent event) { events.push_back(std::move(event)); });
+    std::string error;
+    CHECK(host.load("https://example.test/old", error));
+    std::string page_url;
+    for (const auto &event : events)
+      if (event.tag == "frame")
+        page_url = event.frame.str("url");
+    CHECK(page_url == "https://other.test/landing");
+    events.clear();
+    host.click(20, 20);
+    bool followed = false;
+    for (const auto &event : events)
+      if (event.tag == "navigate" && event.url == "https://other.test/child")
+        followed = true;
+    CHECK(followed);
+  }
+  // I click a link and my host asks my shell to navigate.
+  {
+    std::vector<HostEvent> events;
+    Host host(
+        [](const std::string &url) {
+          Resource r;
+          r.url = url;
+          r.mime = "text/html";
+          r.text = "<!doctype html><html><body style=\"margin:0\">"
+                   "<a href=\"/next\" style=\"display:block;width:300px;height:60px\">next</a>"
+                   "</body></html>";
+          return r;
+        },
+        [&](HostEvent event) { events.push_back(std::move(event)); });
+    std::string error;
+    CHECK(host.load("https://example.test/", error));
+    events.clear();
+    host.click(20, 20);
+    bool navigated = false;
+    for (const auto &event : events)
+      if (event.tag == "navigate" && event.url == "https://example.test/next")
+        navigated = true;
+    CHECK(navigated);
+  }
+  // A timer that is due runs through pump and reports a new frame.
+  {
+    std::vector<HostEvent> events;
+    Host host(
+        [](const std::string &url) {
+          Resource r;
+          r.url = url;
+          r.mime = "text/html";
+          r.text = "<!doctype html><html><head><title>Before</title></head><body>"
+                   "<script>setTimeout(function(){document.title='After'},0)</script>"
+                   "</body></html>";
+          return r;
+        },
+        [&](HostEvent event) { events.push_back(std::move(event)); });
+    std::string error;
+    CHECK(host.load("https://example.test/", error));
+    CHECK(host.pump());
+    std::string title;
+    for (const auto &event : events)
+      if (event.tag == "frame")
+        title = event.frame.str("title");
+    CHECK(title == "After");
+  }
+  // A failed navigation is an error I can show, not a blank window.
+  {
+    bool reported = false;
+    Host host(
+        [](const std::string &url) {
+          Resource r;
+          r.url = url;
+          r.ok = false;
+          r.status = 404;
+          r.error = "Not found";
+          return r;
+        },
+        [&](HostEvent) { reported = true; });
+    std::string error;
+    CHECK(!host.load("https://example.test/missing", error));
+    CHECK(error == "Not found");
+    CHECK(!host.loaded());
+    CHECK(!reported);
+  }
+  // A fetcher that throws cannot take my browser down with it.
+  {
+    std::vector<HostEvent> events;
+    Host host(
+        [](const std::string &url) -> Resource {
+          if (url == "https://example.test/") {
+            Resource r;
+            r.url = url;
+            r.mime = "text/html";
+            r.text = "<!doctype html><html><body><img src=\"/boom.png\"></body></html>";
+            return r;
+          }
+          throw std::runtime_error("socket exploded");
+        },
+        [&](HostEvent event) { events.push_back(std::move(event)); });
+    std::string error;
+    CHECK(host.load("https://example.test/", error));
+    bool frame = false;
+    for (const auto &event : events)
+      if (event.tag == "frame")
+        frame = true;
+    CHECK(frame);
   }
   std::cout << passed << " engine checks passed\n";
   return 0;

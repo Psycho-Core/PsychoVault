@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
-"""I build PsychoVault with the platform compiler and no browser dependencies."""
+"""I build PsychoVault with the platform compiler and no browser dependencies.
+
+My engine, my page host and my shell all link into one executable. There is no
+renderer process, no embedded payload and no sibling file: one PsychoVault.exe
+loads a page and draws it.
+"""
 from __future__ import annotations
 import argparse, os, pathlib, shutil, subprocess, sys
 ROOT=pathlib.Path(__file__).resolve().parents[1]
-ENGINE=["engine/Psycho_base.cpp","engine/Psycho_dom.cpp","engine/Psycho_css.cpp","engine/Psycho_js_parser.cpp","engine/Psycho_js_runtime.cpp","engine/Psycho_raster.cpp","engine/Psycho_image.cpp","engine/Psycho_layout.cpp","engine/Psycho_page.cpp"]
-PLATFORM=["platform/Psycho_process.cpp","platform/Psycho_network.cpp","platform/Psycho_profile.cpp",
-          "platform/Psycho_proxy.cpp","platform/Psycho_extension.cpp","platform/Psycho_download.cpp",
-          "platform/Psycho_payload.cpp","platform/Psycho_ipc.cpp"]
+ENGINE=["engine/Psycho_base.cpp","engine/Psycho_dom.cpp","engine/Psycho_css.cpp","engine/Psycho_js_parser.cpp",
+        "engine/Psycho_js_runtime.cpp","engine/Psycho_raster.cpp","engine/Psycho_image.cpp",
+        "engine/Psycho_layout.cpp","engine/Psycho_page.cpp"]
+PLATFORM=["platform/Psycho_host.cpp","platform/Psycho_network.cpp","platform/Psycho_profile.cpp",
+          "platform/Psycho_proxy.cpp","platform/Psycho_extension.cpp","platform/Psycho_download.cpp"]
 def run(cmd,env=None):
     print("+",subprocess.list2cmdline([str(x) for x in cmd]),flush=True)
     subprocess.run([str(x) for x in cmd],cwd=ROOT,env=env,check=True)
@@ -43,16 +49,15 @@ def main():
     if compiler=="auto":compiler="msvc" if windows else "gcc"
     env=msvc_env() if compiler=="msvc" else os.environ.copy()
     cxx="cl" if compiler=="msvc" else os.environ.get("CXX","g++")
-    def target(name,sources,libs=(),subsystem=None,entry=None,resource=None):
+    def target(name,sources,libs=(),subsystem=None,entry=None):
         obj=out/"obj"/name;obj.parent.mkdir(parents=True,exist_ok=True);obj.mkdir(exist_ok=True)
         if compiler=="msvc":
             cmd=[cxx,"/nologo","/std:c++20","/EHsc","/O2","/MT","/W3","/WX","/permissive-","/DUNICODE","/D_UNICODE","/D_CRT_SECURE_NO_WARNINGS","/sdl","/GS","/guard:cf","/I"+str(ROOT),"/Fo"+str(obj)+os.sep]
             cmd+= [str(ROOT/s) for s in sources]
             cmd+=["/link","/DYNAMICBASE","/NXCOMPAT","/HIGHENTROPYVA","/INCREMENTAL:NO"]
-            if subsystem:cmd+=["/SUBSYSTEM:"+subsystem]
-            if entry:cmd+=["/ENTRY:"+entry]
+            if subsystem:cmd+=[f"/SUBSYSTEM:"+subsystem]
+            if entry:cmd+=[f"/ENTRY:"+entry]
             cmd+= [l+".lib" for l in libs]
-            if resource:cmd+=[str(resource)]
             cmd+=["/OUT:"+str(out/(name+".exe"))]
         else:
             cmd=[cxx,"-std=c++20","-O2","-g","-Wall","-Wextra","-Werror","-I"+str(ROOT)]
@@ -64,24 +69,10 @@ def main():
     winlibs=["kernel32","user32","gdi32","advapi32","userenv","bcrypt","winhttp","shell32","ole32","dwmapi","ws2_32"]
     target("pv-engine",ENGINE+["tools/Psycho_engine_cli.cpp"],winlibs if windows else [])
     target("pv-tests",ENGINE+PLATFORM+["tests/Psycho_test_main.cpp"],winlibs if windows else [])
-    # My renderer runs inside an AppContainer, so it imports only what it calls.
-    # It must not import user32: user32 initialisation is what fails
-    # with 0xC0000142 in a container. It needs gdi32 only to measure and draw text.
-    renderer_libs=["kernel32","advapi32","ws2_32","bcrypt","gdi32"] if windows else []
-    target("pv-renderer",ENGINE+["platform/Psycho_ipc.cpp","tools/Psycho_renderer_main.cpp"],renderer_libs,"WINDOWS" if windows else None,"mainCRTStartup" if windows else None)
     if windows:
-        # I embed my renderer inside PsychoVault.exe so one file is enough to
-        # browse. I compile the resource with the SDK tool, then link it in.
-        payload_rc=out/"Psycho_payload.rc"
-        payload_res=out/"Psycho_payload.res"
-        renderer_path=(out/"pv-renderer.exe").resolve()
-        payload_rc.write_text('101 RCDATA "'+str(renderer_path).replace(chr(92),"/")+'"'+chr(10),encoding="utf-8")
-        rc=shutil.which("rc",path=env.get("PATH"))
-        if rc is None:raise RuntimeError("rc.exe not found; I need the Windows SDK to embed my renderer")
-        run([rc,"/nologo","/fo",str(payload_res),str(payload_rc)],env)
-        target("PsychoVault",ENGINE+PLATFORM+["shell/Psycho_win_main.cpp"],winlibs,"WINDOWS",None,payload_res)
-        target("pv-sandbox-test",ENGINE+["platform/Psycho_process.cpp","platform/Psycho_ipc.cpp","tools/Psycho_sandbox_test.cpp"],winlibs)
-        target("pv-sandbox-minimal",["tools/Psycho_sandbox_minimal.cpp"],["kernel32","advapi32","ws2_32"],"WINDOWS","mainCRTStartup")
+        # My browser is one file because my page host and my engine are linked
+        # straight into it. Nothing is unpacked and nothing sits beside it.
+        target("PsychoVault",ENGINE+PLATFORM+["shell/Psycho_win_main.cpp"],winlibs,"WINDOWS")
     print("Built",out)
 if __name__=="__main__":
     try:main()
