@@ -166,10 +166,9 @@ void Canvas::text(double x, double y, std::string_view text, double size, uint32
   }
   std::memset(bits, 0, size_t(tw) * th * 4);
   HGDIOBJ oldbmp = SelectObject(dc, bmp);
-  HFONT font =
-      CreateFontW(-int(size), 0, 0, 0, bold ? FW_BOLD : FW_NORMAL, FALSE, FALSE, FALSE,
-                  DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                  DEFAULT_PITCH, std::wstring(family.begin(), family.end()).c_str());
+  HFONT font = CreateFontW(-int(size), 0, 0, 0, bold ? FW_BOLD : FW_NORMAL, FALSE, FALSE, FALSE,
+                           DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                           CLEARTYPE_QUALITY, DEFAULT_PITCH, wide_text(family).c_str());
   HGDIOBJ oldfont = SelectObject(dc, font);
   SetBkMode(dc, TRANSPARENT);
   SetTextColor(dc, RGB(255, 255, 255));

@@ -225,7 +225,7 @@ struct Browser {
         auto tag = msg->str("tag");
         if (tag == "frame") {
           auto *up = new Update{s->tab, s->generation, *msg, {}, {}, {}};
-          PostMessageW(hwnd, WM_FRAME, 0, reinterpret_cast<LPARAM>(up));
+          PostMessageW(s->hwnd, WM_FRAME, 0, reinterpret_cast<LPARAM>(up));
         } else if (tag == "fetch") {
           Resource r = fetch_url(*parse_url(msg->str("url")));
           if (s->stop)
@@ -241,10 +241,10 @@ struct Browser {
           s->send(j);
         } else if (tag == "navigate") {
           auto *up = new Update{s->tab, s->generation, Json(), {}, msg->str("url"), {}};
-          PostMessageW(hwnd, WM_NAVIGATE, 0, reinterpret_cast<LPARAM>(up));
+          PostMessageW(s->hwnd, WM_NAVIGATE, 0, reinterpret_cast<LPARAM>(up));
         } else if (tag == "dialog") {
           auto *up = new Update{s->tab, s->generation, Json(), {}, msg->str("text"), {}};
-          PostMessageW(hwnd, WM_DIALOG, 0, reinterpret_cast<LPARAM>(up));
+          PostMessageW(s->hwnd, WM_DIALOG, 0, reinterpret_cast<LPARAM>(up));
         } else if (tag == "fatal") {
           {
             auto *up = new Update{s->tab, s->generation, Json(), msg->str("message"), {}, {}};
@@ -253,7 +253,7 @@ struct Browser {
           break;
         }
       }
-      PostMessageW(hwnd, WM_DONE, s->tab, s->generation);
+      PostMessageW(s->hwnd, WM_DONE, s->tab, s->generation);
     });
     status = "Loading " + target;
     save_session();
