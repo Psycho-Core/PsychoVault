@@ -2,7 +2,7 @@
 
 I did this research before writing the build plan. I wanted to know what it actually takes to replace the old application with my own browser, keep my interface and features, and make Proton VPN work inside it. I am not treating a specification, a manifest, or a successful compile as proof that the browser works.
 
-Research date: 2 November 2026.
+Research date: 2 November 2026. Implementation note: I later chose dependency-free C++20 for the first engine so I could compile and test immediately with the available toolchain. The Rust findings below remain part of the research record, not a hidden dependency.
 
 ## 1. What I checked
 
