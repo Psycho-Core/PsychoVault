@@ -504,32 +504,105 @@ Value Runtime::assign_identifier(Env &env, const std::string &name, const Value 
 }
 // I expand a spread operand into individual values. A string spreads by code
 // point, an array by index, and anything else is a TypeError like the spec says.
-static void append_spread(Values &out, const Value &source) {
-  if (source.type == Value::Type::String) {
-    for (auto cp : utf8_decode(source.string)) {
+static void append_spread(Runtime &runtime, Values &out, const Value &source) {
+  Values items;
+  if (!runtime.iterate(source, items))
+    throw JsError{Value("TypeError: value is not iterable")};
+  for (auto &item : items) {
+    out.push_back(item);
+    if (out.size() > 100000)
+      throw JsError{Value("RangeError: spread size limit")};
+  }
+}
+bool Runtime::iterate(const Value &value, Values &out, size_t limit) {
+  if (value.type == Value::Type::String) {
+    for (auto cp : utf8_decode(value.string)) {
+      if (out.size() >= limit)
+        break;
       out.push_back(Value(utf8_encode(cp)));
-      if (out.size() > 100000)
-        throw JsError{Value("RangeError: spread size limit")};
     }
-    return;
+    return true;
   }
-  if (source.type == Value::Type::Object && source.object &&
-      source.object->kind == Object::Kind::Array) {
-    size_t n = size_t(std::max(0.0, source.object->properties["length"].to_number()));
-    for (size_t i = 0; i < n; ++i) {
-      auto it = source.object->properties.find(std::to_string(i));
-      out.push_back(it == source.object->properties.end() ? Value() : it->second);
-      if (out.size() > 100000)
-        throw JsError{Value("RangeError: spread size limit")};
+  if (value.type != Value::Type::Object || !value.object)
+    return false;
+  Object *o = value.object;
+  if (o->kind == Object::Kind::Array) {
+    size_t n = size_t(std::max(0.0, o->properties["length"].to_number()));
+    for (size_t i = 0; i < n && out.size() < limit; ++i) {
+      auto it = o->properties.find(std::to_string(i));
+      out.push_back(it == o->properties.end() ? Value() : it->second);
     }
-    return;
+    return true;
   }
-  throw JsError{Value("TypeError: value is not iterable")};
+  auto values = o->properties.find("__values__");
+  if (values != o->properties.end() && values->second.type == Value::Type::Object &&
+      values->second.object) {
+    Object *list = values->second.object;
+    size_t n = size_t(std::max(0.0, list->properties["length"].to_number()));
+    for (size_t i = 0; i < n && out.size() < limit; ++i) {
+      auto it = list->properties.find(std::to_string(i));
+      if (it != list->properties.end())
+        out.push_back(it->second);
+    }
+    return true;
+  }
+  auto order = o->properties.find("__order__"), store = o->properties.find("__entries__");
+  if (order != o->properties.end() && store != o->properties.end() &&
+      order->second.type == Value::Type::Object && store->second.type == Value::Type::Object) {
+    Object *keys = order->second.object;
+    size_t n = size_t(std::max(0.0, keys->properties["length"].to_number()));
+    for (size_t i = 0; i < n && out.size() < limit; ++i) {
+      auto k = keys->properties.find(std::to_string(i));
+      if (k == keys->properties.end())
+        continue;
+      auto found = store->second.object->properties.find(k->second.to_string());
+      out.push_back(make_array(
+          {k->second, found == store->second.object->properties.end() ? Value() : found->second}));
+    }
+    return true;
+  }
+  auto custom = o->properties.find("@@iterator");
+  if (custom != o->properties.end() && callable(custom->second)) {
+    Values none;
+    Value iterator = call(custom->second, none, value);
+    while (out.size() < limit) {
+      if (iterator.type != Value::Type::Object || !iterator.object)
+        break;
+      Value next = get_member(iterator, "next");
+      if (!callable(next))
+        break;
+      Values none_args;
+      Value step = call(next, none_args, iterator);
+      if (get_member(step, "done").truthy())
+        break;
+      out.push_back(get_member(step, "value"));
+    }
+    return true;
+  }
+  return false;
 }
 Value Runtime::get_member(const Value &base, const std::string &key) {
   if (base.type == Value::Type::Undefined || base.type == Value::Type::Null)
     throw JsError{Value("TypeError: cannot read property " + key)};
   if (base.type == Value::Type::Object && base.object) {
+    // Spread and for..of ask for this, so every collection I own answers it.
+    if (key == "@@iterator" && !base.object->properties.count("@@iterator")) {
+      Value self = base;
+      Values items;
+      if (!iterate(self, items))
+        return Value();
+      auto snapshot = std::make_shared<Values>(std::move(items));
+      auto index = std::make_shared<size_t>(0);
+      Value iterator = make_object();
+      iterator.object->properties["next"] = make_native([this, snapshot, index](Values &) {
+        Value result = make_object();
+        bool done = *index >= snapshot->size();
+        result.object->properties["done"] = Value(done);
+        result.object->properties["value"] = done ? Value() : (*snapshot)[(*index)++];
+        return result;
+      });
+      return iterator;
+    }
     auto accessor = base.object->properties.find("get:" + key);
     if (accessor != base.object->properties.end()) {
       Values none;
@@ -553,7 +626,7 @@ Value Runtime::get_member(const Value &base, const std::string &key) {
           Value receiver = a.empty() ? Value() : a[0];
           Values rest;
           if (a.size() > 1)
-            append_spread(rest, a[1]);
+            append_spread(r, rest, a[1]);
           return r.call(fn, rest, receiver);
         });
       return make_native([&r, fn](Values &a) {
@@ -638,11 +711,33 @@ Value Runtime::get_member(const Value &base, const std::string &key) {
         return Value(out);
       });
     if (key == "split")
-      return make_native(
-          [this, s](Values &a) { return string_split(s, a.empty() ? Value() : a[0]); });
+      return make_native([this, s](Values &a) {
+        return string_split(s, a.empty() ? Value() : a[0],
+                            a.size() > 1 ? a[1].to_number() : 4294967295.0);
+      });
     if (key == "match")
       return make_native(
           [this, s](Values &a) { return string_match(s, a.empty() ? Value() : a[0]); });
+    if (key == "matchAll")
+      return make_native([this, s](Values &a) {
+        Value pattern = a.empty() ? Value() : a[0];
+        if (!(pattern.type == Value::Type::Object && pattern.object &&
+              pattern.object->host_type == "RegExp"))
+          throw JsError{Value("TypeError: matchAll needs a pattern")};
+        std::string flags = pattern.object->properties["flags"].to_string();
+        if (flags.find('g') == std::string::npos)
+          flags += 'g';
+        // I match against a fresh copy so the caller's lastIndex is untouched.
+        Value copy = make_regex(pattern.object->properties["source"].to_string(), flags);
+        Values out;
+        while (out.size() < 10000) {
+          Value found = regex_exec(copy, Value(s));
+          if (found.type == Value::Type::Null)
+            break;
+          out.push_back(found);
+        }
+        return make_array(out);
+      });
     if (key == "search")
       return make_native(
           [this, s](Values &a) { return string_search(s, a.empty() ? Value() : a[0]); });
@@ -928,6 +1023,35 @@ Value Runtime::get_member(const Value &base, const std::string &key) {
         if (key == "every")
           return Value(every);
         return Value();
+      });
+    if (key == "at")
+      return make_native([arr](Values &a) {
+        double n = a.empty() ? 0 : a[0].to_number();
+        double length = arr.object->properties["length"].to_number();
+        if (n < 0)
+          n += length;
+        if (n < 0 || n >= length)
+          return Value();
+        return arr.object->properties[std::to_string(int(n))];
+      });
+    if (key == "flat")
+      return make_native([&r, arr](Values &a) {
+        int depth = a.empty() ? 1 : int(std::clamp(a[0].to_number(), 0.0, 32.0));
+        Values out;
+        std::function<void(const Value &, int)> walk = [&](const Value &value, int left) {
+          if (value.type == Value::Type::Object && value.object &&
+              value.object->kind == Object::Kind::Array && left > 0) {
+            double length = value.object->properties["length"].to_number();
+            for (int i = 0; i < int(length); ++i) {
+              auto it = value.object->properties.find(std::to_string(i));
+              walk(it == value.object->properties.end() ? Value() : it->second, left - 1);
+            }
+            return;
+          }
+          out.push_back(value);
+        };
+        walk(arr, depth);
+        return r.make_array(out);
       });
     if (key == "sort")
       return make_native([&r, arr](Values &a) {
@@ -1226,10 +1350,9 @@ Runtime::Flow Runtime::execute(const Stmt &s, Env &env, Value this_value) {
   case Stmt::Kind::ForIn: {
     Value iterable = evaluate(*s.condition, env, this_value);
     Values keys;
-    if (s.text == "of" && iterable.type == Value::Type::String) {
-      // I iterate a string by code point, not by byte.
-      for (auto cp : utf8_decode(iterable.string))
-        keys.push_back(Value(utf8_encode(cp)));
+    if (s.text == "of") {
+      if (!iterate(iterable, keys))
+        throw JsError{Value("TypeError: value is not iterable")};
     } else if (iterable.type == Value::Type::Object && iterable.object) {
       if (iterable.object->kind == Object::Kind::Array) {
         size_t n = size_t(iterable.object->properties["length"].to_number());
@@ -1241,10 +1364,7 @@ Runtime::Flow Runtime::execute(const Stmt &s, Env &env, Value this_value) {
           keys.push_back(s.text == "of" ? p.second : Value(p.first));
     }
     for (auto &v : keys) {
-      if (s.text == "of")
-        assign_identifier(env, s.name, v);
-      else
-        assign_identifier(env, s.name, v);
+      assign_identifier(env, s.name, v);
       Flow f = execute_block(s.body, env, this_value);
       if (f.kind == Flow::Kind::Break)
         break;
@@ -1308,7 +1428,7 @@ Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
     for (auto &item : e.items) {
       if (item->kind == Expr::Kind::Unary && item->text == "spread") {
         Value source = evaluate(*item->left, env, this_value);
-        append_spread(vs, source);
+        append_spread(*this, vs, source);
       } else
         vs.push_back(evaluate(*item, env, this_value));
     }
@@ -1432,6 +1552,28 @@ Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
                : a;
   }
   case Expr::Kind::Assign: {
+    // A logical assignment only touches its right side when it has to.
+    if (e.text == "??" || e.text == "&&" || e.text == "||") {
+      Value old = e.left->kind == Expr::Kind::Identifier
+                      ? evaluate(*e.left, env, this_value)
+                      : get_member(evaluate(*e.left->left, env, this_value),
+                                   e.left->computed ? evaluate(*e.left->right, env, this_value).to_string()
+                                                    : e.left->text);
+      bool take = e.text == "??" ? (old.type == Value::Type::Null || old.type == Value::Type::Undefined)
+                 : e.text == "&&" ? old.truthy()
+                                  : !old.truthy();
+      if (!take)
+        return old;
+      Value next = evaluate(*e.right, env, this_value);
+      if (e.left->kind == Expr::Kind::Identifier)
+        assign_identifier(env, e.left->text, next);
+      else
+        set_member(evaluate(*e.left->left, env, this_value),
+                   e.left->computed ? evaluate(*e.left->right, env, this_value).to_string()
+                                    : e.left->text,
+                   next);
+      return next;
+    }
     Value v = evaluate(*e.right, env, this_value);
     if (e.text != "=") {
       Value old;
@@ -1506,7 +1648,7 @@ Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
     for (auto &a : e.items) {
       if (a->kind == Expr::Kind::Unary && a->text == "spread") {
         Value source = evaluate(*a->left, env, this_value);
-        append_spread(args, source);
+        append_spread(*this, args, source);
       } else
         args.push_back(evaluate(*a, env, this_value));
     }
@@ -1677,7 +1819,10 @@ Value Runtime::string_search(const std::string &subject, const Value &pattern) {
   return Value(double(result.groups[0].begin));
 }
 
-Value Runtime::string_split(const std::string &subject, const Value &separator) {
+Value Runtime::string_split(const std::string &subject, const Value &separator, double limit) {
+  size_t stop = limit >= 4294967295.0 ? size_t(4294967295) : size_t(std::max(0.0, limit));
+  if (stop == 0)
+    return make_array({});
   if (separator.type == Value::Type::Object && separator.object &&
       separator.object->host_type == "RegExp") {
     auto compiled = std::static_pointer_cast<Regex>(separator.object->internal);
@@ -1700,11 +1845,16 @@ Value Runtime::string_split(const std::string &subject, const Value &separator) 
             continue;
           }
         }
+        if (out.size() >= stop)
+          return make_array(out);
         out.push_back(Value(slice_codepoints(cps, position, begin)));
-        for (size_t g = 1; g < result.groups.size(); ++g)
+        for (size_t g = 1; g < result.groups.size(); ++g) {
+          if (out.size() >= stop)
+            return make_array(out);
           out.push_back(result.groups[g].matched
                             ? Value(slice_codepoints(cps, result.groups[g].begin, result.groups[g].end))
                             : Value());
+        }
         position = end;
         scan = end == begin ? end + 1 : end;
         if (out.size() > 100000)
@@ -1713,7 +1863,8 @@ Value Runtime::string_split(const std::string &subject, const Value &separator) 
     } catch (const std::exception &e) {
       throw JsError{Value(std::string("RegExp: ") + e.what())};
     }
-    out.push_back(Value(slice_codepoints(cps, position, cps.size())));
+    if (out.size() < stop)
+      out.push_back(Value(slice_codepoints(cps, position, cps.size())));
     return make_array(out);
   }
   Values out;
@@ -1721,15 +1872,18 @@ Value Runtime::string_split(const std::string &subject, const Value &separator) 
     return make_array({Value(subject)});
   std::string sep = separator.to_string();
   if (sep.empty()) {
-    for (auto cp : utf8_decode(subject))
+    for (auto cp : utf8_decode(subject)) {
+      if (out.size() >= stop)
+        break;
       out.emplace_back(utf8_encode(cp));
+    }
     return make_array(out);
   }
   size_t position = 0;
   while (true) {
     size_t found = subject.find(sep, position);
     out.emplace_back(subject.substr(position, found == std::string::npos ? found : found - position));
-    if (found == std::string::npos)
+    if (found == std::string::npos || out.size() >= stop)
       break;
     position = found + sep.size();
     if (out.size() > 100000)
@@ -2176,7 +2330,7 @@ void Runtime::install_builtins() {
   });
   array.object->properties["from"] = make_native([this](Values &a) {
     Values out;
-    if (!a.empty()) append_spread(out, a[0]);
+    if (!a.empty()) append_spread(*this, out, a[0]);
     if (a.size() > 1 && a[1].type == Value::Type::Object &&
         a[1].object->kind == Object::Kind::Function)
       for (size_t i = 0; i < out.size(); ++i) {
@@ -2189,6 +2343,19 @@ void Runtime::install_builtins() {
   array.object->properties["of"] = make_native([this](Values &a) { return make_array(a); });
   g.properties["Array"] = array;
   // Map and Set keep insertion order because my object properties are ordered.
+  // My Symbol is a key factory: each call makes a distinct key string, and the
+  // well-known keys are fixed strings every object can answer.
+  Value symbol_ctor = make_native([this](Values &a) {
+    std::string description = a.empty() ? std::string() : a[0].to_string();
+    return Value("@@symbol:" + std::to_string(++symbol_counter_) + ":" + description);
+  });
+  symbol_ctor.object->properties["iterator"] = Value("@@iterator");
+  symbol_ctor.object->properties["asyncIterator"] = Value("@@asyncIterator");
+  symbol_ctor.object->properties["toStringTag"] = Value("@@toStringTag");
+  symbol_ctor.object->properties["for"] = make_native([](Values &a) {
+    return Value("@@registry:" + (a.empty() ? std::string() : a[0].to_string()));
+  });
+  g.properties["Symbol"] = symbol_ctor;
   g.properties["Map"] = make_native([this](Values &a) {
     Value self = make_object();
     Value store = make_object();
@@ -2274,10 +2441,10 @@ void Runtime::install_builtins() {
     });
     if (!a.empty()) {
       Values init;
-      append_spread(init, a[0]);
+      append_spread(*this, init, a[0]);
       for (auto &pair : init) {
         Values kv;
-        append_spread(kv, pair);
+        append_spread(*this, kv, pair);
         Values setargs{kv.empty() ? Value() : kv[0], kv.size() > 1 ? kv[1] : Value()};
         call(self.object->properties["set"], setargs, self);
       }
@@ -2302,7 +2469,7 @@ void Runtime::install_builtins() {
   g.properties["Set"] = make_native([this](Values &a) {
     Value self = make_object();
     Values init;
-    if (!a.empty()) append_spread(init, a[0]);
+    if (!a.empty()) append_spread(*this, init, a[0]);
     Values unique;
     for (auto &v : init) {
       bool found = false;
@@ -2405,6 +2572,21 @@ void Runtime::install_builtins() {
           out.push_back(make_array({Value(p.first), p.second}));
     return make_array(out);
   });
+  object.object->properties["fromEntries"] = make_native([this](Values &a) {
+    Value out = make_object();
+    if (a.empty())
+      return out;
+    Values pairs;
+    iterate(a[0], pairs);
+    for (auto &pair : pairs) {
+      if (pair.type != Value::Type::Object || !pair.object)
+        continue;
+      Value key = pair.object->properties["0"];
+      Value value = pair.object->properties["1"];
+      out.object->properties[key.to_string()] = value;
+    }
+    return out;
+  });
   object.object->properties["assign"] = make_native([](Values &a) {
     if (a.empty())
       return Value();
@@ -2452,6 +2634,25 @@ void Runtime::install_builtins() {
             Values(a.begin() + std::min(size_t(2), a.size()), a.end()), false};
     timers.push_back(t);
     return Value(t.id);
+  });
+  // A canvas animation asks for the next frame the same way it would anywhere
+  // else, so I schedule the callback on my own timer wheel.
+  g.properties["requestAnimationFrame"] = make_native([this](Values &a) {
+    if (a.empty() || a[0].type_of() != "function")
+      throw JsError{Value("TypeError: frame callback required")};
+    if (timers.size() >= 256)
+      throw std::runtime_error("timer limit");
+    double now = double(std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch())
+                            .count());
+    Timer t{next_timer++, now + 16, a[0], Values{Value(now)}, false};
+    timers.push_back(t);
+    return Value(t.id);
+  });
+  g.properties["cancelAnimationFrame"] = make_native([this](Values &a) {
+    double id = a.empty() ? 0 : a[0].to_number();
+    std::erase_if(timers, [id](const Timer &t) { return t.id == id; });
+    return Value();
   });
   g.properties["clearTimeout"] = make_native([this](Values &a) {
     double id = a.empty() ? 0 : a[0].to_number();
@@ -2538,7 +2739,7 @@ void Runtime::install_builtins() {
     Value result = make_promise();
     Values items;
     if (!a.empty())
-      append_spread(items, a[0]);
+      append_spread(*this, items, a[0]);
     auto collected = std::make_shared<Values>(items.size());
     auto remaining = std::make_shared<size_t>(items.size());
     auto failed = std::make_shared<bool>(false);
@@ -2576,7 +2777,7 @@ void Runtime::install_builtins() {
     Value result = make_promise();
     Values items;
     if (!a.empty())
-      append_spread(items, a[0]);
+      append_spread(*this, items, a[0]);
     auto collected = std::make_shared<Values>(items.size());
     auto remaining = std::make_shared<size_t>(items.size());
     Runtime *runtime = this;
@@ -2622,7 +2823,7 @@ void Runtime::install_builtins() {
     Value result = make_promise();
     Values items;
     if (!a.empty())
-      append_spread(items, a[0]);
+      append_spread(*this, items, a[0]);
     Runtime *runtime = this;
     for (const auto &item : items) {
       Value on_ok = make_native([runtime, result](Values &args) {
@@ -2637,6 +2838,39 @@ void Runtime::install_builtins() {
         runtime->promise_then(item, on_ok, on_err);
       else
         settle_promise(result.object, 1, item);
+    }
+    return result;
+  });
+  promise_ctor.object->properties["any"] = make_native([this](Values &a) {
+    Value result = make_promise();
+    Values items;
+    if (!a.empty())
+      append_spread(*this, items, a[0]);
+    auto reasons = std::make_shared<Values>();
+    auto remaining = std::make_shared<size_t>(items.size());
+    Runtime *runtime = this;
+    if (items.empty()) {
+      settle_promise(result.object, 2, Value("AggregateError: no promise was given"));
+      return result;
+    }
+    for (const auto &item : items) {
+      Value on_ok = make_native([runtime, result](Values &args) {
+        runtime->settle_promise(result.object, 1, args.empty() ? Value() : args[0]);
+        return Value();
+      });
+      Value on_err = make_native([runtime, result, reasons, remaining](Values &args) {
+        reasons->push_back(args.empty() ? Value() : args[0]);
+        if (--*remaining == 0 && result.object->promise_state == 0)
+          runtime->settle_promise(result.object, 2,
+                                  Value("AggregateError: every promise was rejected"));
+        return Value();
+      });
+      if (item.type == Value::Type::Object && item.object && item.object->host_type == "Promise")
+        runtime->promise_then(item, on_ok, on_err);
+      else {
+        settle_promise(result.object, 1, item);
+        return result;
+      }
     }
     return result;
   });

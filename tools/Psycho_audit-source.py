@@ -49,8 +49,10 @@ if release_path.exists():
           'tools/Psycho_verify_package.py' in release)
     check('I verify published assets after publishing','gh release view' in release)
     check('I mark the preview as a prerelease','--prerelease' in release)
-    check('release notes state YouTube and Netflix do not play','YouTube and Netflix do not play' in release)
-    check('release notes state Proton is not bundled','Proton VPN is not bundled' in release)
+    # My notes now live in my repo, so the workflow and the file must agree.
+    notes_text = (ROOT/'docs/Psycho_RELEASE-NOTES.md').read_text() if (ROOT/'docs/Psycho_RELEASE-NOTES.md').exists() else release
+    check('release notes state YouTube and Netflix do not play','YouTube and Netflix do not play' in notes_text)
+    check('release notes state Proton is not bundled','Proton VPN is not bundled' in notes_text)
 
 # My extension boundary must stay default-deny.
 extension=(ROOT/'platform/Psycho_extension.cpp').read_text()
@@ -113,6 +115,23 @@ check('my page installs fetch on my own fetcher','void Page::install_fetch()' in
 check('my fetch cannot bypass my network policy','fetcher(href)' in page_text)
 check('my await pump still lets due timers run','bool Page::pump_for_await()' in page_text)
 check('my page host gives my engine its own fetcher','page_->fetcher = [this]' in host_cpp)
+# My CSS and layout handle the boxes real pages are built from.
+css_text=(ROOT/'engine/Psycho_css.cpp').read_text()
+check('I parse positioning, offsets, flex, grid and transforms',
+      all(k in css_text for k in ('"position"','"flex-grow"','"grid-template-columns"','"transform"','"right"')))
+layout_text=(ROOT/'engine/Psycho_layout.cpp').read_text()
+check('my layout places an absolute box against its containing block','place_positioned(' in layout_text)
+check('my layout offsets a relative box without moving the flow','move_box(' in layout_text)
+check('my flexbox covers direction, wrapping, growth and alignment',
+      all(k in layout_text for k in ('flex_children','justify_content','align_items','flex_wrap')))
+check('my grid turns a track list into track widths','track_sizes(' in layout_text)
+check('my transforms move what a box painted','apply_transform(' in layout_text)
+check('a fixed box ignores the scroll position','if (!c.fixed)' in layout_text)
+check('my tests measure my layout cases','node_box(' in tests_text)
+# The step 2 audit fixes stay fixed.
+check('my iterator walk is shared by spread and for..of','bool Runtime::iterate(' in runtime_text)
+check('my fetch rejects only when no response arrived','bool received = res.status >= 100;' in page_text)
+check('my strings honour a split limit','size_t stop = limit >=' in runtime_text)
 check('my tests cover patterns, promises, async and fetch',
       all(k in tests_text for k in ('/ab+c/.test','Promise.all(','async function',"fetch('/api.json'")))
 for wf in ('.github/workflows/Psycho_owned-engine.yml','.github/workflows/Psycho_release.yml'):
@@ -144,6 +163,59 @@ for flag in ('--expect-image',):
     check('my shell parses '+flag, 'args[i] == "'+flag+'"' in shell_text)
 check('my shell refuses an option it does not understand',
       'I do not understand the option' in shell_text)
+
+# Step 4: my browsing state is mine, and it reaches the network the long way.
+cookie_text=(ROOT/'engine/Psycho_cookies.cpp').read_text()
+network_text=(ROOT/'platform/Psycho_network.cpp').read_text()
+storage_text=(ROOT/'engine/Psycho_storage.cpp').read_text()
+check('my cookie jar keeps HttpOnly away from a script',
+      'from_document' in cookie_text and 'cookie.http_only' in cookie_text)
+check('my cookie jar refuses a cookie for another domain','refused outright' in cookie_text)
+check('my cookie jar only sends a Secure cookie over https',
+      'cookie.secure && url.scheme != "https"' in cookie_text)
+check('my web storage enforces a quota','kQuota' in storage_text and 'return false' in storage_text)
+check('my page hands a form post to my host with a content type',
+      'post.content_type = "application/x-www-form-urlencoded"' in page_text)
+check('my host posts a form through my own network stack','options.method = "POST"' in shell_text)
+check('my network layer attaches my cookies to a request','L"Cookie: "' in network_text)
+check('my network layer keeps what a response set','set_from_header(url, header' in network_text)
+check('my find in page asks my engine to walk the painted text',
+      'find_marks' in shell_text and 'find_in_paint' in shell_text)
+check('my zoom scales the paint list and the clicks','/ current().zoom' in shell_text)
+check('my tests cover cookies, storage, history and a real form post',
+      all(k in tests_text for k in ('CookieJar jar;','Storage store;','history.pushState',
+                                    'page.posts.size()')))
+
+# Audit of steps 3, 4 and 5: each fix keeps a check so it cannot come back.
+layout_text=(ROOT/'engine/Psycho_layout.cpp').read_text()
+check('an absolute child measures against the padding box',
+      'Rect self{left + s.border[3]' in layout_text)
+check('my find walks the paint list in my engine', 'find_in_paint(' in layout_text)
+check('my shell highlights from that same walk', 'find_in_paint(' in shell_text)
+check('Max-Age beats Expires in either order', 'has_max_age' in cookie_text)
+check('a ticked box with no value sends on', 'value = "on"' in page_text)
+check('a multiple select sends every chosen option', 'bool multiple = has_attr(input, "multiple")' in page_text)
+canvas_text=(ROOT/'engine/Psycho_canvas.cpp').read_text()
+page_header=(ROOT/'engine/Psycho_page.hpp').read_text()
+check('my canvas keeps the text a script set', 'fill_style = value.to_string()' in page_text)
+check('my canvas returns the element that owns it', 'return node(canvas_node)' in page_text)
+check('my canvas honours a scaled drawImage', 'Point a = map(x, y), b = map(x + w, y + h);' in canvas_text)
+check('my canvas can draw a piece of an image', 'draw_image_rect' in canvas_text)
+check('my canvas can dash a stroke', 'set_line_dash' in canvas_text)
+check('a WebP tells me it cannot decode instead of going quiet',
+      'I cannot decode WebP yet' in page_text)
+check('my tests cover the step 3 to 5 audit', all(k in tests_text for k in (
+      'find_in_paint(paint, "hello")', 'decode_jpeg(bytes)', 'render_svg(',
+      'x.roundRect(10,10,20,10,3)', 'c=on')))
+check('my page header owns the canvas map', 'canvases_' in page_header)
+
+check('my release notes come from my repo, not a template',
+      'docs/Psycho_RELEASE-NOTES.md' in (ROOT/'.github/workflows/Psycho_release.yml').read_text())
+notes=(ROOT/'docs/Psycho_RELEASE-NOTES.md').read_text()
+check('my release notes say what I added', 'What I added in this build' in notes)
+check('my release notes state what I am not claiming', 'What I am not claiming' in notes
+      and 'WebP and progressive JPEG are not decoded' in notes)
+check('my release notes carry my version marker', '{{VERSION}}' in notes)
 
 print(f'\n{passed} passed, {len(fail)} failed')
 sys.exit(1 if fail else 0)

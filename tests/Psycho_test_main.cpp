@@ -18,6 +18,39 @@ static int passed = 0;
     }                                                                                              \
     ++passed;                                                                                      \
   } while (0)
+// I read back where a box ended up, which is how I check my layout maths.
+static Rect node_box(Page &page, const char *id, bool *fixed = nullptr) {
+  auto frame = page.render(800, 600, 0);
+  int node = page.doc.by_id(id);
+  // The fixed flag only exists on a paint command, so I read it from the paint
+  // list and the box itself from the layout report.
+  const Json *paint = frame.find("paint");
+  const Json *painted_box = nullptr;
+  if (paint) {
+    for (const auto &command : paint->array) {
+      if (int(command.num("node", -1)) == node && int(command.num("kind", -1)) == 0) {
+        if (fixed)
+          *fixed = command.flag("fixed");
+        painted_box = &command;
+        break;
+      }
+    }
+  }
+  const Json *boxes = frame.find("boxes");
+  if (boxes) {
+    for (const auto &entry : boxes->array) {
+      if (int(entry.num("node", -1)) == node)
+        return Rect{entry.num("x"), entry.num("y"), entry.num("w"), entry.num("h")};
+    }
+  }
+  if (painted_box)
+    return Rect{painted_box->num("x"), painted_box->num("y"), painted_box->num("w"),
+                painted_box->num("h")};
+  return Rect{0, 0, -1, -1};
+}
+static bool near(double a, double b) {
+  return std::abs(a - b) < 1.0;
+}
 static std::string js_eval(const std::string &s) {
   js::Runtime r;
   return r.run(s).to_string();
@@ -85,6 +118,13 @@ int main() {
   CHECK(js_eval("var re=/a/g;re.exec('aa');re.lastIndex") == "1");
   CHECK(js_eval("/(?<y>\\d{4})/.exec('in 2026')[1]") == "2026");
   CHECK(js_eval("(()=>{try{new RegExp('(');return 'no';}catch(e){return 'threw';}})()") == "threw");
+  CHECK(js_eval("var s=0;for(var v of new Set([1,2,3]))s+=v;s") == "6");
+  CHECK(js_eval("var s=0;for(var e of new Map([['a',1],['b',2]]))s+=e[1];s") == "3");
+  CHECK(js_eval("[...new Set([1,2,2])].join(',')") == "1,2");
+  CHECK(js_eval("typeof Symbol") == "function");
+  CHECK(js_eval("Array.from('abc').join('-')") == "a-b-c");
+  CHECK(js_eval("'a,b,c'.split(',',2).length") == "2");
+  CHECK(js_eval("var o={f:async function(){return 1;}};typeof o.f") == "function");
   // Promises: handlers are queued and run when the script finishes.
   {
     js::Runtime r;
@@ -111,6 +151,115 @@ int main() {
     }
     CHECK(bad);
   }
+  // Positioning, flex, grid and transforms, measured from my own paint list.
+  {
+    Page page;
+    page.load(*parse_url("https://layout.test/"),
+              "<!doctype html><style>body{margin:0}"
+              "#p{position:relative;width:400px;height:200px;margin:10px}"
+              "#a{position:absolute;top:10px;left:20px;width:50px;height:30px}"
+              "</style><div id=p><div id=a>x</div></div>");
+    Rect a = node_box(page, "a");
+    CHECK(near(a.x, 30) && near(a.y, 20) && near(a.w, 50) && near(a.h, 30));
+  }
+  {
+    Page page;
+    page.load(*parse_url("https://layout.test/"),
+              "<!doctype html><style>body{margin:0}"
+              "#r{position:relative;top:5px;left:7px;width:100px;height:20px}"
+              "</style><div id=r>rel</div>");
+    Rect r = node_box(page, "r");
+    CHECK(near(r.x, 7) && near(r.y, 5));
+  }
+  {
+    Page page;
+    page.load(*parse_url("https://layout.test/"),
+              "<!doctype html><style>body{margin:0}"
+              "#f{position:fixed;top:0;left:0;width:100px;height:20px;background:#123}"
+              "</style><div id=f>fixed</div>");
+    bool fixed = false;
+    Rect f = node_box(page, "f", &fixed);
+    CHECK(near(f.x, 0) && near(f.y, 0) && fixed);
+  }
+  {
+    Page page;
+    page.load(*parse_url("https://layout.test/"),
+              "<!doctype html><style>body{margin:0}"
+              "#f{display:flex;justify-content:center;width:300px;height:40px}"
+              "#a,#b{width:50px;height:20px}"
+              "</style><div id=f><div id=a>a</div><div id=b>b</div></div>");
+    Rect a = node_box(page, "a"), b = node_box(page, "b");
+    CHECK(near(a.x, 100) && near(b.x, 150));
+  }
+  {
+    Page page;
+    page.load(*parse_url("https://layout.test/"),
+              "<!doctype html><style>body{margin:0}"
+              "#f{display:flex;width:300px;height:40px}"
+              "#a{flex:1;height:20px}#b{flex:2;height:20px}"
+              "</style><div id=f><div id=a>a</div><div id=b>b</div></div>");
+    Rect a = node_box(page, "a"), b = node_box(page, "b");
+    CHECK(near(a.w, 100) && near(b.w, 200));
+  }
+  {
+    Page page;
+    page.load(*parse_url("https://layout.test/"),
+              "<!doctype html><style>body{margin:0}"
+              "#f{display:flex;align-items:center;height:100px;width:200px}"
+              "#a{width:40px;height:20px}"
+              "</style><div id=f><div id=a>a</div></div>");
+    Rect a = node_box(page, "a");
+    CHECK(near(a.y, 40));
+  }
+  {
+    // A flex row in normal flow starts below what came before it and takes the
+    // height of its items, which is where a page with a heading and a row goes
+    // wrong if the main and cross axes are mixed up.
+    Page page;
+    page.load(*parse_url("https://layout.test/"),
+              "<!doctype html><style>body{margin:0;font-size:20px;line-height:1}"
+              "#f{display:flex;gap:10px}"
+              "#a{width:100px;height:30px}#b{width:100px;height:50px}"
+              "#after{height:20px}"
+              "</style><p id=first>heading</p>"
+              "<div id=f><div id=a>a</div><div id=b>b</div></div>"
+              "<div id=after>after</div>");
+    Rect first = node_box(page, "first"), a = node_box(page, "a"), b = node_box(page, "b");
+    Rect f = node_box(page, "f"), after = node_box(page, "after");
+    CHECK(near(first.y, 20) && near(first.h, 20));
+    CHECK(near(a.y, 60) && near(b.y, 60));
+    CHECK(near(f.y, 60) && near(f.h, 50));
+    CHECK(near(after.y, 110));
+  }
+  {
+    Page page;
+    page.load(*parse_url("https://layout.test/"),
+              "<!doctype html><style>body{margin:0}"
+              "#f{display:flex;flex-direction:column;gap:10px;width:200px}"
+              "#a{height:20px}#b{height:30px}"
+              "</style><div id=f><div id=a>a</div><div id=b>b</div></div>");
+    Rect a = node_box(page, "a"), b = node_box(page, "b");
+    CHECK(near(a.y, 0) && near(b.y, 30));
+  }
+  {
+    Page page;
+    page.load(*parse_url("https://layout.test/"),
+              "<!doctype html><style>body{margin:0}"
+              "#g{display:grid;grid-template-columns:100px 1fr;gap:10px;width:310px}"
+              "#a,#b{height:20px}"
+              "</style><div id=g><div id=a>a</div><div id=b>b</div></div>");
+    Rect a = node_box(page, "a"), b = node_box(page, "b");
+    CHECK(near(a.w, 100) && near(b.x, 110) && near(b.w, 200));
+  }
+  {
+    Page page;
+    page.load(*parse_url("https://layout.test/"),
+              "<!doctype html><style>body{margin:0}"
+              "#t{transform:translate(15px,25px);width:100px;height:20px}"
+              "</style><div id=t>t</div>");
+    Rect t = node_box(page, "t");
+    CHECK(near(t.x, 15) && near(t.y, 25));
+  }
   // fetch() goes through my own network hook and resolves through promises.
   {
     Page page;
@@ -122,8 +271,16 @@ int main() {
         r.text = "{\"name\":\"vault\",\"items\":[1,2]}";
         return r;
       }
+      if (url == "https://local.test/offline") {
+        // No response at all: this is what a fetch promise rejects on.
+        r.status = 0;
+        r.ok = false;
+        r.error = "connection failed";
+        return r;
+      }
+      r.status = 404;
       r.ok = false;
-      r.error = "not found";
+      r.error = "HTTP 404";
       return r;
     };
     page.load(*parse_url("https://local.test/"),
@@ -132,15 +289,18 @@ int main() {
               ".then(function(j){document.title=j.name+j.items.length;});"
               "</script>");
     CHECK(page.title() == "vault2");
-    bool failed = false;
-    try {
-      page.load(*parse_url("https://local.test/"), "<!doctype html><script>fetch('/missing')"
-                                                   ".catch(function(e){document.title=e;})</script>");
-    } catch (std::exception &) {
-      failed = true;
-    }
-    CHECK(!failed);
-    CHECK(page.title().find("TypeError") != std::string::npos);
+    // An error status is still a response, so it resolves with ok false.
+    page.load(*parse_url("https://local.test/"),
+              "<!doctype html><title>before</title><script>fetch('/missing')"
+              ".then(function(r){document.title=(r.ok?'ok':'bad')+r.status;})"
+              ".catch(function(e){document.title='rejected';});</script>");
+    CHECK(page.title() == "bad404");
+    // A request that never got a response rejects.
+    page.load(*parse_url("https://local.test/"),
+              "<!doctype html><title>before</title><script>fetch('/offline')"
+              ".then(function(r){document.title='resolved';})"
+              ".catch(function(e){document.title='rejected:'+e;});</script>");
+    CHECK(page.title().rfind("rejected:", 0) == 0);
   }
   // await waits for a timer even though my engine runs one statement at a time.
   {
@@ -229,6 +389,229 @@ int main() {
   CHECK(!form.navigations.empty());
   if (!form.navigations.empty())
     CHECK(form.navigations[0].find("q=hello+world") != std::string::npos);
+  // Cookies: matching, scope, expiry and what a script may see.
+  {
+    CookieJar jar;
+    auto site = *parse_url("https://example.com/app/page");
+    jar.set_from_header(site, "sid=abc; Path=/; HttpOnly", 1000);
+    jar.set_from_header(site, "theme=dark; Max-Age=60", 1000);
+    auto header = jar.header_for(site, 1001);
+    CHECK(header.find("sid=abc") != std::string::npos &&
+          header.find("theme=dark") != std::string::npos);
+    auto visible = jar.document_string(site, 1001);
+    CHECK(visible.find("theme=dark") != std::string::npos &&
+          visible.find("sid=abc") == std::string::npos);
+    CHECK(jar.header_for(*parse_url("https://other.test/"), 1001).empty());
+    jar.set_from_header(*parse_url("https://example.com/"), "tls=1; Secure", 1000);
+    CHECK(jar.header_for(*parse_url("http://example.com/"), 1001).find("tls=1") ==
+          std::string::npos);
+    CHECK(jar.header_for(site, 2000).find("theme=dark") == std::string::npos);
+    jar.set_from_header(*parse_url("https://example.com/"), "wide=1; Domain=example.com", 1000);
+    CHECK(jar.header_for(*parse_url("https://cdn.example.com/x"), 1001).find("wide=1") !=
+          std::string::npos);
+    jar.set_from_header(*parse_url("https://example.com/"), "bad=1; Domain=elsewhere.test", 1000);
+    CHECK(jar.header_for(*parse_url("https://elsewhere.test/"), 1001).empty());
+    CHECK(jar.header_for(site, 1001, true, true).empty());
+    // A script cannot create an HttpOnly cookie, and a removal takes effect.
+    jar.set_from_document(site, "script=1; HttpOnly", 1000);
+    CHECK(jar.document_string(site, 1001).find("script=1") != std::string::npos);
+    jar.set_from_header(site, "sid=gone; Max-Age=0", 1000);
+    CHECK(jar.header_for(site, 1001).find("sid=gone") == std::string::npos);
+  }
+  {
+    Storage store;
+    std::string origin = "https://store.test";
+    CHECK(store.set(origin, "a", "1"));
+    CHECK(store.set(origin, "b", "2"));
+    CHECK(store.length(origin) == 2);
+    CHECK(store.key(origin, 1) == "b");
+    CHECK(store.get(origin, "a") == "1");
+    CHECK(store.remove(origin, "a") && store.length(origin) == 1);
+    CHECK(!store.set(origin, "big", std::string(Storage::kQuota, 'x')));
+    CHECK(store.set(origin, "b", "22") && store.get(origin, "b") == "22");
+  }
+  {
+    // Two tabs share local storage but never each other's session storage.
+    Storage shared;
+    Page one;
+    one.use_local_storage(&shared);
+    one.load(*parse_url("https://store.test/"),
+             "<script>localStorage.setItem('k','v');sessionStorage.setItem('s','1');</script>");
+    Page two;
+    two.use_local_storage(&shared);
+    two.load(*parse_url("https://store.test/"),
+             "<script>document.title = localStorage.getItem('k') + '/' + "
+             "sessionStorage.getItem('s');</script>");
+    CHECK(two.title() == "v/null");
+  }
+  {
+    // history.pushState changes the address without loading, and back returns.
+    Page page;
+    page.load(*parse_url("https://history.test/start"),
+              "<script>history.pushState({n:1},'', '/two');</script>");
+    CHECK(page.doc.url.path == "/two");
+    CHECK(page.history().size() == 2);
+    Page again;
+    again.load(*parse_url("https://history.test/start"),
+               "<script>history.pushState({n:1},'', '/two');history.back();"
+               "document.title = location.pathname;</script>");
+    CHECK(again.title() == "/start");
+  }
+  {
+    // A form post is handed to my host with the right body, not turned into a GET.
+    Page page;
+    page.load(*parse_url("https://forms.test/"),
+              "<!doctype html><form action='/submit' method=post><input name=q value='hello "
+              "world'><input type=hidden name=token value=abc></form>");
+    page.render(800, 600, 0);
+    page.click(10, 10);
+    page.key("Enter", "");
+    CHECK(page.posts.size() == 1);
+    if (!page.posts.empty()) {
+      CHECK(page.posts[0].method == "POST");
+      CHECK(page.posts[0].body == "q=hello+world&token=abc");
+      CHECK(page.posts[0].content_type == "application/x-www-form-urlencoded");
+      CHECK(page.posts[0].url == "https://forms.test/submit");
+    }
+    CHECK(page.navigations.empty());
+  }
+  // Audit of steps 3 to 5: the fixes I made after measuring real pages.
+  {
+    // An absolute child starts at the padding box of its positioned ancestor,
+    // not at the border box, so a border and padding both move it inwards.
+    Page page;
+    page.load(*parse_url("https://layout.test/"),
+              "<!doctype html><style>body{margin:0}div{background:#222}"
+              "#rel{position:relative;margin:10px;padding:20px;border:5px solid #000;"
+              "width:300px;height:100px}"
+              "#abs{position:absolute;top:0;left:0;width:40px;height:30px}"
+              "</style><div id=rel><div id=abs></div></div>");
+    Rect abs = node_box(page, "abs");
+    CHECK(near(abs.x, 15) && near(abs.y, 15));
+  }
+  {
+    // Max-Age wins over Expires whatever order a server writes them in.
+    CookieJar jar;
+    auto site = *parse_url("https://shop.test/");
+    jar.set_from_header(site, "both=1; Max-Age=10; Expires=Wed, 21 Oct 2037 07:28:00 GMT", 1000);
+    CHECK(jar.header_for(site, 1200).find("both=1") == std::string::npos);
+    jar.set_from_header(site, "either=1; Expires=Wed, 21 Oct 2037 07:28:00 GMT", 1000);
+    CHECK(jar.header_for(site, 1200).find("either=1") != std::string::npos);
+  }
+  {
+    // A ticked box with no value sends "on", and a multiple select sends every
+    // chosen option.
+    Page page;
+    page.load(*parse_url("https://forms.test/"),
+              "<!doctype html><form action='/go' method=get><input name=q value=v>"
+              "<input type=checkbox name=c checked>"
+              "<select name=s multiple><option value=x selected>X</option>"
+              "<option value=y selected>Y</option><option value=z>Z</option></select></form>");
+    page.render(800, 600, 0);
+    page.click(5, 5);
+    page.key("Enter", "");
+    CHECK(!page.navigations.empty());
+    if (!page.navigations.empty()) {
+      auto url = page.navigations[0];
+      CHECK(url.find("c=on") != std::string::npos);
+      CHECK(url.find("s=x") != std::string::npos && url.find("s=y") != std::string::npos);
+      CHECK(url.find("s=z") == std::string::npos);
+    }
+  }
+  {
+    // Find in page walks the text my layout paints, including a word split
+    // across two spans.
+    std::vector<PaintCommand> paint;
+    auto text = [&](double x, double y, std::string body, double width) {
+      PaintCommand command;
+      command.kind = PaintCommand::Kind::Text;
+      command.rect = {x, y, width, 16};
+      command.text = std::move(body);
+      paint.push_back(command);
+    };
+    text(0, 0, "Hel", 20);
+    text(20, 0, "lo there", 60);
+    text(0, 20, "another hello", 90);
+    auto hits = find_in_paint(paint, "hello");
+    CHECK(hits.size() == 2);
+    if (hits.size() == 2) {
+      // "hello" starts in the first run and ends two characters into the second,
+      // so the highlight covers 20px plus two ninths of the 60px run.
+      CHECK(near(hits[0].x, 0) && near(hits[0].y, 0));
+      CHECK(hits[0].w > 30 && hits[0].w < 40);
+      CHECK(near(hits[1].y, 20) && hits[1].x > 50 && hits[1].x < 60);
+    }
+    CHECK(find_in_paint(paint, "HELLO").size() == 2);
+    CHECK(find_in_paint(paint, "nothing").empty());
+  }
+  {
+    // My canvas gives back what a script set, and the element it belongs to.
+    Page page;
+    page.load(*parse_url("https://canvas.test/"),
+              "<!doctype html><canvas id=c width=40 height=30></canvas><script>"
+              "var x=document.getElementById('c').getContext('2d');"
+              "x.fillStyle='#ff0000';x.strokeStyle='#00ff00';x.lineWidth=3;"
+              "console.log(x.fillStyle+'|'+x.strokeStyle+'|'+x.lineWidth+'|'+x.canvas.id);"
+              "x.fillRect(0,0,10,10);"
+              "x.beginPath();x.roundRect(10,10,20,10,3);x.fill();"
+              "x.setLineDash([2,2]);x.beginPath();x.moveTo(0,25);x.lineTo(40,25);x.stroke();"
+              "console.log(x.getImageData(2,2,1,1).data[0]);"
+              "</script>");
+    bool style = false, pixel = false;
+    for (auto &d : page.diagnostics) {
+      if (d.message == "log: #ff0000|#00ff00|3|c")
+        style = true;
+      if (d.message == "log: 255")
+        pixel = true;
+    }
+    CHECK(style);
+    CHECK(pixel);
+    page.render(400, 300, 0);
+    CHECK(page.canvas_images().count(page.doc.by_id("c")) == 1);
+  }
+  {
+    // My JPEG decoder reads a real baseline file, and refuses a progressive one
+    // with a message that says why.
+    auto bytes = base64_decode(
+        "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAIBAQEBAQIBAQECAgICAgQDAgICAgUEBAMEBgUGBgYFBgYGBwkIBgcJBwYGCAsICQoKCgoKBggLDAsKDAkKCgr/2wBDAQICAgICAgUDAwUKBwYHCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgr/wAARCAAIAAgDAREAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD4b/4KYfs8/wDChf8AhCv+Kv8A7V/tX+0v+Yf5HleV9l/6aPuz5ntjHfNfv/7KbiX/AFi/1w/dcnJ/Z/2ua/N9e8la1jyeOPpqf8TgfV/+EH+zP7M5/wDmK+s+1+s8v/UPh+Tk+r/3+bn+zy+9/9k=");
+    auto image = decode_jpeg(bytes);
+    CHECK(image.width == 8 && image.height == 8);
+    if (image.valid()) {
+      auto pixel = [&](int x, int y) {
+        const uint8_t *p = &image.pixels[(size_t(y) * image.width + x) * 4];
+        return std::make_tuple(int(p[2]), int(p[1]), int(p[0]));
+      };
+      auto red = pixel(1, 1), blue = pixel(6, 1);
+      CHECK(std::get<0>(red) > 200 && std::get<1>(red) < 60);
+      CHECK(std::get<2>(blue) > 200 && std::get<0>(blue) < 60);
+    }
+    bool refused = false;
+    try {
+      decode_jpeg(Bytes{0xff, 0xd8, 0xff, 0xc2, 0x00});
+    } catch (const std::exception &) {
+      refused = true;
+    }
+    CHECK(refused);
+  }
+  {
+    // My SVG renderer fills, strokes and centres a circle inside a viewBox.
+    auto image = render_svg(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' width='100' height='100'>"
+        "<rect x='10' y='10' width='80' height='80' fill='#ff0000' stroke='#0000ff'"
+        " stroke-width='4'/><circle cx='50' cy='50' r='20' fill='#00ff00'/></svg>",
+        100, 100);
+    CHECK(image.width == 100 && image.height == 100);
+    if (image.valid()) {
+      auto pixel = [&](int x, int y) {
+        const uint8_t *p = &image.pixels[(size_t(y) * image.width + x) * 4];
+        return std::make_tuple(int(p[2]), int(p[1]), int(p[0]), int(p[3]));
+      };
+      auto centre = pixel(50, 50), edge = pixel(11, 50), corner = pixel(2, 2);
+      CHECK(std::get<1>(centre) > 200 && std::get<0>(centre) < 60);
+      CHECK(std::get<2>(edge) > 150);
+      CHECK(std::get<3>(corner) == 0);
+    }
+  }
   Canvas c(64, 64, 0xff000000);
   c.fill({0, 0, 64, 64}, 0xff112233);
   c.stroke({4, 4, 20, 20}, 0xffffffff);
@@ -1023,6 +1406,341 @@ int main() {
       if (event.tag == "frame")
         frame = true;
     CHECK(frame);
+  }
+
+  // ---- Step five: my own JPEG, SVG and Canvas 2D -------------------------
+  {
+    // An eight by eight baseline JPEG: red on the left, blue on the right, with
+    // chroma subsampling on. I decode it with my own Huffman and cosine code.
+    static const uint8_t tiny_jpeg[] = {
+    255,216,255,224,0,16,74,70,73,70,0,1,1,0,0,1,0,1,0,0,
+    255,219,0,67,0,3,2,2,3,2,2,3,3,3,3,4,3,3,4,5,
+    8,5,5,4,4,5,10,7,7,6,8,12,10,12,12,11,10,11,11,13,
+    14,18,16,13,14,17,14,11,11,16,22,16,17,19,20,21,21,21,12,15,
+    23,24,22,20,24,18,20,21,20,255,219,0,67,1,3,4,4,5,4,5,
+    9,5,5,9,20,13,11,13,20,20,20,20,20,20,20,20,20,20,20,20,
+    20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,
+    20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,255,192,
+    0,17,8,0,8,0,8,3,1,34,0,2,17,1,3,17,1,255,196,0,
+    31,0,0,1,5,1,1,1,1,1,1,0,0,0,0,0,0,0,0,1,
+    2,3,4,5,6,7,8,9,10,11,255,196,0,181,16,0,2,1,3,3,
+    2,4,3,5,5,4,4,0,0,1,125,1,2,3,0,4,17,5,18,33,
+    49,65,6,19,81,97,7,34,113,20,50,129,145,161,8,35,66,177,193,21,
+    82,209,240,36,51,98,114,130,9,10,22,23,24,25,26,37,38,39,40,41,
+    42,52,53,54,55,56,57,58,67,68,69,70,71,72,73,74,83,84,85,86,
+    87,88,89,90,99,100,101,102,103,104,105,106,115,116,117,118,119,120,121,122,
+    131,132,133,134,135,136,137,138,146,147,148,149,150,151,152,153,154,162,163,164,
+    165,166,167,168,169,170,178,179,180,181,182,183,184,185,186,194,195,196,197,198,
+    199,200,201,202,210,211,212,213,214,215,216,217,218,225,226,227,228,229,230,231,
+    232,233,234,241,242,243,244,245,246,247,248,249,250,255,196,0,31,1,0,3,
+    1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,1,2,3,4,5,
+    6,7,8,9,10,11,255,196,0,181,17,0,2,1,2,4,4,3,4,7,
+    5,4,4,0,1,2,119,0,1,2,3,17,4,5,33,49,6,18,65,81,
+    7,97,113,19,34,50,129,8,20,66,145,161,177,193,9,35,51,82,240,21,
+    98,114,209,10,22,36,52,225,37,241,23,24,25,26,38,39,40,41,42,53,
+    54,55,56,57,58,67,68,69,70,71,72,73,74,83,84,85,86,87,88,89,
+    90,99,100,101,102,103,104,105,106,115,116,117,118,119,120,121,122,130,131,132,
+    133,134,135,136,137,138,146,147,148,149,150,151,152,153,154,162,163,164,165,166,
+    167,168,169,170,178,179,180,181,182,183,184,185,186,194,195,196,197,198,199,200,
+    201,202,210,211,212,213,214,215,216,217,218,226,227,228,229,230,231,232,233,234,
+    242,243,244,245,246,247,248,249,250,255,218,0,12,3,1,0,2,17,3,17,
+    0,63,0,248,219,226,175,252,194,255,0,237,175,254,201,69,20,87,247,15,
+    130,95,242,64,101,223,247,23,255,0,79,212,62,175,197,255,0,249,45,241,
+    255,0,247,15,255,0,76,211,63,255,217
+    };
+    Bytes jpeg(tiny_jpeg, tiny_jpeg + sizeof(tiny_jpeg));
+    auto picture = decode_jpeg(jpeg);
+    CHECK(picture.width == 8 && picture.height == 8);
+    CHECK(picture.pixels.size() == 8 * 8 * 4);
+    auto channel = [&](int x, int y, int offset) { return int(picture.pixels[(y * 8 + x) * 4 + offset]); };
+    // My buffer is blue, green, red, alpha.
+    CHECK(channel(1, 1, 2) > 200 && channel(1, 1, 0) < 80);
+    CHECK(channel(6, 1, 0) > 200 && channel(6, 1, 2) < 80);
+    bool refused = false;
+    try {
+      decode_jpeg(Bytes(jpeg.begin(), jpeg.end() - 20));
+    } catch (const std::exception &) {
+      refused = true;
+    }
+    CHECK(refused);
+    refused = false;
+    try {
+      decode_jpeg(Bytes(fixtures::rgb_fixed.begin(), fixtures::rgb_fixed.end()));
+    } catch (const std::exception &) {
+      refused = true;
+    }
+    CHECK(refused);
+  }
+  {
+    // SVG: a red box, a blue circle and a translated group, drawn with my raster.
+    std::string svg =
+        "<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 40 40'>"
+        "<rect x='0' y='0' width='20' height='20' fill='#ff0000'/>"
+        "<circle cx='30' cy='30' r='8' fill='blue'/>"
+        "<g transform='translate(2,22)'><rect width='8' height='8' fill='#00ff00'/></g>"
+        "</svg>";
+    auto drawn = render_svg(svg, 40, 40);
+    CHECK(drawn.width == 40 && drawn.height == 40);
+    auto pixel = [&](int x, int y) {
+      size_t i = (size_t(y) * drawn.width + x) * 4;
+      return (uint32_t(drawn.pixels[i + 3]) << 24) | (uint32_t(drawn.pixels[i + 2]) << 16) |
+             (uint32_t(drawn.pixels[i + 1]) << 8) | drawn.pixels[i];
+    };
+    CHECK(pixel(5, 5) == 0xffff0000u);
+    CHECK(pixel(30, 30) == 0xff0000ffu);
+    CHECK(pixel(4, 24) == 0xff00ff00u);
+    CHECK((pixel(38, 2) >> 24) == 0);
+    bool rejected = false;
+    try {
+      render_svg("<svg><rect></svg>", 10, 10);
+    } catch (const std::exception &) {
+      rejected = true;
+    }
+    CHECK(rejected);
+  }
+  {
+    // Canvas 2D through a real page, the same path a site drives.
+    Page canvas_page;
+    canvas_page.load(
+        *parse_url("https://canvas.test/"),
+        "<!doctype html><canvas id=c width=20 height=20></canvas><canvas id=d width=10 "
+        "height=10></canvas><canvas id=e width=5 height=5></canvas><script>"
+        "var c=document.getElementById('c').getContext('2d');"
+        "c.fillStyle='#ff0000';c.fillRect(0,0,10,20);"
+        "c.fillStyle='#00ff00';c.fillRect(10,0,10,10);"
+        "c.save();c.translate(0,10);c.fillStyle='#0000ff';c.fillRect(10,0,10,10);c.restore();"
+        "c.clearRect(0,0,2,2);"
+        "var g=c.createLinearGradient(0,0,20,0);g.addColorStop(0,'#000000');"
+        "g.addColorStop(1,'#ffffff');c.fillStyle=g;c.fillRect(0,18,20,2);"
+        "var d=document.getElementById('d').getContext('2d');"
+        "d.drawImage(document.getElementById('c'),0,0,10,10);"
+        "var e=document.getElementById('e').getContext('2d');"
+        "e.fillStyle='#ffffff';e.fillRect(0,0,5,5);e.fillRect(0,0,1,1);"
+        "document.getElementById('e').width=6;"
+        "document.title=c.getImageData(0,0,1,1).data.join(',')+'|'"
+        "+c.toDataURL().slice(0,22)+'|'+c.getImageData(19,1,1,1).data.join(',')+'|'"
+        "+(typeof c.fillRect)+'|'+(c.measureText('hello').width>0);"
+        "</script>");
+    auto picture_frame = canvas_page.render(400, 300, 0);
+    CHECK(canvas_page.title() == "0,0,0,0|data:image/png;base64,|0,255,0,255|function|true");
+    int canvas_commands = 0;
+    for (const auto &command : picture_frame.at("paint").array)
+      if (int(command.num("kind")) == int(PaintCommand::Kind::Canvas))
+        ++canvas_commands;
+    CHECK(canvas_commands == 3);
+    auto &images = canvas_page.canvas_images();
+    CHECK(images.size() == 3);
+    const Image &surface = images.at(canvas_page.doc.by_id("c"));
+    CHECK(surface.width == 20 && surface.height == 20);
+    auto at = [&](const Image &image, int x, int y) {
+      size_t i = (size_t(y) * image.width + x) * 4;
+      return (uint32_t(image.pixels[i + 3]) << 24) | (uint32_t(image.pixels[i + 2]) << 16) |
+             (uint32_t(image.pixels[i + 1]) << 8) | image.pixels[i];
+    };
+    CHECK(at(surface, 1, 1) == 0x00000000u);  // cleared
+    CHECK(at(surface, 15, 5) == 0xff00ff00u);
+    CHECK(at(surface, 15, 15) == 0xff0000ffu);
+    // The gradient runs black to white, so the left end is dark and the right
+    // end is bright.
+    uint32_t gradient_left = at(surface, 1, 19), gradient_right = at(surface, 18, 19);
+    CHECK(((gradient_left >> 16) & 255) < 60);
+    CHECK(((gradient_right >> 16) & 255) > 190);
+    const Image &copy = images.at(canvas_page.doc.by_id("d"));
+    CHECK(at(copy, 1, 1) == 0xffff0000u && at(copy, 8, 1) == 0xff00ff00u);
+    // Setting the bitmap size clears the drawing, as the spec says.
+    canvas_page.render(400, 300, 0);
+    const Image &resized = canvas_page.canvas_images().at(canvas_page.doc.by_id("e"));
+    CHECK(resized.width == 6 && at(resized, 0, 0) == 0x00000000u);
+  }
+  {
+    // A JPEG and an SVG arrive through the resource path a site uses.
+    Page media;
+    media.load(*parse_url("https://media.test/"),
+               "<!doctype html><img id=j src='/photo.jpg'><img id=v src='/logo.svg' width=32 "
+               "height=32>");
+    static const uint8_t tiny_jpeg[] = {
+    255,216,255,224,0,16,74,70,73,70,0,1,1,0,0,1,0,1,0,0,
+    255,219,0,67,0,3,2,2,3,2,2,3,3,3,3,4,3,3,4,5,
+    8,5,5,4,4,5,10,7,7,6,8,12,10,12,12,11,10,11,11,13,
+    14,18,16,13,14,17,14,11,11,16,22,16,17,19,20,21,21,21,12,15,
+    23,24,22,20,24,18,20,21,20,255,219,0,67,1,3,4,4,5,4,5,
+    9,5,5,9,20,13,11,13,20,20,20,20,20,20,20,20,20,20,20,20,
+    20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,
+    20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,255,192,
+    0,17,8,0,8,0,8,3,1,34,0,2,17,1,3,17,1,255,196,0,
+    31,0,0,1,5,1,1,1,1,1,1,0,0,0,0,0,0,0,0,1,
+    2,3,4,5,6,7,8,9,10,11,255,196,0,181,16,0,2,1,3,3,
+    2,4,3,5,5,4,4,0,0,1,125,1,2,3,0,4,17,5,18,33,
+    49,65,6,19,81,97,7,34,113,20,50,129,145,161,8,35,66,177,193,21,
+    82,209,240,36,51,98,114,130,9,10,22,23,24,25,26,37,38,39,40,41,
+    42,52,53,54,55,56,57,58,67,68,69,70,71,72,73,74,83,84,85,86,
+    87,88,89,90,99,100,101,102,103,104,105,106,115,116,117,118,119,120,121,122,
+    131,132,133,134,135,136,137,138,146,147,148,149,150,151,152,153,154,162,163,164,
+    165,166,167,168,169,170,178,179,180,181,182,183,184,185,186,194,195,196,197,198,
+    199,200,201,202,210,211,212,213,214,215,216,217,218,225,226,227,228,229,230,231,
+    232,233,234,241,242,243,244,245,246,247,248,249,250,255,196,0,31,1,0,3,
+    1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,1,2,3,4,5,
+    6,7,8,9,10,11,255,196,0,181,17,0,2,1,2,4,4,3,4,7,
+    5,4,4,0,1,2,119,0,1,2,3,17,4,5,33,49,6,18,65,81,
+    7,97,113,19,34,50,129,8,20,66,145,161,177,193,9,35,51,82,240,21,
+    98,114,209,10,22,36,52,225,37,241,23,24,25,26,38,39,40,41,42,53,
+    54,55,56,57,58,67,68,69,70,71,72,73,74,83,84,85,86,87,88,89,
+    90,99,100,101,102,103,104,105,106,115,116,117,118,119,120,121,122,130,131,132,
+    133,134,135,136,137,138,146,147,148,149,150,151,152,153,154,162,163,164,165,166,
+    167,168,169,170,178,179,180,181,182,183,184,185,186,194,195,196,197,198,199,200,
+    201,202,210,211,212,213,214,215,216,217,218,226,227,228,229,230,231,232,233,234,
+    242,243,244,245,246,247,248,249,250,255,218,0,12,3,1,0,2,17,3,17,
+    0,63,0,248,219,226,175,252,194,255,0,237,175,254,201,69,20,87,247,15,
+    130,95,242,64,101,223,247,23,255,0,79,212,62,175,197,255,0,249,45,241,
+    255,0,247,15,255,0,76,211,63,255,217
+    };
+    Resource photo;
+    photo.url = "https://media.test/photo.jpg";
+    photo.mime = "application/octet-stream";
+    photo.ok = true;
+    photo.bytes = Bytes(tiny_jpeg, tiny_jpeg + sizeof(tiny_jpeg));
+    media.resource(photo);
+    Resource svg;
+    svg.url = "https://media.test/logo.svg";
+    svg.mime = "image/svg+xml";
+    svg.ok = true;
+    std::string svg_text =
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 4'><rect width='4' height='4' "
+        "fill='#ff8800'/></svg>";
+    svg.bytes.assign(svg_text.begin(), svg_text.end());
+    media.resource(svg);
+    CHECK(media.images().at("https://media.test/photo.jpg").width == 8);
+    CHECK(media.images().at("https://media.test/logo.svg").width == 4);
+    auto media_frame = media.render(400, 300, 0);
+    bool sized = false;
+    for (const auto &command : media_frame.at("paint").array)
+      if (int(command.num("kind")) == int(PaintCommand::Kind::Image) && near(command.num("w"), 32) &&
+          near(command.num("h"), 32))
+        sized = true;
+    CHECK(sized);
+  }
+  {
+    // The conditional operator used to hand back its test, which broke every
+    // site that wrote `x = cond ? a : b`.
+    CHECK(js_eval("var n=2;var s=n>1?'many':'one';s") == "many");
+    CHECK(js_eval("var o={v:3};var s=o.v===3?'yes':'no';s") == "yes");
+    CHECK(js_eval("var f=false;var s=f?'a':'b';s") == "b");
+  }
+  // ---- Step three: the box model, flex, grid, clipping and gradients ------
+  {
+    // A border shorthand is a length, a style word and a colour, and my colour
+    // parser must not swallow the whole thing.
+    Page borders;
+    borders.load(*parse_url("https://borders.test/"),
+                 "<!doctype html><style>body{margin:0}#a{border-bottom:2px solid #000;height:20px}"
+                 "#b{border:1px solid red;height:10px}</style><div id=a></div><div id=b></div>");
+    Rect border_a = node_box(borders, "a"), border_b = node_box(borders, "b");
+    CHECK(near(border_a.h, 22) && near(border_a.y, 0));
+    CHECK(near(border_b.y, 22) && near(border_b.h, 12));
+  }
+  {
+    // Two stacked margins collapse to the larger one, so the second box starts
+    // at 10 + 30.
+    Page collapse;
+    collapse.load(*parse_url("https://collapse.test/"),
+                  "<!doctype html><style>body{margin:0}#a{margin-bottom:20px;height:10px}"
+                  "#b{margin-top:30px;height:10px}</style><div id=a></div><div id=b></div>");
+    CHECK(near(node_box(collapse, "b").y, 40));
+  }
+  {
+    // A percentage height resolves against the parent's height, never its width.
+    Page percent;
+    percent.load(*parse_url("https://percent.test/"),
+                 "<!doctype html><style>body{margin:0}#p{height:100px}#a{height:50%}</style>"
+                 "<div id=p><div id=a></div></div>");
+    CHECK(near(node_box(percent, "a").h, 50));
+  }
+  {
+    // grid-template-rows fixes the track heights.
+    Page grid;
+    grid.load(*parse_url("https://grid.test/"),
+              "<!doctype html><style>body{margin:0}#g{display:grid;width:100px;"
+              "grid-template-columns:50px 50px;grid-template-rows:40px 20px}#c{height:10px}</style>"
+              "<div id=g><div></div><div></div><div id=c></div></div>");
+    Rect c = node_box(grid, "c");
+    CHECK(near(c.y, 40) && near(c.x, 0) && near(c.w, 50));
+  }
+  {
+    // flex order and align-self move one item without touching the rest.
+    Page flex;
+    flex.load(*parse_url("https://flex.test/"),
+              "<!doctype html><style>body{margin:0}#f{display:flex;width:200px;height:60px}"
+              "#a{width:50px;height:10px;order:2}#b{width:50px;height:10px;order:1;"
+              "align-self:flex-end}</style><div id=f><div id=a></div><div id=b></div></div>");
+    Rect flex_a = node_box(flex, "a"), flex_b = node_box(flex, "b");
+    CHECK(near(flex_a.x, 50) && near(flex_a.y, 0));
+    CHECK(near(flex_b.x, 0) && near(flex_b.y, 50));
+  }
+  {
+    // Sticky stays where the flow puts it until a scroll asks for it.
+    Page sticky;
+    sticky.load(*parse_url("https://sticky.test/"),
+                "<!doctype html><style>body{margin:0}#a{position:sticky;top:5px;height:20px}</style>"
+                "<div id=a></div>");
+    CHECK(near(node_box(sticky, "a").y, 0));
+  }
+  {
+    // A gradient background, an overflow clip and the paint pass that applies
+    // them, checked on real pixels.
+    Page painted;
+    painted.load(*parse_url("https://paint.test/"),
+                 "<!doctype html><style>body{margin:0;background:#fff}"
+                 "#g{height:20px;background:linear-gradient(90deg,#ff0000,#0000ff)}"
+                 "#clip{height:20px;overflow:hidden}#tall{height:80px;background:#00ff00}"
+                 "</style><div id=g></div><div id=clip><div id=tall></div></div>");
+    auto frame = painted.render(200, 120, 0);
+    std::vector<PaintCommand> commands;
+    bool saw_gradient = false;
+    int clips = 0;
+    for (const auto &command : frame.at("paint").array) {
+      PaintCommand entry;
+      entry.kind = PaintCommand::Kind(int(command.num("kind")));
+      entry.rect = {command.num("x"), command.num("y"), command.num("w"), command.num("h")};
+      entry.color = uint32_t(command.num("color"));
+      entry.text = command.str("text");
+      entry.size = command.num("size");
+      entry.thickness = command.num("thickness");
+      entry.bold = command.flag("bold");
+      entry.node = int(command.num("node"));
+      entry.gradient = command.str("gradient");
+      if (!entry.gradient.empty())
+        saw_gradient = true;
+      if (entry.kind == PaintCommand::Kind::PushClip)
+        ++clips;
+      commands.push_back(entry);
+    }
+    CHECK(saw_gradient);
+    CHECK(clips == 1);
+    Canvas canvas(200, 160, 0xffffffff);
+    paint_commands(canvas, commands, 0, painted.images());
+    auto pixel = [&](int x, int y) {
+      size_t i = (size_t(y) * canvas.width + x) * 4;
+      return (uint32_t(canvas.pixels[i + 3]) << 24) | (uint32_t(canvas.pixels[i + 2]) << 16) |
+             (uint32_t(canvas.pixels[i + 1]) << 8) | canvas.pixels[i];
+    };
+    uint32_t left = pixel(2, 10), right = pixel(196, 10);
+    CHECK(((left >> 16) & 255) > 200 && (left & 255) < 60);
+    CHECK((right & 255) > 200 && ((right >> 16) & 255) < 60);
+    // The tall green child is clipped at the bottom of its 20px box.
+    CHECK(((pixel(100, 30) >> 8) & 255) == 255);
+    CHECK(pixel(100, 60) == 0xffffffff);
+  }
+  {
+    // Script pieces I fixed while auditing step two.
+    CHECK(js_eval("[...new Set([1,1,2])].join(',')") == "1,2");
+    CHECK(js_eval("[1,[2,[3]]].flat(2).join(',')") == "1,2,3");
+    CHECK(js_eval("[1,2,3].at(-1)") == "3");
+    CHECK(js_eval("Object.fromEntries([['a',1]]).a") == "1");
+    // I split the string so the compiler does not read ??= as a trigraph.
+    CHECK(js_eval("var a=null;a?" "?='z';a") == "z");
+    CHECK(js_eval("var b=1;b&&=2;b") == "2");
+    CHECK(js_eval("var c=0;c||=7;c") == "7");
+    CHECK(js_eval("'a-b'.replace(/(\\w)-(\\w)/,'$2$1')") == "ba");
   }
   std::cout << passed << " engine checks passed\n";
   return 0;

@@ -13,6 +13,12 @@ struct Image {
 // Supports the non-interlaced PNG color types. Errors are values at the caller;
 // this function throws on malformed input or an exceeded resource bound.
 Image decode_png(const Bytes &encoded);
+// I decode baseline and extended sequential JPEG myself, including chroma
+// subsampling and restart markers. Progressive files are refused by name.
+Image decode_jpeg(const Bytes &encoded);
+// I draw SVG myself: shapes, paths, transforms and fill or stroke. Filters,
+// masks, text and animation are not implemented and are skipped.
+Image render_svg(const std::string &source, int width, int height);
 uint32_t crc32(const uint8_t *data, size_t size, uint32_t initial = 0);
 uint32_t adler32(const uint8_t *data, size_t size);
 } // namespace pv

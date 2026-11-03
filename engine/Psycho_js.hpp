@@ -187,6 +187,10 @@ public:
   Value make_promise();
   void settle_promise(Object *promise, int state, const Value &value);
   Value promise_then(const Value &promise, const Value &on_fulfilled, const Value &on_rejected);
+  // I walk whatever a value can be iterated as: text by code point, arrays by
+  // index, my Map and Set objects in insertion order, and anything else that
+  // supplies its own "@@iterator" method.
+  bool iterate(const Value &value, Values &out, size_t limit = 100000);
   // I wait for a promise the same way I would in a browser: keep running
   // queued work and due timers until it settles or my deadline passes.
   Value await_value(const Value &value);
@@ -250,6 +254,7 @@ private:
     std::vector<Value> roots;
   };
   std::deque<Microtask> microtasks_;
+  int symbol_counter_ = 0;
   Object *regex_prototype_ = nullptr;
   Object *promise_prototype_ = nullptr;
   void enqueue_microtask(std::function<void()> run, std::vector<Value> roots);
@@ -257,7 +262,7 @@ private:
   Value regex_exec(const Value &self, const Value &input);
   Value string_match(const std::string &subject, const Value &pattern);
   Value string_search(const std::string &subject, const Value &pattern);
-  Value string_split(const std::string &subject, const Value &separator);
+  Value string_split(const std::string &subject, const Value &separator, double limit);
   Value string_replace(const std::string &subject, const Value &pattern, const Value &replacement,
                        bool all);
   Value settle_reaction(Object *promise, const PromiseReaction &reaction, int state,

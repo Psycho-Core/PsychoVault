@@ -4,7 +4,8 @@
 namespace pv {
 struct Image;
 struct PaintCommand {
-  enum class Kind { Rect, Border, Text, Image, Line } kind;
+  // I keep the order stable because the frame I send my shell carries it as a number.
+  enum class Kind { Rect, Border, Text, Image, Line, Canvas, PushClip, PopClip } kind;
   Rect rect;
   uint32_t color = 0xff000000;
   std::string text;
@@ -12,6 +13,10 @@ struct PaintCommand {
   bool bold = false;
   int node = -1;
   std::string url;
+  // A gradient background keeps its CSS text until the paint pass parses it.
+  std::string gradient;
+  // A fixed command stays where it is when the page scrolls.
+  bool fixed = false;
 };
 struct LayoutResult {
   std::vector<PaintCommand> paint;
@@ -23,4 +28,7 @@ LayoutResult layout_document(const Document &doc, const std::vector<Style> &styl
                              Canvas &measure);
 void paint_commands(Canvas &canvas, const std::vector<PaintCommand> &commands, double scroll_y,
                     const std::map<std::string, Image> &images);
+// Find in page. I search the text my layout actually paints, so a highlight
+// lines up with the glyphs instead of guessing from the source text.
+std::vector<Rect> find_in_paint(const std::vector<PaintCommand> &commands, std::string_view needle);
 } // namespace pv

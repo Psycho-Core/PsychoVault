@@ -41,6 +41,8 @@ public:
   std::vector<std::string> user_words;
   // Extensions the user installed, so I can reload them on the next launch.
   std::vector<std::string> extension_directories;
+  // Site state I keep with the profile so a restart is not a sign-out.
+  Json cookies, local_storage;
   std::vector<std::string> disabled_extensions;
   std::string error;
   static Profile open(const std::string &directory, bool private_mode);

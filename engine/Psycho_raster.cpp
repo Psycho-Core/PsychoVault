@@ -19,6 +19,128 @@ uint32_t blend(uint32_t d, uint32_t s) {
            b = ((s & 255) * a + (d & 255) * ia) / 255;
   return 0xff000000 | (r << 16) | (g << 8) | b;
 }
+void Canvas::polygon(const std::vector<Point> &points, uint32_t c) {
+  if (points.size() < 3)
+    return;
+  double top = points[0].y, bottom = points[0].y;
+  for (const auto &p : points) {
+    top = std::min(top, p.y);
+    bottom = std::max(bottom, p.y);
+  }
+  int y0 = std::clamp(int(std::floor(std::max(top, clip.y))), 0, height);
+  int y1 = std::clamp(int(std::ceil(std::min(bottom, clip.y + clip.h))), 0, height);
+  std::vector<double> crossings;
+  for (int y = y0; y < y1; ++y) {
+    double scan = y + 0.5;
+    crossings.clear();
+    for (size_t i = 0; i < points.size(); ++i) {
+      const Point &a = points[i], &b = points[(i + 1) % points.size()];
+      if (a.y == b.y)
+        continue;
+      double low = std::min(a.y, b.y), high = std::max(a.y, b.y);
+      if (scan < low || scan >= high)
+        continue;
+      crossings.push_back(a.x + (scan - a.y) * (b.x - a.x) / (b.y - a.y));
+    }
+    if (crossings.size() < 2)
+      continue;
+    std::sort(crossings.begin(), crossings.end());
+    for (size_t i = 0; i + 1 < crossings.size(); i += 2) {
+      double left = std::max(crossings[i], clip.x), right = std::min(crossings[i + 1], clip.x + clip.w);
+      int x0 = std::clamp(int(std::ceil(left - 0.5)), 0, width);
+      int x1 = std::clamp(int(std::ceil(right - 0.5)), 0, width);
+      for (int x = x0; x < x1; ++x)
+        pixel(x, y, c);
+    }
+  }
+}
+void Canvas::polyline(const std::vector<Point> &points, uint32_t c, double width, bool closed) {
+  if (points.empty())
+    return;
+  double half = std::max(0.5, width / 2);
+  size_t count = closed ? points.size() : points.size() - 1;
+  for (size_t i = 0; i < count; ++i) {
+    const Point &a = points[i], &b = points[(i + 1) % points.size()];
+    double dx = b.x - a.x, dy = b.y - a.y;
+    double length = std::sqrt(dx * dx + dy * dy);
+    if (length < 0.0001) {
+      pixel(int(a.x), int(a.y), c);
+      continue;
+    }
+    // I walk the segment and stamp a small square, which keeps a stroke solid
+    // without needing a second rasteriser.
+    int steps = int(length) + 1;
+    for (int s = 0; s <= steps; ++s) {
+      double t = double(s) / steps;
+      double px = a.x + dx * t, py = a.y + dy * t;
+      for (int oy = int(-half); oy <= int(half); ++oy)
+        for (int ox = int(-half); ox <= int(half); ++ox)
+          pixel(int(px) + ox, int(py) + oy, c);
+    }
+  }
+}
+void Canvas::circle(double cx, double cy, double radius, uint32_t c) {
+  ellipse(cx, cy, radius, radius, c);
+}
+void Canvas::ellipse(double cx, double cy, double rx, double ry, uint32_t c) {
+  if (rx <= 0 || ry <= 0)
+    return;
+  int y0 = std::clamp(int(std::floor(cy - ry)), 0, height);
+  int y1 = std::clamp(int(std::ceil(cy + ry)), 0, height);
+  for (int y = y0; y < y1; ++y) {
+    double dy = (y + 0.5 - cy) / ry;
+    if (dy < -1 || dy > 1)
+      continue;
+    double half = rx * std::sqrt(std::max(0.0, 1 - dy * dy));
+    int x0 = std::clamp(int(std::ceil(cx - half - 0.5)), 0, width);
+    int x1 = std::clamp(int(std::ceil(cx + half - 0.5)), 0, width);
+    for (int x = x0; x < x1; ++x)
+      pixel(x, y, c);
+  }
+}
+uint32_t gradient_shade(const Gradient &gradient, double x, double y) {
+  if (gradient.stops.empty())
+    return 0x00000000u;
+  double t = 0;
+  if (gradient.radial) {
+    double dx = x - gradient.x0, dy = y - gradient.y0;
+    double distance = std::sqrt(dx * dx + dy * dy);
+    double span = gradient.r1 - gradient.r0;
+    t = span > 0.0001 ? (distance - gradient.r0) / span : 0;
+  } else {
+    double dx = gradient.x1 - gradient.x0, dy = gradient.y1 - gradient.y0;
+    double length = dx * dx + dy * dy;
+    t = length > 0.0001 ? ((x - gradient.x0) * dx + (y - gradient.y0) * dy) / length : 0;
+  }
+  t = std::clamp(t, 0.0, 1.0);
+  if (gradient.stops.size() == 1 || t <= gradient.stops.front().at)
+    return gradient.stops.front().color;
+  if (t >= gradient.stops.back().at)
+    return gradient.stops.back().color;
+  for (size_t i = 1; i < gradient.stops.size(); ++i) {
+    const GradientStop &right = gradient.stops[i];
+    if (t > right.at)
+      continue;
+    const GradientStop &left = gradient.stops[i - 1];
+    double span = right.at - left.at;
+    double f = span > 0.0001 ? (t - left.at) / span : 0;
+    auto mix = [&](int shift) {
+      double a = double((left.color >> shift) & 255), b = double((right.color >> shift) & 255);
+      return uint32_t(a + (b - a) * f);
+    };
+    return (mix(24) << 24) | (mix(16) << 16) | (mix(8) << 8) | mix(0);
+  }
+  return gradient.stops.back().color;
+}
+void Canvas::fill_gradient(Rect r, const Gradient &gradient) {
+  int x0 = std::clamp(int(std::floor(std::max(r.x, clip.x))), 0, width),
+      y0 = std::clamp(int(std::floor(std::max(r.y, clip.y))), 0, height),
+      x1 = std::clamp(int(std::ceil(std::min(r.x + r.w, clip.x + clip.w))), 0, width),
+      y1 = std::clamp(int(std::ceil(std::min(r.y + r.h, clip.y + clip.h))), 0, height);
+  for (int y = y0; y < y1; ++y)
+    for (int x = x0; x < x1; ++x)
+      pixel(x, y, gradient_shade(gradient, x + 0.5, y + 0.5));
+}
 Canvas::Canvas(int w, int h, uint32_t color)
     : width(std::clamp(w, 1, 8192)), height(std::clamp(h, 1, 16384)),
       pixels(size_t(width) * height * 4), clip{0, 0, double(width), double(height)} {

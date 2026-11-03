@@ -96,6 +96,8 @@ Profile Profile::open(const std::string &directory, bool private_mode) {
   };
   Json settings;
   load("owned-settings.json", settings);
+  load("owned-cookies.json", p.cookies);
+  load("owned-storage.json", p.local_storage);
   if (settings.type == Json::Type::Object) {
     p.set_custom_search(settings.str("customSearch"));
     p.set_search_engine(settings.str("searchEngine", p.search_engine));
@@ -250,6 +252,9 @@ bool Profile::save() {
       ok;
   ok =
       write_file_atomic(directory + "/owned-history.json", history_json.dump() + "\n", error) && ok;
+  ok = write_file_atomic(directory + "/owned-cookies.json", cookies.dump() + "\n", error) && ok;
+  ok = write_file_atomic(directory + "/owned-storage.json", local_storage.dump() + "\n", error) &&
+       ok;
   ok = save_session() && ok;
   return ok;
 }

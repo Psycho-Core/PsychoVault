@@ -184,43 +184,9 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.version }}"
-          $notes = @"
-          # PsychoVault $version - Windows x64 development preview
-
-          I build my own browser engine. This is a development preview I can test, not a finished browser.
-
-          ## What I verified in this build
-
-          - I built with MSVC on a GitHub-hosted Windows runner.
-          - My engine test suite passed.
-          - My single executable rendered a fetched page with images from an empty folder containing nothing else, and it left no second file behind.
-          - I rendered a fetched page with CSS, JavaScript and a decoded PNG through my own engine inside my own browser process.
-          - My bundled VPN bridge drove my real proxy, storage and WebRTC-policy code, and my fail-closed routing refused to leak when no proxy was usable.
-          - My download manager, PAC evaluator and extension permission checks passed their regression tests.
-
-          ## How I run it
-
-          I download **PsychoVault.exe** and double-click it. That is the whole install.
-
-          My engine and my page host are compiled into that one file, so nothing is unpacked and nothing sits beside it. My CI proves this by copying only ``PsychoVault.exe`` into an empty folder, rendering a fetched page with images from there, and checking the folder still holds one file afterwards.
-
-          I also publish ``PsychoVault-windows-x64.zip`` with my test tools for anyone who wants them, but I do not need it to browse.
-
-          ## How my updater reads this release
-
-          I publish ``PsychoVault-update.json`` with the version, tag and a SHA-256 for every asset. ``PsychoVault.exe`` is the update payload, so an update replaces one file. I verify the hash before I offer to install anything.
-
-          ## What I am not claiming
-
-          - YouTube and Netflix do not play. My engine has no media pipeline, no Media Source Extensions and no DRM. DRM will only ever arrive as a separately licensed extension, never inside my engine.
-          - Proton VPN is not bundled. The included VPN bridge is my own code and needs a proxy I point it at.
-          - My vault, password manager, translation, media keys and full legacy settings parity are not finished.
-          - This build is unsigned, so Windows SmartScreen may warn me.
-
-          ## No warranty
-
-          I provide this preview as-is, without warranty.
-          "@
+          # My notes live in my repo so they describe this version, not a template.
+          $notes = Get-Content docs/Psycho_RELEASE-NOTES.md -Raw
+          $notes = $notes.Replace('{{VERSION}}', $version)
           $notes | Set-Content -Encoding utf8 build/RELEASE-NOTES.md
           Get-Content build/RELEASE-NOTES.md | Add-Content $env:GITHUB_STEP_SUMMARY
 

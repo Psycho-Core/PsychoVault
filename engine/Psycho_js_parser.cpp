@@ -369,7 +369,10 @@ public:
       node->right = expr(prec + (prec == 1 || op == "**" ? 0 : 1));
       left = std::move(node);
     }
-    if (min == 0 && take("?")) {
+    // The conditional sits between assignment and everything looser, so I take
+    // it when this call is parsing at assignment level or below. Testing only
+    // for zero here made `a = b ? c : d` assign the test instead of the branch.
+    if (min <= 1 && take("?")) {
       auto node = make(Expr::Kind::Conditional);
       node->left = std::move(left);
       node->right = expr();
@@ -695,6 +698,13 @@ public:
           if (is("}"))
             break;
           std::string key;
+          // An async method: { async f() {} }
+          bool method_async = false;
+          if (is("async") && tok(1).text != ":" && tok(1).text != "," && tok(1).text != "}" &&
+              tok(1).text != "(") {
+            method_async = true;
+            ++p;
+          }
           // An accessor declares get x() or set x(v).
           if ((is("get") || is("set")) && tok(1).text != ":" && tok(1).text != "," &&
               tok(1).text != "}" && tok(1).text != "(") {
@@ -738,6 +748,7 @@ public:
           // A method shorthand: { f() {} }
           if (is("(")) {
             auto fn = function_node();
+            fn->async = method_async;
             expect("(");
             if (!is(")"))
               do {
@@ -992,6 +1003,11 @@ public:
         is_static = true;
         ++p;
       }
+      bool member_async = false;
+      if (is("async") && tok(1).text != "(" && tok(1).text != "=" && tok(1).text != ";") {
+        member_async = true;
+        ++p;
+      }
       std::string accessor;
       if ((is("get") || is("set")) && tok(1).text != "(" && tok(1).text != ";" &&
           tok(1).text != "}") {
@@ -1013,6 +1029,7 @@ public:
         continue;
       }
       auto fn = function_node();
+      fn->async = member_async;
       expect("(");
       if (!is(")"))
         do {
