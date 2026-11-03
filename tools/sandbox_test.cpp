@@ -19,7 +19,8 @@ int main() {
   }
   Process p;
   std::string error;
-  if (!p.start(executable_dir() + "\\pv-sandbox-probe.exe", "\"" + sentinel + "\"", true, error)) {
+  if (!p.start(executable_dir() + "\\pv-renderer.exe", "--sandbox-probe \"" + sentinel + "\"", true,
+               error)) {
     std::cerr << "sandbox start failed: " << error << "\n";
     return 1;
   }

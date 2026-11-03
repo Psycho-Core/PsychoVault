@@ -60,8 +60,40 @@ void emit(pv::Page &page, double width, double height, double scroll) {
   page.diagnostics.clear();
 }
 } // namespace
-int main() {
+int main(int argc, char **argv) {
   using namespace pv;
+#ifdef _WIN32
+  if (argc > 2 && std::string(argv[1]) == "--sandbox-probe") {
+    HANDLE token = nullptr;
+    DWORD is_appcontainer = 0, token_error = 0;
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+      DWORD returned = 0;
+      if (!GetTokenInformation(token, TokenIsAppContainer, &is_appcontainer,
+                               sizeof(is_appcontainer), &returned))
+        token_error = GetLastError();
+      CloseHandle(token);
+    } else
+      token_error = GetLastError();
+    HANDLE file = CreateFileA(argv[2], GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+    DWORD file_error = file == INVALID_HANDLE_VALUE ? GetLastError() : 0;
+    if (file != INVALID_HANDLE_VALUE)
+      CloseHandle(file);
+    bool denied = file == INVALID_HANDLE_VALUE &&
+                  (file_error == ERROR_ACCESS_DENIED || file_error == ERROR_SHARING_VIOLATION);
+    std::string out = "{\"appContainer\":" + std::to_string(is_appcontainer) +
+                      ",\"tokenError\":" + std::to_string(token_error) +
+                      ",\"fileDenied\":" + (denied ? "1" : "0") +
+                      ",\"fileError\":" + std::to_string(file_error) +
+                      ",\"networkTested\":false}\n";
+    DWORD written = 0;
+    WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), out.data(), DWORD(out.size()), &written, nullptr);
+    return 0;
+  }
+#else
+  (void)argc;
+  (void)argv;
+#endif
   try {
     Page page;
     double width = 1000, height = 700, scroll = 0;
