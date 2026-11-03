@@ -10,6 +10,7 @@
 #include "../platform/Psycho_profile.hpp"
 #include "../platform/Psycho_extension.hpp"
 #include "../platform/Psycho_download.hpp"
+#include "../platform/Psycho_payload.hpp"
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -120,7 +121,13 @@ void Session::run() {
     post_update(hwnd, WM_DONE, new Update{tab, generation, Json(), {}, {}, {}});
   };
   std::string error;
-  if (!process.start(executable_dir() + "\\pv-renderer.exe", "", true, error)) {
+  std::string renderer_error;
+  auto renderer = renderer_executable(renderer_error);
+  if (renderer.empty()) {
+    fail(renderer_error);
+    return;
+  }
+  if (!process.start(renderer, "", true, error)) {
     fail("Renderer sandbox failed: " + error);
     return;
   }
@@ -1564,7 +1571,12 @@ static int run_sandbox_test(const std::string &report_path) {
     if (!write_file_atomic(sentinel.string(), "broker-only sandbox sentinel\n", error))
       throw std::runtime_error(error);
     Process renderer;
-    bool started = renderer.start(executable_dir() + "\\pv-renderer.exe",
+    // My sandbox gate must exercise the same renderer a real page uses, so it
+    // resolves my embedded payload too.
+    auto renderer_path = renderer_executable(error);
+    if (renderer_path.empty())
+      throw std::runtime_error(error);
+    bool started = renderer.start(renderer_path,
                                   "--sandbox-probe \"" + sentinel.string() + "\"", true, error);
     result.set("started", started);
     result.set("startError", error);

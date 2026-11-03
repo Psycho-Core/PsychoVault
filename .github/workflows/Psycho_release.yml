@@ -120,6 +120,31 @@ jobs:
           Get-Content build/sandbox-test.json | Add-Content $env:GITHUB_STEP_SUMMARY
           "``````" | Add-Content $env:GITHUB_STEP_SUMMARY
 
+      - name: Prove my single executable renders with no sibling files
+        shell: pwsh
+        run: |
+          # I copy ONLY PsychoVault.exe into an empty folder. If it cannot render
+          # a fetched page from there, my one-file promise is broken.
+          $solo = Join-Path $env:RUNNER_TEMP 'psychovault-solo'
+          Remove-Item -Recurse -Force $solo -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force $solo | Out-Null
+          Copy-Item build/PsychoVault.exe $solo/PsychoVault.exe
+          $count = (Get-ChildItem $solo -File).Count
+          if ($count -ne 1) { Write-Host "::error::My solo folder has $count files, expected 1"; exit 1 }
+          $server = Start-Process python -ArgumentList '-m','http.server','8766','--directory','tests/fixtures' -PassThru -WindowStyle Hidden
+          try {
+            Start-Sleep -Seconds 1
+            & $solo/PsychoVault.exe --smoke --expect-image --url http://127.0.0.1:8766/Psycho_browser-smoke.html --capture build/captures/standalone.png --profile build/solo-profile
+            if ($LASTEXITCODE -ne 0) { Write-Host "::error::My standalone exe failed to render a fetched page"; exit $LASTEXITCODE }
+            & $solo/PsychoVault.exe --sandbox-test --sandbox-report build/solo-sandbox.json --profile build/solo-profile
+            if ($LASTEXITCODE -ne 0) { Write-Host "::error::My standalone exe failed its sandbox gate"; exit $LASTEXITCODE }
+            python -c "import json; d=json.load(open('build/solo-sandbox.json', encoding='utf-8')); assert d.get('ok') is True, d; print('My standalone exe unpacked its renderer and passed containment.')"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
+          }
+          "## My single-file exe rendered on its own" | Add-Content $env:GITHUB_STEP_SUMMARY
+
       - name: Package my release and update manifest
         shell: pwsh
         run: |
@@ -166,19 +191,22 @@ jobs:
           - I built with MSVC on a GitHub-hosted Windows runner.
           - My engine test suite passed.
           - My renderer runs in a Windows AppContainer, and my required gate proved the token is active, a broker-owned file is unreadable, and direct TCP and UDP sockets are refused.
+          - My single executable rendered a fetched page with images from an empty folder containing nothing else.
           - I rendered a fetched page with CSS, JavaScript and a decoded PNG through my sandboxed renderer.
           - My bundled VPN bridge drove my real proxy, storage and WebRTC-policy code, and my fail-closed routing refused to leak when no proxy was usable.
           - My download manager, PAC evaluator and extension permission checks passed their regression tests.
 
           ## How I run it
 
-          1. I download ``PsychoVault-windows-x64.zip`` and extract every file into its own folder.
-          2. I keep ``PsychoVault.exe`` and ``pv-renderer.exe`` together - my browser is multi-process, so the bare exe alone will not render pages.
-          3. I run ``PsychoVault.exe``.
+          I download **PsychoVault.exe** and double-click it. That is the whole install.
+
+          My renderer is embedded inside that one file. I unpack it into my own Windows user folder and verify its hash before running it, so a single exe renders pages on its own. My CI proves this by copying only ``PsychoVault.exe`` into an empty folder and rendering a fetched page with images from there.
+
+          I also publish ``PsychoVault-windows-x64.zip`` with my test tools for anyone who wants them, but I do not need it to browse.
 
           ## How my updater reads this release
 
-          I publish ``PsychoVault-update.json`` with the version, tag and a SHA-256 for every asset. The ZIP is the update payload. I verify the hash before I offer to install anything.
+          I publish ``PsychoVault-update.json`` with the version, tag and a SHA-256 for every asset. ``PsychoVault.exe`` is the update payload, so an update replaces one file. I verify the hash before I offer to install anything.
 
           ## What I am not claiming
 

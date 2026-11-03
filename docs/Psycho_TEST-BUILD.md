@@ -1,51 +1,38 @@
-# My Windows test build
+# My Windows build
 
-This is a development preview of my own browser. I am publishing it so I can test it on my own computer and find real problems. It is not a finished browser and it is not signed.
+I double-click **`PsychoVault.exe`**. That is the whole install. There is nothing to extract, no folder to keep together and no commands to run.
 
-## How I run it
+If Windows SmartScreen warns me, that is because my build is not code-signed yet. I can check the file against `SHA256SUMS.txt` on my release page before I choose to run it.
 
-1. I extract **every** file from `PsychoVault-windows-x64.zip` into its own folder.
-2. I keep `PsychoVault.exe` and `pv-renderer.exe` together. My browser is multi-process, so the bare `PsychoVault.exe` on its own will not render pages.
-3. I double-click `PsychoVault.exe`.
-4. If SmartScreen warns me, I check the hash below before I choose to run an unsigned build.
+## What happens the first time I run it
 
-## How I check the build
+My browser unpacks its own renderer into my Windows user folder and checks it against the hash built into the executable before it runs it. I do that once per version. Every page still runs in a separate contained process, because that separation is what stops a hostile website reaching my files.
 
-I open PowerShell in the extracted folder and run:
+I do not need administrator rights and I do not install a service.
 
-```powershell
-.\pv-tests.exe
-.\PsychoVault.exe --sandbox-test --sandbox-report sandbox-test.json
-Get-Content .\sandbox-test.json
-Get-FileHash .\PsychoVault.exe -Algorithm SHA256
-```
+## What works
 
-I compare the hashes with `SHA256SUMS.txt`. `pv-tests.exe` runs my engine, proxy, extension, download and profile checks. The sandbox command reports whether my renderer really is contained.
+- **Tabs.** Each tab keeps its own contained renderer, so switching tabs does not reload the page. Stop, reload, back, forward and restoring my last tabs all work.
+- **Pages.** My own HTML, CSS, JavaScript, layout and painting code renders what I fetch. PNG images decode and paint.
+- **Downloads.** `Ctrl+J` opens my downloads. Files stream to disk with progress and cancel, and my list survives a restart.
+- **Settings.** All ten categories are there, and the controls change real saved behaviour - search engine, home page, ad blocking, Do Not Track, referrer stripping, download folder, accent colour and more.
+- **Extensions.** I can add an unpacked extension. Permissions are denied unless the extension declares them.
+- **VPN.** My bundled VPN bridge drives my real proxy code, including PAC scripts and fail-closed routing that refuses to connect directly when my proxy is unusable.
+- **Containment.** My renderer runs in a Windows AppContainer on a private desktop, with no access to my files and no direct network sockets.
 
-## What works in this build
+## What does not work yet, and I am not going to pretend otherwise
 
-- **Tabs.** Each tab keeps its own sandboxed renderer, so switching tabs does not reload the page. I have stop, reload, back, forward and active-tab restore.
-- **Pages.** I fetch through my broker and render with my own HTML, CSS, JavaScript and layout code. Valid PNG images decode and paint.
-- **Downloads.** I stream to disk with progress, cancel, a safe filename and a persistent list. `Ctrl+J` opens my downloads.
-- **Settings.** All ten categories are present and the controls I show change real persisted behaviour - search, home page, ad blocking, Do Not Track, referrer stripping, download folder, accent, tab close buttons and more.
-- **Extensions.** I load unpacked extensions with manifest validation and default-deny permissions. A denied API raises a catchable error instead of silently working.
-- **VPN transport.** My bundled VPN bridge drives my real proxy code. I support fixed proxies and PAC scripts evaluated in my own interpreter, with fail-closed routing.
-- **Containment.** My renderer runs in a Windows AppContainer on a private desktop. My required gate proves the token is active, a broker-owned file is unreadable and direct TCP/UDP sockets are refused.
+- **YouTube and Netflix do not play.** I have no video pipeline and no DRM. Netflix needs a licensed Widevine module, which can only ever be a separate extension - never part of my engine.
+- **Proton VPN is not bundled.** The VPN bridge included here is my own code and needs a proxy I point it at. I have not verified Proton sign-in or routing.
+- **My VPN only tunnels HTTP proxies so far.** I refuse TLS-to-proxy and SOCKS5 rather than quietly connecting directly.
+- **Most big modern sites will not work yet.** My JavaScript engine has no classes, modules, promises, async/await or regular expressions.
+- **My vault and password manager are not built.** I show an honest status rather than a password box that saves nothing.
+- No WebRTC, canvas, translation or spell-check dictionary yet.
 
-## What does not work, and I am not pretending otherwise
+## Where my data lives
 
-- **YouTube and Netflix do not play.** I have no media pipeline, no Media Source Extensions and no DRM. Netflix specifically needs a licensed Widevine module, which I will only ever load as a separate extension - never inside my engine.
-- **Proton VPN is not bundled.** The included "PsychoVault VPN Bridge" is my own code, not Proton. It needs a proxy I point it at. I have not verified any Proton sign-in or routing.
-- **My VPN bridge only tunnels HTTP proxies.** I refuse `https` and `socks5` proxies rather than silently connecting directly, because I cannot tunnel those yet. Proton uses TLS-to-proxy, so this is a real gap.
-- **Most modern sites will not work.** My JavaScript engine has no classes, modules, promises, async/await or regular expressions.
-- **My vault and password manager are not implemented.** I show an honest status instead of a password field that stores nothing.
-- **No WebRTC, media, canvas, workers or IndexedDB.** My WebRTC setting records policy; it is not a leak test.
-- **Unsigned.** No installer, no code signing, and my updater verifies hashes but I have not tested a full install-and-rollback cycle.
-
-## My profile and my privacy
-
-My normal profile lives in `%LOCALAPPDATA%\PsychoVault\Owned`. A private window does not write history or session tabs. I keep a damaged settings file as a `.corrupt-*` backup instead of overwriting it. I should still back up anything I care about before testing.
+My profile is in `%LOCALAPPDATA%\PsychoVault\Owned`. A private window writes no history and no session tabs. If a settings file is ever damaged I keep it as a `.corrupt-*` backup instead of overwriting it. I should still back up anything I care about before testing.
 
 ## No warranty
 
-I provide this preview as-is, without warranty. I am responsible for deciding where I run it and what I put into it.
+I provide this preview as-is, without warranty. I decide where I run it and what I put into it.

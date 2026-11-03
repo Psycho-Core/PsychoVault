@@ -95,6 +95,31 @@ jobs:
           "## Required sandbox gate`n`n``````json" | Add-Content $env:GITHUB_STEP_SUMMARY
           Get-Content build/sandbox-test.json | Add-Content $env:GITHUB_STEP_SUMMARY
           "``````" | Add-Content $env:GITHUB_STEP_SUMMARY
+      - name: Prove my single executable renders with no sibling files
+        shell: pwsh
+        run: |
+          # I copy ONLY PsychoVault.exe into an empty folder. If it cannot render
+          # a fetched page from there, my one-file promise is broken.
+          $solo = Join-Path $env:RUNNER_TEMP 'psychovault-solo'
+          Remove-Item -Recurse -Force $solo -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force $solo | Out-Null
+          Copy-Item build/PsychoVault.exe $solo/PsychoVault.exe
+          $count = (Get-ChildItem $solo -File).Count
+          if ($count -ne 1) { Write-Host "::error::My solo folder has $count files, expected 1"; exit 1 }
+          $server = Start-Process python -ArgumentList '-m','http.server','8766','--directory','tests/fixtures' -PassThru -WindowStyle Hidden
+          try {
+            Start-Sleep -Seconds 1
+            & $solo/PsychoVault.exe --smoke --expect-image --url http://127.0.0.1:8766/Psycho_browser-smoke.html --capture build/captures/standalone.png --profile build/solo-profile
+            if ($LASTEXITCODE -ne 0) { Write-Host "::error::My standalone exe failed to render a fetched page"; exit $LASTEXITCODE }
+            & $solo/PsychoVault.exe --sandbox-test --sandbox-report build/solo-sandbox.json --profile build/solo-profile
+            if ($LASTEXITCODE -ne 0) { Write-Host "::error::My standalone exe failed its sandbox gate"; exit $LASTEXITCODE }
+            python -c "import json; d=json.load(open('build/solo-sandbox.json', encoding='utf-8')); assert d.get('ok') is True, d; print('My standalone exe unpacked its renderer and passed containment.')"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
+          }
+          "## My single-file exe rendered on its own" | Add-Content $env:GITHUB_STEP_SUMMARY
+
       - name: Package Windows preview ZIP
         shell: pwsh
         run: |

@@ -63,5 +63,27 @@ network=(ROOT/'platform/Psycho_network.cpp').read_text()
 check('I refuse a proxy scheme I cannot tunnel','refusing the request rather than connecting directly' in network)
 check('I stream downloads to a partial file before committing','psychovault-part' in network)
 
+# My one-file promise has to be enforced, not just claimed.
+build_text=(ROOT/'tools/Psycho_build.py').read_text()
+check('I embed my renderer as a resource in my executable','101 RCDATA' in build_text)
+check('I compile my payload resource with the SDK tool','rc.exe not found' in build_text)
+shell_text=(ROOT/'shell/Psycho_win_main.cpp').read_text()
+check('my shell resolves its renderer through my payload loader','renderer_executable(' in shell_text)
+check('my shell never assumes a sibling renderer file',
+      'executable_dir() + "\\\\pv-renderer.exe"' not in shell_text)
+payload=(ROOT/'platform/Psycho_payload.cpp').read_text()
+check('I verify my unpacked renderer before running it','failed its own hash check' in payload)
+check('I unpack into my own per-user folder','FOLDERID_LocalAppData' in payload)
+check('I name my payload folder by hash so versions cannot collide','digest.substr(0, 32)' in payload)
+for wf in ('.github/workflows/Psycho_owned-engine.yml','.github/workflows/Psycho_release.yml'):
+    body=(ROOT/wf).read_text()
+    check('I prove my single exe renders alone: '+wf,
+          'psychovault-solo' in body and 'expected 1' in body and '--expect-image' in body)
+check('my update payload is the single executable',
+      'asset("PsychoVault.exe", out / "PsychoVault.exe", "update")' in (ROOT/'tools/Psycho_package.py').read_text())
+instructions=(ROOT/'docs/Psycho_TEST-BUILD.md').read_text()
+check('my test instructions need no shell commands','```powershell' not in instructions.lower())
+check('my test instructions start with a double-click','double-click' in instructions.lower())
+
 print(f'\n{passed} passed, {len(fail)} failed')
 sys.exit(1 if fail else 0)

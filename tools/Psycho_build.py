@@ -5,7 +5,8 @@ import argparse, os, pathlib, shutil, subprocess, sys
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 ENGINE=["engine/Psycho_base.cpp","engine/Psycho_dom.cpp","engine/Psycho_css.cpp","engine/Psycho_js_parser.cpp","engine/Psycho_js_runtime.cpp","engine/Psycho_raster.cpp","engine/Psycho_image.cpp","engine/Psycho_layout.cpp","engine/Psycho_page.cpp"]
 PLATFORM=["platform/Psycho_process.cpp","platform/Psycho_network.cpp","platform/Psycho_profile.cpp",
-          "platform/Psycho_proxy.cpp","platform/Psycho_extension.cpp","platform/Psycho_download.cpp"]
+          "platform/Psycho_proxy.cpp","platform/Psycho_extension.cpp","platform/Psycho_download.cpp",
+          "platform/Psycho_payload.cpp"]
 def run(cmd,env=None):
     print("+",subprocess.list2cmdline([str(x) for x in cmd]),flush=True)
     subprocess.run([str(x) for x in cmd],cwd=ROOT,env=env,check=True)
@@ -42,7 +43,7 @@ def main():
     if compiler=="auto":compiler="msvc" if windows else "gcc"
     env=msvc_env() if compiler=="msvc" else os.environ.copy()
     cxx="cl" if compiler=="msvc" else os.environ.get("CXX","g++")
-    def target(name,sources,libs=(),subsystem=None,entry=None):
+    def target(name,sources,libs=(),subsystem=None,entry=None,resource=None):
         obj=out/"obj"/name;obj.parent.mkdir(parents=True,exist_ok=True);obj.mkdir(exist_ok=True)
         if compiler=="msvc":
             cmd=[cxx,"/nologo","/std:c++20","/EHsc","/O2","/MT","/W3","/WX","/permissive-","/DUNICODE","/D_UNICODE","/D_CRT_SECURE_NO_WARNINGS","/sdl","/GS","/guard:cf","/I"+str(ROOT),"/Fo"+str(obj)+os.sep]
@@ -51,6 +52,7 @@ def main():
             if subsystem:cmd+=["/SUBSYSTEM:"+subsystem]
             if entry:cmd+=["/ENTRY:"+entry]
             cmd+= [l+".lib" for l in libs]
+            if resource:cmd+=[str(resource)]
             cmd+=["/OUT:"+str(out/(name+".exe"))]
         else:
             cmd=[cxx,"-std=c++20","-O2","-g","-Wall","-Wextra","-Werror","-I"+str(ROOT)]
@@ -64,7 +66,16 @@ def main():
     target("pv-tests",ENGINE+PLATFORM+["tests/Psycho_test_main.cpp"],winlibs if windows else [])
     target("pv-renderer",ENGINE+["platform/Psycho_process.cpp","tools/Psycho_renderer_main.cpp"],winlibs + ["ws2_32"] if windows else [],"WINDOWS" if windows else None,"mainCRTStartup" if windows else None)
     if windows:
-        target("PsychoVault",ENGINE+PLATFORM+["shell/Psycho_win_main.cpp"],winlibs,"WINDOWS")
+        # I embed my renderer inside PsychoVault.exe so one file is enough to
+        # browse. I compile the resource with the SDK tool, then link it in.
+        payload_rc=out/"Psycho_payload.rc"
+        payload_res=out/"Psycho_payload.res"
+        renderer_path=(out/"pv-renderer.exe").resolve()
+        payload_rc.write_text('101 RCDATA "'+str(renderer_path).replace(chr(92),"/")+'"'+chr(10),encoding="utf-8")
+        rc=shutil.which("rc",path=env.get("PATH"))
+        if rc is None:raise RuntimeError("rc.exe not found; I need the Windows SDK to embed my renderer")
+        run([rc,"/nologo","/fo",str(payload_res),str(payload_rc)],env)
+        target("PsychoVault",ENGINE+PLATFORM+["shell/Psycho_win_main.cpp"],winlibs,"WINDOWS",None,payload_res)
         target("pv-sandbox-test",ENGINE+["platform/Psycho_process.cpp","tools/Psycho_sandbox_test.cpp"],winlibs)
         target("pv-sandbox-minimal",["tools/Psycho_sandbox_minimal.cpp"],["kernel32","advapi32","ws2_32"],"WINDOWS","mainCRTStartup")
     print("Built",out)

@@ -2,10 +2,9 @@
 """I package only verified Windows files and emit the manifest my updater reads.
 
 I never package a profile, a credential, a build tree or source control.
-My browser is multi-process by design: PsychoVault.exe needs pv-renderer.exe
-beside it, so the ZIP is the complete runnable payload and the manifest marks it
-as the update target. I publish the bare executables too because I want them
-individually downloadable and hash-verified.
+My renderer is embedded inside PsychoVault.exe, so that one file is enough to
+browse and it is my update payload. I still publish a ZIP with my test tools and
+a standalone renderer for development, but nobody needs them to run my browser.
 """
 from __future__ import annotations
 import argparse
@@ -98,10 +97,11 @@ def main() -> None:
         "publishedUtc": published,
         "complete": False,
         "notesUrl": f"https://github.com/{args.repo}/releases/tag/{tag}",
-        "requires": ["PsychoVault.exe", "pv-renderer.exe"],
+        "requires": ["PsychoVault.exe"],
+        "selfContained": True,
         "assets": [
-            asset("PsychoVault-windows-x64.zip", archive, "update"),
-            asset("PsychoVault.exe", out / "PsychoVault.exe", "browser"),
+            asset("PsychoVault.exe", out / "PsychoVault.exe", "update"),
+            asset("PsychoVault-windows-x64.zip", archive, "tools"),
             asset("pv-renderer.exe", out / "pv-renderer.exe", "renderer"),
             asset("SHA256SUMS.txt", checksums, "checksums"),
         ],
