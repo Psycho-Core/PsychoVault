@@ -433,15 +433,28 @@ bool Process::start(const std::string &exe, const std::string &args, bool sandbo
     desktop_ = CreateDesktopW(L"Renderer", nullptr, nullptr, 0, DESKTOP_ALL_ACCESS, nullptr);
     if (!desktop_)
       return fail(os_error("CreateDesktop"));
-    if (!grant_object(station_, app_sid,
-                      WINSTA_ENUMERATE | WINSTA_ENUMDESKTOPS | WINSTA_READATTRIBUTES |
-                          WINSTA_ACCESSGLOBALATOMS | READ_CONTROL,
-                      error))
+    // The child token is checked against both the user principal and the
+    // AppContainer principal. These grants are on private objects only.
+    HANDLE user_token = nullptr;
+    std::vector<uint8_t> user_buffer;
+    PSID user_sid = nullptr;
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &user_token)) {
+      DWORD needed = 0;
+      GetTokenInformation(user_token, TokenUser, nullptr, 0, &needed);
+      user_buffer.resize(needed);
+      if (needed && GetTokenInformation(user_token, TokenUser, user_buffer.data(), needed, &needed))
+        user_sid = reinterpret_cast<PTOKEN_USER>(user_buffer.data())->User.Sid;
+      CloseHandle(user_token);
+    }
+    ACCESS_MASK station_access = WINSTA_ALL_ACCESS | STANDARD_RIGHTS_REQUIRED;
+    ACCESS_MASK desktop_access = DESKTOP_ALL_ACCESS;
+    if (user_sid && !grant_object(station_, user_sid, station_access, error))
+      return fail("cannot grant private window-station user access: " + error);
+    if (!grant_object(station_, app_sid, station_access, error))
       return fail("cannot grant private window-station access: " + error);
-    if (!grant_object(desktop_, app_sid,
-                      DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_CREATEWINDOW |
-                          DESKTOP_ENUMERATE | READ_CONTROL,
-                      error))
+    if (user_sid && !grant_object(desktop_, user_sid, desktop_access, error))
+      return fail("cannot grant private desktop user access: " + error);
+    if (!grant_object(desktop_, app_sid, desktop_access, error))
       return fail("cannot grant private desktop access: " + error);
     desktop_name = station_name + L"\\Renderer";
     restricted = true;
