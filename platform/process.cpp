@@ -147,26 +147,35 @@ bool grant_path(const std::wstring &path, PSID sid, ACCESS_MASK access) {
     LocalFree(sd);
   return ok;
 }
-bool grant_object(HANDLE object, PSID sid, ACCESS_MASK access) {
+bool grant_object(HANDLE object, PSID sid, ACCESS_MASK access, std::string &error) {
   PACL old = nullptr;
   PSECURITY_DESCRIPTOR sd = nullptr;
-  if (GetSecurityInfo(object, SE_WINDOW_OBJECT, DACL_SECURITY_INFORMATION, nullptr, nullptr, &old,
-                      nullptr, &sd) != ERROR_SUCCESS)
+  DWORD info = GetSecurityInfo(object, SE_WINDOW_OBJECT, DACL_SECURITY_INFORMATION, nullptr,
+                               nullptr, &old, nullptr, &sd);
+  if (info != ERROR_SUCCESS) {
+    error = os_error("GetSecurityInfo window object", info);
     return false;
+  }
   EXPLICIT_ACCESSW ea{};
   ea.grfAccessPermissions = access;
   ea.grfAccessMode = GRANT_ACCESS;
   ea.grfInheritance = NO_INHERITANCE;
   BuildTrusteeWithSidW(&ea.Trustee, sid);
   PACL updated = nullptr;
-  bool ok = SetEntriesInAclW(1, &ea, old, &updated) == ERROR_SUCCESS &&
-            SetSecurityInfo(object, SE_WINDOW_OBJECT, DACL_SECURITY_INFORMATION, nullptr, nullptr,
-                            updated, nullptr) == ERROR_SUCCESS;
+  DWORD entries = SetEntriesInAclW(1, &ea, old, &updated);
+  DWORD set = entries == ERROR_SUCCESS
+                  ? SetSecurityInfo(object, SE_WINDOW_OBJECT, DACL_SECURITY_INFORMATION, nullptr,
+                                    nullptr, updated, nullptr)
+                  : entries;
   if (updated)
     LocalFree(updated);
   if (sd)
     LocalFree(sd);
-  return ok;
+  if (set != ERROR_SUCCESS) {
+    error = os_error("SetSecurityInfo window object", set);
+    return false;
+  }
+  return true;
 }
 bool overlapped_io(HANDLE file, void *data, DWORD size, bool reading, HANDLE stop, int timeout,
                    size_t &transferred, std::string &error) {
@@ -425,12 +434,14 @@ bool Process::start(const std::string &exe, const std::string &args, bool sandbo
       return fail(os_error("CreateDesktop"));
     if (!grant_object(station_, app_sid,
                       WINSTA_ENUMERATE | WINSTA_ENUMDESKTOPS | WINSTA_READATTRIBUTES |
-                          WINSTA_ACCESSGLOBALATOMS | READ_CONTROL | SYNCHRONIZE))
-      return fail("cannot grant private window-station access");
+                          WINSTA_ACCESSGLOBALATOMS | READ_CONTROL | SYNCHRONIZE,
+                      error))
+      return fail("cannot grant private window-station access: " + error);
     if (!grant_object(desktop_, app_sid,
                       DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_CREATEWINDOW |
-                          DESKTOP_ENUMERATE | READ_CONTROL | SYNCHRONIZE))
-      return fail("cannot grant private desktop access");
+                          DESKTOP_ENUMERATE | READ_CONTROL | SYNCHRONIZE,
+                      error))
+      return fail("cannot grant private desktop access: " + error);
     desktop_name = station_name + L"\\Renderer";
     restricted = true;
   }
