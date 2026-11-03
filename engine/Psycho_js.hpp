@@ -96,7 +96,8 @@ struct Expr {
     Function,
     Template,
     Class,
-    Regex
+    Regex,
+    Await
   };
   Kind kind;
   Value literal;
@@ -144,6 +145,8 @@ struct Stmt {
 };
 struct Function {
   bool arrow = false;
+  // An async function runs its body straight away but hands back a promise.
+  bool async = false;
   std::vector<std::string> params;
   std::vector<std::unique_ptr<Stmt>> defaults;
   std::vector<std::unique_ptr<Stmt>> body;
@@ -184,6 +187,13 @@ public:
   Value make_promise();
   void settle_promise(Object *promise, int state, const Value &value);
   Value promise_then(const Value &promise, const Value &on_fulfilled, const Value &on_rejected);
+  // I wait for a promise the same way I would in a browser: keep running
+  // queued work and due timers until it settles or my deadline passes.
+  Value await_value(const Value &value);
+  // My page installs this so awaiting still lets timers fire while I wait.
+  void set_pump(std::function<bool()> pump) {
+    pump_ = std::move(pump);
+  }
   // I run queued promise work. My page calls this after every script and timer.
   void drain_microtasks(size_t limit = 200000);
   bool has_microtasks() const {
@@ -217,7 +227,9 @@ private:
     enum class Kind { None, Return, Break, Continue } kind = Kind::None;
     Value value;
   };
+  Value call_sync(Value fn, const Values &args, Value this_value);
   Host *host_;
+  std::function<bool()> pump_;
   std::vector<std::unique_ptr<Program>> programs_;
   size_t program_bytes_ = 0;
   std::vector<std::unique_ptr<Object>> objects_;

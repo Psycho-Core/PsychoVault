@@ -111,6 +111,91 @@ int main() {
     }
     CHECK(bad);
   }
+  // fetch() goes through my own network hook and resolves through promises.
+  {
+    Page page;
+    page.fetcher = [](const std::string &url) {
+      Resource r;
+      r.url = url;
+      r.mime = "application/json";
+      if (url == "https://local.test/api.json") {
+        r.text = "{\"name\":\"vault\",\"items\":[1,2]}";
+        return r;
+      }
+      r.ok = false;
+      r.error = "not found";
+      return r;
+    };
+    page.load(*parse_url("https://local.test/"),
+              "<!doctype html><title>before</title><script>"
+              "fetch('/api.json').then(function(r){return r.json();})"
+              ".then(function(j){document.title=j.name+j.items.length;});"
+              "</script>");
+    CHECK(page.title() == "vault2");
+    bool failed = false;
+    try {
+      page.load(*parse_url("https://local.test/"), "<!doctype html><script>fetch('/missing')"
+                                                   ".catch(function(e){document.title=e;})</script>");
+    } catch (std::exception &) {
+      failed = true;
+    }
+    CHECK(!failed);
+    CHECK(page.title().find("TypeError") != std::string::npos);
+  }
+  // await waits for a timer even though my engine runs one statement at a time.
+  {
+    Page page;
+    page.load(*parse_url("https://local.test/"),
+              "<!doctype html><title>before</title><script>"
+              "(async function(){await new Promise(function(r){setTimeout(r,5);});"
+              "document.title='after';})();"
+              "</script>");
+    CHECK(page.title() == "after");
+  }
+  // The same page host my browser runs: fetch, script, image and frame events.
+  {
+    std::vector<HostEvent> events;
+    Host host(
+        [](const std::string &url) {
+          Resource r;
+          r.url = url;
+          if (url == "https://local.test/") {
+            r.mime = "text/html";
+            r.text = "<!doctype html><title>t</title><body><img src=\"/Psycho_pixel.png\">"
+                     "<div id=out>wait</div><script>fetch('/api')"
+                     ".then(function(r){return r.json();})"
+                     ".then(function(j){document.getElementById('out').textContent=j.n;});"
+                     "</script></body>";
+            return r;
+          }
+          if (url == "https://local.test/api") {
+            r.mime = "application/json";
+            r.text = "{\"n\":42}";
+            return r;
+          }
+          if (url == "https://local.test/Psycho_pixel.png") {
+            r.mime = "image/png";
+            r.bytes = Bytes(fixtures::rgba_filters.begin(), fixtures::rgba_filters.end());
+            return r;
+          }
+          r.ok = false;
+          r.error = "not found";
+          return r;
+        },
+        [&events](HostEvent event) { events.push_back(std::move(event)); });
+    std::string error;
+    CHECK(host.load("https://local.test/", error));
+    bool frame = false, image = false;
+    for (const auto &event : events) {
+      if (event.tag == "frame")
+        frame = true;
+      if (event.tag == "image")
+        image = true;
+    }
+    CHECK(frame);
+    CHECK(image);
+    CHECK(host.pump() == false);
+  }
   Page page;
   page.load(*parse_url("https://local.test/"),
             "<!doctype "

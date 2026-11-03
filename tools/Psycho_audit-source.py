@@ -86,6 +86,35 @@ for gone in ('platform/Psycho_ipc.cpp','platform/Psycho_process.cpp','platform/P
     check('I removed the helper process plumbing: '+gone,not (ROOT/gone).exists())
 tests_text=(ROOT/'tests/Psycho_test_main.cpp').read_text()
 check('my tests drive my page host directly','#include "../platform/Psycho_host.hpp"' in tests_text and 'Host host(' in tests_text)
+# My pattern engine, my promise queue and my async support are my own code.
+regex_cpp=(ROOT/'engine/Psycho_regex.cpp').read_text()
+regex_hpp=(ROOT/'engine/Psycho_regex.hpp').read_text()
+check('I wrote my own pattern engine','std::optional<Regex> Regex::compile' in regex_cpp)
+check('my pattern engine matches on decoded code points','std::vector<uint32_t>' in regex_hpp)
+check('my pattern engine stops at a step limit instead of hanging',
+      'kStepLimit' in regex_cpp and 'kNestingLimit' in regex_cpp)
+check('my pattern engine reaches the build',"engine/Psycho_regex.cpp" in build_text)
+runtime_text=(ROOT/'engine/Psycho_js_runtime.cpp').read_text()
+check('my runtime compiles a pattern once per object','Value Runtime::make_regex' in runtime_text)
+check('my strings take a pattern in match, search, split and replace',
+      all(k in runtime_text for k in ('Value Runtime::string_match','Value Runtime::string_search',
+                                      'Value Runtime::string_split','Value Runtime::string_replace')))
+check('my promise handlers are queued instead of running inline',
+      'Value Runtime::promise_then' in runtime_text and 'enqueue_microtask' in runtime_text)
+check('my collector treats queued work as a root','for (auto &task : microtasks_)' in runtime_text)
+check('an async function hands back a promise','object->function->async' in runtime_text)
+check('await cannot freeze a tab forever','await never settled' in runtime_text)
+parser_text=(ROOT/'engine/Psycho_js_parser.cpp').read_text()
+check('my lexer tells a pattern literal from a division','regex_allowed' in parser_text)
+check('I parse async functions, async arrows and await',
+      'async_expression' in parser_text and 'Expr::Kind::Await' in parser_text)
+page_text=(ROOT/'engine/Psycho_page.cpp').read_text()
+check('my page installs fetch on my own fetcher','void Page::install_fetch()' in page_text)
+check('my fetch cannot bypass my network policy','fetcher(href)' in page_text)
+check('my await pump still lets due timers run','bool Page::pump_for_await()' in page_text)
+check('my page host gives my engine its own fetcher','page_->fetcher = [this]' in host_cpp)
+check('my tests cover patterns, promises, async and fetch',
+      all(k in tests_text for k in ('/ab+c/.test','Promise.all(','async function',"fetch('/api.json'")))
 for wf in ('.github/workflows/Psycho_owned-engine.yml','.github/workflows/Psycho_release.yml'):
     body=(ROOT/wf).read_text()
     check('I prove my single exe renders alone: '+wf,

@@ -1,5 +1,6 @@
 #include "Psycho_page.hpp"
 #include <chrono>
+#include <thread>
 namespace pv {
 static constexpr int kDocument = -1, kLocation = -3, kStyleBase = 1000000, kClassBase = 2000000;
 static bool has_attr(const Node &n, const std::string &key) {
@@ -498,6 +499,8 @@ void Page::load(const Url &url, const std::string &html, const std::string &mime
   delete js_->host();
   js_ = std::make_unique<js::Runtime>(new PageHost(*this));
   js_->global().properties["location"] = js_->host_value(kLocation, "Location");
+  js_->set_pump([this] { return pump_for_await(); });
+  install_fetch();
   js_->global().properties["alert"] = js_->make_native([this](js::Values &a) {
     if (dialogs.size() < 8)
       dialogs.push_back(a.empty() ? "" : a[0].to_string());
@@ -511,6 +514,104 @@ void Page::load(const Url &url, const std::string &html, const std::string &mime
   }
   dirty_ = true;
   run_scripts();
+}
+// I turn my own JSON tree into script values so json() needs no second parser.
+static js::Value from_json(js::Runtime &r, const Json &json) {
+  switch (json.type) {
+  case Json::Type::Bool:
+    return js::Value(json.boolean);
+  case Json::Type::Number:
+    return js::Value(json.number);
+  case Json::Type::String:
+    return js::Value(json.string);
+  case Json::Type::Array: {
+    js::Values items;
+    for (auto &item : json.array)
+      items.push_back(from_json(r, item));
+    return r.make_array(items);
+  }
+  case Json::Type::Object: {
+    js::Value object = r.make_object();
+    for (auto &entry : json.object)
+      object.object->properties[entry.first] = from_json(r, entry.second);
+    return object;
+  }
+  case Json::Type::Null:
+  default:
+    return js::Value::null();
+  }
+}
+// A body is already in hand, so the promise it hands back is already settled.
+static js::Value text_promise(js::Runtime &rt, const std::string &text) {
+  js::Value promise = rt.make_promise();
+  rt.settle_promise(promise.object, 1, js::Value(text));
+  return promise;
+}
+void Page::install_fetch() {
+  if (!js_)
+    return;
+  js_->global().properties["fetch"] = js_->make_native([this](js::Values &a) {
+    auto &r = *js_;
+    js::Value promise = r.make_promise();
+    if (a.empty()) {
+      r.settle_promise(promise.object, 2, js::Value("TypeError: fetch needs a URL"));
+      return promise;
+    }
+    auto target = resolve_url(doc.url, a[0].to_string());
+    if (!target || !target->network() || !fetcher) {
+      r.settle_promise(promise.object, 2, js::Value("TypeError: this URL cannot be fetched"));
+      return promise;
+    }
+    std::string href = target->href();
+    Resource res;
+    try {
+      res = fetcher(href);
+    } catch (const std::exception &e) {
+      res = Resource();
+      res.url = href;
+      res.ok = false;
+      res.error = e.what();
+    }
+    if (!res.ok) {
+      r.settle_promise(promise.object, 2,
+                       js::Value("TypeError: " + (res.error.empty() ? "network error" : res.error)));
+      return promise;
+    }
+    std::string body = res.text;
+    if (body.empty() && !res.bytes.empty())
+      body.assign(res.bytes.begin(), res.bytes.end());
+    js::Value response = r.make_object();
+    response.object->host_type = "Response";
+    response.object->properties["url"] = js::Value(href);
+    response.object->properties["ok"] = js::Value(res.status >= 200 && res.status < 300);
+    response.object->properties["status"] = js::Value(double(res.status));
+    response.object->properties["statusText"] = js::Value(res.status == 200 ? "OK" : "");
+    response.object->properties["redirected"] = js::Value(false);
+    response.object->properties["type"] = js::Value("basic");
+    js::Value headers = r.make_object();
+    headers.object->host_type = "Headers";
+    headers.object->properties["get"] = r.make_native([res](js::Values &args) {
+      std::string name = lower(args.empty() ? "" : args[0].to_string());
+      if (name == "content-type")
+        return js::Value(res.mime);
+      if (name == "content-length")
+        return js::Value(std::to_string(res.text.empty() ? res.bytes.size() : res.text.size()));
+      return js::Value::null();
+    });
+    response.object->properties["headers"] = headers;
+    response.object->properties["text"] =
+        r.make_native([this, body](js::Values &) { return text_promise(*js_, body); });
+    response.object->properties["json"] = r.make_native([this, body](js::Values &) {
+      auto parsed = Json::parse(body);
+      if (!parsed)
+        return text_promise(*js_, std::string());
+      js::Value p = js_->make_promise();
+      js_->settle_promise(p.object, 1, from_json(*js_, *parsed));
+      return p;
+    });
+    r.settle_promise(promise.object, 1, response);
+    return promise;
+  });
 }
 void Page::request(std::string input) {
   auto u = resolve_url(doc.url, input);
@@ -835,6 +936,9 @@ double Page::next_timer_delay() const {
   return best;
 }
 void Page::tick() {
+  run_due_timers();
+}
+bool Page::run_due_timers() {
   double now = double(now_ms());
   std::vector<js::Runtime::Timer> due;
   for (auto it = js_->timers.begin(); it != js_->timers.end();) {
@@ -863,5 +967,17 @@ void Page::tick() {
     }
     dirty_ = true;
   }
+  return !due.empty();
+}
+// While a script waits on a promise I still let its timers run, so
+// `await new Promise(r => setTimeout(r, 50))` behaves the way it should.
+bool Page::pump_for_await() {
+  if (run_due_timers())
+    return true;
+  if (js_->timers.empty())
+    return false;
+  std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  run_due_timers();
+  return true;
 }
 } // namespace pv

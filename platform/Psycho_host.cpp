@@ -11,7 +11,11 @@ constexpr int kSubresourceRounds = 8;
 } // namespace
 
 Host::Host(Fetcher fetcher, Reporter reporter)
-    : page_(std::make_unique<Page>()), fetch_(std::move(fetcher)), report_(std::move(reporter)) {}
+    : page_(std::make_unique<Page>()), fetch_(std::move(fetcher)), report_(std::move(reporter)) {
+  // I give my engine the same fetcher I use myself, so a script that calls
+  // fetch() reaches the network through my own stack.
+  page_->fetcher = [this](const std::string &url) { return fetch(url); };
+}
 Host::~Host() = default;
 
 Resource Host::fetch(const std::string &url) const {

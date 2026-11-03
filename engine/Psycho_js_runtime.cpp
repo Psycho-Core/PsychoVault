@@ -2,6 +2,7 @@
 #include "Psycho_regex.hpp"
 #include <chrono>
 #include <cstdio>
+#include <thread>
 #include <cstdlib>
 #include <iomanip>
 namespace pv::js {
@@ -1005,6 +1006,23 @@ bool Runtime::set_member(const Value &base, const std::string &key, const Value 
   return true;
 }
 Value Runtime::call(Value fn, const Values &args, Value this_value) {
+  // An async function runs its body now, but the caller only ever sees a
+  // promise: a return value fulfils it and a throw rejects it.
+  if (fn.type == Value::Type::Object && fn.object && fn.object->kind == Object::Kind::Function &&
+      fn.object->function && fn.object->function->async) {
+    Value promise = make_promise();
+    try {
+      settle_promise(promise.object, 1, call_sync(fn, args, this_value));
+    } catch (JsError &error) {
+      settle_promise(promise.object, 2, error.value);
+    } catch (const std::exception &error) {
+      settle_promise(promise.object, 2, Value(std::string("Error: ") + error.what()));
+    }
+    return promise;
+  }
+  return call_sync(fn, args, this_value);
+}
+Value Runtime::call_sync(Value fn, const Values &args, Value this_value) {
   tick();
   if (++depth_ > 128) {
     --depth_;
@@ -1275,6 +1293,8 @@ Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
     return e.literal;
   case Expr::Kind::Regex:
     return make_regex(e.text, e.flags);
+  case Expr::Kind::Await:
+    return await_value(evaluate(*e.left, env, this_value));
   case Expr::Kind::This:
     return this_value;
   case Expr::Kind::Identifier: {
@@ -1970,6 +1990,33 @@ void Runtime::settle_promise(Object *promise, int state, const Value &value) {
   }
 }
 
+Value Runtime::await_value(const Value &value) {
+  if (!(value.type == Value::Type::Object && value.object && value.object->host_type == "Promise"))
+    return value;
+  Object *promise = value.object;
+  auto started = std::chrono::steady_clock::now();
+  // I keep going while anything at all could settle this promise. If nothing
+  // can, I stop instead of freezing the page forever.
+  while (promise->promise_state == 0) {
+    if (!microtasks_.empty()) {
+      drain_microtasks(10000);
+      continue;
+    }
+    if (pump_ && pump_())
+      continue;
+    auto waited = std::chrono::steady_clock::now() - started;
+    if (waited > std::chrono::milliseconds(5000))
+      throw JsError{Value("Error: await never settled")};
+    if (!pump_ && microtasks_.empty())
+      throw JsError{Value("Error: await on a promise that never settles")};
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  if (promise->promise_state == 2) {
+    promise->promise_handled = true;
+    throw JsError{promise->promise_result};
+  }
+  return promise->promise_result;
+}
 Value Runtime::promise_then(const Value &promise, const Value &on_fulfilled,
                             const Value &on_rejected) {
   if (promise.type != Value::Type::Object || !promise.object)

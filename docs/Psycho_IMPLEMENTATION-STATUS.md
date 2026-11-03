@@ -6,10 +6,10 @@ I am building this in the open. This page records what my source actually does a
 
 | Area | What I wrote | Evidence |
 | --- | --- | --- |
-| Base | URL parsing/resolution, UTF-8, JSON, atomic writes with corruption backups, OS random, monotonic clock | 312 local checks |
+| Base | URL parsing/resolution, UTF-8, JSON, atomic writes with corruption backups, OS random, monotonic clock | 337 local checks |
 | HTML/DOM | Tokenizer, tree builder, entities, forms, selectors, mutation | Local checks; WPT not run |
 | CSS | Syntax, cascade, inheritance, box model, block/inline/flex, media queries | Local checks; WPT not run |
-| JavaScript | Parser, tree-walking interpreter, closures, objects/arrays, classes with `extends`/`super`, destructuring, template literals, spread, Map/Set, getters/setters, optional chaining, mark-sweep GC, timers, DOM events | Local checks incl. operator-classification regressions; Test262 not run |
+| JavaScript | Parser, tree-walking interpreter, closures, objects/arrays, classes with `extends`/`super`, destructuring, template literals, spread, Map/Set, getters/setters, optional chaining, mark-sweep GC, timers, DOM events, promises, `async`/`await`, my own pattern engine, `fetch` | Local checks incl. operator-classification regressions; Test262 not run |
 | Painting | Display list, software raster, owned PNG decoder/encoder, image blitting, OS text | Headless and native captures |
 | Shell | Native window, per-tab page on its own worker thread, omnibox, Unicode input/paste, stop/reload, bookmarks, history, downloads panel, all ten settings categories | Native captures; full UI parity not run |
 | Networking | Broker WinHTTP with TLS validation, redirects, size limits, proxy routing, proxy auth, DNT/referrer/UA policy, host block lists | Local policy checks; live proxy not run |
@@ -26,7 +26,7 @@ I am building this in the open. This page records what my source actually does a
 - **Media.** No `<video>`/`<audio>` pipeline, no Media Source Extensions, no DRM. YouTube and Netflix do not play. DRM can only ever arrive as a separately licensed extension, never inside my engine.
 - **Proton VPN.** Not bundled. Proton's extension is TypeScript needing their Node toolchain, and its worker needs modern JavaScript my engine lacks. My own VPN bridge is bundled and clearly labelled as mine.
 - **TLS-to-proxy and SOCKS5.** I refuse these rather than leak a direct connection. This is a real gap because Proton uses TLS-to-proxy.
-- **Modern JavaScript.** No modules, promises, async/await, regular expressions, Proxy or Symbol, and no tagged templates or labelled break.
+- **Modern JavaScript.** No modules, iterators or Symbol, typed arrays, Proxy, tagged templates or labelled break. Promises, async/await, regular expressions and `fetch` are in. `await` completes before the rest of the current script continues, which is the one place my job ordering differs from a browser.
 - **Vault and passwords.** Not implemented. I refuse to show a password field that stores nothing, and I have migrated no existing vault data.
 - WebRTC stack, canvas, workers, IndexedDB, Web Crypto, translation, spelling dictionary, media keys, mod CSS.
 - Installer, code signing, updater install-and-rollback, Android, full 125-control settings parity.

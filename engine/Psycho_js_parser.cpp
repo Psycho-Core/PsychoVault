@@ -488,7 +488,74 @@ public:
     node->items.push_back(std::move(tail));
     return node;
   }
+  // I report whether the token after an opening bracket closes a parameter list
+  // that is followed by a fat arrow, so `async(a)` stays a call.
+  bool arrow_ahead(size_t start) {
+    if (start >= tokens.size() || tokens[start].text != "(")
+      return false;
+    size_t scan = start;
+    int nest = 0;
+    while (scan < tokens.size()) {
+      if (tokens[scan].text == "(")
+        ++nest;
+      else if (tokens[scan].text == ")") {
+        --nest;
+        if (!nest) {
+          ++scan;
+          break;
+        }
+      } else if (tokens[scan].text == "<eof>")
+        break;
+      ++scan;
+    }
+    return scan < tokens.size() && tokens[scan].text == "=>";
+  }
+  std::unique_ptr<Expr> async_expression(bool allow_call) {
+    ++p; // async
+    if (is("function")) {
+      auto e = function_expression();
+      if (e->function)
+        e->function->async = true;
+      return postfix(std::move(e), allow_call);
+    }
+    auto fn = function_node();
+    fn->arrow = true;
+    fn->async = true;
+    if (is("(") && arrow_ahead(p)) {
+      expect("(");
+      if (!is(")"))
+        do {
+          if (take("...")) {
+            fn->params.push_back("..." + identifier());
+            break;
+          }
+          fn->params.push_back(identifier());
+        } while (take(","));
+      expect(")");
+    } else {
+      fn->params.push_back(identifier());
+    }
+    expect("=>");
+    if (take("{"))
+      fn->body = block();
+    else
+      fn->expression = expr();
+    auto e = make(Expr::Kind::Function);
+    e->function = fn;
+    return e;
+  }
   std::unique_ptr<Expr> prefix(bool allow_call = true) {
+    if (is("async") && (tok(1).text == "function" || (tok(1).text == "(" && arrow_ahead(p + 1)) ||
+                        (tok(2).text == "=>" && !keyword(tok(1).text))))
+      return async_expression(allow_call);
+    // await only means anything inside a function body; I accept it anywhere.
+    if (is("await")) {
+      ++p;
+      auto e = make(Expr::Kind::Await);
+      e->prefix = true;
+      e->left = prefix();
+      return e;
+    }
     if (is("class"))
       return postfix(class_expression(), allow_call);
     // A bare-identifier arrow: x => x * 2
@@ -1183,6 +1250,13 @@ public:
         expect("{");
         s->final = block();
       }
+    } else if (is("async") && tok(1).text == "function") {
+      ++p;
+      auto e = function_expression();
+      e->function->async = true;
+      s = statement_node(Stmt::Kind::Function);
+      s->function = e->function;
+      s->name = e->function->name;
     } else if (is("function")) {
       auto e = function_expression();
       s = statement_node(Stmt::Kind::Function);

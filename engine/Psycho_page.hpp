@@ -8,6 +8,8 @@ public:
   Document doc;
   std::vector<Diagnostic> diagnostics;
   std::vector<std::string> requests, navigations, dialogs;
+  // My host sets this so scripts can fetch with my own network stack.
+  std::function<Resource(const std::string &)> fetcher;
   Page();
   ~Page();
   void load(const Url &url, const std::string &html, const std::string &mime = "text/html");
@@ -17,6 +19,8 @@ public:
   void key(const std::string &key, const std::string &text);
   double next_timer_delay() const;
   void tick();
+  // I run whatever timers are due now and report whether I ran any.
+  bool run_due_timers();
   std::string title() const;
   const std::map<std::string, Image> &images() const {
     return images_;
@@ -42,6 +46,8 @@ private:
   int focused_ = -1;
   bool dirty_ = true;
   void run_scripts();
+  void install_fetch();
+  bool pump_for_await();
   void execute_script(int node);
   void request(std::string url);
   void rebuild();
