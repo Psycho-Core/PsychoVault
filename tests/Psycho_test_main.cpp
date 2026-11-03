@@ -375,6 +375,92 @@ int main() {
   CHECK(!form.navigations.empty());
   if (!form.navigations.empty())
     CHECK(form.navigations[0].find("q=hello+world") != std::string::npos);
+  // Cookies: matching, scope, expiry and what a script may see.
+  {
+    CookieJar jar;
+    auto site = *parse_url("https://example.com/app/page");
+    jar.set_from_header(site, "sid=abc; Path=/; HttpOnly", 1000);
+    jar.set_from_header(site, "theme=dark; Max-Age=60", 1000);
+    auto header = jar.header_for(site, 1001);
+    CHECK(header.find("sid=abc") != std::string::npos &&
+          header.find("theme=dark") != std::string::npos);
+    auto visible = jar.document_string(site, 1001);
+    CHECK(visible.find("theme=dark") != std::string::npos &&
+          visible.find("sid=abc") == std::string::npos);
+    CHECK(jar.header_for(*parse_url("https://other.test/"), 1001).empty());
+    jar.set_from_header(*parse_url("https://example.com/"), "tls=1; Secure", 1000);
+    CHECK(jar.header_for(*parse_url("http://example.com/"), 1001).find("tls=1") ==
+          std::string::npos);
+    CHECK(jar.header_for(site, 2000).find("theme=dark") == std::string::npos);
+    jar.set_from_header(*parse_url("https://example.com/"), "wide=1; Domain=example.com", 1000);
+    CHECK(jar.header_for(*parse_url("https://cdn.example.com/x"), 1001).find("wide=1") !=
+          std::string::npos);
+    jar.set_from_header(*parse_url("https://example.com/"), "bad=1; Domain=elsewhere.test", 1000);
+    CHECK(jar.header_for(*parse_url("https://elsewhere.test/"), 1001).empty());
+    CHECK(jar.header_for(site, 1001, true, true).empty());
+    // A script cannot create an HttpOnly cookie, and a removal takes effect.
+    jar.set_from_document(site, "script=1; HttpOnly", 1000);
+    CHECK(jar.document_string(site, 1001).find("script=1") != std::string::npos);
+    jar.set_from_header(site, "sid=gone; Max-Age=0", 1000);
+    CHECK(jar.header_for(site, 1001).find("sid=gone") == std::string::npos);
+  }
+  {
+    Storage store;
+    std::string origin = "https://store.test";
+    CHECK(store.set(origin, "a", "1"));
+    CHECK(store.set(origin, "b", "2"));
+    CHECK(store.length(origin) == 2);
+    CHECK(store.key(origin, 1) == "b");
+    CHECK(store.get(origin, "a") == "1");
+    CHECK(store.remove(origin, "a") && store.length(origin) == 1);
+    CHECK(!store.set(origin, "big", std::string(Storage::kQuota, 'x')));
+    CHECK(store.set(origin, "b", "22") && store.get(origin, "b") == "22");
+  }
+  {
+    // Two tabs share local storage but never each other's session storage.
+    Storage shared;
+    Page one;
+    one.use_local_storage(&shared);
+    one.load(*parse_url("https://store.test/"),
+             "<script>localStorage.setItem('k','v');sessionStorage.setItem('s','1');</script>");
+    Page two;
+    two.use_local_storage(&shared);
+    two.load(*parse_url("https://store.test/"),
+             "<script>document.title = localStorage.getItem('k') + '/' + "
+             "sessionStorage.getItem('s');</script>");
+    CHECK(two.title() == "v/null");
+  }
+  {
+    // history.pushState changes the address without loading, and back returns.
+    Page page;
+    page.load(*parse_url("https://history.test/start"),
+              "<script>history.pushState({n:1},'', '/two');</script>");
+    CHECK(page.doc.url.path == "/two");
+    CHECK(page.history().size() == 2);
+    Page again;
+    again.load(*parse_url("https://history.test/start"),
+               "<script>history.pushState({n:1},'', '/two');history.back();"
+               "document.title = location.pathname;</script>");
+    CHECK(again.title() == "/start");
+  }
+  {
+    // A form post is handed to my host with the right body, not turned into a GET.
+    Page page;
+    page.load(*parse_url("https://forms.test/"),
+              "<!doctype html><form action='/submit' method=post><input name=q value='hello "
+              "world'><input type=hidden name=token value=abc></form>");
+    page.render(800, 600, 0);
+    page.click(10, 10);
+    page.key("Enter", "");
+    CHECK(page.posts.size() == 1);
+    if (!page.posts.empty()) {
+      CHECK(page.posts[0].method == "POST");
+      CHECK(page.posts[0].body == "q=hello+world&token=abc");
+      CHECK(page.posts[0].content_type == "application/x-www-form-urlencoded");
+      CHECK(page.posts[0].url == "https://forms.test/submit");
+    }
+    CHECK(page.navigations.empty());
+  }
   Canvas c(64, 64, 0xff000000);
   c.fill({0, 0, 64, 64}, 0xff112233);
   c.stroke({4, 4, 20, 20}, 0xffffffff);

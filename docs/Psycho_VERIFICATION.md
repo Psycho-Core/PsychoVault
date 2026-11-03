@@ -5,8 +5,8 @@ I separate what passed from what failed, what is blocked and what I have not run
 ## Passed locally
 
 - My GCC build of the engine, my page host and my test suite, and a full Clang/MinGW cross-build of the Windows browser executable.
-- My engine test suite: **357 checks passed**. This covers URL/JSON/UTF-8, DOM, CSS, my JavaScript interpreter, PNG decode, layout, proxy routing, PAC evaluation, extension permissions, download naming, profile persistence, my bundled VPN bridge, and my page host loading a page, fetching its subresources, decoding an image and reporting frames.
-- My source-ownership and boundary audit: **162 passed, 0 failed**. This now includes the single-executable promise: no second executable, no resource compiler, no helper process.
+- My engine test suite: **385 checks passed**. This covers URL/JSON/UTF-8, DOM, CSS, my JavaScript interpreter, PNG decode, layout, proxy routing, PAC evaluation, extension permissions, download naming, profile persistence, my bundled VPN bridge, and my page host loading a page, fetching its subresources, decoding an image and reporting frames, my cookie jar, my web storage quota and a real form post.
+- My source-ownership and boundary audit: **173 passed, 0 failed**. This now includes the single-executable promise: no second executable, no resource compiler, no helper process.
 - My file-naming audit: **20 passed, 0 failed**.
 - My plan audit: **377 passed, 0 failed**.
 - Windows cross-compilation of every module with Clang/MinGW targeting `x86_64-windows-gnu`, including a full link of `PsychoVault.exe`, which catches MSVC-class errors before I spend a hosted build.
@@ -18,6 +18,12 @@ I separate what passed from what failed, what is blocked and what I have not run
 - **`for...of` over a `Map` or a `Set` produced nonsense.** It walked object properties and handed back native functions. I wrote one iterator walk and made spread, `for...of` and `Array.from` share it, so a non-iterable now raises a `TypeError` instead of inventing values.
 - **`async` methods in classes and object literals did not parse.** They were read as a property named `async`.
 - **`matchAll` was missing**, and `Symbol` did not exist at all.
+
+## Real bugs my step 4 work found and I fixed
+
+- **A form post would have been replayed as a GET.** My first version of `method="post"` pushed the action URL into my navigation list as well as handing the body to my host, so the shell would have followed it with a second, bodiless request. A post now goes one way only, and a check asserts that no navigation is queued with it.
+- **`document.cookie` ignored its own attributes.** My first document setter threw away `path` and `expires`, so a script that set a cookie for `/account` silently wrote it for the whole site, and a script that set an expiry got a session cookie. Script assignments now parse the same attributes as a header, except that `HttpOnly` is refused.
+- **My storage quota check double counted.** The first version subtracted an existing item and then compared against the full total again, so replacing a value near the limit failed. A replacement now only pays for the difference, and a check covers it.
 
 ## Real bugs my own tests found and I fixed
 

@@ -162,5 +162,27 @@ for flag in ('--expect-image',):
 check('my shell refuses an option it does not understand',
       'I do not understand the option' in shell_text)
 
+# Step 4: my browsing state is mine, and it reaches the network the long way.
+cookie_text=(ROOT/'engine/Psycho_cookies.cpp').read_text()
+network_text=(ROOT/'platform/Psycho_network.cpp').read_text()
+storage_text=(ROOT/'engine/Psycho_storage.cpp').read_text()
+check('my cookie jar keeps HttpOnly away from a script',
+      'from_document' in cookie_text and 'cookie.http_only' in cookie_text)
+check('my cookie jar refuses a cookie for another domain','refused outright' in cookie_text)
+check('my cookie jar only sends a Secure cookie over https',
+      'cookie.secure && url.scheme != "https"' in cookie_text)
+check('my web storage enforces a quota','kQuota' in storage_text and 'return false' in storage_text)
+check('my page hands a form post to my host with a content type',
+      'post.content_type = "application/x-www-form-urlencoded"' in page_text)
+check('my host posts a form through my own network stack','options.method = "POST"' in shell_text)
+check('my network layer attaches my cookies to a request','L"Cookie: "' in network_text)
+check('my network layer keeps what a response set','set_from_header(url, header' in network_text)
+check('my find in page walks the paint list my layout produced',
+      'find_marks' in shell_text and 'PaintCommand::Kind::Text' in shell_text)
+check('my zoom scales the paint list and the clicks','/ current().zoom' in shell_text)
+check('my tests cover cookies, storage, history and a real form post',
+      all(k in tests_text for k in ('CookieJar jar;','Storage store;','history.pushState',
+                                    'page.posts.size()')))
+
 print(f'\n{passed} passed, {len(fail)} failed')
 sys.exit(1 if fail else 0)

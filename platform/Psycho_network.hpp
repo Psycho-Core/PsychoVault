@@ -1,5 +1,6 @@
 #pragma once
 #include "../engine/Psycho_base.hpp"
+#include "../engine/Psycho_cookies.hpp"
 #include "Psycho_proxy.hpp"
 
 namespace pv {
@@ -19,6 +20,17 @@ struct NetworkPolicy {
   // Credentials a VPN extension supplied through webRequest.onAuthRequired.
   std::string proxy_user, proxy_pass;
   bool has_proxy_auth = false;
+  // I attach the profile's jar here so every request in the browser, including
+  // a script's fetch and a form post, reads and writes the same cookies.
+  CookieJar *cookies = nullptr;
+  // The host of the page making the request, so a third-party cookie can be
+  // refused rather than silently sent.
+  std::string top_level_host;
+};
+
+// What one request carries beyond its URL.
+struct RequestOptions {
+  std::string method = "GET", body, content_type;
 };
 
 // I refuse a request before any socket is opened when policy blocks it.
@@ -27,6 +39,8 @@ bool policy_blocks(const NetworkPolicy &policy, const Url &url, std::string &rea
 Resource fetch_url(const Url &url, int timeout_ms = 20000, size_t max_bytes = kMaxDocument);
 Resource fetch_url(const Url &url, const NetworkPolicy &policy, int timeout_ms = 20000,
                    size_t max_bytes = kMaxDocument);
+Resource fetch_url(const Url &url, const NetworkPolicy &policy, const RequestOptions &request,
+                   int timeout_ms = 20000, size_t max_bytes = kMaxDocument);
 
 struct DownloadProgress {
   uint64_t received = 0;

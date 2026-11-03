@@ -26,7 +26,7 @@
 
 namespace pv {
 static constexpr UINT WM_FRAME = WM_APP + 1, WM_NAVIGATE = WM_APP + 2, WM_DIALOG = WM_APP + 3,
-                      WM_DONE = WM_APP + 4, WM_IMAGE = WM_APP + 5;
+                      WM_DONE = WM_APP + 4, WM_IMAGE = WM_APP + 5, WM_URL = WM_APP + 6;
 static constexpr uint32_t BG = 0xff05080f, RAIL = 0xff080d16, CHROME = 0xff070b12,
                           PANEL = 0xff0d1420, BORDER = 0xff1c2736, TEXT = 0xffe6edf3,
                           MUTED = 0xff8b98a9, ACCENT = 0xff38bdf8;
@@ -46,7 +46,7 @@ struct Tab {
   std::vector<std::string> history;
   size_t index = 0;
   bool loading = false, started = false, recorded = false;
-  double scroll = 0;
+  double scroll = 0, zoom = 1.0;
   uint64_t generation = 0;
   Json frame;
   std::string error;
@@ -83,6 +83,8 @@ struct Session {
   std::string url;
   std::string start_error;
   NetworkPolicy policy;
+  CookieJar *jar = nullptr;
+  Storage *storage = nullptr;
   double width = 1000, height = 700;
   std::mutex mutex;
   std::condition_variable changed;
@@ -160,6 +162,10 @@ void Session::deliver(HostEvent event) {
   } else if (event.tag == "navigate") {
     update->url = std::move(event.url);
     post_update(hwnd, WM_NAVIGATE, update);
+  } else if (event.tag == "url") {
+    // history.pushState or a form post changed the address without a load.
+    update->url = std::move(event.url);
+    post_update(hwnd, WM_URL, update);
   } else if (event.tag == "dialog") {
     update->url = std::move(event.text);
     post_update(hwnd, WM_DIALOG, update);
@@ -210,6 +216,28 @@ void Session::run() {
         return fetch_url(*parsed, policy);
       },
       [this](HostEvent event) { deliver(std::move(event)); });
+  if (jar) {
+    host.use_cookies(jar);
+    policy.cookies = jar;
+  }
+  if (storage) host.use_local_storage(storage);
+  // A form post goes out through the same network stack as everything else.
+  host.set_poster([this](const std::string &link, const std::string &body,
+                         const std::string &content_type) {
+    Resource resource;
+    auto parsed = parse_url(link);
+    if (!parsed) {
+      resource.url = link;
+      resource.ok = false;
+      resource.error = "Invalid form URL";
+      return resource;
+    }
+    RequestOptions options;
+    options.method = "POST";
+    options.body = body;
+    options.content_type = content_type;
+    return fetch_url(*parsed, policy, options, 20000, 8u * 1024u * 1024u);
+  });
   std::string error;
   if (!host.load(url, error)) {
     if (!stopping)
@@ -247,6 +275,15 @@ struct Browser {
        panel_history = false, panel_downloads = false;
   ExtensionHost extensions;
   DownloadManager downloads;
+  // Every tab shares these, so a session on one tab is a session on the next,
+  // and both survive a restart with my settings.
+  CookieJar cookies;
+  Storage local_storage;
+  // Find in page
+  bool find_open = false;
+  std::string find_text;
+  std::vector<Rect> find_marks;
+  int find_at = 0;
   std::string extension_error, download_error;
   int settings_scroll = 0;
   size_t address_caret = 0, home_search_caret = 0;
@@ -264,6 +301,8 @@ struct Browser {
     profile =
         Profile::open(directory.empty() ? default_profile_directory() : directory, private_mode);
     profile_error = profile.error;
+    cookies.from_json(profile.cookies);
+    local_storage.from_json(profile.local_storage);
     if (profile.download_directory.empty())
       profile.download_directory = default_download_directory();
     downloads.set_directory(profile.download_directory);
@@ -289,10 +328,18 @@ struct Browser {
     }
     new_tab("psychovault://newtab", false);
   }
+  // I persist my settings together with the cookies and local storage, so a
+  // restart does not sign the user out of everything.
+  bool save_profile() {
+    profile.cookies = cookies.to_json();
+    profile.local_storage = local_storage.to_json();
+    return profile.save();
+  }
   // I build the request policy from my persisted settings so every toggle has a
   // real effect on the next request.
-  NetworkPolicy policy() const {
+  NetworkPolicy policy() {
     NetworkPolicy out;
+    out.cookies = &cookies;
     out.proxy = profile.proxy;
     out.send_dnt = profile.send_dnt;
     out.strip_referrer = profile.strip_referrer;
@@ -345,7 +392,7 @@ struct Browser {
       }
       profile.proxy = config;
       profile.proxy.owner_extension = id;
-      if (!profile.save()) { error = profile.error; return false; }
+      if (!save_profile()) { error = profile.error; return false; }
       return true;
     };
     effects.get_proxy = [this](const std::string &) { return profile.proxy; };
@@ -355,12 +402,12 @@ struct Browser {
         return false;
       }
       profile.proxy = ProxyConfig::direct();
-      if (!profile.save()) { error = profile.error; return false; }
+      if (!save_profile()) { error = profile.error; return false; }
       return true;
     };
     effects.set_webrtc_policy = [this](const std::string &, const std::string &value, std::string &) {
       profile.web_rtc_policy = value;
-      profile.save();
+      save_profile();
       return true;
     };
     effects.log = [this](const std::string &id, const std::string &level, const std::string &message) {
@@ -383,7 +430,7 @@ struct Browser {
   ~Browser() {
     if (profile.clear_on_exit && !private_mode) {
       profile.clear_history();
-      profile.save();
+      save_profile();
     }
     for (auto &tab : tabs)
       if (tab.session)
@@ -446,13 +493,14 @@ struct Browser {
     sync_address();
     settings = starts(tab.url, "psychovault://settings");
     status = !tab.error.empty() ? tab.error : tab.loading ? "Loading " + tab.url : tab.url;
+    update_find();
     if (!tab.started && (starts(tab.url, "http://") || starts(tab.url, "https://"))) {
       navigate(tab.url, false);
     } else if (tab.session) {
       Json j = Json::make_object();
       j.set("tag", "resize");
-      j.set("width", content.w);
-      j.set("height", content.h);
+      j.set("width", content.w / tab.zoom);
+      j.set("height", content.h / tab.zoom);
       tab.session->send(j);
     }
     save_session();
@@ -526,8 +574,14 @@ struct Browser {
     session->generation = tab.generation;
     session->url = target;
     session->policy = policy();
-    session->width = content.w;
-    session->height = content.h;
+    session->jar = &cookies;
+    session->storage = &local_storage;
+    if (auto host_url = parse_url(target)) {
+      session->policy.top_level_host = host_url->host;
+      session->policy.cookies = &cookies;
+    }
+    session->width = content.w / tab.zoom;
+    session->height = content.h / tab.zoom;
     tab.session = session;
     session->worker = std::thread([session] { session->run(); });
     if (index == active)
@@ -573,10 +627,11 @@ struct Browser {
     if (current().session) {
       Json j = Json::make_object();
       j.set("tag", "resize");
-      j.set("width", content.w);
-      j.set("height", content.h);
+      j.set("width", content.w / current().zoom);
+      j.set("height", content.h / current().zoom);
       current().session->send(j);
     }
+    update_find();
     InvalidateRect(hwnd, nullptr, FALSE);
   }
   void draw(Canvas &c) {
@@ -655,6 +710,21 @@ struct Browser {
       draw_home(c);
     else
       draw_content(c);
+    if (find_open) {
+      Rect bar{content.x + content.w - 330, content.y + 10, 310, 34};
+      c.fill(bar, PANEL);
+      c.stroke(bar, ACCENT);
+      std::string shown = find_text.empty() ? "Find in page" : find_text;
+      c.text(bar.x + 12, bar.y + 11, shown.substr(0, 34), 13, find_text.empty() ? MUTED : TEXT);
+      std::string counter = find_marks.empty()
+                                ? "0/0"
+                                : std::to_string(find_at + 1) + "/" + std::to_string(find_marks.size());
+      c.text(bar.x + bar.w - 96, bar.y + 12, counter, 12, MUTED);
+      Rect close{bar.x + bar.w - 26, bar.y + 8, 18, 18};
+      c.text(close.x + 5, close.y, "x", 12, MUTED);
+      hits.push_back({bar, "find-bar", 0, {}});
+      hits.push_back({close, "find-close", 0, {}});
+    }
     c.fill({44, double(height - 22), double(width - 44), 22}, CHROME);
     c.text(52, height - 19, status.substr(0, 180), 11, MUTED);
   }
@@ -907,7 +977,7 @@ struct Browser {
       if (!profile.set_custom_search(value)) status = "A custom search URL must contain %s";
       else { if (!value.empty()) profile.set_search_engine("custom"); status = "Custom search saved"; }
     }
-    profile.save();
+    save_profile();
     sync_address();
   }
   void check_for_update() {
@@ -955,6 +1025,123 @@ struct Browser {
     if (y == size_t(content.y) + 80)
       c.text(content.x + 40, double(y), "Nothing saved yet.", 13, MUTED);
   }
+  static std::string ascii_lower(std::string text) {
+    for (char &ch : text)
+      if (ch >= 'A' && ch <= 'Z')
+        ch = char(ch - 'A' + 'a');
+    return text;
+  }
+  // I build the list of places my query appears by walking the text runs my
+  // layout produced, so a find shows what the page actually paints.
+  void update_find() {
+    find_marks.clear();
+    find_at = 0;
+    Tab &t = current();
+    if (!find_open || find_text.empty() || t.frame.type != Json::Type::Object)
+      return;
+    struct Span {
+      size_t start, end;
+      double x, w;
+    };
+    struct Line {
+      double y = 0, h = 16;
+      std::string text;
+      std::vector<Span> spans;
+    };
+    std::vector<Line> lines;
+    for (const auto &j : t.frame.at("paint").array) {
+      if (int(j.num("kind")) != int(PaintCommand::Kind::Text))
+        continue;
+      std::string text = j.str("text");
+      if (text.empty())
+        continue;
+      double y = j.num("y");
+      Line *line = nullptr;
+      for (auto &candidate : lines)
+        if (std::abs(candidate.y - y) < 0.7) {
+          line = &candidate;
+          break;
+        }
+      if (!line) {
+        lines.push_back(Line{y, std::max(12.0, j.num("h")), {}, {}});
+        line = &lines.back();
+      }
+      size_t start = line->text.size();
+      line->text += text;
+      line->spans.push_back({start, line->text.size(), j.num("x"), j.num("w")});
+    }
+    std::string needle = ascii_lower(find_text);
+    for (const auto &line : lines) {
+      std::string haystack = ascii_lower(line.text);
+      size_t at = haystack.find(needle);
+      while (at != std::string::npos) {
+        size_t end = at + needle.size();
+        Rect rect{0, line.y, 0, line.h};
+        bool first = true;
+        for (const auto &span : line.spans) {
+          if (span.end <= at || span.start >= end)
+            continue;
+          double local_start = double((at > span.start ? at : span.start) - span.start);
+          double local_end = double((end < span.end ? end : span.end) - span.start);
+          double total = double(span.end - span.start);
+          double x0 = span.x + (total > 0 ? span.w * local_start / total : 0);
+          double x1 = span.x + (total > 0 ? span.w * local_end / total : span.w);
+          if (first) {
+            rect.x = x0;
+            rect.w = x1 - x0;
+            first = false;
+          } else
+            rect.w = x1 - rect.x;
+        }
+        if (rect.w > 0)
+          find_marks.push_back(rect);
+        at = haystack.find(needle, at + 1);
+      }
+    }
+  }
+  void open_find() {
+    find_open = true;
+    address_focus = home_focus = false;
+    update_find();
+    InvalidateRect(hwnd, nullptr, FALSE);
+  }
+  void close_find() {
+    find_open = false;
+    find_text.clear();
+    find_marks.clear();
+    find_at = 0;
+    InvalidateRect(hwnd, nullptr, FALSE);
+  }
+  void find_step(int delta) {
+    if (find_marks.empty())
+      return;
+    find_at = (find_at + delta + int(find_marks.size())) % int(find_marks.size());
+    const Rect &m = find_marks[size_t(find_at)];
+    Tab &t = current();
+    double zoom = t.zoom > 0 ? t.zoom : 1.0;
+    // My scroll is kept in page units, so the visible band is the content height
+    // divided by the zoom.
+    double view = content.h / zoom;
+    if (m.y < t.scroll)
+      scroll((m.y - t.scroll) * zoom - 24);
+    else if (m.y + m.h > t.scroll + view)
+      scroll(((m.y + m.h) - (t.scroll + view)) * zoom + 24);
+    InvalidateRect(hwnd, nullptr, FALSE);
+  }
+  void set_zoom(double zoom) {
+    Tab &t = current();
+    t.zoom = std::clamp(zoom, 0.5, 3.0);
+    if (t.session) {
+      Json j = Json::make_object();
+      j.set("tag", "resize");
+      j.set("width", content.w / t.zoom);
+      j.set("height", content.h / t.zoom);
+      t.session->send(j);
+    }
+    update_find();
+    status = "Zoom " + std::to_string(int(t.zoom * 100 + 0.5)) + "%";
+    InvalidateRect(hwnd, nullptr, FALSE);
+  }
   void draw_content(Canvas &c) {
     Tab &t = current();
     if (t.loading && t.frame.type == Json::Type::Null) {
@@ -969,13 +1156,15 @@ struct Browser {
     if (t.frame.type != Json::Type::Object)
       return;
     std::vector<PaintCommand> commands;
+    double zoom = t.zoom;
     for (auto &j : t.frame.at("paint").array) {
       PaintCommand p;
       p.kind = PaintCommand::Kind(int(j.num("kind")));
-      p.rect = {j.num("x") + content.x, j.num("y") + content.y - t.scroll, j.num("w"), j.num("h")};
+      p.rect = {j.num("x") * zoom + content.x, j.num("y") * zoom + content.y - t.scroll * zoom,
+                j.num("w") * zoom, j.num("h") * zoom};
       p.color = uint32_t(j.num("color"));
       p.text = j.str("text");
-      p.size = j.num("size");
+      p.size = j.num("size") * zoom;
       p.thickness = j.num("thickness");
       p.bold = j.flag("bold");
       p.node = int(j.num("node"));
@@ -985,6 +1174,16 @@ struct Browser {
     Rect old = c.clip;
     c.clip = content;
     paint_commands(c, commands, 0, t.images);
+    for (size_t i = 0; i < find_marks.size(); ++i) {
+      const Rect &m = find_marks[i];
+      Rect r{m.x * zoom + content.x, m.y * zoom + content.y - t.scroll * zoom, m.w * zoom,
+             m.h * zoom};
+      if (i == size_t(find_at)) {
+        c.stroke(r, ACCENT);
+        c.fill({r.x, r.y + r.h - 2, r.w, 2}, ACCENT);
+      } else
+        c.stroke(r, 0xff2a4a6a);
+    }
     c.clip = old;
   }
   void click(int x, int y) {
@@ -1014,7 +1213,7 @@ struct Browser {
           address_caret = address.size();
         } else if (h.action == "bookmark") {
           profile.bookmark(current().title, current().url);
-          profile.save();
+          save_profile();
           status = "Bookmark saved";
         } else if (h.action == "bookmarks") {
           panel_bookmarks = !panel_bookmarks;
@@ -1034,16 +1233,16 @@ struct Browser {
           std::vector<std::string> engines = {"duckduckgo", "brave", "startpage", "wikipedia"};
           auto it2 = std::find(engines.begin(), engines.end(), profile.search_engine);
           profile.search_engine = engines[(it2 - engines.begin() + 1) % engines.size()];
-          profile.save();
+          save_profile();
         } else if (h.action == "setting-restore") {
           profile.restore_tabs = !profile.restore_tabs;
-          profile.save();
+          save_profile();
         } else if (h.action == "downloads") {
           panel_downloads = !panel_downloads;
           panel_bookmarks = panel_history = false;
         } else if (h.action == "toggle-adblock") {
           profile.block_ads = !profile.block_ads;
-          profile.save();
+          save_profile();
           status = profile.block_ads ? "Ad blocker on" : "Ad blocker off";
         } else if (h.action == "vpn") {
           navigate("psychovault://settings");
@@ -1055,36 +1254,36 @@ struct Browser {
         } else if (h.action == "download-open") {
           if (!h.value.empty()) ShellExecuteW(hwnd, L"open", std::wstring(h.value.begin(), h.value.end()).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         } else if (h.action == "setting-workspaces") {
-          profile.workspaces = !profile.workspaces; profile.save();
+          profile.workspaces = !profile.workspaces; save_profile();
         } else if (h.action == "setting-home") {
           begin_setting_edit("homepage", profile.home_page);
         } else if (h.action == "setting-custom-search") {
           begin_setting_edit("customSearch", profile.custom_search);
         } else if (h.action == "setting-block-ads") {
-          profile.block_ads = !profile.block_ads; profile.save();
+          profile.block_ads = !profile.block_ads; save_profile();
         } else if (h.action == "setting-third-party-cookies") {
-          profile.block_third_party_cookies = !profile.block_third_party_cookies; profile.save();
+          profile.block_third_party_cookies = !profile.block_third_party_cookies; save_profile();
         } else if (h.action == "setting-dnt") {
-          profile.send_dnt = !profile.send_dnt; profile.save();
+          profile.send_dnt = !profile.send_dnt; save_profile();
         } else if (h.action == "setting-referrer") {
-          profile.strip_referrer = !profile.strip_referrer; profile.save();
+          profile.strip_referrer = !profile.strip_referrer; save_profile();
         } else if (h.action == "setting-clear-exit") {
-          profile.clear_on_exit = !profile.clear_on_exit; profile.save();
+          profile.clear_on_exit = !profile.clear_on_exit; save_profile();
         } else if (h.action == "setting-clear-history") {
-          profile.clear_history(); profile.save(); status = "I cleared my browsing history";
+          profile.clear_history(); save_profile(); status = "I cleared my browsing history";
         } else if (h.action == "setting-download-dir") {
           auto chosen = pick_folder(hwnd);
           if (!chosen.empty()) {
             if (profile.set_download_directory(chosen)) {
               downloads.set_directory(profile.download_directory);
-              profile.save();
+              save_profile();
               status = "Downloads will save to " + profile.download_directory;
             } else status = "I cannot write to that folder";
           }
         } else if (h.action == "setting-ask-save") {
-          profile.ask_save_location = !profile.ask_save_location; profile.save();
+          profile.ask_save_location = !profile.ask_save_location; save_profile();
         } else if (h.action == "setting-download-notify") {
-          profile.download_notify = !profile.download_notify; profile.save();
+          profile.download_notify = !profile.download_notify; save_profile();
         } else if (h.action == "setting-open-downloads") {
           panel_downloads = true; settings = false;
         } else if (h.action == "extension-toggle") {
@@ -1099,7 +1298,7 @@ struct Browser {
               if (!enable) list.push_back(record.manifest.id);
               if (enable && !extensions.start_worker(record.manifest.id, error))
                 extension_error = error;
-              profile.save();
+              save_profile();
             } else extension_error = error;
           }
         } else if (h.action == "extension-add") {
@@ -1108,7 +1307,7 @@ struct Browser {
             std::string error;
             if (extensions.install_directory(chosen, error)) {
               profile.extension_directories.push_back(chosen);
-              profile.save();
+              save_profile();
               for (const auto &record : extensions.list())
                 if (record.directory == chosen && !extensions.start_worker(record.manifest.id, error))
                   extension_error = error;
@@ -1119,34 +1318,34 @@ struct Browser {
           const int steps[] = {0, 25, 50, 75};
           size_t index = 0;
           for (size_t i = 0; i < 4; ++i) if (profile.cpu_limit == steps[i]) index = i;
-          profile.cpu_limit = steps[(index + 1) % 4]; profile.save();
+          profile.cpu_limit = steps[(index + 1) % 4]; save_profile();
         } else if (h.action == "setting-sleep-tabs") {
           const int steps[] = {0, 5, 15, 30, 60};
           size_t index = 0;
           for (size_t i = 0; i < 5; ++i) if (profile.sleep_tabs_minutes == steps[i]) index = i;
-          profile.sleep_tabs_minutes = steps[(index + 1) % 5]; profile.save();
+          profile.sleep_tabs_minutes = steps[(index + 1) % 5]; save_profile();
         } else if (h.action == "setting-battery") {
-          profile.battery_saver = !profile.battery_saver; profile.save();
+          profile.battery_saver = !profile.battery_saver; save_profile();
         } else if (h.action == "setting-accent") {
           const char *accents[] = {"cyan", "purple", "green", "red"};
           size_t index = 0;
           for (size_t i = 0; i < 4; ++i) if (profile.accent == accents[i]) index = i;
-          profile.accent = accents[(index + 1) % 4]; profile.save();
+          profile.accent = accents[(index + 1) % 4]; save_profile();
         } else if (h.action == "setting-hide-sidebar") {
-          profile.hide_sidebar = !profile.hide_sidebar; profile.save();
+          profile.hide_sidebar = !profile.hide_sidebar; save_profile();
         } else if (h.action == "setting-spellcheck") {
-          profile.spell_check = !profile.spell_check; profile.save();
+          profile.spell_check = !profile.spell_check; save_profile();
         } else if (h.action == "setting-spell-add") {
-          if (!home_search.empty()) { profile.add_user_word(home_search); profile.save(); status = "I added the word"; }
+          if (!home_search.empty()) { profile.add_user_word(home_search); save_profile(); status = "I added the word"; }
           else status = "Type a word in my home search box first";
         } else if (h.action == "setting-spell-remove") {
-          if (!profile.user_words.empty()) { profile.remove_user_word(profile.user_words.back()); profile.save(); }
+          if (!profile.user_words.empty()) { profile.remove_user_word(profile.user_words.back()); save_profile(); }
         } else if (h.action == "setting-high-contrast") {
-          profile.high_contrast = !profile.high_contrast; profile.save();
+          profile.high_contrast = !profile.high_contrast; save_profile();
         } else if (h.action == "setting-reduce-motion") {
-          profile.reduce_motion = !profile.reduce_motion; profile.save();
+          profile.reduce_motion = !profile.reduce_motion; save_profile();
         } else if (h.action == "setting-tab-close") {
-          profile.show_tab_close_buttons = !profile.show_tab_close_buttons; profile.save();
+          profile.show_tab_close_buttons = !profile.show_tab_close_buttons; save_profile();
         } else if (h.action == "setting-check-update") {
           check_for_update();
         } else if (h.action == "minimize")
@@ -1155,19 +1354,61 @@ struct Browser {
           ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE);
         else if (h.action == "close-window")
           PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        else if (h.action == "find-bar")
+          address_focus = home_focus = false;
+        else if (h.action == "find-close")
+          close_find();
         InvalidateRect(hwnd, nullptr, FALSE);
         return;
       }
     if (content.contains(x, y) && current().session) {
       Json j = Json::make_object();
       j.set("tag", "click");
-      j.set("x", x - content.x);
-      j.set("y", y - content.y);
+      // A zoomed page lays out in its own pixels, so I convert back before I
+      // hand a click to it.
+      j.set("x", (x - content.x) / current().zoom);
+      j.set("y", (y - content.y) / current().zoom);
       current().session->send(j);
     }
   }
   void key(UINT, WPARAM wp, LPARAM) {
     bool ctrl = GetKeyState(VK_CONTROL) < 0;
+    bool shift = GetKeyState(VK_SHIFT) < 0;
+    if (ctrl && wp == 'F') {
+      open_find();
+      return;
+    }
+    if (ctrl && (wp == VK_OEM_PLUS || wp == VK_ADD || wp == '=')) {
+      set_zoom(current().zoom * 1.1);
+      return;
+    }
+    if (ctrl && (wp == VK_OEM_MINUS || wp == VK_SUBTRACT)) {
+      set_zoom(current().zoom / 1.1);
+      return;
+    }
+    if (ctrl && wp == '0') {
+      set_zoom(1.0);
+      return;
+    }
+    if (find_open && !address_focus && !home_focus) {
+      if (wp == VK_ESCAPE) {
+        close_find();
+        return;
+      }
+      if (wp == VK_RETURN) {
+        find_step(shift ? -1 : 1);
+        return;
+      }
+      if (wp == VK_BACK) {
+        if (!find_text.empty()) {
+          size_t previous = previous_cp(find_text, find_text.size());
+          find_text.erase(previous);
+          update_find();
+        }
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return;
+      }
+    }
     if (ctrl && wp == 'V') {
       paste();
       return;
@@ -1198,7 +1439,7 @@ struct Browser {
     }
     if (ctrl && wp == 'D') {
       profile.bookmark(current().title, current().url);
-      profile.save();
+      save_profile();
       status = "Bookmark saved";
       InvalidateRect(hwnd, nullptr, FALSE);
       return;
@@ -1276,6 +1517,14 @@ struct Browser {
   void insert_text(const std::string &text) {
     if (text.empty())
       return;
+    if (find_open && !address_focus && !home_focus) {
+      if (find_text.size() + text.size() <= 512) {
+        find_text += text;
+        update_find();
+      }
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
     if (address_focus) {
       if (address.size() + text.size() > 8192)
         return;
@@ -1330,8 +1579,10 @@ struct Browser {
   }
   void scroll(double delta) {
     Tab &t = current();
-    double max = std::max(0.0, t.frame.num("height", content.h) - content.h);
-    t.scroll = std::clamp(t.scroll + delta, 0.0, max);
+    double zoom = t.zoom > 0 ? t.zoom : 1.0;
+    double page_height = t.frame.num("height", content.h / zoom);
+    double max = std::max(0.0, page_height - content.h / zoom);
+    t.scroll = std::clamp(t.scroll + delta / zoom, 0.0, max);
     if (t.session) {
       Json j = Json::make_object();
       j.set("tag", "scroll");
@@ -1460,16 +1711,37 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
               tab->history[tab->index] = final_url;
           }
           b->profile.visit(tab->title, tab->url);
-          if (!b->profile.save() && b->profile_error.empty())
+          if (!b->save_profile() && b->profile_error.empty())
             b->profile_error = b->profile.error;
           if (tab == &b->current() && !b->address_focus)
             b->sync_address();
         }
-        if (tab == &b->current())
+        if (tab == &b->current()) {
           b->status = tab->url;
+          b->update_find();
+        }
       }
       if (tab == &b->current())
         InvalidateRect(hwnd, nullptr, FALSE);
+    }
+    return 0;
+  }
+  case WM_URL: {
+    std::unique_ptr<Update> up(reinterpret_cast<Update *>(lp));
+    auto b = browser(hwnd);
+    Tab *tab = b ? b->find_tab(int(wp)) : nullptr;
+    if (tab && up->generation == tab->generation && !up->url.empty()) {
+      tab->url = up->url;
+      if (tab->index < tab->history.size())
+        tab->history[tab->index] = up->url;
+      if (tab == &b->current()) {
+        if (!b->address_focus)
+          b->sync_address();
+        b->status = tab->url;
+        b->update_find();
+        b->save_session();
+        InvalidateRect(hwnd, nullptr, FALSE);
+      }
     }
     return 0;
   }

@@ -9,13 +9,22 @@ I am working through my browser one step at a time, in the order that gets me so
 | 1 | One executable that renders my pages itself | Done, published as 0.4.0 |
 | 2 | Modern JavaScript: promises, async/await, regular expressions, iterators, fetch, modules | Patterns, promises, async/await, iterators, `Symbol`, `matchAll` and `fetch` are in; typed arrays and modules are still to come |
 | 3 | CSS and layout: positioning, flexbox, grid, transforms | Done in this build for positioning, flexbox, grid and translate/scale transforms |
-| 4 | Browsing fundamentals: cookies, local storage, forms, find in page, zoom | Not started |
+| 4 | Browsing fundamentals: cookies, local storage, forms, find in page, zoom | Done in this build: my own cookie jar, local and session storage with a quota, GET and POST forms, the history API, find in page and zoom |
 | 5 | More image formats and canvas | Not started |
 | 6 | Media: audio, video and Media Source Extensions | Not started |
 | 7 | VPN transport, including the TLS-to-proxy path Proton needs | Not started |
 | 8 | Security: operating-system containment for page code, certificate policy, ad blocking | Not started |
 | 9 | Conformance measurement with Test262 and web-platform-tests subsets | Not started |
 | 10 | Published release and a verified updater cycle | Publishing on every build; the install and rollback half is not tested |
+
+## What this build adds over 0.6.1
+
+- **A cookie jar of my own.** I parse `Set-Cookie` myself, with the name, value, domain, path, expiry date, `Max-Age`, `Secure` and `HttpOnly`. A cookie for a domain I am not talking to is refused, a host-only cookie only returns to the host that set it, a `Secure` cookie never goes out over plain HTTP, and a script sees `document.cookie` without the `HttpOnly` entries. My network layer now reads every `Set-Cookie` a response carries and sends the right `Cookie` header on the next request, including subresources and downloads. The third-party toggle really blocks a cross-site cookie now, because my policy knows which host the page belongs to.
+- **Local and session storage.** `localStorage` and `sessionStorage` work as properties and as `getItem`, `setItem`, `removeItem`, `clear`, `key` and `length`. Each origin gets its own five megabyte budget, and a write that would pass it raises a quota error a page can catch. Local storage is shared by every tab and saved into my profile; session storage belongs to the tab and goes away with it. Private mode keeps both in memory only.
+- **Real form posts.** A form with `method="post"` now builds `application/x-www-form-urlencoded`, `multipart/form-data` or `text/plain` and my host sends it through the same network stack as everything else, then renders the answer in the same tab. Checkboxes only send when they are checked, a submit button no longer sends its own label, and a disabled or unchecked control is skipped.
+- **The history API.** `history.pushState`, `replaceState`, `back`, `forward`, `go`, `length` and `state` work on the page's own history, `popstate` fires, and the address bar follows because my host reports the change instead of reloading. A page cannot push an entry for another origin.
+- **Find in page.** `Ctrl+F` opens a find bar. I search the text runs my own layout produced, so the highlight lines up with what is painted, `Enter` and `Shift+Enter` step through the matches, the found match scrolls into view, and `Esc` closes it.
+- **Zoom.** `Ctrl+=`, `Ctrl+-` and `Ctrl+0` scale the page between 50% and 300%. The page lays out at the zoomed viewport width, so text reflows instead of being stretched, and clicks are converted back into page coordinates.
 
 ## What this build adds over 0.5.0
 
@@ -48,7 +57,7 @@ I want to be straight about one difference: my engine runs one statement at a ti
 
 ## Evidence required before I hand over a preview
 
-- The engine and page-host tests pass locally and on Windows. They now stand at 337 checks, including pattern matching, promise ordering, async/await and a `fetch` round trip through my page host.
+- The engine and page-host tests pass locally and on Windows. They now stand at 385 checks, including pattern matching, promise ordering, async/await and a `fetch` round trip through my page host.
 - The single-file gate passes on hosted Windows for the exact commit I publish.
 - A local HTTP test proves main-document, stylesheet, script and PNG loading through my page host.
 - The Windows artifact contains only my executables, notices and build metadata - no profile, credential or source-control directory.

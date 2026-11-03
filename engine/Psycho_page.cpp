@@ -2,7 +2,12 @@
 #include <chrono>
 #include <thread>
 namespace pv {
-static constexpr int kDocument = -1, kLocation = -3, kStyleBase = 1000000, kClassBase = 2000000;
+static constexpr int kDocument = -1, kLocation = -3, kStorageLocal = -5, kStorageSession = -6,
+                     kHistory = -7, kStyleBase = 1000000, kClassBase = 2000000;
+// Cookies expire against wall-clock seconds, which is what a date header uses.
+static double cookie_now() {
+  return double(now_ms()) / 1000.0;
+}
 static bool has_attr(const Node &n, const std::string &key) {
   std::string v;
   return n.get_attribute(key, v);
@@ -24,9 +29,120 @@ public:
     if (page.diagnostics.size() < 200)
       page.diagnostics.push_back({"console", text.substr(0, 4096)});
   }
+  Storage &storage_for(int id) {
+    return id == kStorageLocal ? page.local_storage() : page.session_storage();
+  }
+  js::Value storage_get(int id, const std::string &name) {
+    auto &r = *page.js_;
+    Storage &store = storage_for(id);
+    Storage *store_ptr = &store;
+    std::string origin = page.doc.url.origin();
+    if (name == "length")
+      return js::Value(double(store_ptr->length(origin)));
+    if (name == "key")
+      return r.make_native([store_ptr, origin](js::Values &a) {
+        if (a.empty())
+          return js::Value::null();
+        auto key = store_ptr->key(origin, size_t(std::max(0.0, a[0].to_number())));
+        return key.empty() ? js::Value::null() : js::Value(key);
+      });
+    if (name == "getItem")
+      return r.make_native([store_ptr, origin](js::Values &a) {
+        bool found = false;
+        auto value = store_ptr->get(origin, a.empty() ? std::string() : a[0].to_string(), &found);
+        return found ? js::Value(value) : js::Value::null();
+      });
+    if (name == "setItem")
+      return r.make_native([store_ptr, origin](js::Values &a) {
+        if (a.size() < 2)
+          return js::Value();
+        if (!store_ptr->set(origin, a[0].to_string(), a[1].to_string()))
+          throw js::JsError{js::Value("QuotaExceededError: web storage is full for this site")};
+        return js::Value();
+      });
+    if (name == "removeItem")
+      return r.make_native([store_ptr, origin](js::Values &a) {
+        if (!a.empty())
+          store_ptr->remove(origin, a[0].to_string());
+        return js::Value();
+      });
+    if (name == "clear")
+      return r.make_native([store_ptr, origin](js::Values &) {
+        store_ptr->clear(origin);
+        return js::Value();
+      });
+    bool found = false;
+    auto value = store_ptr->get(origin, name, &found);
+    return found ? js::Value(value) : js::Value();
+  }
+  js::Value history_get(const std::string &name) {
+    auto &r = *page.js_;
+    if (name == "length")
+      return js::Value(double(page.history_.size()));
+    if (name == "state") {
+      if (page.history_.empty() || page.history_index_ >= page.history_.size())
+        return js::Value::null();
+      return page.history_[page.history_index_].state;
+    }
+    if (name == "pushState" || name == "replaceState") {
+      bool replace = name == "replaceState";
+      return r.make_native([this, replace](js::Values &a) {
+        step_history(a, replace);
+        return js::Value();
+      });
+    }
+    if (name == "back" || name == "forward" || name == "go") {
+      long fixed = name == "back" ? -1 : (name == "forward" ? 1 : 0);
+      bool relative = name == "go";
+      return r.make_native([this, fixed, relative](js::Values &a) {
+        long delta = relative ? long(a.empty() ? 0.0 : a[0].to_number()) : fixed;
+        go_to(delta);
+        return js::Value();
+      });
+    }
+    return js::Value();
+  }
+  void step_history(js::Values &a, bool replace) {
+    auto &d = page.doc;
+    std::string target = a.size() > 2 ? a[2].to_string() : d.url.href();
+    auto resolved = resolve_url(d.url, target);
+    // A page may only rewrite its own history entry, never another origin's.
+    if (!resolved || resolved->origin() != d.url.origin()) {
+      if (page.diagnostics.size() < 200)
+        page.diagnostics.push_back({"history", "I refused a history change to another origin"});
+      return;
+    }
+    Page::HistoryEntry entry{resolved->href(), a.empty() ? js::Value::null() : a[0]};
+    if (replace && !page.history_.empty()) {
+      page.history_[page.history_index_] = entry;
+    } else {
+      page.history_.resize(page.history_index_ + 1);
+      page.history_.push_back(entry);
+      page.history_index_ = page.history_.size() - 1;
+    }
+    d.url = *resolved;
+    page.dirty_ = true;
+  }
+  void go_to(long delta) {
+    long target = long(page.history_index_) + delta;
+    if (target < 0 || target >= long(page.history_.size()) || target == long(page.history_index_))
+      return;
+    page.history_index_ = size_t(target);
+    if (auto url = parse_url(page.history_[page.history_index_].url))
+      page.doc.url = *url;
+    page.dirty_ = true;
+    js::Value event = page.js_->make_object();
+    event.object->properties["type"] = js::Value("popstate");
+    event.object->properties["state"] = page.history_[page.history_index_].state;
+    page.dispatch(page.doc.root, "popstate", event);
+  }
   js::Value get(int id, const std::string &name) override {
     auto &r = *page.js_;
     auto &d = page.doc;
+    if (id == kStorageLocal || id == kStorageSession)
+      return storage_get(id, name);
+    if (id == kHistory)
+      return history_get(name);
     if (id == kLocation) {
       if (name == "href")
         return js::Value(d.url.href());
@@ -63,6 +179,8 @@ public:
         return js::Value(d.title());
       if (name == "URL" || name == "documentURI")
         return js::Value(d.url.href());
+      if (name == "cookie")
+        return js::Value(page.cookies().document_string(d.url, cookie_now()));
       if (name == "location")
         return r.host_value(kLocation, "Location");
       if (name == "getElementById")
@@ -328,6 +446,15 @@ public:
   }
   bool set(int id, const std::string &name, const js::Value &value) override {
     auto &d = page.doc;
+    if (id == kStorageLocal || id == kStorageSession) {
+      if (!storage_for(id).set(d.url.origin(), name, value.to_string()))
+        throw js::JsError{js::Value("QuotaExceededError: web storage is full for this site")};
+      return true;
+    }
+    if (id == kDocument && name == "cookie") {
+      page.cookies().set_from_document(d.url, value.to_string(), cookie_now());
+      return true;
+    }
     if (id == kLocation && name == "href") {
       page.request_navigation(value.to_string());
       return true;
@@ -480,6 +607,22 @@ void Page::remove_listener(int node, const std::string &type, js::Value fn) {
 Page::Page() {
   js_ = std::make_unique<js::Runtime>(new PageHost(*this));
 }
+CookieJar &Page::cookies() {
+  return *jar_;
+}
+void Page::use_cookies(CookieJar *jar) {
+  jar_ = jar ? jar : &own_cookies_;
+}
+Storage &Page::local_storage() {
+  return *local_;
+}
+void Page::use_local_storage(Storage *storage) {
+  local_ = storage ? storage : &own_local_;
+}
+void Page::set_history(std::vector<HistoryEntry> entries, size_t index) {
+  history_ = std::move(entries);
+  history_index_ = history_.empty() ? 0 : std::min(index, history_.size() - 1);
+}
 Page::~Page() {
   delete js_->host();
 }
@@ -499,6 +642,14 @@ void Page::load(const Url &url, const std::string &html, const std::string &mime
   delete js_->host();
   js_ = std::make_unique<js::Runtime>(new PageHost(*this));
   js_->global().properties["location"] = js_->host_value(kLocation, "Location");
+  js_->global().properties["localStorage"] = js_->host_value(kStorageLocal, "Storage");
+  js_->global().properties["sessionStorage"] = js_->host_value(kStorageSession, "Storage");
+  js_->global().properties["history"] = js_->host_value(kHistory, "History");
+  // A fresh document starts with one history entry, the page itself.
+  history_.clear();
+  history_.push_back(HistoryEntry{url.href(), js::Value::null()});
+  history_index_ = 0;
+  posts.clear();
   js_->set_pump([this] { return pump_for_await(); });
   install_fetch();
   js_->global().properties["alert"] = js_->make_native([this](js::Values &a) {
@@ -899,34 +1050,108 @@ void Page::key(const std::string &key, const std::string &text) {
       submit_form(form);
   }
 }
+// A form body is encoded the way a browser does it, where a space becomes a
+// plus and everything outside the unreserved set is escaped.
+static std::string form_encode(const std::string &text) {
+  static const char *hex = "0123456789ABCDEF";
+  std::string out;
+  for (unsigned char c : text) {
+    if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '*')
+      out += char(c);
+    else if (c == ' ')
+      out += '+';
+    else {
+      out += '%';
+      out += hex[c >> 4];
+      out += hex[c & 15];
+    }
+  }
+  return out;
+}
 void Page::submit_form(int form) {
   const auto &f = doc.nodes[form];
   std::string method = lower(f.attribute("method", "get"));
-  if (method != "get") {
-    diagnostics.push_back({"forms", "Only GET form submission is implemented"});
-    return;
-  }
   std::string action = f.attribute("action");
   auto base = resolve_url(doc.url, action.empty() ? doc.url.href() : action);
   if (!base || !base->network())
     return;
-  std::string query;
+  std::vector<std::pair<std::string, std::string>> fields;
   for (int n : doc.query("*", form)) {
     const auto &input = doc.nodes[n];
-    auto name = input.attribute("name");
-    if (name.empty())
+    if (input.type != Node::Type::Element)
       continue;
-    if ((input.name == "input" || input.name == "textarea" || input.name == "select")) {
-      std::string value = input.name == "textarea" ? doc.text_content(n) : input.attribute("value");
-      if (input.name == "select") {
-        for (int o : input.children)
-          if (doc.nodes[o].name == "option" && has_attr(doc.nodes[o], "selected"))
-            value = doc.text_content(o);
+    auto name = input.attribute("name");
+    // A control that cannot be typed into is not submitted either.
+    if (name.empty() || has_attr(input, "disabled"))
+      continue;
+    if (input.name == "input") {
+      auto type = lower(input.attribute("type", "text"));
+      // A submit button does not send its own value, and an unchecked box sends
+      // nothing at all.
+      if (type == "submit" || type == "button" || type == "image" || type == "reset")
+        continue;
+      if ((type == "checkbox" || type == "radio") && !has_attr(input, "checked"))
+        continue;
+      fields.emplace_back(name, input.attribute("value"));
+    } else if (input.name == "textarea") {
+      fields.emplace_back(name, doc.text_content(n));
+    } else if (input.name == "select") {
+      std::string value;
+      bool chosen = false;
+      for (int o : input.children) {
+        const auto &option = doc.nodes[o];
+        if (option.name != "option" || !has_attr(option, "selected"))
+          continue;
+        value = has_attr(option, "value") ? option.attribute("value") : doc.text_content(o);
+        chosen = true;
+        break;
       }
-      if (!query.empty())
-        query += '&';
-      query += percent_encode(name, true) + "=" + percent_encode(value, true);
+      if (!chosen)
+        for (int o : input.children)
+          if (doc.nodes[o].name == "option") {
+            value = has_attr(doc.nodes[o], "value") ? doc.nodes[o].attribute("value")
+                                                    : doc.text_content(o);
+            break;
+          }
+      fields.emplace_back(name, value);
     }
+  }
+  if (method == "post") {
+    FormPost post;
+    post.url = base->href();
+    post.method = "POST";
+    std::string enctype = lower(f.attribute("enctype", "application/x-www-form-urlencoded"));
+    if (enctype == "multipart/form-data") {
+      std::string boundary = "----PsychoVaultForm" + std::to_string(now_ms());
+      for (const auto &[name, value] : fields) {
+        post.body += "--" + boundary + "\r\n";
+        post.body += "Content-Disposition: form-data; name=\"" + name + "\"\r\n\r\n";
+        post.body += value + "\r\n";
+      }
+      post.body += "--" + boundary + "--\r\n";
+      post.content_type = "multipart/form-data; boundary=" + boundary;
+    } else if (enctype == "text/plain") {
+      for (const auto &[name, value] : fields)
+        post.body += name + "=" + value + "\r\n";
+      post.content_type = "text/plain";
+    } else {
+      for (const auto &[name, value] : fields) {
+        if (!post.body.empty())
+          post.body += '&';
+        post.body += form_encode(name) + "=" + form_encode(value);
+      }
+      post.content_type = "application/x-www-form-urlencoded";
+    }
+    // My host sends this itself and renders the answer, so this is not a plain
+    // navigation and must not be replayed as a GET.
+    posts.push_back(post);
+    return;
+  }
+  std::string query;
+  for (const auto &[name, value] : fields) {
+    if (!query.empty())
+      query += '&';
+    query += form_encode(name) + "=" + form_encode(value);
   }
   base->query = query;
   navigations.push_back(base->href());

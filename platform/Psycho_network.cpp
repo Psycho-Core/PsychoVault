@@ -195,7 +195,11 @@ ProxyAttempt apply_proxy(HINTERNET session, const Url &url, const NetworkPolicy 
   return attempt;
 }
 
-std::wstring request_headers(const Url &url, const NetworkPolicy &policy) {
+double now_seconds() {
+  return double(now_ms()) / 1000.0;
+}
+std::wstring request_headers(const Url &url, const NetworkPolicy &policy,
+                            const RequestOptions &request) {
   std::wstring headers = L"Accept: */*\r\nAccept-Encoding: identity\r\n";
   headers += L"User-Agent: " + wide(policy.user_agent) + L"\r\n";
   if (!policy.accept_language.empty())
@@ -204,6 +208,21 @@ std::wstring request_headers(const Url &url, const NetworkPolicy &policy) {
   if (policy.strip_referrer) headers += L"Referer:\r\n";
   else if (!url.origin().empty())
     headers += L"Referer: " + wide(url.origin() + "/") + L"\r\n";
+  if (policy.cookies) {
+    bool cross_site =
+        !policy.top_level_host.empty() && lower(policy.top_level_host) != lower(url.host);
+    auto jar = policy.cookies->header_for(url, now_seconds(), cross_site,
+                                          policy.block_third_party_cookies);
+    if (!jar.empty())
+      headers += L"Cookie: " + wide(jar) + L"\r\n";
+  }
+  if (!request.body.empty()) {
+    headers += L"Content-Type: " +
+               wide(request.content_type.empty() ? std::string("application/x-www-form-urlencoded")
+                                                 : request.content_type) +
+               L"\r\n";
+    headers += L"Content-Length: " + std::to_wstring(request.body.size()) + L"\r\n";
+  }
   if (policy.has_proxy_auth && !policy.proxy_user.empty()) {
     // I only ever send proxy credentials to the proxy, never to the origin.
     auto raw = policy.proxy_user + ":" + policy.proxy_pass;
@@ -216,6 +235,10 @@ std::wstring request_headers(const Url &url, const NetworkPolicy &policy) {
 
 Resource fetch_url(const Url &initial, const NetworkPolicy &policy, int timeout_ms,
                    size_t max_bytes) {
+  return fetch_url(initial, policy, RequestOptions{}, timeout_ms, max_bytes);
+}
+Resource fetch_url(const Url &initial, const NetworkPolicy &policy, const RequestOptions &options,
+                   int timeout_ms, size_t max_bytes) {
   Resource out;
   out.url = initial.href();
   // Zero means I never got a response, which is what a fetch promise rejects
@@ -268,7 +291,8 @@ Resource fetch_url(const Url &initial, const NetworkPolicy &policy, int timeout_
       break;
     }
     auto path = wide(url.path + (url.query.empty() ? "" : "?" + url.query));
-    HINTERNET request = WinHttpOpenRequest(connect, L"GET", path.c_str(), nullptr,
+    HINTERNET request = WinHttpOpenRequest(connect, wide(options.method).c_str(), path.c_str(),
+                                           nullptr,
                                            WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
                                            url.scheme == "https" ? WINHTTP_FLAG_SECURE : 0);
     if (!request) {
@@ -277,9 +301,11 @@ Resource fetch_url(const Url &initial, const NetworkPolicy &policy, int timeout_
       out.error = "request failed";
       break;
     }
-    auto headers = request_headers(url, policy);
+    auto headers = request_headers(url, policy, options);
     BOOL sent = WinHttpSendRequest(request, headers.c_str(), DWORD(headers.size()),
-                                   WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+                                   options.body.empty() ? WINHTTP_NO_REQUEST_DATA
+                                                        : LPVOID(options.body.data()),
+                                   DWORD(options.body.size()), DWORD(options.body.size()), 0) &&
                 WinHttpReceiveResponse(request, nullptr);
     if (!sent) {
       out.ok = false;
@@ -292,6 +318,24 @@ Resource fetch_url(const Url &initial, const NetworkPolicy &policy, int timeout_
     WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
                         WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX);
     out.status = int(status);
+    if (policy.cookies) {
+      for (DWORD index = 0;; ++index) {
+        DWORD cookie_size = 0;
+        if (WinHttpQueryHeaders(request, WINHTTP_QUERY_SET_COOKIE, WINHTTP_HEADER_NAME_BY_INDEX,
+                                WINHTTP_NO_OUTPUT_BUFFER, &cookie_size, &index) ||
+            GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+          break;
+        std::wstring buffer(cookie_size / sizeof(wchar_t) + 1, L'\0');
+        if (!WinHttpQueryHeaders(request, WINHTTP_QUERY_SET_COOKIE, WINHTTP_HEADER_NAME_BY_INDEX,
+                                 buffer.data(), &cookie_size, &index))
+          break;
+        buffer.resize(cookie_size / sizeof(wchar_t));
+        auto header = narrow(buffer);
+        if (header.empty())
+          break;
+        policy.cookies->set_from_header(url, header, now_seconds());
+      }
+    }
     if (status == 407) {
       out.ok = false;
       out.error = policy.has_proxy_auth
@@ -435,7 +479,8 @@ DownloadOutcome download_to_file(const Url &initial, const std::string &destinat
       outcome.error = "request failed";
       break;
     }
-    auto headers = request_headers(url, policy);
+    // A download is a plain GET, so it carries the same cookies as a page load.
+    auto headers = request_headers(url, policy, RequestOptions{});
     BOOL sent = WinHttpSendRequest(request, headers.c_str(), DWORD(headers.size()),
                                    WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
                 WinHttpReceiveResponse(request, nullptr);
@@ -566,6 +611,10 @@ DownloadOutcome download_to_file(const Url &initial, const std::string &destinat
 #else
 
 Resource fetch_url(const Url &url, const NetworkPolicy &policy, int, size_t) {
+  return fetch_url(url, policy, RequestOptions{}, 0, 0);
+}
+Resource fetch_url(const Url &url, const NetworkPolicy &policy, const RequestOptions &, int,
+                   size_t) {
   Resource r;
   r.url = url.href();
   r.status = 0;

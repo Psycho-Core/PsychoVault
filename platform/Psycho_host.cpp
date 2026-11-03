@@ -18,6 +18,16 @@ Host::Host(Fetcher fetcher, Reporter reporter)
 }
 Host::~Host() = default;
 
+void Host::use_cookies(CookieJar *jar) {
+  page_->use_cookies(jar);
+}
+void Host::use_local_storage(Storage *storage) {
+  page_->use_local_storage(storage);
+}
+void Host::set_poster(Poster poster) {
+  poster_ = std::move(poster);
+}
+
 Resource Host::fetch(const std::string &url) const {
   Resource failure;
   failure.url = url;
@@ -115,6 +125,10 @@ void Host::settle() {
   // I fetch everything my page asked for, then render once. Each round may add
   // new requests, so I keep going until it is quiet.
   for (int round = 0; round < kSubresourceRounds; ++round) {
+    if (!page_->posts.empty()) {
+      send_post();
+      continue;
+    }
     if (page_->requests.empty())
       break;
     std::vector<std::string> requests = std::move(page_->requests);
@@ -124,6 +138,38 @@ void Host::settle() {
   }
   page_->requests.clear();
   emit();
+}
+
+void Host::send_post() {
+  std::vector<Page::FormPost> pending = std::move(page_->posts);
+  page_->posts.clear();
+  for (const auto &post : pending) {
+    if (!poster_) {
+      page_->diagnostics.push_back({"forms", "I have no way to send a form post here"});
+      continue;
+    }
+    Resource response;
+    try {
+      response = poster_(post.url, post.body, post.content_type);
+    } catch (const std::exception &error) {
+      response.url = post.url;
+      response.ok = false;
+      response.status = 0;
+      response.error = error.what();
+    }
+    // A server that answered with an error status still answered, so I show
+    // what it sent rather than pretending the request never arrived.
+    if (!response.ok && response.status < 100) {
+      page_->diagnostics.push_back(
+          {"forms", response.error.empty() ? "the form post failed" : response.error});
+      continue;
+    }
+    auto base = response.url.empty() ? parse_url(post.url) : parse_url(response.url);
+    if (base)
+      page_->load(*base, response.text, response.mime);
+    reported_url_.clear();
+    loaded_ = true;
+  }
 }
 
 void Host::emit() {
@@ -144,6 +190,17 @@ void Host::emit() {
     HostEvent event;
     event.tag = "frame";
     event.frame = std::move(frame);
+    report_(std::move(event));
+  }
+  // A page can change its own address without loading anything, through
+  // history.pushState or because a form post came back. I tell my shell so the
+  // address bar stays true.
+  std::string current = page_->doc.url.href();
+  if (report_ && current != reported_url_) {
+    reported_url_ = current;
+    HostEvent event;
+    event.tag = "url";
+    event.url = current;
     report_(std::move(event));
   }
   for (const auto &target : page_->navigations) {
