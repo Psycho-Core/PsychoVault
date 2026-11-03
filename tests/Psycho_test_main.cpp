@@ -1,5 +1,8 @@
 #include "../engine/Psycho_page.hpp"
 #include "../platform/Psycho_profile.hpp"
+#include "../platform/Psycho_proxy.hpp"
+#include "../platform/Psycho_extension.hpp"
+#include "../platform/Psycho_download.hpp"
 #include "Psycho_image_fixtures.hpp"
 #include <filesystem>
 #include <cassert>
@@ -212,6 +215,248 @@ int main() {
     CHECK(private_profile.save());
     Profile after_private = Profile::open(path, false);
     CHECK(after_private.history.size() == 1 && after_private.session_tabs.size() == 2);
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);
+  }
+  // ---- My proxy routing and fail-closed behaviour -------------------------
+  {
+    ProxyConfig config;
+    std::string error;
+    auto json = Json::parse(R"({"mode":"fixed_servers","singleProxy":{"scheme":"http","host":"127.0.0.1","port":8080},"bypassList":["localhost",".internal.test","10.0.0.0/8","*.skip.test"],"failClosed":true})");
+    auto parsed = ProxyConfig::from_json(*json, error);
+    CHECK(parsed.has_value());
+    config = *parsed;
+    CHECK(config.mode_name() == "fixed_servers");
+    ProxyServer server;
+    std::string reason;
+    CHECK(config.route(*parse_url("https://example.com/"), server, reason));
+    CHECK(server.authority() == "127.0.0.1:8080");
+    CHECK(config.route(*parse_url("https://box.internal.test/"), server, reason));
+    CHECK(server.empty());
+    CHECK(config.route(*parse_url("https://a.skip.test/"), server, reason));
+    CHECK(server.empty());
+    CHECK(config.route(*parse_url("http://10.1.2.3/"), server, reason));
+    CHECK(server.empty());
+    CHECK(config.route(*parse_url("http://11.1.2.3/"), server, reason));
+    CHECK(!server.empty());
+    CHECK(config.route(*parse_url("http://localhost/"), server, reason));
+    CHECK(server.empty());
+    // A fail-closed config with no usable proxy must refuse, not leak direct.
+    auto broken = Json::parse(R"({"mode":"pac_script","pac":"","failClosed":true})");
+    auto bad = ProxyConfig::from_json(*broken, error);
+    CHECK(!bad.has_value());
+    ProxyConfig empty_pac;
+    empty_pac.mode = ProxyConfig::Mode::PacScript;
+    empty_pac.fail_closed = true;
+    CHECK(!empty_pac.route(*parse_url("https://example.com/"), server, reason));
+    CHECK(reason.find("fail-closed") != std::string::npos);
+    ProxyConfig open_pac;
+    open_pac.mode = ProxyConfig::Mode::PacScript;
+    CHECK(open_pac.route(*parse_url("https://example.com/"), server, reason));
+    // I reject a proxy server I cannot actually tunnel rather than accept it.
+    auto socks = Json::parse(R"({"mode":"fixed_servers","singleProxy":{"scheme":"ftp","host":"h","port":1}})");
+    CHECK(!ProxyConfig::from_json(*socks, error).has_value());
+    auto roundtrip = ProxyConfig::from_json(config.to_json(), error);
+    CHECK(roundtrip.has_value() && roundtrip->single.authority() == "127.0.0.1:8080");
+  }
+  // ---- My PAC evaluator runs in my own interpreter ------------------------
+  {
+    auto servers = parse_pac_result("PROXY first.test:8080; HTTPS second.test:4443; DIRECT");
+    CHECK(servers.size() == 3);
+    CHECK(servers[0].scheme == "http" && servers[0].port == 8080);
+    CHECK(servers[1].scheme == "https" && servers[1].port == 4443);
+    CHECK(servers[2].empty());
+    CHECK(parse_pac_result("BOGUS x; PROXY :; PROXY h:0").empty());
+    std::string script =
+        "function FindProxyForURL(url, host) {"
+        "  if (isPlainHostName(host)) return 'DIRECT';"
+        "  if (dnsDomainIs(host, '.internal.test')) return 'DIRECT';"
+        "  if (shExpMatch(host, '*.vpn.test')) return 'PROXY vpn.test:3128';"
+        "  if (isInNet(host, '10.0.0.0', '255.0.0.0')) return 'DIRECT';"
+        "  return 'PROXY default.test:8080';"
+        "}";
+    auto plain = run_pac(script, *parse_url("http://box/"));
+    CHECK(plain.ok && plain.raw == "DIRECT");
+    auto internal = run_pac(script, *parse_url("http://a.internal.test/"));
+    CHECK(internal.ok && internal.raw == "DIRECT");
+    auto vpn = run_pac(script, *parse_url("https://site.vpn.test/"));
+    CHECK(vpn.ok && vpn.servers.size() == 1 && vpn.servers[0].host == "vpn.test");
+    auto fallback = run_pac(script, *parse_url("https://example.com/"));
+    CHECK(fallback.ok && fallback.servers[0].port == 8080);
+    auto missing = run_pac("var x = 1;", *parse_url("https://example.com/"));
+    CHECK(!missing.ok && !missing.error.empty());
+    // A hostile script must not hang my routing decision.
+    auto loop = run_pac("function FindProxyForURL(){ while(true){} return 'DIRECT'; }",
+                        *parse_url("https://example.com/"));
+    CHECK(!loop.ok);
+  }
+  // ---- My extension manifest validation and default-deny permissions ------
+  {
+    auto manifest = ExtensionManifest::parse(R"({"manifest_version":3,"name":"Test VPN","version":"1.0.0","permissions":["proxy","storage","privacy","webRequest","webRequestAuthProvider"],"background":{"service_worker":"js/service.js"}})");
+    CHECK(manifest.valid);
+    CHECK(manifest.name == "Test VPN");
+    CHECK(manifest.service_worker == "js/service.js");
+    CHECK(manifest.has_permission("proxy"));
+    CHECK(manifest.has_permission("storage"));
+    CHECK(!manifest.has_permission("tabs"));
+    CHECK(!manifest.has_permission("debugger"));
+    CHECK(!ExtensionManifest::parse("{}").valid);
+    CHECK(!ExtensionManifest::parse("not json").valid);
+    CHECK(!ExtensionManifest::parse(R"({"manifest_version":1,"name":"x","version":"1"})").valid);
+    CHECK(!ExtensionManifest::parse(R"({"manifest_version":3,"name":"x"})").valid);
+    auto traversal = ExtensionManifest::parse(R"({"manifest_version":3,"name":"x","version":"1","background":{"service_worker":"../../evil.js"}})");
+    CHECK(!traversal.valid);
+    auto absolute = ExtensionManifest::parse(R"({"manifest_version":3,"name":"x","version":"1","background":{"service_worker":"C:/evil.js"}})");
+    CHECK(!absolute.valid);
+    auto hosts = ExtensionManifest::parse(R"({"manifest_version":3,"name":"x","version":"1","host_permissions":["https://*.example.com/*","<all_urls>"]})");
+    CHECK(hosts.valid && hosts.matches_host(*parse_url("https://a.example.com/")));
+    ExtensionManifest scoped;
+    scoped.host_permissions = {"https://*.example.com/*"};
+    CHECK(scoped.matches_host(*parse_url("https://sub.example.com/x")));
+    CHECK(scoped.matches_host(*parse_url("https://example.com/x")));
+    CHECK(!scoped.matches_host(*parse_url("https://evil.test/x")));
+    CHECK(!scoped.matches_host(*parse_url("file:///etc/passwd")));
+  }
+  // ---- My extension host enforces permissions at the API boundary ---------
+  {
+    auto root = std::filesystem::temp_directory_path() /
+                ("psychovault-ext-" + std::to_string(now_ms()));
+    std::filesystem::create_directories(root);
+    std::string error;
+    write_file_atomic((root / "manifest.json").string(),
+                      R"({"manifest_version":3,"name":"No Perms","version":"1.0","background":{"service_worker":"w.js"}})", error);
+    // This worker tries to take over my proxy without the proxy permission.
+    write_file_atomic((root / "w.js").string(),
+                      "var denied = false; try { chrome.proxy.settings.set({value:{mode:'direct'}}); }"
+                      " catch (e) { denied = true; }", error);
+    ExtensionHost host;
+    bool proxy_called = false;
+    ExtensionEffects effects;
+    effects.set_proxy = [&](const std::string &, const ProxyConfig &, std::string &) {
+      proxy_called = true; return true;
+    };
+    host.set_effects(std::move(effects));
+    CHECK(host.install_directory(root.string(), error));
+    auto records = host.list();
+    CHECK(records.size() == 1);
+    CHECK(host.start_worker(records[0].manifest.id, error));
+    CHECK(!proxy_called);
+    auto value = host.list()[0];
+    CHECK(value.install_error.empty());
+    // A worker with the permission does reach my broker.
+    write_file_atomic((root / "manifest.json").string(),
+                      R"({"manifest_version":3,"name":"With Perms","version":"1.0","permissions":["proxy","storage"],"background":{"service_worker":"w.js"}})", error);
+    write_file_atomic((root / "w.js").string(),
+                      "chrome.storage.local.set({token:'abc'});"
+                      "chrome.proxy.settings.set({value:{mode:'fixed_servers',singleProxy:{scheme:'http',host:'127.0.0.1',port:0}}});", error);
+    ExtensionHost granted;
+    bool reached = false;
+    ExtensionEffects allowed;
+    allowed.set_proxy = [&](const std::string &, const ProxyConfig &, std::string &) {
+      reached = true; return true;
+    };
+    granted.set_effects(std::move(allowed));
+    CHECK(granted.install_directory(root.string(), error));
+    auto id = granted.list()[0].manifest.id;
+    // Port 0 is valid JS but not a usable proxy, so my validation must refuse it
+    // before the broker is ever asked to change routing.
+    granted.start_worker(id, error);
+    CHECK(!reached);
+    write_file_atomic((root / "w.js").string(),
+                      "chrome.storage.local.set({token:'abc'});"
+                      "chrome.proxy.settings.set({value:{mode:'fixed_servers',singleProxy:{scheme:'http',host:'127.0.0.1',port:3128}}});", error);
+    CHECK(granted.start_worker(id, error));
+    CHECK(reached);
+    CHECK(granted.list()[0].storage.str("token") == "abc");
+    CHECK(granted.set_enabled(id, false, error));
+    CHECK(!granted.remove("does-not-exist", error));
+    CHECK(granted.remove(id, error));
+    CHECK(granted.list().empty());
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+  }
+  // ---- My download naming refuses traversal and device names -------------
+  {
+    auto url = parse_url("https://example.com/files/report.pdf");
+    CHECK(safe_download_name(*url, "") == "report.pdf");
+    CHECK(safe_download_name(*url, "attachment; filename=\"clean name.zip\"") == "clean name.zip");
+    auto evil = safe_download_name(*url, "attachment; filename=\"../../evil.exe\"");
+    CHECK(evil.find('/') == std::string::npos && evil.find("..") == std::string::npos);
+    auto stream = safe_download_name(*url, "attachment; filename=\"file.txt:payload\"");
+    CHECK(stream.find(':') == std::string::npos);
+    CHECK(safe_download_name(*parse_url("https://example.com/CON"), "") == "_CON");
+    CHECK(safe_download_name(*parse_url("https://example.com/"), "").size() > 0);
+    auto directory = std::filesystem::temp_directory_path() /
+                     ("psychovault-dl-" + std::to_string(now_ms()));
+    std::filesystem::create_directories(directory);
+    auto first = unique_download_path(directory.string(), "same.txt");
+    CHECK(first.find("same.txt") != std::string::npos);
+    std::string error;
+    write_file_atomic(first, "x", error);
+    auto second = unique_download_path(directory.string(), "same.txt");
+    CHECK(second != first && second.find("same (1).txt") != std::string::npos);
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);
+    NetworkPolicy policy;
+    policy.block_ads = true;
+    policy.blocked_hosts = {"ads.example", "tracker.test"};
+    std::string reason;
+    CHECK(policy_blocks(policy, *parse_url("https://ads.example/banner"), reason));
+    CHECK(policy_blocks(policy, *parse_url("https://sub.tracker.test/x"), reason));
+    CHECK(!policy_blocks(policy, *parse_url("https://good.test/"), reason));
+    policy.allowed_hosts = {"ads.example"};
+    CHECK(!policy_blocks(policy, *parse_url("https://ads.example/banner"), reason));
+    // parse_url already refuses file://, so I check the policy guard directly
+    // rather than dereferencing a rejected URL.
+    CHECK(!parse_url("file:///etc/passwd").has_value());
+    Url local_scheme;
+    local_scheme.scheme = "file";
+    local_scheme.host = "";
+    local_scheme.path = "/etc/passwd";
+    CHECK(policy_blocks(policy, local_scheme, reason));
+  }
+  // ---- My new settings survive a profile round trip ----------------------
+  {
+    auto directory = std::filesystem::temp_directory_path() /
+                     ("psychovault-settings-" + std::to_string(now_ms()));
+    auto path = directory.string();
+    Profile profile = Profile::open(path, false);
+    profile.block_ads = false;
+    profile.send_dnt = false;
+    profile.strip_referrer = true;
+    profile.clear_on_exit = true;
+    profile.web_rtc_policy = "disable_non_proxied_udp";
+    profile.blocked_hosts = {"ads.example"};
+    profile.cpu_limit = 50;
+    profile.sleep_tabs_minutes = 15;
+    profile.accent = "purple";
+    profile.high_contrast = true;
+    profile.show_tab_close_buttons = false;
+    profile.add_user_word("Psycho");
+    profile.add_user_word("psycho");
+    profile.proxy.mode = ProxyConfig::Mode::FixedServers;
+    profile.proxy.single = ProxyServer{"http", "127.0.0.1", 3128};
+    profile.proxy.fail_closed = true;
+    profile.proxy.owner_extension = "vpn-test";
+    CHECK(profile.save());
+    Profile restored = Profile::open(path, false);
+    CHECK(!restored.block_ads);
+    CHECK(!restored.send_dnt);
+    CHECK(restored.strip_referrer);
+    CHECK(restored.clear_on_exit);
+    CHECK(restored.web_rtc_policy == "disable_non_proxied_udp");
+    CHECK(restored.blocked_hosts.size() == 1);
+    CHECK(restored.cpu_limit == 50);
+    CHECK(restored.sleep_tabs_minutes == 15);
+    CHECK(restored.accent == "purple");
+    CHECK(restored.high_contrast);
+    CHECK(!restored.show_tab_close_buttons);
+    CHECK(restored.user_words.size() == 1);
+    CHECK(restored.proxy.fail_closed);
+    CHECK(restored.proxy.single.authority() == "127.0.0.1:3128");
+    CHECK(restored.proxy.owner_extension == "vpn-test");
+    CHECK(profile.remove_user_word("PSYCHO"));
+    CHECK(profile.user_words.empty());
     std::error_code ignored;
     std::filesystem::remove_all(directory, ignored);
   }

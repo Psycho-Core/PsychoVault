@@ -4,7 +4,8 @@ from __future__ import annotations
 import argparse, os, pathlib, shutil, subprocess, sys
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 ENGINE=["engine/Psycho_base.cpp","engine/Psycho_dom.cpp","engine/Psycho_css.cpp","engine/Psycho_js_parser.cpp","engine/Psycho_js_runtime.cpp","engine/Psycho_raster.cpp","engine/Psycho_image.cpp","engine/Psycho_layout.cpp","engine/Psycho_page.cpp"]
-PLATFORM=["platform/Psycho_process.cpp","platform/Psycho_network.cpp","platform/Psycho_profile.cpp"]
+PLATFORM=["platform/Psycho_process.cpp","platform/Psycho_network.cpp","platform/Psycho_profile.cpp",
+          "platform/Psycho_proxy.cpp","platform/Psycho_extension.cpp","platform/Psycho_download.cpp"]
 def run(cmd,env=None):
     print("+",subprocess.list2cmdline([str(x) for x in cmd]),flush=True)
     subprocess.run([str(x) for x in cmd],cwd=ROOT,env=env,check=True)
@@ -58,7 +59,7 @@ def main():
             cmd+=["-pthread","-o",str(out/name)]
             cmd+= ["-l"+l for l in libs]
         run(cmd,env)
-    winlibs=["kernel32","user32","gdi32","advapi32","userenv","bcrypt","winhttp","shell32","ole32","dwmapi"]
+    winlibs=["kernel32","user32","gdi32","advapi32","userenv","bcrypt","winhttp","shell32","ole32","dwmapi","ws2_32"]
     target("pv-engine",ENGINE+["tools/Psycho_engine_cli.cpp"],winlibs if windows else [])
     target("pv-tests",ENGINE+PLATFORM+["tests/Psycho_test_main.cpp"],winlibs if windows else [])
     target("pv-renderer",ENGINE+["platform/Psycho_process.cpp","tools/Psycho_renderer_main.cpp"],winlibs + ["ws2_32"] if windows else [],"WINDOWS" if windows else None,"mainCRTStartup" if windows else None)

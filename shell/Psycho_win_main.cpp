@@ -8,6 +8,8 @@
 #include "../platform/Psycho_network.hpp"
 #include "../platform/Psycho_process.hpp"
 #include "../platform/Psycho_profile.hpp"
+#include "../platform/Psycho_extension.hpp"
+#include "../platform/Psycho_download.hpp"
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -17,6 +19,7 @@
 #include <fstream>
 #include <iostream>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <thread>
 #include <windows.h>
 #include <windowsx.h>
@@ -54,6 +57,7 @@ struct Hit {
   int index = 0;
   std::string value;
 };
+static std::string pick_folder(HWND owner);
 struct Session {
   Process process;
   std::thread worker;
@@ -61,6 +65,7 @@ struct Session {
   int tab = 0;
   uint64_t generation = 0;
   std::string url;
+  NetworkPolicy policy;
   double width = 1000, height = 700;
   std::mutex mutex;
   std::condition_variable changed;
@@ -124,7 +129,7 @@ void Session::run() {
     fail("Invalid URL");
     return;
   }
-  Resource main = fetch_url(*target);
+  Resource main = fetch_url(*target, policy);
   if (process.stopping())
     return;
   if (!main.ok) {
@@ -214,7 +219,11 @@ struct Browser {
   uint64_t generation = 0;
   std::string address, home_search, status = "Ready", profile_error;
   bool address_focus = false, home_focus = false, settings = false, panel_bookmarks = false,
-       panel_history = false;
+       panel_history = false, panel_downloads = false;
+  ExtensionHost extensions;
+  DownloadManager downloads;
+  std::string extension_error, download_error;
+  int settings_scroll = 0;
   size_t address_caret = 0, home_search_caret = 0;
   wchar_t high_surrogate = 0;
   int settings_category = 0;
@@ -230,9 +239,96 @@ struct Browser {
     profile =
         Profile::open(directory.empty() ? default_profile_directory() : directory, private_mode);
     profile_error = profile.error;
+    if (profile.download_directory.empty())
+      profile.download_directory = default_download_directory();
+    downloads.set_directory(profile.download_directory);
+    if (!private_mode) downloads.load(profile.directory);
+    install_extension_effects();
+    if (!private_mode) {
+      std::string storage_error;
+      extensions.load_storage(profile.directory, storage_error);
+      for (const auto &directory : profile.extension_directories) {
+        std::string error;
+        if (extensions.install_directory(directory, error)) {
+          for (const auto &record : extensions.list()) {
+            bool disabled = std::find(profile.disabled_extensions.begin(),
+                                      profile.disabled_extensions.end(),
+                                      record.manifest.id) != profile.disabled_extensions.end();
+            if (disabled) extensions.set_enabled(record.manifest.id, false, error);
+            else if (!extensions.start_worker(record.manifest.id, error))
+              extension_error = error;
+          }
+        } else extension_error = error;
+      }
+    }
     new_tab("psychovault://newtab", false);
   }
+  // I build the request policy from my persisted settings so every toggle has a
+  // real effect on the next request.
+  NetworkPolicy policy() const {
+    NetworkPolicy out;
+    out.proxy = profile.proxy;
+    out.send_dnt = profile.send_dnt;
+    out.strip_referrer = profile.strip_referrer;
+    out.block_third_party_cookies = profile.block_third_party_cookies;
+    out.block_ads = profile.block_ads;
+    out.blocked_hosts = profile.blocked_hosts;
+    out.allowed_hosts = profile.block_allow_sites;
+    return out;
+  }
+  void install_extension_effects() {
+    ExtensionEffects effects;
+    effects.set_proxy = [this](const std::string &id, const ProxyConfig &config, std::string &error) {
+      if (private_mode) {
+        error = "I do not let an extension change the proxy in a private window";
+        return false;
+      }
+      if (!profile.proxy.owner_extension.empty() && profile.proxy.owner_extension != id) {
+        error = "another extension already controls my proxy";
+        return false;
+      }
+      profile.proxy = config;
+      profile.proxy.owner_extension = id;
+      if (!profile.save()) { error = profile.error; return false; }
+      return true;
+    };
+    effects.get_proxy = [this](const std::string &) { return profile.proxy; };
+    effects.clear_proxy = [this](const std::string &id, std::string &error) {
+      if (!profile.proxy.owner_extension.empty() && profile.proxy.owner_extension != id) {
+        error = "this extension does not control my proxy";
+        return false;
+      }
+      profile.proxy = ProxyConfig::direct();
+      if (!profile.save()) { error = profile.error; return false; }
+      return true;
+    };
+    effects.set_webrtc_policy = [this](const std::string &, const std::string &value, std::string &) {
+      profile.web_rtc_policy = value;
+      profile.save();
+      return true;
+    };
+    effects.log = [this](const std::string &id, const std::string &level, const std::string &message) {
+      if (extension_log.size() >= 200) extension_log.erase(extension_log.begin());
+      extension_log.push_back(id + " " + level + ": " + message);
+    };
+    extensions.set_effects(std::move(effects));
+  }
+  std::vector<std::string> extension_log;
+  std::string vpn_summary() const {
+    if (!profile.proxy.active()) return "VPN off - direct connection";
+    ProxyServer server;
+    std::string reason;
+    auto url = parse_url("https://example.com/");
+    if (url && !profile.proxy.route(*url, server, reason))
+      return "VPN fail-closed - " + reason;
+    if (server.empty()) return "VPN " + profile.proxy.mode_name() + " - bypassed";
+    return "VPN " + profile.proxy.mode_name() + " via " + server.authority();
+  }
   ~Browser() {
+    if (profile.clear_on_exit && !private_mode) {
+      profile.clear_history();
+      profile.save();
+    }
     for (auto &tab : tabs)
       if (tab.session)
         tab.session->process.request_stop();
@@ -373,6 +469,7 @@ struct Browser {
     session->tab = tab.id;
     session->generation = tab.generation;
     session->url = target;
+    session->policy = policy();
     session->width = content.w;
     session->height = content.h;
     tab.session = session;
@@ -482,10 +579,19 @@ struct Browser {
     hits.push_back({{4, 64, 36, 36}, "bookmarks", 0, {}});
     c.text(12, 112, "H", 14, MUTED);
     hits.push_back({{4, 104, 36, 36}, "history", 0, {}});
+    c.text(12, 152, "D", 14, downloads.active_count() ? ACCENT : MUTED);
+    hits.push_back({{4, 144, 36, 36}, "downloads", 0, {}});
+    c.text(12, height - 158, "A", 14, profile.block_ads ? ACCENT : MUTED, profile.block_ads);
+    hits.push_back({{4, double(height - 166), 36, 36}, "toggle-adblock", 0, {}});
+    c.text(12, height - 114, "V", 14, profile.proxy.active() ? ACCENT : MUTED,
+           profile.proxy.active());
+    hits.push_back({{4, double(height - 122), 36, 36}, "vpn", 0, {}});
     c.text(12, height - 70, "S", 14, MUTED);
     hits.push_back({{4, double(height - 78), 36, 36}, "settings", 0, {}});
     c.fill(content, BG);
-    if (panel_bookmarks || panel_history)
+    if (panel_downloads)
+      draw_downloads(c);
+    else if (panel_bookmarks || panel_history)
       draw_panel(c);
     else if (settings)
       draw_settings(c);
@@ -527,6 +633,51 @@ struct Browser {
     c.text(cx - 170, content.y + content.h - 50, "Development engine - not a finished browser", 12,
            MUTED);
   }
+  void draw_downloads(Canvas &c) {
+    c.text(content.x + 40, content.y + 30, "Downloads", 24, TEXT, true);
+    c.text(content.x + 40, content.y + 62, downloads.directory(), 12, MUTED);
+    Rect clear{content.x + content.w - 200, content.y + 24, 150, 30};
+    c.fill(clear, PANEL);
+    c.stroke(clear, BORDER);
+    c.text(clear.x + 12, clear.y + 7, "Clear finished", 12, TEXT);
+    hits.push_back({clear, "downloads-clear", 0, {}});
+    auto items = downloads.snapshot();
+    double y = content.y + 100;
+    if (items.empty())
+      c.text(content.x + 40, y, "I have not downloaded anything yet.", 13, MUTED);
+    for (size_t i = 0; i < items.size() && y < content.y + content.h - 60; ++i) {
+      const auto &item = items[i];
+      Rect row{content.x + 40, y, content.w - 80, 56};
+      c.fill(row, PANEL);
+      c.stroke(row, BORDER);
+      c.text(row.x + 12, row.y + 8, item.filename.substr(0, 70), 13, TEXT);
+      std::string detail = item.state;
+      if (item.state == "running") {
+        detail += "  " + std::to_string(item.received / 1024) + " KiB";
+        if (item.total) detail += " of " + std::to_string(item.total / 1024) + " KiB";
+      } else if (!item.error.empty()) detail += " - " + item.error;
+      c.text(row.x + 12, row.y + 30, detail.substr(0, 110), 11,
+             item.state == "failed" ? 0xfff87171 : MUTED);
+      if (item.state == "running" && item.total) {
+        double fraction = std::clamp(double(item.received) / double(item.total), 0.0, 1.0);
+        c.fill({row.x, row.y + row.h - 3, row.w * fraction, 3}, ACCENT);
+      }
+      if (item.state == "running") {
+        Rect cancel{row.x + row.w - 90, row.y + 12, 76, 28};
+        c.stroke(cancel, BORDER);
+        c.text(cancel.x + 12, cancel.y + 6, "Cancel", 12, TEXT);
+        hits.push_back({cancel, "download-cancel", item.id, {}});
+      } else if (item.state == "complete") {
+        Rect open{row.x + row.w - 90, row.y + 12, 76, 28};
+        c.stroke(open, BORDER);
+        c.text(open.x + 20, open.y + 6, "Open", 12, TEXT);
+        hits.push_back({open, "download-open", item.id, item.path});
+      }
+      y += 64;
+    }
+    if (!download_error.empty())
+      c.text(content.x + 40, content.y + content.h - 40, download_error, 12, 0xfff87171);
+  }
   void draw_settings(Canvas &c) {
     c.text(content.x + 80, content.y + 36, "Settings", 28, TEXT, true);
     c.text(content.x + 80, content.y + 76, "Built by Psycho-Core", 13, MUTED);
@@ -539,45 +690,190 @@ struct Browser {
     c.stroke(nav, BORDER);
     for (int i = 0; i < 10; ++i) {
       Rect r{nav.x + 10, nav.y + 12 + i * 38, 200, 32};
-      if (i == settings_category)
-        c.stroke(r, ACCENT);
-      c.text(r.x + 12, r.y + 7, cats[i], 13, i == settings_category ? TEXT : MUTED);
+      if (i == settings_category) c.stroke(r, ACCENT);
+      c.text(r.x + 22, r.y + 7, cats[i], 13, i == settings_category ? TEXT : MUTED);
+      c.text(r.x + 6, r.y + 7, (i < 9 ? "0" : "") + std::to_string(i + 1), 10, MUTED);
       hits.push_back({r, "settings-category", i, {}});
     }
     double x = nav.x + nav.w + 32, y = nav.y;
     c.text(x, y, cats[settings_category], 22, TEXT, true);
     y += 44;
-    if (settings_category == 0) {
-      c.text(x, y, "Search engine", 14, TEXT);
-      Rect r{x + 300, y - 4, 220, 30};
+    auto toggle = [&](const char *label, bool value, const char *action, const char *hint) {
+      c.text(x, y, label, 14, TEXT);
+      Rect t{x + 340, y - 4, 48, 24};
+      c.fill(t, value ? ACCENT : BORDER);
+      c.text(t.x + 8, t.y + 3, value ? "ON" : "OFF", 11, value ? BG : TEXT, true);
+      hits.push_back({t, action, 0, {}});
+      if (hint && *hint) { c.text(x, y + 20, hint, 11, MUTED); y += 58; }
+      else y += 42;
+    };
+    auto value_row = [&](const char *label, const std::string &value, const char *action) {
+      c.text(x, y, label, 14, TEXT);
+      Rect r{x + 340, y - 4, 260, 30};
       c.fill(r, 0xff050a12);
       c.stroke(r, BORDER);
-      c.text(r.x + 10, r.y + 6, profile.search_engine, 13, TEXT);
-      hits.push_back({r, "setting-search", 0, {}});
-      y += 52;
-      c.text(x, y, "Restore tabs on launch", 14, TEXT);
-      Rect toggle{x + 300, y - 4, 48, 24};
-      c.fill(toggle, profile.restore_tabs ? ACCENT : BORDER);
-      c.text(toggle.x + 8, toggle.y + 3, profile.restore_tabs ? "ON" : "OFF", 11,
-             profile.restore_tabs ? BG : TEXT, true);
-      hits.push_back({toggle, "setting-restore", 0, {}});
-      y += 52;
-      c.text(x, y, "Home page", 14, TEXT);
-      c.text(x + 300, y, profile.home_page, 13, MUTED);
-      y += 52;
-      c.text(x, y,
-             "These controls change real browser behaviour and save to my "
-             "profile.",
-             12, MUTED);
-    } else {
-      c.text(x, y,
-             "This category is not implemented yet. I will not show pretend "
-             "controls.",
-             13, MUTED);
+      c.text(r.x + 10, r.y + 6, value.substr(0, 34), 12, TEXT);
+      if (action && *action) hits.push_back({r, action, 0, {}});
+      y += 46;
+    };
+    auto button = [&](const char *label, const char *action) {
+      Rect r{x, y - 2, 240, 32};
+      c.fill(r, PANEL);
+      c.stroke(r, BORDER);
+      c.text(r.x + 12, r.y + 8, label, 12, TEXT);
+      hits.push_back({r, action, 0, {}});
+      y += 46;
+    };
+    auto note = [&](const std::string &text) {
+      c.text(x, y, text.substr(0, 96), 12, MUTED);
+      y += 26;
+    };
+    switch (settings_category) {
+    case 0:
+      value_row("Search engine", profile.search_engine, "setting-search");
+      toggle("Restore tabs on launch", profile.restore_tabs, "setting-restore",
+             "I reopen my last tabs and the tab I was using.");
+      toggle("Workspaces", profile.workspaces, "setting-workspaces", "");
+      value_row("Home page", profile.home_page, "setting-home");
+      value_row("Custom search", profile.custom_search.empty() ? "not set" : "configured",
+                "setting-custom-search");
+      break;
+    case 1:
+      toggle("Block ads and trackers", profile.block_ads, "setting-block-ads",
+             "I refuse the request before a socket opens.");
+      toggle("Block third-party cookies", profile.block_third_party_cookies,
+             "setting-third-party-cookies", "");
+      toggle("Send Do Not Track", profile.send_dnt, "setting-dnt", "I add DNT: 1 to every request.");
+      toggle("Strip referrer", profile.strip_referrer, "setting-referrer", "");
+      toggle("Clear history when I close", profile.clear_on_exit, "setting-clear-exit", "");
+      value_row("WebRTC policy", profile.web_rtc_policy, "");
+      button("Clear browsing history now", "setting-clear-history");
+      note("Blocked hosts: " + std::to_string(profile.blocked_hosts.size()));
+      break;
+    case 2:
+      value_row("Save files to", profile.download_directory, "setting-download-dir");
+      toggle("Ask where to save each file", profile.ask_save_location, "setting-ask-save", "");
+      toggle("Show download progress", profile.download_notify, "setting-download-notify", "");
+      button("Open my downloads", "setting-open-downloads");
+      note("Active transfers: " + std::to_string(downloads.active_count()));
+      break;
+    case 3: {
+      note(vpn_summary());
+      auto records = extensions.list();
+      if (records.empty()) {
+        note("I have no extensions installed.");
+        note("Proton VPN is not bundled yet - see my verification record.");
+      }
+      for (size_t i = 0; i < records.size() && i < 6; ++i) {
+        const auto &record = records[i];
+        c.text(x, y, record.manifest.name.substr(0, 40), 14, TEXT);
+        c.text(x, y + 18, ("v" + record.manifest.version + "  " +
+                          std::to_string(record.manifest.permissions.size()) + " permissions")
+                             .substr(0, 60), 11, MUTED);
+        Rect t{x + 340, y - 4, 48, 24};
+        c.fill(t, record.enabled ? ACCENT : BORDER);
+        c.text(t.x + 8, t.y + 3, record.enabled ? "ON" : "OFF", 11, record.enabled ? BG : TEXT, true);
+        hits.push_back({t, "extension-toggle", int(i), record.manifest.id});
+        y += 50;
+        if (!record.install_error.empty()) {
+          c.text(x, y - 6, record.install_error.substr(0, 90), 11, 0xfff87171);
+          y += 22;
+        }
+      }
+      button("Add an unpacked extension", "extension-add");
+      if (!extension_error.empty()) note(extension_error);
+      break;
     }
-    c.text(x, y + 60, "Profile: " + profile.directory, 11, MUTED);
+    case 4:
+      value_row("CPU limit", profile.cpu_limit ? std::to_string(profile.cpu_limit) + "%" : "off",
+                "setting-cpu-limit");
+      value_row("Sleep inactive tabs", profile.sleep_tabs_minutes
+                    ? std::to_string(profile.sleep_tabs_minutes) + " min" : "off",
+                "setting-sleep-tabs");
+      toggle("Battery saver", profile.battery_saver, "setting-battery", "");
+      note("Live renderers: " + std::to_string(tabs.size()));
+      note("Active downloads: " + std::to_string(downloads.active_count()));
+      break;
+    case 5:
+      value_row("Theme", profile.theme, "");
+      value_row("Accent", profile.accent, "setting-accent");
+      toggle("Hide the sidebar", profile.hide_sidebar, "setting-hide-sidebar", "");
+      note("I have not implemented custom mod CSS yet.");
+      break;
+    case 6:
+      toggle("Spell check what I type", profile.spell_check, "setting-spellcheck", "");
+      note("Words I added: " + std::to_string(profile.user_words.size()));
+      button("Add a word from my search box", "setting-spell-add");
+      button("Remove my last added word", "setting-spell-remove");
+      break;
+    case 7:
+      note("My vault is not implemented in this build.");
+      note("I will not show a password field that stores nothing.");
+      note("I have not migrated any existing vault data.");
+      break;
+    case 8:
+      toggle("High contrast", profile.high_contrast, "setting-high-contrast", "");
+      toggle("Reduce motion", profile.reduce_motion, "setting-reduce-motion", "");
+      toggle("Show tab close buttons", profile.show_tab_close_buttons, "setting-tab-close", "");
+      note("Translation is not implemented yet.");
+      break;
+    default:
+      note("PsychoVault development build - owned engine");
+      note("Profile: " + profile.directory);
+      note(vpn_summary());
+      note("Extensions: " + std::to_string(extensions.list().size()));
+      button("Check for an update", "setting-check-update");
+      if (!update_status.empty()) note(update_status);
+      note("I verify a release hash before I offer to install it.");
+      break;
+    }
     if (!profile_error.empty())
-      c.text(x, y + 82, profile_error, 11, 0xfff87171);
+      c.text(x, content.y + content.h - 40, profile_error.substr(0, 100), 11, 0xfff87171);
+  }
+  std::string update_status;
+  std::string editing_setting;
+  void begin_setting_edit(const std::string &key, const std::string &current_value) {
+    editing_setting = key;
+    address = current_value;
+    address_caret = address.size();
+    address_focus = true;
+    status = "Editing " + key + " - press Enter to save or Escape to cancel";
+  }
+  void commit_setting_edit() {
+    auto key = editing_setting;
+    auto value = trim(address);
+    editing_setting.clear();
+    address_focus = false;
+    if (key == "homepage") {
+      if (!profile.set_home_page(value)) status = "That is not a URL I can use as a home page";
+      else status = "Home page saved";
+    } else if (key == "customSearch") {
+      if (!profile.set_custom_search(value)) status = "A custom search URL must contain %s";
+      else { if (!value.empty()) profile.set_search_engine("custom"); status = "Custom search saved"; }
+    }
+    profile.save();
+    sync_address();
+  }
+  void check_for_update() {
+    update_status = "Checking my releases...";
+    auto url = parse_url("https://api.github.com/repos/Psycho-Core/PsychoVault/releases/latest");
+    if (!url) { update_status = "I could not build the release URL"; return; }
+    auto response = fetch_url(*url, policy(), 15000, 1024 * 1024);
+    if (!response.ok) { update_status = "Update check failed: " + response.error; return; }
+    auto json = Json::parse(response.text);
+    if (!json) { update_status = "The release response was not valid JSON"; return; }
+    auto tag = json->str("tag_name");
+    if (tag.empty()) { update_status = "I have not published a release yet"; return; }
+    bool has_manifest = false, has_exe = false;
+    const Json *assets = json->find("assets");
+    if (assets && assets->type == Json::Type::Array)
+      for (const auto &asset : assets->array) {
+        auto name = asset.str("name");
+        if (name == "PsychoVault-update.json") has_manifest = true;
+        if (name == "PsychoVault.exe") has_exe = true;
+      }
+    update_status = "Latest release " + tag + (has_exe ? " (exe present" : " (no exe");
+    update_status += has_manifest ? ", manifest present)" : ", no manifest)";
   }
   void draw_panel(Canvas &c) {
     bool bm = panel_bookmarks;
@@ -686,6 +982,117 @@ struct Browser {
         } else if (h.action == "setting-restore") {
           profile.restore_tabs = !profile.restore_tabs;
           profile.save();
+        } else if (h.action == "downloads") {
+          panel_downloads = !panel_downloads;
+          panel_bookmarks = panel_history = false;
+        } else if (h.action == "toggle-adblock") {
+          profile.block_ads = !profile.block_ads;
+          profile.save();
+          status = profile.block_ads ? "Ad blocker on" : "Ad blocker off";
+        } else if (h.action == "vpn") {
+          navigate("psychovault://settings");
+          settings_category = 3;
+        } else if (h.action == "downloads-clear") {
+          downloads.clear_finished();
+        } else if (h.action == "download-cancel") {
+          downloads.cancel(h.index);
+        } else if (h.action == "download-open") {
+          if (!h.value.empty()) ShellExecuteW(hwnd, L"open", std::wstring(h.value.begin(), h.value.end()).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        } else if (h.action == "setting-workspaces") {
+          profile.workspaces = !profile.workspaces; profile.save();
+        } else if (h.action == "setting-home") {
+          begin_setting_edit("homepage", profile.home_page);
+        } else if (h.action == "setting-custom-search") {
+          begin_setting_edit("customSearch", profile.custom_search);
+        } else if (h.action == "setting-block-ads") {
+          profile.block_ads = !profile.block_ads; profile.save();
+        } else if (h.action == "setting-third-party-cookies") {
+          profile.block_third_party_cookies = !profile.block_third_party_cookies; profile.save();
+        } else if (h.action == "setting-dnt") {
+          profile.send_dnt = !profile.send_dnt; profile.save();
+        } else if (h.action == "setting-referrer") {
+          profile.strip_referrer = !profile.strip_referrer; profile.save();
+        } else if (h.action == "setting-clear-exit") {
+          profile.clear_on_exit = !profile.clear_on_exit; profile.save();
+        } else if (h.action == "setting-clear-history") {
+          profile.clear_history(); profile.save(); status = "I cleared my browsing history";
+        } else if (h.action == "setting-download-dir") {
+          auto chosen = pick_folder(hwnd);
+          if (!chosen.empty()) {
+            if (profile.set_download_directory(chosen)) {
+              downloads.set_directory(profile.download_directory);
+              profile.save();
+              status = "Downloads will save to " + profile.download_directory;
+            } else status = "I cannot write to that folder";
+          }
+        } else if (h.action == "setting-ask-save") {
+          profile.ask_save_location = !profile.ask_save_location; profile.save();
+        } else if (h.action == "setting-download-notify") {
+          profile.download_notify = !profile.download_notify; profile.save();
+        } else if (h.action == "setting-open-downloads") {
+          panel_downloads = true; settings = false;
+        } else if (h.action == "extension-toggle") {
+          std::string error;
+          auto records = extensions.list();
+          if (h.index >= 0 && size_t(h.index) < records.size()) {
+            const auto &record = records[size_t(h.index)];
+            bool enable = !record.enabled;
+            if (extensions.set_enabled(record.manifest.id, enable, error)) {
+              auto &list = profile.disabled_extensions;
+              list.erase(std::remove(list.begin(), list.end(), record.manifest.id), list.end());
+              if (!enable) list.push_back(record.manifest.id);
+              if (enable && !extensions.start_worker(record.manifest.id, error))
+                extension_error = error;
+              profile.save();
+            } else extension_error = error;
+          }
+        } else if (h.action == "extension-add") {
+          auto chosen = pick_folder(hwnd);
+          if (!chosen.empty()) {
+            std::string error;
+            if (extensions.install_directory(chosen, error)) {
+              profile.extension_directories.push_back(chosen);
+              profile.save();
+              for (const auto &record : extensions.list())
+                if (record.directory == chosen && !extensions.start_worker(record.manifest.id, error))
+                  extension_error = error;
+              status = "I installed the extension";
+            } else extension_error = error;
+          }
+        } else if (h.action == "setting-cpu-limit") {
+          const int steps[] = {0, 25, 50, 75};
+          size_t index = 0;
+          for (size_t i = 0; i < 4; ++i) if (profile.cpu_limit == steps[i]) index = i;
+          profile.cpu_limit = steps[(index + 1) % 4]; profile.save();
+        } else if (h.action == "setting-sleep-tabs") {
+          const int steps[] = {0, 5, 15, 30, 60};
+          size_t index = 0;
+          for (size_t i = 0; i < 5; ++i) if (profile.sleep_tabs_minutes == steps[i]) index = i;
+          profile.sleep_tabs_minutes = steps[(index + 1) % 5]; profile.save();
+        } else if (h.action == "setting-battery") {
+          profile.battery_saver = !profile.battery_saver; profile.save();
+        } else if (h.action == "setting-accent") {
+          const char *accents[] = {"cyan", "purple", "green", "red"};
+          size_t index = 0;
+          for (size_t i = 0; i < 4; ++i) if (profile.accent == accents[i]) index = i;
+          profile.accent = accents[(index + 1) % 4]; profile.save();
+        } else if (h.action == "setting-hide-sidebar") {
+          profile.hide_sidebar = !profile.hide_sidebar; profile.save();
+        } else if (h.action == "setting-spellcheck") {
+          profile.spell_check = !profile.spell_check; profile.save();
+        } else if (h.action == "setting-spell-add") {
+          if (!home_search.empty()) { profile.add_user_word(home_search); profile.save(); status = "I added the word"; }
+          else status = "Type a word in my home search box first";
+        } else if (h.action == "setting-spell-remove") {
+          if (!profile.user_words.empty()) { profile.remove_user_word(profile.user_words.back()); profile.save(); }
+        } else if (h.action == "setting-high-contrast") {
+          profile.high_contrast = !profile.high_contrast; profile.save();
+        } else if (h.action == "setting-reduce-motion") {
+          profile.reduce_motion = !profile.reduce_motion; profile.save();
+        } else if (h.action == "setting-tab-close") {
+          profile.show_tab_close_buttons = !profile.show_tab_close_buttons; profile.save();
+        } else if (h.action == "setting-check-update") {
+          check_for_update();
         } else if (h.action == "minimize")
           ShowWindow(hwnd, SW_MINIMIZE);
         else if (h.action == "maximize")
@@ -707,6 +1114,12 @@ struct Browser {
     bool ctrl = GetKeyState(VK_CONTROL) < 0;
     if (ctrl && wp == 'V') {
       paste();
+      return;
+    }
+    if (ctrl && wp == 'J') {
+      panel_downloads = !panel_downloads;
+      panel_bookmarks = panel_history = false;
+      InvalidateRect(hwnd, nullptr, FALSE);
       return;
     }
     if (ctrl && wp == 'L') {
@@ -749,6 +1162,7 @@ struct Browser {
       std::string &text = address_focus ? address : home_search;
       size_t &caret = address_focus ? address_caret : home_search_caret;
       if (wp == VK_RETURN) {
+        if (!editing_setting.empty()) { commit_setting_edit(); InvalidateRect(hwnd, nullptr, FALSE); return; }
         std::string target = text;
         address_focus = home_focus = false;
         if (!target.empty())
@@ -871,6 +1285,23 @@ struct Browser {
     InvalidateRect(hwnd, nullptr, FALSE);
   }
 };
+static std::string pick_folder(HWND owner) {
+  BROWSEINFOW info{};
+  info.hwndOwner = owner;
+  info.lpszTitle = L"Choose a folder";
+  info.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+  PIDLIST_ABSOLUTE id = SHBrowseForFolderW(&info);
+  if (!id) return {};
+  wchar_t path[MAX_PATH * 2] = {0};
+  std::string out;
+  if (SHGetPathFromIDListW(id, path)) {
+    int size = WideCharToMultiByte(CP_UTF8, 0, path, -1, nullptr, 0, nullptr, nullptr);
+    out.assign(size ? size - 1 : 0, '\0');
+    if (size) WideCharToMultiByte(CP_UTF8, 0, path, -1, out.data(), size, nullptr, nullptr);
+  }
+  CoTaskMemFree(id);
+  return out;
+}
 static Browser *browser(HWND hwnd) {
   return reinterpret_cast<Browser *>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
 }
@@ -1045,6 +1476,11 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   }
   case WM_TIMER: {
     auto b = browser(hwnd);
+    if (b && !b->smoke) {
+      b->extensions.tick();
+      if (b->downloads.active_count() && (GetTickCount() % 8) < 2)
+        InvalidateRect(hwnd, nullptr, FALSE);
+    }
     if (b && b->smoke && GetTickCount() - b->start_tick > 4000) {
       if (!b->capture_path.empty())
         capture(hwnd, b->capture_path);

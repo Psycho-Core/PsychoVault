@@ -6,11 +6,6 @@ static bool has_attr(const Node &n, const std::string &key) {
   std::string v;
   return n.get_attribute(key, v);
 }
-static double now_ms() {
-  return double(std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now().time_since_epoch())
-                    .count());
-}
 class PageHost : public js::Host {
 public:
   Page &page;
@@ -834,13 +829,13 @@ void Page::submit_form(int form) {
 double Page::next_timer_delay() const {
   if (js_->timers.empty())
     return -1;
-  double now = now_ms(), best = 86400000;
+  double now = double(now_ms()), best = 86400000;
   for (auto &t : js_->timers)
     best = std::min(best, std::max(0.0, t.due - now));
   return best;
 }
 void Page::tick() {
-  double now = now_ms();
+  double now = double(now_ms());
   std::vector<js::Runtime::Timer> due;
   for (auto it = js_->timers.begin(); it != js_->timers.end();) {
     if (it->due <= now) {

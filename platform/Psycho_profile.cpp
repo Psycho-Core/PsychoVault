@@ -102,6 +102,46 @@ Profile Profile::open(const std::string &directory, bool private_mode) {
     p.set_home_page(settings.str("homePage", p.home_page));
     p.restore_tabs = settings.flag("restoreTabs", true);
     p.workspaces = settings.flag("workspaces", true);
+    auto read_list = [&](const char *key, std::vector<std::string> &out) {
+      const Json *value = settings.find(key);
+      if (!value || value->type != Json::Type::Array) return;
+      for (const auto &entry : value->array) {
+        if (out.size() >= 4096) break;
+        if (entry.type == Json::Type::String && !entry.string.empty()) out.push_back(entry.string);
+      }
+    };
+    p.download_directory = settings.str("downloadDirectory");
+    p.ask_save_location = settings.flag("askSaveLocation", false);
+    p.download_notify = settings.flag("downloadNotify", true);
+    p.block_ads = settings.flag("blockAds", true);
+    p.block_third_party_cookies = settings.flag("blockThirdPartyCookies", true);
+    p.send_dnt = settings.flag("sendDNT", true);
+    p.strip_referrer = settings.flag("stripReferrer", false);
+    p.clear_on_exit = settings.flag("clearOnExit", false);
+    p.web_rtc_policy = settings.str("webRtc", "default");
+    read_list("blockedHosts", p.blocked_hosts);
+    read_list("blockAllowSites", p.block_allow_sites);
+    if (const Json *proxy = settings.find("proxy")) {
+      std::string proxy_error;
+      auto config = ProxyConfig::from_json(*proxy, proxy_error);
+      // A corrupt proxy record must not silently become a direct connection.
+      if (config) p.proxy = *config;
+      else if (!proxy->str("mode", "direct").empty() && proxy->str("mode", "direct") != "direct")
+        p.error = "I ignored a damaged proxy record: " + proxy_error;
+    }
+    p.theme = settings.str("theme", "dark");
+    p.accent = settings.str("accent", "cyan");
+    p.high_contrast = settings.flag("highContrast", false);
+    p.reduce_motion = settings.flag("reduceMotion", false);
+    p.show_tab_close_buttons = settings.flag("showTabCloseButtons", true);
+    p.hide_sidebar = settings.flag("hideSidebar", false);
+    p.cpu_limit = int(std::clamp(settings.num("cpuLimit", 0), 0.0, 100.0));
+    p.sleep_tabs_minutes = int(std::clamp(settings.num("sleepTabsMin", 0), 0.0, 1440.0));
+    p.battery_saver = settings.flag("batterySaver", false);
+    p.spell_check = settings.flag("spellCheck", true);
+    read_list("spellUserWords", p.user_words);
+    read_list("extensionDirectories", p.extension_directories);
+    read_list("disabledExtensions", p.disabled_extensions);
   }
   Json bookmarks;
   load("owned-bookmarks.json", bookmarks);
@@ -159,6 +199,36 @@ bool Profile::save() {
   settings.set("restoreTabs", restore_tabs);
   settings.set("workspaces", workspaces);
   settings.set("customSearch", custom_search);
+  auto write_list = [&](const char *key, const std::vector<std::string> &values) {
+    Json list = Json::make_array();
+    for (const auto &value : values) list.array.push_back(Json(value));
+    settings.set(key, std::move(list));
+  };
+  settings.set("downloadDirectory", download_directory);
+  settings.set("askSaveLocation", ask_save_location);
+  settings.set("downloadNotify", download_notify);
+  settings.set("blockAds", block_ads);
+  settings.set("blockThirdPartyCookies", block_third_party_cookies);
+  settings.set("sendDNT", send_dnt);
+  settings.set("stripReferrer", strip_referrer);
+  settings.set("clearOnExit", clear_on_exit);
+  settings.set("webRtc", web_rtc_policy);
+  write_list("blockedHosts", blocked_hosts);
+  write_list("blockAllowSites", block_allow_sites);
+  settings.set("proxy", proxy.to_json());
+  settings.set("theme", theme);
+  settings.set("accent", accent);
+  settings.set("highContrast", high_contrast);
+  settings.set("reduceMotion", reduce_motion);
+  settings.set("showTabCloseButtons", show_tab_close_buttons);
+  settings.set("hideSidebar", hide_sidebar);
+  settings.set("cpuLimit", cpu_limit);
+  settings.set("sleepTabsMin", sleep_tabs_minutes);
+  settings.set("batterySaver", battery_saver);
+  settings.set("spellCheck", spell_check);
+  write_list("spellUserWords", user_words);
+  write_list("extensionDirectories", extension_directories);
+  write_list("disabledExtensions", disabled_extensions);
   Json bookmarks_json = Json::make_array();
   for (auto &b : bookmarks) {
     Json j = Json::make_object();
@@ -279,5 +349,30 @@ bool Profile::set_custom_search(const std::string &template_url) {
     return false;
   custom_search = template_url;
   return true;
+}
+bool Profile::set_download_directory(const std::string &directory) {
+  if (directory.empty()) return false;
+  std::error_code ec;
+  auto path = std::filesystem::absolute(std::filesystem::path(directory), ec);
+  if (ec) return false;
+  std::filesystem::create_directories(path, ec);
+  if (ec) return false;
+  download_directory = path.string();
+  return true;
+}
+void Profile::add_user_word(const std::string &word) {
+  auto trimmed = trim(word);
+  if (trimmed.empty() || trimmed.size() > 64 || user_words.size() >= 4096) return;
+  for (const auto &existing : user_words)
+    if (lower(existing) == lower(trimmed)) return;
+  user_words.push_back(trimmed);
+}
+bool Profile::remove_user_word(const std::string &word) {
+  auto it = std::remove_if(user_words.begin(), user_words.end(), [&](const std::string &entry) {
+    return lower(entry) == lower(trim(word));
+  });
+  bool removed = it != user_words.end();
+  user_words.erase(it, user_words.end());
+  return removed;
 }
 } // namespace pv

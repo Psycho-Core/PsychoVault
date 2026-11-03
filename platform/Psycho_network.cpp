@@ -1,26 +1,232 @@
 #include "Psycho_network.hpp"
+#include <filesystem>
+#include <fstream>
 #ifdef _WIN32
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
+#include <shlobj.h>
 #include <winhttp.h>
 #endif
+
 namespace pv {
-#ifdef _WIN32
-static std::wstring wide(const std::string &s) {
-  if (s.empty())
-    return {};
-  int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), int(s.size()), nullptr, 0);
-  std::wstring w(n, 0);
-  MultiByteToWideChar(CP_UTF8, 0, s.c_str(), int(s.size()), w.data(), n);
-  return w;
+namespace {
+std::string host_matches_list(const std::vector<std::string> &list, const std::string &host) {
+  auto lower_host = lower(host);
+  for (const auto &entry : list) {
+    auto rule = lower(trim(entry));
+    if (rule.empty()) continue;
+    if (rule.front() == '.') {
+      if (lower_host.size() >= rule.size() &&
+          lower_host.compare(lower_host.size() - rule.size(), rule.size(), rule) == 0)
+        return rule;
+      if (lower_host == rule.substr(1)) return rule;
+      continue;
+    }
+    if (rule == lower_host) return rule;
+    if (lower_host.size() > rule.size() &&
+        lower_host.compare(lower_host.size() - rule.size() - 1, rule.size() + 1, "." + rule) == 0)
+      return rule;
+  }
+  return {};
 }
-Resource fetch_url(const Url &initial, int timeout_ms, size_t max_bytes) {
+} // namespace
+
+bool policy_blocks(const NetworkPolicy &policy, const Url &url, std::string &reason) {
+  if (!url.network()) {
+    reason = "I only fetch http and https URLs";
+    return true;
+  }
+  if (policy.block_ads) {
+    auto exception = host_matches_list(policy.allowed_hosts, url.host);
+    if (!exception.empty()) return false;
+    auto blocked = host_matches_list(policy.blocked_hosts, url.host);
+    if (!blocked.empty()) {
+      reason = "blocked by my ad blocker: " + blocked;
+      return true;
+    }
+  }
+  return false;
+}
+
+std::string safe_download_name(const Url &url, const std::string &content_disposition) {
+  std::string name;
+  auto header = lower(content_disposition);
+  auto position = header.find("filename=");
+  if (position != std::string::npos) {
+    auto value = trim(content_disposition.substr(position + 9));
+    auto semicolon = value.find(';');
+    if (semicolon != std::string::npos) value = trim(value.substr(0, semicolon));
+    if (value.size() >= 2 && value.front() == '"' && value.back() == '"')
+      value = value.substr(1, value.size() - 2);
+    name = value;
+  }
+  if (name.empty()) {
+    auto path = url.path;
+    auto slash = path.find_last_of('/');
+    name = slash == std::string::npos ? path : path.substr(slash + 1);
+  }
+  if (name.empty()) name = "download";
+  // I strip anything that could escape the download directory or name an
+  // alternate data stream, and I refuse reserved Windows device names.
+  std::string clean;
+  for (char c : name) {
+    if (c == '/' || c == '\\' || c == ':' || c == '\0') clean += '_';
+    else if (static_cast<unsigned char>(c) < 32) clean += '_';
+    else if (c == '<' || c == '>' || c == '"' || c == '|' || c == '?' || c == '*') clean += '_';
+    else clean += c;
+  }
+  // I collapse dot runs so no ".." survives anywhere in the name, even though
+  // removing the separators already made traversal impossible.
+  std::string collapsed;
+  for (char c : clean) {
+    if (c == '.' && !collapsed.empty() && collapsed.back() == '.') continue;
+    collapsed += c;
+  }
+  clean = collapsed;
+  while (!clean.empty() && (clean.back() == '.' || clean.back() == ' ')) clean.pop_back();
+  while (!clean.empty() && clean.front() == '.') clean.erase(0, 1);
+  if (clean.empty()) clean = "download";
+  if (clean.size() > 120) {
+    auto dot = clean.find_last_of('.');
+    auto extension = dot != std::string::npos && clean.size() - dot <= 12 ? clean.substr(dot) : "";
+    clean = clean.substr(0, 120 - extension.size()) + extension;
+  }
+  static const std::set<std::string> reserved = {
+      "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7",
+      "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9"};
+  auto stem = lower(clean.substr(0, clean.find('.')));
+  if (reserved.count(stem)) clean = "_" + clean;
+  return clean;
+}
+
+std::string unique_download_path(const std::string &directory, const std::string &name) {
+  namespace fs = std::filesystem;
+  auto candidate = fs::path(directory) / name;
+  if (!fs::exists(candidate)) return candidate.string();
+  auto dot = name.find_last_of('.');
+  auto stem = dot == std::string::npos ? name : name.substr(0, dot);
+  auto extension = dot == std::string::npos ? std::string() : name.substr(dot);
+  for (int index = 1; index < 10000; ++index) {
+    candidate = fs::path(directory) / (stem + " (" + std::to_string(index) + ")" + extension);
+    if (!fs::exists(candidate)) return candidate.string();
+  }
+  return (fs::path(directory) / (stem + "." + std::to_string(now_ms()) + extension)).string();
+}
+
+std::string default_download_directory() {
+#ifdef _WIN32
+  wchar_t *path = nullptr;
+  if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Downloads, 0, nullptr, &path)) && path) {
+    int size = WideCharToMultiByte(CP_UTF8, 0, path, -1, nullptr, 0, nullptr, nullptr);
+    std::string out(size ? size - 1 : 0, '\0');
+    if (size) WideCharToMultiByte(CP_UTF8, 0, path, -1, out.data(), size, nullptr, nullptr);
+    CoTaskMemFree(path);
+    if (!out.empty()) return out;
+  }
+  if (path) CoTaskMemFree(path);
+#endif
+  const char *home = std::getenv("HOME");
+  const char *profile = std::getenv("USERPROFILE");
+  std::string base = home ? home : profile ? profile : ".";
+  return (std::filesystem::path(base) / "Downloads").string();
+}
+
+#ifdef _WIN32
+namespace {
+std::wstring wide(const std::string &text) {
+  if (text.empty()) return {};
+  int size = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()), nullptr, 0);
+  std::wstring out(size, 0);
+  MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()), out.data(), size);
+  return out;
+}
+std::string narrow(const std::wstring &text) {
+  if (text.empty()) return {};
+  int size = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), int(text.size()), nullptr, 0, nullptr,
+                                 nullptr);
+  std::string out(size, 0);
+  WideCharToMultiByte(CP_UTF8, 0, text.c_str(), int(text.size()), out.data(), size, nullptr, nullptr);
+  return out;
+}
+
+// I open a WinHTTP session honouring the resolved proxy. I refuse schemes I
+// cannot actually tunnel rather than silently falling back to a direct socket.
+struct ProxyAttempt {
+  bool ok = false;
+  std::string error;
+  bool used_proxy = false;
+};
+ProxyAttempt apply_proxy(HINTERNET session, const Url &url, const NetworkPolicy &policy) {
+  ProxyAttempt attempt;
+  if (!policy.proxy.active()) return {true, {}, false};
+  ProxyServer server;
+  std::string reason;
+  if (!policy.proxy.route(url, server, reason)) {
+    attempt.error = reason;
+    return attempt;
+  }
+  if (server.empty()) return {true, {}, false}; // bypassed or explicit DIRECT
+  if (server.scheme != "http") {
+    // WinHTTP tunnels http proxies with CONNECT. It cannot open a TLS session to
+    // the proxy itself, nor speak SOCKS5. I refuse instead of leaking direct.
+    attempt.error = "I cannot tunnel through a " + server.scheme +
+                    " proxy yet; refusing the request rather than connecting directly";
+    return attempt;
+  }
+  WINHTTP_PROXY_INFO info{};
+  info.dwAccessType = WINHTTP_ACCESS_TYPE_NAMED_PROXY;
+  auto proxy_text = wide(server.authority());
+  std::wstring bypass_text;
+  for (const auto &entry : policy.proxy.bypass) {
+    if (!bypass_text.empty()) bypass_text += L";";
+    bypass_text += wide(entry);
+  }
+  info.lpszProxy = proxy_text.data();
+  info.lpszProxyBypass = bypass_text.empty() ? nullptr : bypass_text.data();
+  if (!WinHttpSetOption(session, WINHTTP_OPTION_PROXY, &info, sizeof(info))) {
+    attempt.error = "WinHTTP refused my proxy configuration (error " +
+                    std::to_string(GetLastError()) + ")";
+    return attempt;
+  }
+  attempt.ok = true;
+  attempt.used_proxy = true;
+  return attempt;
+}
+
+std::wstring request_headers(const Url &url, const NetworkPolicy &policy) {
+  std::wstring headers = L"Accept: */*\r\nAccept-Encoding: identity\r\n";
+  headers += L"User-Agent: " + wide(policy.user_agent) + L"\r\n";
+  if (!policy.accept_language.empty())
+    headers += L"Accept-Language: " + wide(policy.accept_language) + L"\r\n";
+  if (policy.send_dnt) headers += L"DNT: 1\r\n";
+  if (policy.strip_referrer) headers += L"Referer:\r\n";
+  else if (!url.origin().empty())
+    headers += L"Referer: " + wide(url.origin() + "/") + L"\r\n";
+  if (policy.has_proxy_auth && !policy.proxy_user.empty()) {
+    // I only ever send proxy credentials to the proxy, never to the origin.
+    auto raw = policy.proxy_user + ":" + policy.proxy_pass;
+    Bytes bytes(raw.begin(), raw.end());
+    headers += L"Proxy-Authorization: Basic " + wide(base64_encode(bytes)) + L"\r\n";
+  }
+  return headers;
+}
+} // namespace
+
+Resource fetch_url(const Url &initial, const NetworkPolicy &policy, int timeout_ms,
+                   size_t max_bytes) {
   Resource out;
   out.url = initial.href();
+  std::string blocked;
+  if (policy_blocks(policy, initial, blocked)) {
+    out.ok = false;
+    out.error = blocked;
+    return out;
+  }
   Url url = initial;
-  HINTERNET session =
-      WinHttpOpen(L"PsychoVault/0.1 (owned engine; development)", WINHTTP_ACCESS_TYPE_NO_PROXY,
-                  WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+  HINTERNET session = WinHttpOpen(L"PsychoVault/0.2", WINHTTP_ACCESS_TYPE_NO_PROXY,
+                                  WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
   if (!session) {
     out.ok = false;
     out.error = "WinHTTP session failed";
@@ -29,21 +235,36 @@ Resource fetch_url(const Url &initial, int timeout_ms, size_t max_bytes) {
   WinHttpSetTimeouts(session, timeout_ms, timeout_ms, timeout_ms, timeout_ms);
   DWORD redirect = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
   WinHttpSetOption(session, WINHTTP_OPTION_REDIRECT_POLICY, &redirect, sizeof(redirect));
-  DWORD disabled = WINHTTP_DISABLE_COOKIES | WINHTTP_DISABLE_AUTHENTICATION;
+  DWORD disabled = WINHTTP_DISABLE_COOKIES | WINHTTP_DISABLE_AUTHENTICATION |
+                   WINHTTP_DISABLE_KEEP_ALIVE;
   WinHttpSetOption(session, WINHTTP_OPTION_DISABLE_FEATURE, &disabled, sizeof(disabled));
+  DWORD protocols = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 | WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3;
+  WinHttpSetOption(session, WINHTTP_OPTION_SECURE_PROTOCOLS, &protocols, sizeof(protocols));
+
   for (int redirects = 0; redirects <= 5; ++redirects) {
     if (!url.network()) {
       out.ok = false;
       out.error = "blocked non-HTTP URL";
       break;
     }
+    if (policy_blocks(policy, url, blocked)) {
+      out.ok = false;
+      out.error = blocked;
+      break;
+    }
+    auto proxy = apply_proxy(session, url, policy);
+    if (!proxy.ok) {
+      out.ok = false;
+      out.error = proxy.error;
+      break;
+    }
     HINTERNET connect = WinHttpConnect(session, wide(url.host).c_str(), url.effective_port(), 0);
     if (!connect) {
       out.ok = false;
-      out.error = "connect failed";
+      out.error = "connect failed (error " + std::to_string(GetLastError()) + ")";
       break;
     }
-    std::wstring path = wide(url.path + (url.query.empty() ? "" : "?" + url.query));
+    auto path = wide(url.path + (url.query.empty() ? "" : "?" + url.query));
     HINTERNET request = WinHttpOpenRequest(connect, L"GET", path.c_str(), nullptr,
                                            WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
                                            url.scheme == "https" ? WINHTTP_FLAG_SECURE : 0);
@@ -53,18 +274,13 @@ Resource fetch_url(const Url &initial, int timeout_ms, size_t max_bytes) {
       out.error = "request failed";
       break;
     }
-    DWORD protocols = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 | WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3;
-    WinHttpSetOption(session, WINHTTP_OPTION_SECURE_PROTOCOLS, &protocols, sizeof(protocols));
-    const wchar_t *headers = L"Accept: "
-                             L"text/html,application/xhtml+xml,text/css,application/"
-                             L"javascript,image/png,image/*;q=0.8,*/*;q=0.5\r\nAccept-Encoding: "
-                             L"identity\r\n";
-    BOOL sent = WinHttpSendRequest(request, headers, DWORD(wcslen(headers)),
+    auto headers = request_headers(url, policy);
+    BOOL sent = WinHttpSendRequest(request, headers.c_str(), DWORD(headers.size()),
                                    WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
                 WinHttpReceiveResponse(request, nullptr);
     if (!sent) {
       out.ok = false;
-      out.error = "network request failed: " + std::to_string(GetLastError());
+      out.error = "network request failed (error " + std::to_string(GetLastError()) + ")";
       WinHttpCloseHandle(request);
       WinHttpCloseHandle(connect);
       break;
@@ -73,26 +289,26 @@ Resource fetch_url(const Url &initial, int timeout_ms, size_t max_bytes) {
     WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
                         WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX);
     out.status = int(status);
+    if (status == 407) {
+      out.ok = false;
+      out.error = policy.has_proxy_auth
+                      ? "the proxy rejected my credentials (HTTP 407)"
+                      : "the proxy requires authentication (HTTP 407)";
+      WinHttpCloseHandle(request);
+      WinHttpCloseHandle(connect);
+      break;
+    }
     wchar_t mime[256];
     size = sizeof(mime);
     if (WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_TYPE, WINHTTP_HEADER_NAME_BY_INDEX, mime,
-                            &size, WINHTTP_NO_HEADER_INDEX)) {
-      int n = WideCharToMultiByte(CP_UTF8, 0, mime, -1, nullptr, 0, nullptr, nullptr);
-      std::string m(n ? n - 1 : 0, 0);
-      if (n)
-        WideCharToMultiByte(CP_UTF8, 0, mime, -1, m.data(), n, nullptr, nullptr);
-      out.mime = m;
-    }
+                            &size, WINHTTP_NO_HEADER_INDEX))
+      out.mime = narrow(mime);
     if (status >= 300 && status < 400) {
       wchar_t location[4096];
       size = sizeof(location);
       if (WinHttpQueryHeaders(request, WINHTTP_QUERY_LOCATION, WINHTTP_HEADER_NAME_BY_INDEX,
                               location, &size, WINHTTP_NO_HEADER_INDEX)) {
-        int n = WideCharToMultiByte(CP_UTF8, 0, location, -1, nullptr, 0, nullptr, nullptr);
-        std::string loc(n ? n - 1 : 0, 0);
-        if (n)
-          WideCharToMultiByte(CP_UTF8, 0, location, -1, loc.data(), n, nullptr, nullptr);
-        auto next = resolve_url(url, loc);
+        auto next = resolve_url(url, narrow(location));
         WinHttpCloseHandle(request);
         WinHttpCloseHandle(connect);
         if (!next || !next->network()) {
@@ -118,14 +334,13 @@ Resource fetch_url(const Url &initial, int timeout_ms, size_t max_bytes) {
         out.error = "read failed";
         break;
       }
-      if (!available)
-        break;
+      if (!available) break;
       if (body.size() + available > max_bytes) {
         out.ok = false;
         out.error = "response size limit";
         break;
       }
-      size_t old = body.size();
+      auto old = body.size();
       body.resize(old + available);
       DWORD got = 0;
       if (!WinHttpReadData(request, body.data() + old, available, &got)) {
@@ -134,33 +349,250 @@ Resource fetch_url(const Url &initial, int timeout_ms, size_t max_bytes) {
         break;
       }
       body.resize(old + got);
-      if (!got)
-        break;
+      if (!got) break;
     }
     WinHttpCloseHandle(request);
     WinHttpCloseHandle(connect);
-    if (out.error.empty() || out.error == "read failed" && status >= 200 && status < 300) {
+    if (out.error.empty()) {
       out.bytes = std::move(body);
       out.text = legacy_decode(out.bytes);
       if (status >= 400) {
         out.ok = false;
         out.error = "HTTP " + std::to_string(status);
-      } else
-        out.ok = out.error.empty();
+      } else {
+        out.ok = true;
+      }
     }
     break;
   }
   WinHttpCloseHandle(session);
   return out;
 }
+
+DownloadOutcome download_to_file(const Url &initial, const std::string &destination,
+                                 const NetworkPolicy &policy,
+                                 const std::function<bool()> &cancel,
+                                 const std::function<void(const DownloadProgress &)> &progress,
+                                 int timeout_ms) {
+  DownloadOutcome outcome;
+  outcome.final_url = initial.href();
+  std::string blocked;
+  if (policy_blocks(policy, initial, blocked)) {
+    outcome.error = blocked;
+    return outcome;
+  }
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  fs::create_directories(fs::path(destination).parent_path(), ec);
+  auto partial = destination + ".psychovault-part";
+  std::ofstream file(partial, std::ios::binary | std::ios::trunc);
+  if (!file) {
+    outcome.error = "I cannot create the download file";
+    return outcome;
+  }
+  Url url = initial;
+  HINTERNET session = WinHttpOpen(L"PsychoVault/0.2", WINHTTP_ACCESS_TYPE_NO_PROXY,
+                                  WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+  if (!session) {
+    outcome.error = "WinHTTP session failed";
+    file.close();
+    fs::remove(partial, ec);
+    return outcome;
+  }
+  WinHttpSetTimeouts(session, timeout_ms, timeout_ms, timeout_ms, timeout_ms);
+  DWORD redirect = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
+  WinHttpSetOption(session, WINHTTP_OPTION_REDIRECT_POLICY, &redirect, sizeof(redirect));
+  DWORD disabled = WINHTTP_DISABLE_COOKIES | WINHTTP_DISABLE_AUTHENTICATION;
+  WinHttpSetOption(session, WINHTTP_OPTION_DISABLE_FEATURE, &disabled, sizeof(disabled));
+  DWORD protocols = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 | WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3;
+  WinHttpSetOption(session, WINHTTP_OPTION_SECURE_PROTOCOLS, &protocols, sizeof(protocols));
+
+  for (int redirects = 0; redirects <= 5; ++redirects) {
+    if (cancel && cancel()) {
+      outcome.cancelled = true;
+      outcome.error = "cancelled";
+      break;
+    }
+    auto proxy = apply_proxy(session, url, policy);
+    if (!proxy.ok) {
+      outcome.error = proxy.error;
+      break;
+    }
+    HINTERNET connect = WinHttpConnect(session, wide(url.host).c_str(), url.effective_port(), 0);
+    if (!connect) {
+      outcome.error = "connect failed";
+      break;
+    }
+    auto path = wide(url.path + (url.query.empty() ? "" : "?" + url.query));
+    HINTERNET request = WinHttpOpenRequest(connect, L"GET", path.c_str(), nullptr,
+                                           WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                           url.scheme == "https" ? WINHTTP_FLAG_SECURE : 0);
+    if (!request) {
+      WinHttpCloseHandle(connect);
+      outcome.error = "request failed";
+      break;
+    }
+    auto headers = request_headers(url, policy);
+    BOOL sent = WinHttpSendRequest(request, headers.c_str(), DWORD(headers.size()),
+                                   WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+                WinHttpReceiveResponse(request, nullptr);
+    if (!sent) {
+      outcome.error = "network request failed (error " + std::to_string(GetLastError()) + ")";
+      WinHttpCloseHandle(request);
+      WinHttpCloseHandle(connect);
+      break;
+    }
+    DWORD status = 0, size = sizeof(status);
+    WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                        WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX);
+    outcome.status = int(status);
+    if (status >= 300 && status < 400) {
+      wchar_t location[4096];
+      size = sizeof(location);
+      bool have_location = WinHttpQueryHeaders(request, WINHTTP_QUERY_LOCATION,
+                                              WINHTTP_HEADER_NAME_BY_INDEX, location, &size,
+                                              WINHTTP_NO_HEADER_INDEX) != FALSE;
+      auto next = have_location ? resolve_url(url, narrow(location)) : std::nullopt;
+      WinHttpCloseHandle(request);
+      WinHttpCloseHandle(connect);
+      if (!next || !next->network()) {
+        outcome.error = "blocked redirect";
+        break;
+      }
+      url = *next;
+      outcome.final_url = url.href();
+      continue;
+    }
+    if (status >= 400) {
+      outcome.error = status == 407 ? "the proxy requires authentication (HTTP 407)"
+                                    : "HTTP " + std::to_string(status);
+      WinHttpCloseHandle(request);
+      WinHttpCloseHandle(connect);
+      break;
+    }
+    wchar_t buffer[512];
+    size = sizeof(buffer);
+    if (WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_TYPE, WINHTTP_HEADER_NAME_BY_INDEX,
+                            buffer, &size, WINHTTP_NO_HEADER_INDEX))
+      outcome.mime = narrow(buffer);
+    size = sizeof(buffer);
+    if (WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH, WINHTTP_HEADER_NAME_BY_INDEX,
+                            buffer, &size, WINHTTP_NO_HEADER_INDEX)) {
+      try { outcome.total = std::stoull(narrow(buffer)); } catch (...) { outcome.total = 0; }
+    }
+    // I cap a single download at 8 GiB so a hostile length cannot fill the disk.
+    constexpr uint64_t limit = uint64_t(8) * 1024 * 1024 * 1024;
+    std::vector<char> chunk(65536);
+    bool failed = false;
+    while (true) {
+      if (cancel && cancel()) {
+        outcome.cancelled = true;
+        outcome.error = "cancelled";
+        failed = true;
+        break;
+      }
+      DWORD available = 0;
+      if (!WinHttpQueryDataAvailable(request, &available)) {
+        outcome.error = "read failed";
+        failed = true;
+        break;
+      }
+      if (!available) break;
+      DWORD want = DWORD(std::min<size_t>(available, chunk.size()));
+      DWORD got = 0;
+      if (!WinHttpReadData(request, chunk.data(), want, &got)) {
+        outcome.error = "read failed";
+        failed = true;
+        break;
+      }
+      if (!got) break;
+      if (outcome.received + got > limit) {
+        outcome.error = "the download exceeds my 8 GiB limit";
+        failed = true;
+        break;
+      }
+      file.write(chunk.data(), std::streamsize(got));
+      if (!file) {
+        outcome.error = "I cannot write to the download file";
+        failed = true;
+        break;
+      }
+      outcome.received += got;
+      if (progress) {
+        DownloadProgress state;
+        state.received = outcome.received;
+        state.total = outcome.total;
+        progress(state);
+      }
+    }
+    WinHttpCloseHandle(request);
+    WinHttpCloseHandle(connect);
+    if (!failed) {
+      file.flush();
+      bool write_ok = bool(file);
+      file.close();
+      if (!write_ok) {
+        outcome.error = "I cannot flush the download file";
+        break;
+      }
+      fs::rename(partial, destination, ec);
+      if (ec) {
+        outcome.error = "I cannot move the finished download into place";
+        break;
+      }
+      outcome.ok = true;
+      if (progress) {
+        DownloadProgress state;
+        state.received = outcome.received;
+        state.total = outcome.total ? outcome.total : outcome.received;
+        state.done = true;
+        progress(state);
+      }
+    }
+    break;
+  }
+  WinHttpCloseHandle(session);
+  if (file.is_open()) file.close();
+  if (!outcome.ok) {
+    std::error_code ignored;
+    fs::remove(partial, ignored);
+  }
+  return outcome;
+}
+
 #else
-Resource fetch_url(const Url &url, int, size_t) {
+
+Resource fetch_url(const Url &url, const NetworkPolicy &policy, int, size_t) {
   Resource r;
   r.url = url.href();
+  std::string reason;
+  if (policy_blocks(policy, url, reason)) {
+    r.ok = false;
+    r.error = reason;
+    return r;
+  }
+  ProxyServer server;
+  if (!policy.proxy.route(url, server, reason)) {
+    r.ok = false;
+    r.error = reason;
+    return r;
+  }
   r.ok = false;
-  r.error = "broker networking is implemented on Windows; headless CLI uses "
-            "supplied resources";
+  r.error = "broker networking is implemented on Windows; headless CLI uses supplied resources";
   return r;
 }
+
+DownloadOutcome download_to_file(const Url &url, const std::string &, const NetworkPolicy &,
+                                 const std::function<bool()> &,
+                                 const std::function<void(const DownloadProgress &)> &, int) {
+  DownloadOutcome outcome;
+  outcome.final_url = url.href();
+  outcome.error = "broker downloads are implemented on Windows";
+  return outcome;
+}
 #endif
+
+Resource fetch_url(const Url &url, int timeout_ms, size_t max_bytes) {
+  return fetch_url(url, NetworkPolicy{}, timeout_ms, max_bytes);
+}
 } // namespace pv

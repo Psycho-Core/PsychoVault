@@ -41,6 +41,8 @@ std::string entity_decode(std::string_view text);
 std::string percent_encode(std::string_view text, bool query = false);
 std::string legacy_decode(const Bytes &bytes);
 Bytes random_bytes(size_t count);
+// I use one monotonic millisecond clock for timers, downloads and alarms.
+int64_t now_ms();
 std::string base64_encode(const Bytes &bytes);
 Bytes base64_decode(std::string_view text, size_t max_bytes = kMaxResourceBytes);
 

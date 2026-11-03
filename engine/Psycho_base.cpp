@@ -1,4 +1,5 @@
 #include "Psycho_base.hpp"
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -12,6 +13,11 @@
 #endif
 
 namespace pv {
+int64_t now_ms() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
 Bytes random_bytes(size_t count) {
   if (count > 1024 * 1024)
     throw std::runtime_error("random request limit");
