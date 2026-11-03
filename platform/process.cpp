@@ -21,17 +21,14 @@ static void put32(uint8_t *p, uint32_t n) {
   p[3] = n >> 24;
 }
 static uint32_t get32(const uint8_t *p) {
-  return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 |
-         uint32_t(p[3]) << 24;
+  return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
 }
 static bool write_all(void *h, const uint8_t *data, size_t n) {
 #ifdef _WIN32
   HANDLE handle = h;
   while (n) {
     DWORD done = 0;
-    if (!WriteFile(handle, data, DWORD(std::min<size_t>(n, 1u << 20)), &done,
-                   nullptr) ||
-        !done)
+    if (!WriteFile(handle, data, DWORD(std::min<size_t>(n, 1u << 20)), &done, nullptr) || !done)
       return false;
     data += done;
     n -= done;
@@ -57,9 +54,7 @@ static bool read_all(void *h, uint8_t *data, size_t n) {
   HANDLE handle = h;
   while (n) {
     DWORD done = 0;
-    if (!ReadFile(handle, data, DWORD(std::min<size_t>(n, 1u << 20)), &done,
-                  nullptr) ||
-        !done)
+    if (!ReadFile(handle, data, DWORD(std::min<size_t>(n, 1u << 20)), &done, nullptr) || !done)
       return false;
     data += done;
     n -= done;
@@ -89,8 +84,7 @@ bool write_frame(void *h, const Json &message, std::string &error) {
   uint8_t header[4];
   put32(header, uint32_t(text.size()));
   if (!write_all(h, header, 4) ||
-      !write_all(h, reinterpret_cast<const uint8_t *>(text.data()),
-                 text.size())) {
+      !write_all(h, reinterpret_cast<const uint8_t *>(text.data()), text.size())) {
     error = "IPC write failed";
     return false;
   }
@@ -141,19 +135,16 @@ static std::wstring wide(const std::string &s) {
 static std::string narrow(const std::wstring &w) {
   if (w.empty())
     return {};
-  int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), int(w.size()), nullptr, 0,
-                              nullptr, nullptr);
+  int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), int(w.size()), nullptr, 0, nullptr, nullptr);
   std::string s(n, 0);
-  WideCharToMultiByte(CP_UTF8, 0, w.c_str(), int(w.size()), s.data(), n,
-                      nullptr, nullptr);
+  WideCharToMultiByte(CP_UTF8, 0, w.c_str(), int(w.size()), s.data(), n, nullptr, nullptr);
   return s;
 }
 static bool grant_execute(const std::wstring &path, PSID sid) {
   PACL old = nullptr;
   PSECURITY_DESCRIPTOR sd = nullptr;
-  if (GetNamedSecurityInfoW(path.c_str(), SE_FILE_OBJECT,
-                            DACL_SECURITY_INFORMATION, nullptr, nullptr, &old,
-                            nullptr, &sd) != ERROR_SUCCESS)
+  if (GetNamedSecurityInfoW(path.c_str(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, nullptr,
+                            nullptr, &old, nullptr, &sd) != ERROR_SUCCESS)
     return false;
   EXPLICIT_ACCESSW ea{};
   ea.grfAccessPermissions = FILE_GENERIC_READ | FILE_GENERIC_EXECUTE;
@@ -161,11 +152,10 @@ static bool grant_execute(const std::wstring &path, PSID sid) {
   ea.grfInheritance = NO_INHERITANCE;
   BuildTrusteeWithSidW(&ea.Trustee, sid);
   PACL updated = nullptr;
-  bool ok =
-      SetEntriesInAclW(1, &ea, old, &updated) == ERROR_SUCCESS &&
-      SetNamedSecurityInfoW(const_cast<wchar_t *>(path.c_str()), SE_FILE_OBJECT,
-                            DACL_SECURITY_INFORMATION, nullptr, nullptr,
-                            updated, nullptr) == ERROR_SUCCESS;
+  bool ok = SetEntriesInAclW(1, &ea, old, &updated) == ERROR_SUCCESS &&
+            SetNamedSecurityInfoW(const_cast<wchar_t *>(path.c_str()), SE_FILE_OBJECT,
+                                  DACL_SECURITY_INFORMATION, nullptr, nullptr, updated,
+                                  nullptr) == ERROR_SUCCESS;
   if (updated)
     LocalFree(updated);
   if (sd)
@@ -187,13 +177,11 @@ Process::~Process() {
   if (sid)
     FreeSid(sid);
 }
-bool Process::start(const std::string &exe, const std::string &args,
-                    bool sandbox, std::string &error) {
+bool Process::start(const std::string &exe, const std::string &args, bool sandbox,
+                    std::string &error) {
   SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
-  HANDLE in_read = nullptr, in_write = nullptr, out_read = nullptr,
-         out_write = nullptr;
-  if (!CreatePipe(&in_read, &in_write, &sa, 0) ||
-      !CreatePipe(&out_read, &out_write, &sa, 0)) {
+  HANDLE in_read = nullptr, in_write = nullptr, out_read = nullptr, out_write = nullptr;
+  if (!CreatePipe(&in_read, &in_write, &sa, 0) || !CreatePipe(&out_read, &out_write, &sa, 0)) {
     error = "cannot create renderer pipes";
     return false;
   }
@@ -203,13 +191,12 @@ bool Process::start(const std::string &exe, const std::string &args,
   bool made_profile = false;
   std::wstring container = L"PsychoVault.Renderer";
   if (sandbox) {
-    HRESULT hr = CreateAppContainerProfile(
-        container.c_str(), L"PsychoVault renderer",
-        L"Isolated PsychoVault website renderer", nullptr, 0, &app_sid);
+    HRESULT hr =
+        CreateAppContainerProfile(container.c_str(), L"PsychoVault renderer",
+                                  L"Isolated PsychoVault website renderer", nullptr, 0, &app_sid);
     if (FAILED(hr)) {
       if (hr == HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS))
-        hr = DeriveAppContainerSidFromAppContainerName(container.c_str(),
-                                                       &app_sid);
+        hr = DeriveAppContainerSidFromAppContainerName(container.c_str(), &app_sid);
     } else
       made_profile = true;
     if (FAILED(hr) || !app_sid) {
@@ -239,25 +226,23 @@ bool Process::start(const std::string &exe, const std::string &args,
   auto attrs = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(buffer.data());
   InitializeProcThreadAttributeList(attrs, 1, 0, &size);
   HANDLE inherit[2] = {in_read, out_write};
-  UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-                            inherit, sizeof(inherit), nullptr, nullptr);
+  UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit, sizeof(inherit),
+                            nullptr, nullptr);
   SECURITY_CAPABILITIES caps{};
   caps.AppContainerSid = app_sid;
   caps.CapabilityCount = 0;
   caps.Capabilities = nullptr;
   if (sandbox)
-    UpdateProcThreadAttribute(attrs, 0,
-                              PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
-                              &caps, sizeof(caps), nullptr, nullptr);
+    UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, &caps,
+                              sizeof(caps), nullptr, nullptr);
   si.lpAttributeList = attrs;
   std::wstring command = L"\"" + wide(exe) + L"\" " + wide(args);
   std::vector<wchar_t> cmd(command.begin(), command.end());
   cmd.push_back(0);
   PROCESS_INFORMATION pi{};
   DWORD flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED;
-  BOOL created =
-      CreateProcessW(wide(exe).c_str(), cmd.data(), nullptr, nullptr, TRUE,
-                     flags, nullptr, nullptr, &si.StartupInfo, &pi);
+  BOOL created = CreateProcessW(wide(exe).c_str(), cmd.data(), nullptr, nullptr, TRUE, flags,
+                                nullptr, nullptr, &si.StartupInfo, &pi);
   DeleteProcThreadAttributeList(attrs);
   CloseHandle(in_read);
   CloseHandle(out_write);
@@ -275,13 +260,11 @@ bool Process::start(const std::string &exe, const std::string &args,
   job = CreateJobObjectW(nullptr, nullptr);
   JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
   limits.BasicLimitInformation.LimitFlags =
-      JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE |
-      JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION |
+      JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION |
       JOB_OBJECT_LIMIT_ACTIVE_PROCESS | JOB_OBJECT_LIMIT_PROCESS_MEMORY;
   limits.BasicLimitInformation.ActiveProcessLimit = 1;
   limits.ProcessMemoryLimit = 256ull * 1024 * 1024;
-  SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits,
-                          sizeof(limits));
+  SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits));
   if (!AssignProcessToJobObject(job, process)) {
     error = "cannot assign renderer job";
     TerminateProcess(process, 1);
@@ -327,8 +310,8 @@ Process::~Process() {
   if (write)
     close(int(intptr_t(write)));
 }
-bool Process::start(const std::string &exe, const std::string &args,
-                    bool sandbox, std::string &error) {
+bool Process::start(const std::string &exe, const std::string &args, bool sandbox,
+                    std::string &error) {
   if (sandbox) {
     error = "Windows AppContainer sandbox is not available on this platform";
     return false;
@@ -380,7 +363,9 @@ void Process::terminate() {
     pid = 0;
   }
 }
-bool Process::alive() const { return pid > 0 && kill(pid, 0) == 0; }
+bool Process::alive() const {
+  return pid > 0 && kill(pid, 0) == 0;
+}
 std::string executable_path() {
   char buf[4096];
   ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);

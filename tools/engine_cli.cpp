@@ -87,8 +87,7 @@ int main(int argc, char **argv) {
     if (!out.empty()) {
       auto png = encode_png(width, height, canvas.pixels);
       std::ofstream f(out, std::ios::binary);
-      f.write(reinterpret_cast<const char *>(png.data()),
-              std::streamsize(png.size()));
+      f.write(reinterpret_cast<const char *>(png.data()), std::streamsize(png.size()));
       if (!f)
         throw std::runtime_error("cannot write PNG");
     }

@@ -19,9 +19,8 @@ Resource fetch_url(const Url &initial, int timeout_ms, size_t max_bytes) {
   out.url = initial.href();
   Url url = initial;
   HINTERNET session =
-      WinHttpOpen(L"PsychoVault/0.1 (owned engine; development)",
-                  WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME,
-                  WINHTTP_NO_PROXY_BYPASS, 0);
+      WinHttpOpen(L"PsychoVault/0.1 (owned engine; development)", WINHTTP_ACCESS_TYPE_NO_PROXY,
+                  WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
   if (!session) {
     out.ok = false;
     out.error = "WinHTTP session failed";
@@ -29,45 +28,37 @@ Resource fetch_url(const Url &initial, int timeout_ms, size_t max_bytes) {
   }
   WinHttpSetTimeouts(session, timeout_ms, timeout_ms, timeout_ms, timeout_ms);
   DWORD redirect = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
-  WinHttpSetOption(session, WINHTTP_OPTION_REDIRECT_POLICY, &redirect,
-                   sizeof(redirect));
+  WinHttpSetOption(session, WINHTTP_OPTION_REDIRECT_POLICY, &redirect, sizeof(redirect));
   DWORD disabled = WINHTTP_DISABLE_COOKIES | WINHTTP_DISABLE_AUTHENTICATION;
-  WinHttpSetOption(session, WINHTTP_OPTION_DISABLE_FEATURE, &disabled,
-                   sizeof(disabled));
+  WinHttpSetOption(session, WINHTTP_OPTION_DISABLE_FEATURE, &disabled, sizeof(disabled));
   for (int redirects = 0; redirects <= 5; ++redirects) {
     if (!url.network()) {
       out.ok = false;
       out.error = "blocked non-HTTP URL";
       break;
     }
-    HINTERNET connect = WinHttpConnect(session, wide(url.host).c_str(),
-                                       url.effective_port(), 0);
+    HINTERNET connect = WinHttpConnect(session, wide(url.host).c_str(), url.effective_port(), 0);
     if (!connect) {
       out.ok = false;
       out.error = "connect failed";
       break;
     }
-    std::wstring path =
-        wide(url.path + (url.query.empty() ? "" : "?" + url.query));
-    HINTERNET request =
-        WinHttpOpenRequest(connect, L"GET", path.c_str(), nullptr,
-                           WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
-                           url.scheme == "https" ? WINHTTP_FLAG_SECURE : 0);
+    std::wstring path = wide(url.path + (url.query.empty() ? "" : "?" + url.query));
+    HINTERNET request = WinHttpOpenRequest(connect, L"GET", path.c_str(), nullptr,
+                                           WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                           url.scheme == "https" ? WINHTTP_FLAG_SECURE : 0);
     if (!request) {
       WinHttpCloseHandle(connect);
       out.ok = false;
       out.error = "request failed";
       break;
     }
-    DWORD protocols = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 |
-                      WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3;
-    WinHttpSetOption(session, WINHTTP_OPTION_SECURE_PROTOCOLS, &protocols,
-                     sizeof(protocols));
-    const wchar_t *headers =
-        L"Accept: "
-        L"text/html,application/xhtml+xml,text/css,application/"
-        L"javascript,image/png,image/*;q=0.8,*/*;q=0.5\r\nAccept-Encoding: "
-        L"identity\r\n";
+    DWORD protocols = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 | WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3;
+    WinHttpSetOption(session, WINHTTP_OPTION_SECURE_PROTOCOLS, &protocols, sizeof(protocols));
+    const wchar_t *headers = L"Accept: "
+                             L"text/html,application/xhtml+xml,text/css,application/"
+                             L"javascript,image/png,image/*;q=0.8,*/*;q=0.5\r\nAccept-Encoding: "
+                             L"identity\r\n";
     BOOL sent = WinHttpSendRequest(request, headers, DWORD(wcslen(headers)),
                                    WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
                 WinHttpReceiveResponse(request, nullptr);
@@ -79,35 +70,28 @@ Resource fetch_url(const Url &initial, int timeout_ms, size_t max_bytes) {
       break;
     }
     DWORD status = 0, size = sizeof(status);
-    WinHttpQueryHeaders(
-        request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-        WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX);
+    WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                        WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX);
     out.status = int(status);
     wchar_t mime[256];
     size = sizeof(mime);
-    if (WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_TYPE,
-                            WINHTTP_HEADER_NAME_BY_INDEX, mime, &size,
-                            WINHTTP_NO_HEADER_INDEX)) {
-      int n = WideCharToMultiByte(CP_UTF8, 0, mime, -1, nullptr, 0, nullptr,
-                                  nullptr);
+    if (WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_TYPE, WINHTTP_HEADER_NAME_BY_INDEX, mime,
+                            &size, WINHTTP_NO_HEADER_INDEX)) {
+      int n = WideCharToMultiByte(CP_UTF8, 0, mime, -1, nullptr, 0, nullptr, nullptr);
       std::string m(n ? n - 1 : 0, 0);
       if (n)
-        WideCharToMultiByte(CP_UTF8, 0, mime, -1, m.data(), n, nullptr,
-                            nullptr);
+        WideCharToMultiByte(CP_UTF8, 0, mime, -1, m.data(), n, nullptr, nullptr);
       out.mime = m;
     }
     if (status >= 300 && status < 400) {
       wchar_t location[4096];
       size = sizeof(location);
-      if (WinHttpQueryHeaders(request, WINHTTP_QUERY_LOCATION,
-                              WINHTTP_HEADER_NAME_BY_INDEX, location, &size,
-                              WINHTTP_NO_HEADER_INDEX)) {
-        int n = WideCharToMultiByte(CP_UTF8, 0, location, -1, nullptr, 0,
-                                    nullptr, nullptr);
+      if (WinHttpQueryHeaders(request, WINHTTP_QUERY_LOCATION, WINHTTP_HEADER_NAME_BY_INDEX,
+                              location, &size, WINHTTP_NO_HEADER_INDEX)) {
+        int n = WideCharToMultiByte(CP_UTF8, 0, location, -1, nullptr, 0, nullptr, nullptr);
         std::string loc(n ? n - 1 : 0, 0);
         if (n)
-          WideCharToMultiByte(CP_UTF8, 0, location, -1, loc.data(), n, nullptr,
-                              nullptr);
+          WideCharToMultiByte(CP_UTF8, 0, location, -1, loc.data(), n, nullptr, nullptr);
         auto next = resolve_url(url, loc);
         WinHttpCloseHandle(request);
         WinHttpCloseHandle(connect);
@@ -155,8 +139,7 @@ Resource fetch_url(const Url &initial, int timeout_ms, size_t max_bytes) {
     }
     WinHttpCloseHandle(request);
     WinHttpCloseHandle(connect);
-    if (out.error.empty() ||
-        out.error == "read failed" && status >= 200 && status < 300) {
+    if (out.error.empty() || out.error == "read failed" && status >= 200 && status < 300) {
       out.bytes = std::move(body);
       out.text = legacy_decode(out.bytes);
       if (status >= 400) {

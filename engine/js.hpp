@@ -139,18 +139,21 @@ public:
   Value call(Value function, const Values &args, Value this_value = Value());
   Value evaluate(Expr &expr, Env &env, Value this_value);
   Value get_member(const Value &base, const std::string &key);
-  bool set_member(const Value &base, const std::string &key,
-                  const Value &value);
+  bool set_member(const Value &base, const std::string &key, const Value &value);
   Value make_object(Object::Kind kind = Object::Kind::Plain);
   Value make_array(const Values &values = {});
   Value make_native(std::function<Value(Values &)> fn);
   Value host_value(int id, const std::string &type = "node");
   Object *allocate(Object::Kind kind);
-  Env &global() { return *global_; }
+  Env &global() {
+    return *global_;
+  }
   void collect();
   void root(Object *object);
   void unroot(Object *object);
-  Host *host() { return host_; }
+  Host *host() {
+    return host_;
+  }
   void reset_fuel();
   void tick();
   struct Timer {
@@ -186,12 +189,11 @@ private:
   void install_builtins();
   void hoist(const std::vector<std::unique_ptr<Stmt>> &statements, Env &env);
   Flow execute(const Stmt &statement, Env &env, Value this_value);
-  Flow execute_block(const std::vector<std::unique_ptr<Stmt>> &statements,
-                     Env &env, Value this_value);
+  Flow execute_block(const std::vector<std::unique_ptr<Stmt>> &statements, Env &env,
+                     Value this_value);
   Env *find_env(Env &env, const std::string &name);
   Value declare(Env &env, const std::string &name, const Value &value);
-  Value assign_identifier(Env &env, const std::string &name,
-                          const Value &value);
+  Value assign_identifier(Env &env, const std::string &name, const Value &value);
   Value construct(const Value &constructor, Values &args);
   void mark(Object *object);
 };

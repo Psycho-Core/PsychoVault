@@ -3,22 +3,20 @@
 #include <iostream>
 using namespace pv;
 static int passed = 0;
-#define CHECK(x)                                                               \
-  do {                                                                         \
-    if (!(x)) {                                                                \
-      std::cerr << "FAIL " << __FILE__ << ":" << __LINE__ << " " << #x         \
-                << "\n";                                                       \
-      return 1;                                                                \
-    }                                                                          \
-    ++passed;                                                                  \
+#define CHECK(x)                                                                                   \
+  do {                                                                                             \
+    if (!(x)) {                                                                                    \
+      std::cerr << "FAIL " << __FILE__ << ":" << __LINE__ << " " << #x << "\n";                    \
+      return 1;                                                                                    \
+    }                                                                                              \
+    ++passed;                                                                                      \
   } while (0)
 static std::string js_eval(const std::string &s) {
   js::Runtime r;
   return r.run(s).to_string();
 }
 int main() {
-  CHECK(parse_url("https://example.com/a/../b?x=1#f")->href() ==
-        "https://example.com/b?x=1#f");
+  CHECK(parse_url("https://example.com/a/../b?x=1#f")->href() == "https://example.com/b?x=1#f");
   CHECK(parse_url("http://example.com:80/")->href() == "http://example.com/");
   CHECK(!parse_url("https://user:pass@example.com/"));
   CHECK(!parse_url("file:///C:/secret"));
@@ -30,9 +28,8 @@ int main() {
   CHECK(!Json::parse("{\"a\":}"));
   CHECK(entity_decode("&amp;&#65;&#x1F600;") == "&A\xf0\x9f\x98\x80");
   Document d;
-  d.parse(
-      "<!doctype html><html><head><title>T</title></head><body><p id=a "
-      "class=x>Hello <b>world</b></p><ul><li>one<li>two</ul></body></html>");
+  d.parse("<!doctype html><html><head><title>T</title></head><body><p id=a "
+          "class=x>Hello <b>world</b></p><ul><li>one<li>two</ul></body></html>");
   CHECK(d.title() == "T");
   CHECK(d.by_id("a") >= 0);
   CHECK(d.text_content(d.by_id("a")) == "Hello world");
@@ -42,8 +39,7 @@ int main() {
   CHECK(js_eval("(function(x){return x*x})(7)") == "49");
   CHECK(js_eval("[1,2,3].map(x=>x*2).join(',')") == "2,4,6");
   CHECK(js_eval("var n=0;for(var i=0;i<10;i++)n+=i;n") == "45");
-  CHECK(js_eval("JSON.stringify({a:1,b:[true,null]})") ==
-        "{\"a\":1,\"b\":[true,null]}");
+  CHECK(js_eval("JSON.stringify({a:1,b:[true,null]})") == "{\"a\":1,\"b\":[true,null]}");
   CHECK(js_eval("try{throw new Error('ok')}catch(e){e.message}") == "ok");
   CHECK(js_eval("function f(n){return n<2?1:n*f(n-1)}f(6)") == "720");
   CHECK(js_eval("'abc'.toUpperCase()") == "ABC");

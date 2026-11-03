@@ -13,11 +13,9 @@ struct Canvas {
   Canvas(int w, int h, uint32_t color = 0xff000000);
   void fill(Rect r, uint32_t color);
   void stroke(Rect r, uint32_t color, double thickness = 1);
-  void line(double x1, double y1, double x2, double y2, uint32_t color,
-            double thickness = 1);
-  void text(double x, double y, std::string_view text, double size,
-            uint32_t color, bool bold = false,
-            std::string_view family = "Segoe UI");
+  void line(double x1, double y1, double x2, double y2, uint32_t color, double thickness = 1);
+  void text(double x, double y, std::string_view text, double size, uint32_t color,
+            bool bold = false, std::string_view family = "Segoe UI");
   double text_width(std::string_view text, double size, bool bold = false,
                     std::string_view family = "Segoe UI") const;
   void pixel(int x, int y, uint32_t color);

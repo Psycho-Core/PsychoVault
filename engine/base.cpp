@@ -17,8 +17,7 @@ Bytes random_bytes(size_t count) {
     throw std::runtime_error("random request limit");
   Bytes out(count);
 #ifdef _WIN32
-  if (BCryptGenRandom(nullptr, out.data(), ULONG(count),
-                      BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0)
+  if (BCryptGenRandom(nullptr, out.data(), ULONG(count), BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0)
     throw std::runtime_error("OS random source failed");
 #else
   int fd = open("/dev/urandom", O_RDONLY);
@@ -71,8 +70,7 @@ std::vector<std::string> split(std::string_view v, char d) {
   }
   return out;
 }
-std::string replace_all(std::string text, std::string_view from,
-                        std::string_view to) {
+std::string replace_all(std::string text, std::string_view from, std::string_view to) {
   if (from.empty())
     return text;
   size_t p = 0;
@@ -137,8 +135,8 @@ std::vector<uint32_t> utf8_decode(std::string_view s) {
         bad = true;
       cp = (cp << 6) | (n & 63);
     }
-    if (bad || (extra == 2 && cp < 0x800) || (extra == 3 && cp < 0x10000) ||
-        cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff))
+    if (bad || (extra == 2 && cp < 0x800) || (extra == 3 && cp < 0x10000) || cp > 0x10ffff ||
+        (cp >= 0xd800 && cp <= 0xdfff))
       cp = 0xfffd;
     out.push_back(cp);
   }
@@ -170,46 +168,45 @@ std::string html_escape(std::string_view t) {
   return s;
 }
 std::string entity_decode(std::string_view t) {
-  static const std::map<std::string, std::string> names = {
-      {"amp", "&"},
-      {"lt", "<"},
-      {"gt", ">"},
-      {"quot", "\""},
-      {"apos", "'"},
-      {"nbsp", "\xc2\xa0"},
-      {"copy", "\xc2\xa9"},
-      {"reg", "\xc2\xae"},
-      {"trade", "\xe2\x84\xa2"},
-      {"hellip", "\xe2\x80\xa6"},
-      {"mdash", "-"},
-      {"ndash", "-"},
-      {"lsquo", "\xe2\x80\x98"},
-      {"rsquo", "\xe2\x80\x99"},
-      {"ldquo", "\xe2\x80\x9c"},
-      {"rdquo", "\xe2\x80\x9d"},
-      {"bull", "\xe2\x80\xa2"},
-      {"middot", "\xc2\xb7"},
-      {"laquo", "\xc2\xab"},
-      {"raquo", "\xc2\xbb"},
-      {"times", "\xc3\x97"},
-      {"divide", "\xc3\xb7"},
-      {"deg", "\xc2\xb0"},
-      {"plusmn", "\xc2\xb1"},
-      {"euro", "\xe2\x82\xac"},
-      {"pound", "\xc2\xa3"},
-      {"yen", "\xc2\xa5"},
-      {"cent", "\xc2\xa2"},
-      {"sect", "\xc2\xa7"},
-      {"para", "\xc2\xb6"},
-      {"dagger", "\xe2\x80\xa0"},
-      {"larr", "\xe2\x86\x90"},
-      {"rarr", "\xe2\x86\x92"},
-      {"uarr", "\xe2\x86\x91"},
-      {"darr", "\xe2\x86\x93"},
-      {"harr", "\xe2\x86\x94"},
-      {"check", "\xe2\x9c\x93"},
-      {"star", "\xe2\x98\x86"},
-      {"hearts", "\xe2\x99\xa5"}};
+  static const std::map<std::string, std::string> names = {{"amp", "&"},
+                                                           {"lt", "<"},
+                                                           {"gt", ">"},
+                                                           {"quot", "\""},
+                                                           {"apos", "'"},
+                                                           {"nbsp", "\xc2\xa0"},
+                                                           {"copy", "\xc2\xa9"},
+                                                           {"reg", "\xc2\xae"},
+                                                           {"trade", "\xe2\x84\xa2"},
+                                                           {"hellip", "\xe2\x80\xa6"},
+                                                           {"mdash", "-"},
+                                                           {"ndash", "-"},
+                                                           {"lsquo", "\xe2\x80\x98"},
+                                                           {"rsquo", "\xe2\x80\x99"},
+                                                           {"ldquo", "\xe2\x80\x9c"},
+                                                           {"rdquo", "\xe2\x80\x9d"},
+                                                           {"bull", "\xe2\x80\xa2"},
+                                                           {"middot", "\xc2\xb7"},
+                                                           {"laquo", "\xc2\xab"},
+                                                           {"raquo", "\xc2\xbb"},
+                                                           {"times", "\xc3\x97"},
+                                                           {"divide", "\xc3\xb7"},
+                                                           {"deg", "\xc2\xb0"},
+                                                           {"plusmn", "\xc2\xb1"},
+                                                           {"euro", "\xe2\x82\xac"},
+                                                           {"pound", "\xc2\xa3"},
+                                                           {"yen", "\xc2\xa5"},
+                                                           {"cent", "\xc2\xa2"},
+                                                           {"sect", "\xc2\xa7"},
+                                                           {"para", "\xc2\xb6"},
+                                                           {"dagger", "\xe2\x80\xa0"},
+                                                           {"larr", "\xe2\x86\x90"},
+                                                           {"rarr", "\xe2\x86\x92"},
+                                                           {"uarr", "\xe2\x86\x91"},
+                                                           {"darr", "\xe2\x86\x93"},
+                                                           {"harr", "\xe2\x86\x94"},
+                                                           {"check", "\xe2\x9c\x93"},
+                                                           {"star", "\xe2\x98\x86"},
+                                                           {"hearts", "\xe2\x99\xa5"}};
   std::string out;
   out.reserve(t.size());
   for (size_t i = 0; i < t.size();) {
@@ -263,10 +260,8 @@ std::string percent_encode(std::string_view s, bool query) {
   const char *h = "0123456789ABCDEF";
   std::string out;
   for (unsigned char c : s) {
-    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-        (c >= '0' && c <= '9') ||
-        std::string_view("-._~!$&'()*+,;=:@/?").find(c) !=
-            std::string_view::npos ||
+    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+        std::string_view("-._~!$&'()*+,;=:@/?").find(c) != std::string_view::npos ||
         (query && c == ' '))
       out += query && c == ' ' ? '+' : char(c);
     else {
@@ -278,8 +273,7 @@ std::string percent_encode(std::string_view s, bool query) {
   return out;
 }
 std::string legacy_decode(const Bytes &bytes) {
-  if (bytes.size() >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb &&
-      bytes[2] == 0xbf)
+  if (bytes.size() >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf)
     return std::string(bytes.begin() + 3, bytes.end());
   if (bytes.size() >= 2 && bytes[0] == 0xff && bytes[1] == 0xfe) {
     std::string out;
@@ -287,15 +281,14 @@ std::string legacy_decode(const Bytes &bytes) {
       out += utf8_encode(bytes[i] | (uint32_t(bytes[i + 1]) << 8));
     return out;
   }
-  static const uint16_t high[128] = {
-      0x20ac, 0x81,   0x201a, 0x192,  0x201e, 0x2026, 0x2020, 0x2021,
-      0x2c6,  0x2030, 0x160,  0x2039, 0x152,  0x8d,   0x17d,  0x8f,
-      0x90,   0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014,
-      0x2dc,  0x2122, 0x161,  0x203a, 0x153,  0x9d,   0x17e,  0x178};
+  static const uint16_t high[128] = {0x20ac, 0x81,   0x201a, 0x192,  0x201e, 0x2026, 0x2020, 0x2021,
+                                     0x2c6,  0x2030, 0x160,  0x2039, 0x152,  0x8d,   0x17d,  0x8f,
+                                     0x90,   0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014,
+                                     0x2dc,  0x2122, 0x161,  0x203a, 0x153,  0x9d,   0x17e,  0x178};
   std::string out;
   bool utf = true;
-  auto cps = utf8_decode(std::string_view(
-      reinterpret_cast<const char *>(bytes.data()), bytes.size()));
+  auto cps =
+      utf8_decode(std::string_view(reinterpret_cast<const char *>(bytes.data()), bytes.size()));
   for (auto c : cps)
     if (c == 0xfffd) {
       utf = false;
@@ -313,8 +306,7 @@ std::string legacy_decode(const Bytes &bytes) {
 static bool hexval(char c, int &v) {
   if (c >= '0' && c <= '9')
     v = c - '0';
-  else if (lower(std::string_view(&c, 1))[0] >= 'a' &&
-           lower(std::string_view(&c, 1))[0] <= 'f')
+  else if (lower(std::string_view(&c, 1))[0] >= 'a' && lower(std::string_view(&c, 1))[0] <= 'f')
     v = lower(std::string_view(&c, 1))[0] - 'a' + 10;
   else
     return false;
@@ -324,8 +316,7 @@ static std::string normalize_percent(std::string_view s) {
   std::string out;
   for (size_t i = 0; i < s.size();) {
     int a, b;
-    if (s[i] == '%' && i + 2 < s.size() && hexval(s[i + 1], a) &&
-        hexval(s[i + 2], b)) {
+    if (s[i] == '%' && i + 2 < s.size() && hexval(s[i + 1], a) && hexval(s[i + 2], b)) {
       unsigned char c = static_cast<unsigned char>(a * 16 + b);
       const char *hex = "0123456789ABCDEF";
       out += '%';
@@ -354,8 +345,7 @@ static std::string remove_dots(std::string_view path) {
       trailing = true;
       continue;
     }
-    if (p == ".." || lower(p) == "%2e." || lower(p) == ".%2e" ||
-        lower(p) == "%2e%2e") {
+    if (p == ".." || lower(p) == "%2e." || lower(p) == ".%2e" || lower(p) == "%2e%2e") {
       if (!parts.empty())
         parts.pop_back();
       trailing = true;
@@ -379,11 +369,9 @@ static bool valid_host(std::string host) {
   if (host.empty() || host.size() > 253)
     return false;
   if (host.front() == '[')
-    return host.back() == ']' && host.find(':') != std::string::npos &&
-           host.size() > 2;
+    return host.back() == ']' && host.find(':') != std::string::npos && host.size() > 2;
   for (unsigned char c : host)
-    if (c <= 32 ||
-        std::string_view("/?#@\\<>\"'^{}|").find(c) != std::string_view::npos)
+    if (c <= 32 || std::string_view("/?#@\\<>\"'^{}|").find(c) != std::string_view::npos)
       return false;
   for (unsigned char c : host)
     if (c >= 128)
@@ -400,8 +388,7 @@ std::string Url::origin() const {
                                    : "null";
 }
 uint16_t Url::effective_port() const {
-  return port.empty() ? (scheme == "https" ? 443 : 80)
-                      : uint16_t(std::stoi(port));
+  return port.empty() ? (scheme == "https" ? 443 : 80) : uint16_t(std::stoi(port));
 }
 std::string Url::href(bool frag) const {
   if (!valid)
@@ -432,8 +419,7 @@ std::optional<Url> parse_url(std::string_view input) {
   if (!std::isalpha(static_cast<unsigned char>(u.scheme[0])))
     return std::nullopt;
   for (char c : u.scheme)
-    if (!std::isalnum(static_cast<unsigned char>(c)) && c != '+' && c != '-' &&
-        c != '.')
+    if (!std::isalnum(static_cast<unsigned char>(c)) && c != '+' && c != '-' && c != '.')
       return std::nullopt;
   std::string rest = s.substr(colon + 1);
   size_t hash = rest.find('#');
@@ -469,8 +455,7 @@ std::optional<Url> parse_url(std::string_view input) {
       }
       if (port == 0 || port > 65535)
         return std::nullopt;
-      if ((u.scheme == "http" && port == 80) ||
-          (u.scheme == "https" && port == 443))
+      if ((u.scheme == "http" && port == 80) || (u.scheme == "https" && port == 443))
         u.port.clear();
     }
     u.host = lower(authority);
@@ -483,9 +468,7 @@ std::optional<Url> parse_url(std::string_view input) {
     u.query = normalize_percent(rest.substr(q + 1));
     rest = rest.substr(0, q);
   }
-  u.path = u.host.empty()
-               ? rest
-               : remove_dots(normalize_percent(rest.empty() ? "/" : rest));
+  u.path = u.host.empty() ? rest : remove_dots(normalize_percent(rest.empty() ? "/" : rest));
   if (!u.host.empty() && u.path.empty())
     u.path = "/";
   if (u.scheme == "psychovault" && u.host.empty()) {
@@ -528,8 +511,7 @@ std::optional<Url> resolve_url(const Url &base, std::string_view in) {
     dir = "/";
   return parse_url(base.scheme + "://" + base.authority() + dir + s);
 }
-std::optional<Url> navigate_input(std::string_view input,
-                                  const std::string &search_template) {
+std::optional<Url> navigate_input(std::string_view input, const std::string &search_template) {
   std::string s = trim(input);
   if (s.empty())
     return std::nullopt;
@@ -537,8 +519,8 @@ std::optional<Url> navigate_input(std::string_view input,
       starts(lower(s), "psychovault://") || s == "about:blank")
     return parse_url(s);
   bool space = s.find_first_of(" \t\r\n") != std::string::npos;
-  if (!space && (s == "localhost" || starts(s, "localhost:") ||
-                 s.find('.') != std::string::npos || starts(s, "["))) {
+  if (!space && (s == "localhost" || starts(s, "localhost:") || s.find('.') != std::string::npos ||
+                 starts(s, "["))) {
     auto u = parse_url("http://" + s);
     if (u)
       return u;
@@ -594,8 +576,7 @@ std::string Json::str(std::string_view key, std::string fallback) const {
 }
 double Json::num(std::string_view key, double fallback) const {
   auto p = find(key);
-  return p && p->type == Type::Number && std::isfinite(p->number) ? p->number
-                                                                  : fallback;
+  return p && p->type == Type::Number && std::isfinite(p->number) ? p->number : fallback;
 }
 bool Json::flag(std::string_view key, bool fallback) const {
   auto p = find(key);
@@ -682,8 +663,7 @@ struct JsonParser {
   std::string_view s;
   size_t p = 0;
   void ws() {
-    while (p < s.size() &&
-           (s[p] == ' ' || s[p] == '\t' || s[p] == '\n' || s[p] == '\r'))
+    while (p < s.size() && (s[p] == ' ' || s[p] == '\t' || s[p] == '\n' || s[p] == '\r'))
       ++p;
   }
   bool lit(std::string_view v) {
@@ -744,8 +724,7 @@ struct JsonParser {
             throw std::runtime_error("JSON hex");
           cp = cp * 16 + v;
         }
-        if (cp >= 0xd800 && cp <= 0xdbff && p + 6 <= s.size() && s[p] == '\\' &&
-            s[p + 1] == 'u') {
+        if (cp >= 0xd800 && cp <= 0xdbff && p + 6 <= s.size() && s[p] == '\\' && s[p + 1] == 'u') {
           size_t save = p;
           p += 2;
           uint32_t low = 0;
@@ -885,21 +864,18 @@ std::optional<Json> Json::parse(std::string_view s, size_t max) {
 
 #ifdef _WIN32
 static std::wstring wide_path(const std::string &s) {
-  int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.c_str(),
-                              int(s.size()), nullptr, 0);
+  int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.c_str(), int(s.size()), nullptr, 0);
   if (!n)
     throw std::runtime_error("invalid UTF-8 path");
   std::wstring out(n, 0);
-  MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.c_str(), int(s.size()),
-                      out.data(), n);
+  MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.c_str(), int(s.size()), out.data(), n);
   return out;
 }
 #endif
 std::string read_text_file(const std::string &path) {
 #ifdef _WIN32
-  HANDLE h =
-      CreateFileW(wide_path(path).c_str(), GENERIC_READ, FILE_SHARE_READ,
-                  nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  HANDLE h = CreateFileW(wide_path(path).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                         OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
   if (h == INVALID_HANDLE_VALUE)
     throw std::runtime_error("cannot open input");
 #else
@@ -943,23 +919,22 @@ std::string read_text_file(const std::string &path) {
 #endif
   return out;
 }
-bool write_file_atomic(const std::string &path, const std::string &data,
-                       std::string &error) {
+bool write_file_atomic(const std::string &path, const std::string &data, std::string &error) {
   if (data.size() > kMaxDocument) {
     error = "profile record exceeds size limit";
     return false;
   }
   std::string tmp = path + ".tmp";
 #ifdef _WIN32
-  HANDLE h = CreateFileW(wide_path(tmp).c_str(), GENERIC_WRITE, 0, nullptr,
-                         CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+  HANDLE h = CreateFileW(wide_path(tmp).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                         FILE_ATTRIBUTE_NORMAL, nullptr);
   if (h == INVALID_HANDLE_VALUE) {
     error = "cannot create profile temporary file";
     return false;
   }
   DWORD written = 0;
-  BOOL ok = WriteFile(h, data.data(), DWORD(data.size()), &written, nullptr) &&
-            written == data.size();
+  BOOL ok =
+      WriteFile(h, data.data(), DWORD(data.size()), &written, nullptr) && written == data.size();
   ok = FlushFileBuffers(h) && ok;
   CloseHandle(h);
   if (!ok || !MoveFileExW(wide_path(tmp).c_str(), wide_path(path).c_str(),

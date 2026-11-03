@@ -1,8 +1,7 @@
 // PsychoVault original Windows shell. Website code runs in pv-renderer, not
 // here.
 #ifndef _WIN32
-#error                                                                         \
-    "The native shell targets Windows. Use pv-engine for headless engine tests."
+#error "The native shell targets Windows. Use pv-engine for headless engine tests."
 #endif
 #define NOMINMAX
 #include "../engine/page.hpp"
@@ -20,11 +19,10 @@
 #include <windowsx.h>
 
 namespace pv {
-static constexpr UINT WM_FRAME = WM_APP + 1, WM_NAVIGATE = WM_APP + 2,
-                      WM_DIALOG = WM_APP + 3, WM_DONE = WM_APP + 4;
-static constexpr uint32_t BG = 0xff05080f, RAIL = 0xff080d16,
-                          CHROME = 0xff070b12, PANEL = 0xff0d1420,
-                          BORDER = 0xff1c2736, TEXT = 0xffe6edf3,
+static constexpr UINT WM_FRAME = WM_APP + 1, WM_NAVIGATE = WM_APP + 2, WM_DIALOG = WM_APP + 3,
+                      WM_DONE = WM_APP + 4;
+static constexpr uint32_t BG = 0xff05080f, RAIL = 0xff080d16, CHROME = 0xff070b12,
+                          PANEL = 0xff0d1420, BORDER = 0xff1c2736, TEXT = 0xffe6edf3,
                           MUTED = 0xff8b98a9, ACCENT = 0xff38bdf8;
 struct Update {
   int tab;
@@ -78,8 +76,8 @@ struct Browser {
   uint64_t generation = 0;
   std::shared_ptr<Session> session;
   std::string address, home_search, status = "Ready", profile_error;
-  bool address_focus = false, home_focus = false, settings = false,
-       panel_bookmarks = false, panel_history = false;
+  bool address_focus = false, home_focus = false, settings = false, panel_bookmarks = false,
+       panel_history = false;
   size_t address_caret = 0;
   int settings_category = 0;
   std::vector<Hit> hits;
@@ -94,7 +92,9 @@ struct Browser {
     profile_error = profile.error;
     new_tab("psychovault://newtab", false);
   }
-  Tab &current() { return tabs[size_t(active)]; }
+  Tab &current() {
+    return tabs[size_t(active)];
+  }
   void new_tab(std::string url = "psychovault://newtab", bool focus = true) {
     Tab t;
     t.id = next_id++;
@@ -181,9 +181,8 @@ struct Browser {
       std::string error;
       if (!s->process.start(renderer, "", true, error)) {
         {
-          auto *up = new Update{s->tab, s->generation,
-                                Json(), "Renderer sandbox failed: " + error,
-                                {},     {}};
+          auto *up = new Update{
+              s->tab, s->generation, Json(), "Renderer sandbox failed: " + error, {}, {}};
           PostMessageW(s->hwnd, WM_FRAME, 0, reinterpret_cast<LPARAM>(up));
         }
         return;
@@ -241,17 +240,14 @@ struct Browser {
           j.set("error", r.error);
           s->send(j);
         } else if (tag == "navigate") {
-          auto *up = new Update{s->tab, s->generation,   Json(),
-                                {},     msg->str("url"), {}};
+          auto *up = new Update{s->tab, s->generation, Json(), {}, msg->str("url"), {}};
           PostMessageW(hwnd, WM_NAVIGATE, 0, reinterpret_cast<LPARAM>(up));
         } else if (tag == "dialog") {
-          auto *up = new Update{s->tab, s->generation,    Json(),
-                                {},     msg->str("text"), {}};
+          auto *up = new Update{s->tab, s->generation, Json(), {}, msg->str("text"), {}};
           PostMessageW(hwnd, WM_DIALOG, 0, reinterpret_cast<LPARAM>(up));
         } else if (tag == "fatal") {
           {
-            auto *up = new Update{
-                s->tab, s->generation, Json(), msg->str("message"), {}, {}};
+            auto *up = new Update{s->tab, s->generation, Json(), msg->str("message"), {}, {}};
             PostMessageW(s->hwnd, WM_FRAME, 0, reinterpret_cast<LPARAM>(up));
           }
           break;
@@ -318,8 +314,7 @@ struct Browser {
       if (sel) {
         c.line(r.x, r.y, r.x + r.w, r.y, ACCENT, 2);
       }
-      c.text(r.x + 12, r.y + 8, tabs[i].title.substr(0, 22), 13,
-             sel ? TEXT : MUTED, sel);
+      c.text(r.x + 12, r.y + 8, tabs[i].title.substr(0, 22), 13, sel ? TEXT : MUTED, sel);
       hits.push_back({r, "tab", int(i), {}});
       Rect close{r.x + r.w - 24, r.y + 6, 18, 18};
       c.text(close.x + 4, close.y + 1, "x", 12, MUTED);
@@ -343,14 +338,11 @@ struct Browser {
     Rect addr{196, 47, double(width - 260), 30};
     c.fill(addr, 0xff050a12);
     c.stroke(addr, address_focus ? ACCENT : BORDER);
-    std::string shown =
-        address.empty() ? "Search the web or enter an address" : address;
-    c.text(addr.x + 12, addr.y + 6, shown.substr(0, 120), 13,
-           address.empty() ? MUTED : TEXT);
+    std::string shown = address.empty() ? "Search the web or enter an address" : address;
+    c.text(addr.x + 12, addr.y + 6, shown.substr(0, 120), 13, address.empty() ? MUTED : TEXT);
     hits.push_back({addr, "address", 0, {}});
     if (address_focus) {
-      double cx =
-          addr.x + 12 + c.text_width(address.substr(0, address_caret), 13);
+      double cx = addr.x + 12 + c.text_width(address.substr(0, address_caret), 13);
       c.line(cx, addr.y + 5, cx, addr.y + 24, ACCENT);
     }
     c.text(width - 52, 52, "*", 18, MUTED);
@@ -369,8 +361,7 @@ struct Browser {
       draw_panel(c);
     else if (settings)
       draw_settings(c);
-    else if (current().url == "psychovault://newtab" ||
-             current().url == "about:blank")
+    else if (current().url == "psychovault://newtab" || current().url == "about:blank")
       draw_home(c);
     else
       draw_content(c);
@@ -390,36 +381,31 @@ struct Browser {
     c.fill(search, 0xff0a111c);
     c.stroke(search, home_focus ? ACCENT : BORDER);
     c.text(search.x + 16, search.y + 12,
-           home_search.empty() ? "Search DuckDuckGo or enter an address"
-                               : home_search,
-           14, home_search.empty() ? MUTED : TEXT);
+           home_search.empty() ? "Search DuckDuckGo or enter an address" : home_search, 14,
+           home_search.empty() ? MUTED : TEXT);
     hits.push_back({search, "home-search", 0, {}});
-    const char *labels[] = {"GitHub",    "YouTube", "Reddit",
-                            "Wikipedia", "Mail",    "News"};
-    const char *urls[] = {
-        "https://github.com/",     "https://www.youtube.com/",
-        "https://www.reddit.com/", "https://www.wikipedia.org/",
-        "https://mail.proton.me/", "https://news.ycombinator.com/"};
+    const char *labels[] = {"GitHub", "YouTube", "Reddit", "Wikipedia", "Mail", "News"};
+    const char *urls[] = {"https://github.com/",     "https://www.youtube.com/",
+                          "https://www.reddit.com/", "https://www.wikipedia.org/",
+                          "https://mail.proton.me/", "https://news.ycombinator.com/"};
     for (int i = 0; i < 6; ++i) {
       Rect tile{cx - 324 + i * 108, cy + 130, 96, 84};
       c.fill(tile, 0xff0d1420);
       c.stroke(tile, BORDER);
-      c.text(tile.x + 38, tile.y + 16, std::string(1, labels[i][0]), 18, ACCENT,
-             true);
+      c.text(tile.x + 38, tile.y + 16, std::string(1, labels[i][0]), 18, ACCENT, true);
       c.text(tile.x + 12, tile.y + 52, labels[i], 12, MUTED);
       hits.push_back({tile, "tile", 0, urls[i]});
     }
-    c.text(cx - 170, content.y + content.h - 50,
-           "Development engine - not a finished browser", 12, MUTED);
+    c.text(cx - 170, content.y + content.h - 50, "Development engine - not a finished browser", 12,
+           MUTED);
   }
   void draw_settings(Canvas &c) {
     c.text(content.x + 80, content.y + 36, "Settings", 28, TEXT, true);
     c.text(content.x + 80, content.y + 76, "Built by Psycho-Core", 13, MUTED);
-    const char *cats[] = {
-        "General",    "Privacy & security", "Downloads",
-        "Extensions", "Performance",        "Appearance",
-        "Spelling",   "Passwords",          "Accessibility & language",
-        "About"};
+    const char *cats[] = {"General",    "Privacy & security", "Downloads",
+                          "Extensions", "Performance",        "Appearance",
+                          "Spelling",   "Passwords",          "Accessibility & language",
+                          "About"};
     Rect nav{content.x + 80, content.y + 110, 220, 420};
     c.fill(nav, PANEL);
     c.stroke(nav, BORDER);
@@ -427,8 +413,7 @@ struct Browser {
       Rect r{nav.x + 10, nav.y + 12 + i * 38, 200, 32};
       if (i == settings_category)
         c.stroke(r, ACCENT);
-      c.text(r.x + 12, r.y + 7, cats[i], 13,
-             i == settings_category ? TEXT : MUTED);
+      c.text(r.x + 12, r.y + 7, cats[i], 13, i == settings_category ? TEXT : MUTED);
       hits.push_back({r, "settings-category", i, {}});
     }
     double x = nav.x + nav.w + 32, y = nav.y;
@@ -445,8 +430,8 @@ struct Browser {
       c.text(x, y, "Restore tabs on launch", 14, TEXT);
       Rect toggle{x + 300, y - 4, 48, 24};
       c.fill(toggle, profile.restore_tabs ? ACCENT : BORDER);
-      c.text(toggle.x + 8, toggle.y + 3, profile.restore_tabs ? "ON" : "OFF",
-             11, profile.restore_tabs ? BG : TEXT, true);
+      c.text(toggle.x + 8, toggle.y + 3, profile.restore_tabs ? "ON" : "OFF", 11,
+             profile.restore_tabs ? BG : TEXT, true);
       hits.push_back({toggle, "setting-restore", 0, {}});
       y += 52;
       c.text(x, y, "Home page", 14, TEXT);
@@ -468,8 +453,7 @@ struct Browser {
   }
   void draw_panel(Canvas &c) {
     bool bm = panel_bookmarks;
-    c.text(content.x + 40, content.y + 30, bm ? "Bookmarks" : "History", 24,
-           TEXT, true);
+    c.text(content.x + 40, content.y + 30, bm ? "Bookmarks" : "History", 24, TEXT, true);
     size_t y = size_t(content.y) + 80;
     if (bm) {
       for (size_t i = 0; i < profile.bookmarks.size() && i < 30; ++i) {
@@ -498,8 +482,7 @@ struct Browser {
       return;
     }
     if (!t.error.empty()) {
-      c.text(content.x + 32, content.y + 32, "Navigation failed", 22,
-             0xfff87171, true);
+      c.text(content.x + 32, content.y + 32, "Navigation failed", 22, 0xfff87171, true);
       c.text(content.x + 32, content.y + 72, t.error, 13, MUTED);
       return;
     }
@@ -509,8 +492,7 @@ struct Browser {
     for (auto &j : t.frame.at("paint").array) {
       PaintCommand p;
       p.kind = PaintCommand::Kind(int(j.num("kind")));
-      p.rect = {j.num("x") + content.x, j.num("y") + content.y - t.scroll,
-                j.num("w"), j.num("h")};
+      p.rect = {j.num("x") + content.x, j.num("y") + content.y - t.scroll, j.num("w"), j.num("h")};
       p.color = uint32_t(j.num("color"));
       p.text = j.str("text");
       p.size = j.num("size");
@@ -566,12 +548,9 @@ struct Browser {
         else if (h.action == "settings-category")
           settings_category = h.index;
         else if (h.action == "setting-search") {
-          std::vector<std::string> engines = {"duckduckgo", "brave",
-                                              "startpage", "wikipedia"};
-          auto it2 =
-              std::find(engines.begin(), engines.end(), profile.search_engine);
-          profile.search_engine =
-              engines[(it2 - engines.begin() + 1) % engines.size()];
+          std::vector<std::string> engines = {"duckduckgo", "brave", "startpage", "wikipedia"};
+          auto it2 = std::find(engines.begin(), engines.end(), profile.search_engine);
+          profile.search_engine = engines[(it2 - engines.begin() + 1) % engines.size()];
           profile.save();
         } else if (h.action == "setting-restore") {
           profile.restore_tabs = !profile.restore_tabs;
@@ -728,8 +707,8 @@ static void paint(HWND hwnd) {
   bi.bmiHeader.biPlanes = 1;
   bi.bmiHeader.biBitCount = 32;
   bi.bmiHeader.biCompression = BI_RGB;
-  SetDIBitsToDevice(dc, 0, 0, canvas.width, canvas.height, 0, 0, 0,
-                    canvas.height, canvas.pixels.data(), &bi, DIB_RGB_COLORS);
+  SetDIBitsToDevice(dc, 0, 0, canvas.width, canvas.height, 0, 0, 0, canvas.height,
+                    canvas.pixels.data(), &bi, DIB_RGB_COLORS);
   EndPaint(hwnd, &ps);
 }
 static void capture(HWND hwnd, const std::string &path) {
@@ -738,15 +717,13 @@ static void capture(HWND hwnd, const std::string &path) {
   b->draw(canvas);
   auto png = encode_png(canvas.width, canvas.height, canvas.pixels);
   std::ofstream f(path, std::ios::binary);
-  f.write(reinterpret_cast<const char *>(png.data()),
-          std::streamsize(png.size()));
+  f.write(reinterpret_cast<const char *>(png.data()), std::streamsize(png.size()));
 }
 static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   switch (msg) {
   case WM_NCCREATE: {
     auto cs = reinterpret_cast<CREATESTRUCTW *>(lp);
-    SetWindowLongPtrW(hwnd, GWLP_USERDATA,
-                      reinterpret_cast<LONG_PTR>(cs->lpCreateParams));
+    SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(cs->lpCreateParams));
     return TRUE;
   }
   case WM_CREATE: {
@@ -785,8 +762,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       wchar_t ch = wchar_t(wp);
       if (ch >= 32) {
         char buf[8];
-        int n = WideCharToMultiByte(CP_UTF8, 0, &ch, 1, buf, sizeof(buf),
-                                    nullptr, nullptr);
+        int n = WideCharToMultiByte(CP_UTF8, 0, &ch, 1, buf, sizeof(buf), nullptr, nullptr);
         std::string s(buf, n);
         if (b->address_focus) {
           b->address.insert(b->address_caret, s);
@@ -834,8 +810,8 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   }
   case WM_DIALOG: {
     std::unique_ptr<Update> up(reinterpret_cast<Update *>(lp));
-    MessageBoxW(hwnd, std::wstring(up->url.begin(), up->url.end()).c_str(),
-                L"PsychoVault page", MB_OK);
+    MessageBoxW(hwnd, std::wstring(up->url.begin(), up->url.end()).c_str(), L"PsychoVault page",
+                MB_OK);
     return 0;
   }
   case WM_DONE: {
@@ -887,12 +863,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmd, int show) {
   int argc = 0;
   LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
   for (int i = 1; i < argc; ++i) {
-    int n = WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, nullptr, 0, nullptr,
-                                nullptr);
+    int n = WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, nullptr, 0, nullptr, nullptr);
     std::string a(n ? n - 1 : 0, 0);
     if (n)
-      WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, a.data(), n, nullptr,
-                          nullptr);
+      WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, a.data(), n, nullptr, nullptr);
     args.push_back(a);
   }
   if (argv)
@@ -934,10 +908,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmd, int show) {
       b.new_tab(u, false);
     b.active = 0;
   }
-  HWND hwnd = CreateWindowExW(
-      0, wc.lpszClassName, L"PsychoVault",
-      WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU,
-      CW_USEDEFAULT, CW_USEDEFAULT, 1440, 940, nullptr, nullptr, inst, &b);
+  HWND hwnd =
+      CreateWindowExW(0, wc.lpszClassName, L"PsychoVault",
+                      WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU,
+                      CW_USEDEFAULT, CW_USEDEFAULT, 1440, 940, nullptr, nullptr, inst, &b);
   if (!hwnd)
     return 1;
   MARGINS margins{0, 0, 1, 0};

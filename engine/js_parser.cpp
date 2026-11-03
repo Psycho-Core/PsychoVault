@@ -91,8 +91,7 @@ static std::vector<Token> lex(std::string_view s) {
               size_t e = s.find('}', p);
               if (e == std::string::npos || e - p > 8)
                 throw std::runtime_error("invalid Unicode escape");
-              uint32_t cp = std::stoul(std::string(s.substr(p + 1, e - p - 1)),
-                                       nullptr, 16);
+              uint32_t cp = std::stoul(std::string(s.substr(p + 1, e - p - 1)), nullptr, 16);
               value += utf8_encode(cp);
               p = e + 1;
               continue;
@@ -127,17 +126,15 @@ static std::vector<Token> lex(std::string_view s) {
                (c == '.' && p + 1 < s.size() &&
                 std::isdigit(static_cast<unsigned char>(s[p + 1])))) {
       size_t a = p;
-      if (c == '0' && p + 1 < s.size() &&
-          (s[p + 1] == 'x' || s[p + 1] == 'X')) {
+      if (c == '0' && p + 1 < s.size() && (s[p + 1] == 'x' || s[p + 1] == 'X')) {
         p += 2;
         a = p;
         while (p < s.size() && std::isxdigit(static_cast<unsigned char>(s[p])))
           ++p;
-        t.text = "number:" + std::to_string(std::stoull(
-                                 std::string(s.substr(a, p - a)), nullptr, 16));
+        t.text =
+            "number:" + std::to_string(std::stoull(std::string(s.substr(a, p - a)), nullptr, 16));
       } else {
-        while (p < s.size() &&
-               (std::isdigit(static_cast<unsigned char>(s[p])) || s[p] == '.'))
+        while (p < s.size() && (std::isdigit(static_cast<unsigned char>(s[p])) || s[p] == '.'))
           ++p;
         if (p < s.size() && (s[p] == 'e' || s[p] == 'E')) {
           ++p;
@@ -232,8 +229,8 @@ public:
       error("expected " + std::string(s));
   }
   [[noreturn]] void error(const std::string &message) const {
-    throw std::runtime_error("JavaScript line " + std::to_string(tok().line) +
-                             ": " + message + " near " + tok().text);
+    throw std::runtime_error("JavaScript line " + std::to_string(tok().line) + ": " + message +
+                             " near " + tok().text);
   }
   std::string identifier() {
     auto s = tok().text;
@@ -244,13 +241,11 @@ public:
   }
   bool keyword(const std::string &s) const {
     static const std::set<std::string> k = {
-        "var",       "let",     "const",     "if",     "else",     "while",
-        "for",       "do",      "return",    "break",  "continue", "true",
-        "false",     "null",    "undefined", "new",    "function", "throw",
-        "try",       "catch",   "finally",   "switch", "case",     "default",
-        "class",     "extends", "import",    "export", "async",    "await",
-        "yield",     "delete",  "void",      "typeof", "in",       "of",
-        "instanceof"};
+        "var",      "let",     "const",    "if",     "else",      "while",  "for",       "do",
+        "return",   "break",   "continue", "true",   "false",     "null",   "undefined", "new",
+        "function", "throw",   "try",      "catch",  "finally",   "switch", "case",      "default",
+        "class",    "extends", "import",   "export", "async",     "await",  "yield",     "delete",
+        "void",     "typeof",  "in",       "of",     "instanceof"};
     return k.count(s);
   }
   void semicolon() {
@@ -294,9 +289,9 @@ public:
     return left;
   }
   int precedence(const std::string &s) const {
-    if (s == "=" || s == "+=" || s == "-=" || s == "*=" || s == "/=" ||
-        s == "%=" || s == "**=" || s == "<<=" || s == ">>=" || s == ">>>=" ||
-        s == "&=" || s == "|=" || s == "^=" || s == "&&=" || s == "||=" ||
+    if (s == "=" || s == "+=" || s == "-=" || s == "*=" || s == "/=" || s == "%=" || s == "**=" ||
+        s == "<<=" || s == ">>=" || s == ">>>=" || s == "&=" || s == "|=" || s == "^=" ||
+        s == "&&=" || s == "||=" ||
         s == "?"
              "?=")
       return 1;
@@ -308,8 +303,7 @@ public:
       return 4;
     if (s == "==" || s == "!=" || s == "===" || s == "!==")
       return 5;
-    if (s == "<" || s == ">" || s == "<=" || s == ">=" || s == "instanceof" ||
-        s == "in")
+    if (s == "<" || s == ">" || s == "<=" || s == ">=" || s == "instanceof" || s == "in")
       return 6;
     if (s == "<<" || s == ">>" || s == ">>>")
       return 7;
@@ -366,12 +360,11 @@ public:
       auto e = make(Expr::Kind::This);
       return postfix(std::move(e), allow_call);
     }
-    if (is("!") || is("-") || is("+") || is("~") || is("typeof") ||
-        is("void") || is("++") || is("--")) {
+    if (is("!") || is("-") || is("+") || is("~") || is("typeof") || is("void") || is("++") ||
+        is("--")) {
       std::string op = tok().text;
       ++p;
-      auto e = make(op == "++" || op == "--" ? Expr::Kind::Update
-                                             : Expr::Kind::Unary);
+      auto e = make(op == "++" || op == "--" ? Expr::Kind::Update : Expr::Kind::Unary);
       e->text = op;
       e->prefix = true;
       e->left = expr(11);
@@ -465,8 +458,7 @@ public:
       }
       return postfix(std::move(e), allow_call);
     }
-    if (tok().text.empty() || !ident_start(tok().text[0]) ||
-        keyword(tok().text))
+    if (tok().text.empty() || !ident_start(tok().text[0]) || keyword(tok().text))
       error("expression expected");
     std::string name = tok().text;
     ++p;
@@ -486,8 +478,7 @@ public:
     e->text = name;
     return postfix(std::move(e), allow_call);
   }
-  std::unique_ptr<Expr> postfix(std::unique_ptr<Expr> e,
-                                bool allow_call = true) {
+  std::unique_ptr<Expr> postfix(std::unique_ptr<Expr> e, bool allow_call = true) {
     while (true) {
       if (take(".") || take("?.")) {
         auto m = make(Expr::Kind::Member);
@@ -608,8 +599,7 @@ public:
         if (is("of") || is("in")) {
           auto kind = tok().text;
           ++p;
-          auto f = statement_node(kind == "of" ? Stmt::Kind::ForIn
-                                               : Stmt::Kind::ForIn);
+          auto f = statement_node(kind == "of" ? Stmt::Kind::ForIn : Stmt::Kind::ForIn);
           f->text = kind;
           f->name = init->declarations[0].first;
           f->condition = expr();
@@ -628,8 +618,7 @@ public:
           init->declarations.emplace_back(name, std::move(value));
         }
       } else if (!is(";"))
-        init = statement_node(Stmt::Kind::Expression),
-        init->expression = expr();
+        init = statement_node(Stmt::Kind::Expression), init->expression = expr();
       expect(";");
       s = statement_node(Stmt::Kind::For);
       s->body.push_back(std::move(init));
@@ -646,8 +635,7 @@ public:
         s->expression = expr();
       semicolon();
     } else if (take("break") || take("continue")) {
-      s = statement_node(tokens[p - 1].text == "break" ? Stmt::Kind::Break
-                                                       : Stmt::Kind::Continue);
+      s = statement_node(tokens[p - 1].text == "break" ? Stmt::Kind::Break : Stmt::Kind::Continue);
       semicolon();
     } else if (take("throw")) {
       s = statement_node(Stmt::Kind::Throw);

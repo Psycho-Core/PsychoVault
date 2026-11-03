@@ -11,8 +11,7 @@ struct HistoryEntry {
 struct Profile {
   std::string directory;
   bool private_mode = false, restore_tabs = true, workspaces = true;
-  std::string search_engine = "duckduckgo", home_page = "psychovault://newtab",
-              custom_search;
+  std::string search_engine = "duckduckgo", home_page = "psychovault://newtab", custom_search;
   std::vector<Bookmark> bookmarks;
   std::vector<HistoryEntry> history;
   std::vector<std::string> session_tabs;

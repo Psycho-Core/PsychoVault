@@ -17,12 +17,9 @@ struct LayoutResult {
   std::unordered_map<int, Rect> boxes;
   double height = 0;
 };
-LayoutResult layout_document(const Document &doc,
-                             const std::vector<Style> &styles, double width,
-                             double height,
-                             const std::map<std::string, Resource> &resources,
+LayoutResult layout_document(const Document &doc, const std::vector<Style> &styles, double width,
+                             double height, const std::map<std::string, Resource> &resources,
                              Canvas &measure);
-void paint_commands(Canvas &canvas, const std::vector<PaintCommand> &commands,
-                    double scroll_y,
+void paint_commands(Canvas &canvas, const std::vector<PaintCommand> &commands, double scroll_y,
                     const std::map<std::string, Resource> &resources);
 } // namespace pv

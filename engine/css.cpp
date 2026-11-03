@@ -4,13 +4,11 @@ Color parse_color(std::string_view v) {
   auto s = lower(trim(v));
   Color c;
   static const std::map<std::string, uint32_t> names = {
-      {"black", 0x000000},  {"white", 0xffffff},   {"red", 0xff0000},
-      {"green", 0x008000},  {"blue", 0x0000ff},    {"gray", 0x808080},
-      {"grey", 0x808080},   {"silver", 0xc0c0c0},  {"navy", 0x000080},
-      {"teal", 0x008080},   {"aqua", 0x00ffff},    {"cyan", 0x00ffff},
-      {"purple", 0x800080}, {"magenta", 0xff00ff}, {"fuchsia", 0xff00ff},
-      {"yellow", 0xffff00}, {"orange", 0xffa500},  {"pink", 0xffc0cb},
-      {"brown", 0xa52a2a},  {"transparent", 0}};
+      {"black", 0x000000},  {"white", 0xffffff},   {"red", 0xff0000},     {"green", 0x008000},
+      {"blue", 0x0000ff},   {"gray", 0x808080},    {"grey", 0x808080},    {"silver", 0xc0c0c0},
+      {"navy", 0x000080},   {"teal", 0x008080},    {"aqua", 0x00ffff},    {"cyan", 0x00ffff},
+      {"purple", 0x800080}, {"magenta", 0xff00ff}, {"fuchsia", 0xff00ff}, {"yellow", 0xffff00},
+      {"orange", 0xffa500}, {"pink", 0xffc0cb},    {"brown", 0xa52a2a},   {"transparent", 0}};
   if (s == "transparent" || s.empty() || s == "initial" || s == "unset")
     return c;
   c.transparent = false;
@@ -26,9 +24,7 @@ Color parse_color(std::string_view v) {
       return c;
     uint32_t n = 0;
     for (char ch : h) {
-      int d = ch >= '0' && ch <= '9'   ? ch - '0'
-              : ch >= 'a' && ch <= 'f' ? ch - 'a' + 10
-                                       : -1;
+      int d = ch >= '0' && ch <= '9' ? ch - '0' : ch >= 'a' && ch <= 'f' ? ch - 'a' + 10 : -1;
       if (d < 0)
         return c;
       n = n * 16 + d;
@@ -61,8 +57,7 @@ Color parse_color(std::string_view v) {
       return c;
     auto channel = [](std::string x) {
       x = trim(x);
-      double n = ends(x, "%") ? std::stod(x.substr(0, x.size() - 1)) * 2.55
-                              : std::stod(x);
+      double n = ends(x, "%") ? std::stod(x.substr(0, x.size() - 1)) * 2.55 : std::stod(x);
       return uint8_t(std::clamp(int(std::round(n)), 0, 255));
     };
     try {
@@ -88,9 +83,8 @@ static std::string strip_comments(std::string_view s) {
   }
   return out;
 }
-static std::map<std::string, std::string>
-declarations(std::string_view text,
-             std::set<std::string> *important = nullptr) {
+static std::map<std::string, std::string> declarations(std::string_view text,
+                                                       std::set<std::string> *important = nullptr) {
   std::map<std::string, std::string> out;
   for (auto &part : split(text, ';')) {
     auto p = part.find(':');
@@ -100,9 +94,7 @@ declarations(std::string_view text,
     auto value = trim(std::string_view(part).substr(p + 1));
     auto bang = value.find('!');
     if (bang != std::string::npos) {
-      if (lower(trim(std::string_view(value).substr(bang + 1))) ==
-              "important" &&
-          important)
+      if (lower(trim(std::string_view(value).substr(bang + 1))) == "important" && important)
         important->insert(key);
       value = trim(std::string_view(value).substr(0, bang));
     }
@@ -148,14 +140,12 @@ void Stylesheet::parse(std::string_view input, int &order) {
         r.media = selector;
         rules.push_back(std::move(r));
       }
-      diagnostics.insert(diagnostics.end(), nested.diagnostics.begin(),
-                         nested.diagnostics.end());
+      diagnostics.insert(diagnostics.end(), nested.diagnostics.begin(), nested.diagnostics.end());
     } else if (starts(selector, "@")) {
       if (diagnostics.size() < 100)
         diagnostics.push_back(
             {"css",
-             "unsupported at-rule " +
-                 selector.substr(0, std::min(size_t(40), selector.size()))});
+             "unsupported at-rule " + selector.substr(0, std::min(size_t(40), selector.size()))});
     } else {
       CssRule r;
       r.selector = selector;
@@ -167,12 +157,12 @@ void Stylesheet::parse(std::string_view input, int &order) {
     sPos = end;
   }
 }
-double css_length(const std::string &v, double parent, double font, double root,
-                  double viewport, const std::string &prop, double fallback) {
+double css_length(const std::string &v, double parent, double font, double root, double viewport,
+                  const std::string &prop, double fallback) {
   (void)prop;
   auto s = lower(trim(v));
-  if (s.empty() || s == "auto" || s == "none" || s == "normal" ||
-      s == "initial" || s == "inherit" || s == "unset")
+  if (s.empty() || s == "auto" || s == "none" || s == "normal" || s == "initial" ||
+      s == "inherit" || s == "unset")
     return fallback;
   try {
     if (ends(s, "px"))
@@ -207,8 +197,7 @@ int specificity(std::string_view selector) {
       else if (std::isalpha(static_cast<unsigned char>(ch)) && !ident) {
         ++c;
         ident = true;
-      } else if (!std::isalnum(static_cast<unsigned char>(ch)) && ch != '-' &&
-                 ch != '_')
+      } else if (!std::isalnum(static_cast<unsigned char>(ch)) && ch != '-' && ch != '_')
         ident = false;
     }
     best = std::max(best, a * 10000 + b * 100 + c);
@@ -220,9 +209,8 @@ static std::string ua_css() {
 html,body{margin:0;padding:0}body{font-family:Segoe UI,Arial,sans-serif;font-size:16px;line-height:1.45;color:#111;background:#fff}head,style,script,meta,link,title{display:none}p{margin:1em 0}h1{font-size:2em;font-weight:bold;margin:.67em 0}h2{font-size:1.5em;font-weight:bold;margin:.83em 0}h3{font-size:1.17em;font-weight:bold;margin:1em 0}h4{font-weight:bold;margin:1.33em 0}h5{font-size:.83em;font-weight:bold;margin:1.67em 0}h6{font-size:.67em;font-weight:bold;margin:2.33em 0}a{color:#06c;text-decoration:underline}strong,b{font-weight:bold}em,i{font-style:italic}small{font-size:.83em}code,pre,kbd,samp{font-family:Consolas,monospace}pre{white-space:pre;margin:1em 0}ul,ol{margin:1em 0;padding-left:40px}li{display:list-item}blockquote{margin:1em 40px}hr{border-top:1px solid #888;margin:.5em 0}img{display:inline-block}input,button,select,textarea{display:inline-block;font-size:14px;padding:4px 8px;border:1px solid #777;background:#fff;color:#111}button{text-align:center}table{display:block;border-collapse:collapse}tr{display:block}td,th{display:inline-block;padding:2px}th{font-weight:bold}
 )CSS";
 }
-static void expand_four(const std::string &value, double *out, double parent,
-                        double font, double root, double viewport,
-                        const char *prop) {
+static void expand_four(const std::string &value, double *out, double parent, double font,
+                        double root, double viewport, const char *prop) {
   auto parts = split(value, ' ');
   std::erase_if(parts, [](const std::string &p) { return p.empty(); });
   if (parts.empty())
@@ -240,11 +228,10 @@ static void expand_four(const std::string &value, double *out, double parent,
     indexes[3] = 3;
   }
   for (int i = 0; i < 4; ++i)
-    out[i] = css_length(parts[indexes[i]], parent, font, root, viewport, prop,
-                        out[i]);
+    out[i] = css_length(parts[indexes[i]], parent, font, root, viewport, prop, out[i]);
 }
-static void apply(Style &s, const std::map<std::string, std::string> &d,
-                  double parent_width, double root, double viewport) {
+static void apply(Style &s, const std::map<std::string, std::string> &d, double parent_width,
+                  double root, double viewport) {
   auto get = [&](const char *k) -> const std::string * {
     auto it = d.find(k);
     return it == d.end() ? nullptr : &it->second;
@@ -263,17 +250,16 @@ static void apply(Style &s, const std::map<std::string, std::string> &d,
       s.background = parse_color(parts[0]);
   }
   if (auto v = get("font-size"))
-    s.font_size = std::clamp(css_length(*v, parent_width, s.font_size, root,
-                                        viewport, "font-size", s.font_size),
-                             6.0, 128.0);
+    s.font_size = std::clamp(
+        css_length(*v, parent_width, s.font_size, root, viewport, "font-size", s.font_size), 6.0,
+        128.0);
   if (auto v = get("font-family"))
     s.font_family = trim(split(*v, ',')[0]);
   if (auto v = get("font-weight")) {
     s.weight = *v;
     s.bold =
         *v == "bold" || *v == "bolder" ||
-        (!v->empty() && std::isdigit(static_cast<unsigned char>((*v)[0])) &&
-         std::stoi(*v) >= 600);
+        (!v->empty() && std::isdigit(static_cast<unsigned char>((*v)[0])) && std::stoi(*v) >= 600);
   }
   if (auto v = get("font-style"))
     s.italic = v->find("italic") != std::string::npos;
@@ -285,8 +271,8 @@ static void apply(Style &s, const std::map<std::string, std::string> &d,
     try {
       s.line_height = std::stod(*v);
     } catch (...) {
-      s.line_height = css_length(*v, s.font_size, s.font_size, root, viewport,
-                                 "line-height", s.font_size * 1.45) /
+      s.line_height = css_length(*v, s.font_size, s.font_size, root, viewport, "line-height",
+                                 s.font_size * 1.45) /
                       s.font_size;
     }
     s.line_height = std::clamp(s.line_height, 0.8, 4.0);
@@ -294,21 +280,18 @@ static void apply(Style &s, const std::map<std::string, std::string> &d,
   const char *sides[4] = {"top", "right", "bottom", "left"};
   for (int i = 0; i < 4; ++i) {
     if (auto v = get((std::string("margin-") + sides[i]).c_str()))
-      s.margin[i] = css_length(*v, parent_width, s.font_size, root, viewport,
-                               "margin", 0);
+      s.margin[i] = css_length(*v, parent_width, s.font_size, root, viewport, "margin", 0);
     if (auto v = get((std::string("padding-") + sides[i]).c_str()))
-      s.padding[i] = std::max(0.0, css_length(*v, parent_width, s.font_size,
-                                              root, viewport, "padding", 0));
+      s.padding[i] =
+          std::max(0.0, css_length(*v, parent_width, s.font_size, root, viewport, "padding", 0));
     if (auto v = get((std::string("border-") + sides[i] + "-width").c_str()))
-      s.border[i] = std::max(0.0, css_length(*v, parent_width, s.font_size,
-                                             root, viewport, "border", 0));
+      s.border[i] =
+          std::max(0.0, css_length(*v, parent_width, s.font_size, root, viewport, "border", 0));
   }
   if (auto v = get("margin"))
-    expand_four(*v, s.margin, parent_width, s.font_size, root, viewport,
-                "margin");
+    expand_four(*v, s.margin, parent_width, s.font_size, root, viewport, "margin");
   if (auto v = get("padding")) {
-    expand_four(*v, s.padding, parent_width, s.font_size, root, viewport,
-                "padding");
+    expand_four(*v, s.padding, parent_width, s.font_size, root, viewport, "padding");
     for (double &x : s.padding)
       x = std::max(0.0, x);
   }
@@ -316,9 +299,8 @@ static void apply(Style &s, const std::map<std::string, std::string> &d,
     auto parts = split(*v, ' ');
     if (!parts.empty())
       for (int i = 0; i < 4; ++i)
-        s.border[i] =
-            std::max(0.0, css_length(parts[0], parent_width, s.font_size, root,
-                                     viewport, "border", 0));
+        s.border[i] = std::max(
+            0.0, css_length(parts[0], parent_width, s.font_size, root, viewport, "border", 0));
     for (auto &p : parts) {
       auto c = parse_color(p);
       if (!c.transparent)
@@ -328,26 +310,20 @@ static void apply(Style &s, const std::map<std::string, std::string> &d,
   if (auto v = get("border-color"))
     s.border_color = parse_color(*v);
   if (auto v = get("border-radius"))
-    s.radius = std::max(0.0, css_length(*v, parent_width, s.font_size, root,
-                                        viewport, "radius", 0));
+    s.radius =
+        std::max(0.0, css_length(*v, parent_width, s.font_size, root, viewport, "radius", 0));
   if (auto v = get("width"))
-    s.width =
-        css_length(*v, parent_width, s.font_size, root, viewport, "width", -1);
+    s.width = css_length(*v, parent_width, s.font_size, root, viewport, "width", -1);
   if (auto v = get("height"))
-    s.height =
-        css_length(*v, parent_width, s.font_size, root, viewport, "height", -1);
+    s.height = css_length(*v, parent_width, s.font_size, root, viewport, "height", -1);
   if (auto v = get("min-width"))
-    s.min_width =
-        css_length(*v, parent_width, s.font_size, root, viewport, "width", 0);
+    s.min_width = css_length(*v, parent_width, s.font_size, root, viewport, "width", 0);
   if (auto v = get("max-width"))
-    s.max_width =
-        css_length(*v, parent_width, s.font_size, root, viewport, "width", -1);
+    s.max_width = css_length(*v, parent_width, s.font_size, root, viewport, "width", -1);
   if (auto v = get("min-height"))
-    s.min_height =
-        css_length(*v, parent_width, s.font_size, root, viewport, "height", 0);
+    s.min_height = css_length(*v, parent_width, s.font_size, root, viewport, "height", 0);
   if (auto v = get("max-height"))
-    s.max_height =
-        css_length(*v, parent_width, s.font_size, root, viewport, "height", -1);
+    s.max_height = css_length(*v, parent_width, s.font_size, root, viewport, "height", -1);
   if (auto v = get("box-sizing"))
     s.box_sizing = *v;
   if (auto v = get("white-space"))
@@ -373,8 +349,7 @@ static void apply(Style &s, const std::map<std::string, std::string> &d,
   if (auto v = get("top"))
     s.top = css_length(*v, parent_width, s.font_size, root, viewport, "top", 0);
   if (auto v = get("left"))
-    s.left =
-        css_length(*v, parent_width, s.font_size, root, viewport, "left", 0);
+    s.left = css_length(*v, parent_width, s.font_size, root, viewport, "left", 0);
 }
 static bool media_matches(const std::string &media, double viewport) {
   if (media.empty())
@@ -395,8 +370,7 @@ static bool media_matches(const std::string &media, double viewport) {
     apply = false;
   return apply;
 }
-std::vector<Style> compute_styles(const Document &doc,
-                                  const std::vector<Stylesheet> &sheets,
+std::vector<Style> compute_styles(const Document &doc, const std::vector<Stylesheet> &sheets,
                                   double viewport) {
   std::vector<Style> styles(doc.nodes.size());
   Stylesheet ua;
@@ -431,8 +405,7 @@ std::vector<Style> compute_styles(const Document &doc,
         matched.push_back(&r);
     for (auto &sheet : sheets)
       for (auto &r : sheet.rules)
-        if (media_matches(r.media, viewport) &&
-            matches_selector(doc, id, r.selector))
+        if (media_matches(r.media, viewport) && matches_selector(doc, id, r.selector))
           matched.push_back(&r);
     std::stable_sort(matched.begin(), matched.end(), [](auto a, auto b) {
       return specificity(a->selector) < specificity(b->selector);
@@ -455,8 +428,7 @@ std::vector<Style> compute_styles(const Document &doc,
       s.list_item = true;
     if (n.name == "a")
       s.underline = true;
-    if (n.name == "input" || n.name == "button" || n.name == "select" ||
-        n.name == "textarea")
+    if (n.name == "input" || n.name == "button" || n.name == "select" || n.name == "textarea")
       s.display = "inline-block";
     styles[id] = s;
     for (auto it = n.children.rbegin(); it != n.children.rend(); ++it)

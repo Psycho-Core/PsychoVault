@@ -9,8 +9,7 @@ public:
   std::vector<std::string> requests, navigations, dialogs;
   Page();
   ~Page();
-  void load(const Url &url, const std::string &html,
-            const std::string &mime = "text/html");
+  void load(const Url &url, const std::string &html, const std::string &mime = "text/html");
   void resource(const Resource &res);
   Json render(double width, double height, double scroll);
   void click(double x, double y);
@@ -18,7 +17,9 @@ public:
   double next_timer_delay() const;
   void tick();
   std::string title() const;
-  double content_height() const { return content_height_; }
+  double content_height() const {
+    return content_height_;
+  }
 
 private:
   struct Listener {

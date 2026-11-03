@@ -32,8 +32,7 @@ std::string trim(std::string_view value);
 bool starts(std::string_view value, std::string_view prefix);
 bool ends(std::string_view value, std::string_view suffix);
 std::vector<std::string> split(std::string_view value, char delimiter);
-std::string replace_all(std::string text, std::string_view from,
-                        std::string_view to);
+std::string replace_all(std::string text, std::string_view from, std::string_view to);
 std::string utf8_encode(uint32_t cp);
 std::vector<uint32_t> utf8_decode(std::string_view text);
 std::string html_escape(std::string_view text);
@@ -49,12 +48,13 @@ struct Url {
   std::string href(bool include_fragment = true) const;
   std::string authority() const;
   uint16_t effective_port() const;
-  bool network() const { return scheme == "http" || scheme == "https"; }
+  bool network() const {
+    return scheme == "http" || scheme == "https";
+  }
 };
 std::optional<Url> parse_url(std::string_view input);
 std::optional<Url> resolve_url(const Url &base, std::string_view input);
-std::optional<Url> navigate_input(std::string_view input,
-                                  const std::string &search_template);
+std::optional<Url> navigate_input(std::string_view input, const std::string &search_template);
 
 struct Json {
   enum class Type { Null, Bool, Number, String, Array, Object };
@@ -81,8 +81,7 @@ struct Json {
   double num(std::string_view key, double fallback = 0) const;
   bool flag(std::string_view key, bool fallback = false) const;
   std::string dump() const;
-  static std::optional<Json> parse(std::string_view text,
-                                   size_t max_bytes = 8u * 1024u * 1024u);
+  static std::optional<Json> parse(std::string_view text, size_t max_bytes = 8u * 1024u * 1024u);
 };
 
 struct Resource {
@@ -96,6 +95,5 @@ struct Diagnostic {
   std::string subsystem, message;
 };
 std::string read_text_file(const std::string &path);
-bool write_file_atomic(const std::string &path, const std::string &data,
-                       std::string &error);
+bool write_file_atomic(const std::string &path, const std::string &data, std::string &error);
 } // namespace pv

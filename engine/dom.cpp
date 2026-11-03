@@ -31,9 +31,9 @@ bool Node::has_class(std::string_view name) const {
   return false;
 }
 bool is_void(std::string_view t) {
-  static const std::set<std::string> tags = {
-      "area",  "base", "br",   "col",   "embed",  "hr",    "img",
-      "input", "link", "meta", "param", "source", "track", "wbr"};
+  static const std::set<std::string> tags = {"area",  "base",   "br",    "col",  "embed",
+                                             "hr",    "img",    "input", "link", "meta",
+                                             "param", "source", "track", "wbr"};
   return tags.count(std::string(t));
 }
 Document::Document() {
@@ -55,8 +55,8 @@ int Document::create(Node::Type type, std::string name, std::string text) {
   return nodes.back().id;
 }
 void Document::append(int parent, int child) {
-  if (parent < 0 || child < 0 || parent >= int(nodes.size()) ||
-      child >= int(nodes.size()) || parent == child)
+  if (parent < 0 || child < 0 || parent >= int(nodes.size()) || child >= int(nodes.size()) ||
+      parent == child)
     return;
   for (int p = parent; p >= 0; p = nodes[p].parent)
     if (p == child)
@@ -82,7 +82,9 @@ void Document::detach(int child) {
   }
   nodes[child].parent = -1;
 }
-void Document::remove(int child) { detach(child); }
+void Document::remove(int child) {
+  detach(child);
+}
 std::string Document::text_content(int id) const {
   if (id < 0 || id >= int(nodes.size()))
     return {};
@@ -158,19 +160,19 @@ struct HtmlParser {
   size_t p = 0;
   std::vector<int> stack;
   int context;
-  HtmlParser(Document &d, std::string_view html, int c)
-      : doc(d), s(html), context(c) {
+  HtmlParser(Document &d, std::string_view html, int c) : doc(d), s(html), context(c) {
     if (c < 0)
       stack.push_back(d.root);
     else
       stack.push_back(c);
   }
-  int top() const { return stack.back(); }
+  int top() const {
+    return stack.back();
+  }
   bool raw_mode() const {
     auto &n = doc.nodes[top()];
-    return n.name == "script" || n.name == "style" || n.name == "textarea" ||
-           n.name == "title" || n.name == "xmp" || n.name == "noembed" ||
-           n.name == "noframes";
+    return n.name == "script" || n.name == "style" || n.name == "textarea" || n.name == "title" ||
+           n.name == "xmp" || n.name == "noembed" || n.name == "noframes";
   }
   void text(std::string value) {
     if (value.empty())
@@ -206,8 +208,7 @@ struct HtmlParser {
     }
     return doc.body;
   }
-  void open(std::string tag,
-            std::vector<std::pair<std::string, std::string>> attrs,
+  void open(std::string tag, std::vector<std::pair<std::string, std::string>> attrs,
             bool self_close) {
     if (context < 0) {
       if (tag == "html") {
@@ -233,10 +234,9 @@ struct HtmlParser {
         stack.push_back(b);
         return;
       }
-      static const std::set<std::string> head_tags = {
-          "base", "link", "meta", "title", "style", "script", "noscript"};
-      bool in_head =
-          std::find(stack.begin(), stack.end(), doc.head) != stack.end();
+      static const std::set<std::string> head_tags = {"base",  "link",   "meta",    "title",
+                                                      "style", "script", "noscript"};
+      bool in_head = std::find(stack.begin(), stack.end(), doc.head) != stack.end();
       if (head_tags.count(tag) && (in_head || doc.body < 0)) {
         ensure_head();
         if (!in_head) {
@@ -254,12 +254,10 @@ struct HtmlParser {
         }
       }
       if (tag == "p")
-        close_named("p",
-                    {"address", "article",  "aside",   "blockquote", "div",
-                     "dl",      "fieldset", "footer",  "form",       "h1",
-                     "h2",      "h3",       "h4",      "h5",         "h6",
-                     "header",  "hr",       "main",    "nav",        "ol",
-                     "p",       "pre",      "section", "table",      "ul"});
+        close_named("p", {"address", "article", "aside", "blockquote", "div", "dl", "fieldset",
+                          "footer",  "form",    "h1",    "h2",         "h3",  "h4", "h5",
+                          "h6",      "header",  "hr",    "main",       "nav", "ol", "p",
+                          "pre",     "section", "table", "ul"});
       if (tag == "li")
         close_named("li", {"li"});
       if ((tag == "dt" || tag == "dd"))
@@ -300,21 +298,20 @@ struct HtmlParser {
   }
   std::string name() {
     size_t a = p;
-    while (p < s.size() && !std::isspace(static_cast<unsigned char>(s[p])) &&
-           s[p] != '>' && s[p] != '/')
+    while (p < s.size() && !std::isspace(static_cast<unsigned char>(s[p])) && s[p] != '>' &&
+           s[p] != '/')
       ++p;
     return lower(s.substr(a, p - a));
   }
   void attributes(std::vector<std::pair<std::string, std::string>> &attrs) {
     while (p < s.size()) {
-      while (p < s.size() &&
-             (std::isspace(static_cast<unsigned char>(s[p])) || s[p] == '/'))
+      while (p < s.size() && (std::isspace(static_cast<unsigned char>(s[p])) || s[p] == '/'))
         ++p;
       if (p >= s.size() || s[p] == '>')
         break;
       size_t a = p;
-      while (p < s.size() && !std::isspace(static_cast<unsigned char>(s[p])) &&
-             s[p] != '=' && s[p] != '>' && s[p] != '/')
+      while (p < s.size() && !std::isspace(static_cast<unsigned char>(s[p])) && s[p] != '=' &&
+             s[p] != '>' && s[p] != '/')
         ++p;
       std::string key = lower(s.substr(a, p - a));
       if (key.empty()) {
@@ -338,8 +335,7 @@ struct HtmlParser {
             ++p;
         } else {
           a = p;
-          while (p < s.size() &&
-                 !std::isspace(static_cast<unsigned char>(s[p])) && s[p] != '>')
+          while (p < s.size() && !std::isspace(static_cast<unsigned char>(s[p])) && s[p] != '>')
             ++p;
           value = std::string(s.substr(a, p - a));
         }
@@ -357,8 +353,7 @@ struct HtmlParser {
         while (end < s.size()) {
           if (s[end] == '<' && lower(s.substr(end, close.size())) == close &&
               (end + close.size() == s.size() ||
-               std::isspace(
-                   static_cast<unsigned char>(s[end + close.size()])) ||
+               std::isspace(static_cast<unsigned char>(s[end + close.size()])) ||
                s[end + close.size()] == '>'))
             break;
           ++end;
@@ -463,8 +458,7 @@ struct SimpleSelector {
   std::string pseudo;
   char relation = ' ';
 };
-static std::vector<std::vector<SimpleSelector>>
-parse_selector(std::string_view selector) {
+static std::vector<std::vector<SimpleSelector>> parse_selector(std::string_view selector) {
   std::vector<std::vector<SimpleSelector>> groups;
   for (auto &group : split(selector, ',')) {
     std::string s = trim(group);
@@ -482,27 +476,23 @@ parse_selector(std::string_view selector) {
         ++p;
       SimpleSelector part;
       part.relation = chain.empty() ? ' ' : relation;
-      if (p < s.size() &&
-          (std::isalpha(static_cast<unsigned char>(s[p])) || s[p] == '*')) {
+      if (p < s.size() && (std::isalpha(static_cast<unsigned char>(s[p])) || s[p] == '*')) {
         size_t a = p;
         if (s[p] == '*')
           ++p;
         else
           while (p < s.size() &&
-                 (std::isalnum(static_cast<unsigned char>(s[p])) ||
-                  s[p] == '-' || s[p] == '_'))
+                 (std::isalnum(static_cast<unsigned char>(s[p])) || s[p] == '-' || s[p] == '_'))
             ++p;
         part.tag = lower(s.substr(a, p - a));
       }
-      while (p < s.size() && s[p] != ' ' && s[p] != '\t' && s[p] != '\n' &&
-             s[p] != '>' && s[p] != '+' && s[p] != '~') {
+      while (p < s.size() && s[p] != ' ' && s[p] != '\t' && s[p] != '\n' && s[p] != '>' &&
+             s[p] != '+' && s[p] != '~') {
         char kind = s[p++];
         size_t a = p;
         if (kind == '#' || kind == '.') {
-          while (p < s.size() &&
-                 (std::isalnum(static_cast<unsigned char>(s[p])) ||
-                  s[p] == '-' || s[p] == '_' ||
-                  static_cast<unsigned char>(s[p]) >= 128))
+          while (p < s.size() && (std::isalnum(static_cast<unsigned char>(s[p])) || s[p] == '-' ||
+                                  s[p] == '_' || static_cast<unsigned char>(s[p]) >= 128))
             ++p;
           auto value = std::string(s.substr(a, p - a));
           if (kind == '#')
@@ -531,9 +521,7 @@ parse_selector(std::string_view selector) {
         } else if (kind == ':') {
           if (p < s.size() && s[p] == ':')
             return {};
-          while (
-              p < s.size() &&
-              (std::isalnum(static_cast<unsigned char>(s[p])) || s[p] == '-'))
+          while (p < s.size() && (std::isalnum(static_cast<unsigned char>(s[p])) || s[p] == '-'))
             ++p;
           part.pseudo = lower(s.substr(a, p - a));
           if (p < s.size() && s[p] == '(') {
@@ -546,8 +534,8 @@ parse_selector(std::string_view selector) {
         } else
           return {};
       }
-      if (part.tag.empty() && part.id.empty() && part.classes.empty() &&
-          part.attrs.empty() && part.pseudo.empty())
+      if (part.tag.empty() && part.id.empty() && part.classes.empty() && part.attrs.empty() &&
+          part.pseudo.empty())
         return {};
       chain.push_back(std::move(part));
       if (chain.size() > 64)
@@ -607,8 +595,7 @@ static bool match_simple(const Document &d, int n, const SimpleSelector &s) {
           siblings.push_back(c);
       if (siblings.empty())
         return false;
-      size_t index =
-          std::find(siblings.begin(), siblings.end(), n) - siblings.begin();
+      size_t index = std::find(siblings.begin(), siblings.end(), n) - siblings.begin();
       if (s.pseudo == "first-child" && index != 0)
         return false;
       if (s.pseudo == "last-child" && index + 1 != siblings.size())
@@ -626,16 +613,15 @@ static bool match_simple(const Document &d, int n, const SimpleSelector &s) {
       }
     } else if (s.pseudo == "checked") {
       std::string value;
-      if (!node.get_attribute("checked", value) &&
-          !node.get_attribute("selected", value))
+      if (!node.get_attribute("checked", value) && !node.get_attribute("selected", value))
         return false;
     } else
       return false;
   }
   return true;
 }
-static bool match_chain(const Document &d, int n,
-                        const std::vector<SimpleSelector> &chain, size_t i) {
+static bool match_chain(const Document &d, int n, const std::vector<SimpleSelector> &chain,
+                        size_t i) {
   if (!match_simple(d, n, chain[i]))
     return false;
   if (i == 0)
@@ -653,13 +639,11 @@ static bool match_chain(const Document &d, int n,
       return false;
     if (rel == '+') {
       --it;
-      return d.nodes[*it].type == Node::Type::Element &&
-             match_chain(d, *it, chain, i - 1);
+      return d.nodes[*it].type == Node::Type::Element && match_chain(d, *it, chain, i - 1);
     }
     do {
       --it;
-      if (d.nodes[*it].type == Node::Type::Element &&
-          match_chain(d, *it, chain, i - 1))
+      if (d.nodes[*it].type == Node::Type::Element && match_chain(d, *it, chain, i - 1))
         return true;
     } while (it != sib.begin());
     return false;

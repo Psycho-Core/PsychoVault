@@ -4,7 +4,9 @@
 #include <cstdlib>
 #include <iomanip>
 namespace pv::js {
-Value Value::undef() { return {}; }
+Value Value::undef() {
+  return {};
+}
 Value Value::null() {
   Value v;
   v.type = Type::Null;
@@ -104,8 +106,7 @@ std::string Value::to_string() const {
       return out;
     }
     if (object->kind == Object::Kind::Function)
-      return "function " +
-             (object->function ? object->function->name : std::string()) +
+      return "function " + (object->function ? object->function->name : std::string()) +
              "() { [PsychoVault code] }";
     if (object->kind == Object::Kind::Native)
       return "function () { [PsychoVault code] }";
@@ -128,8 +129,8 @@ std::string Value::type_of() const {
   case Type::String:
     return "string";
   case Type::Object:
-    return object && (object->kind == Object::Kind::Function ||
-                      object->kind == Object::Kind::Native)
+    return object &&
+                   (object->kind == Object::Kind::Function || object->kind == Object::Kind::Native)
                ? "function"
                : "object";
   }
@@ -156,14 +157,11 @@ Json Value::to_json(int depth) const {
     return Json();
   if (object->kind == Object::Kind::Array) {
     Json j = Json::make_array();
-    size_t n = std::min(
-        size_t(100000),
-        size_t(std::max(0.0, object->properties["length"].to_number())));
+    size_t n =
+        std::min(size_t(100000), size_t(std::max(0.0, object->properties["length"].to_number())));
     for (size_t i = 0; i < n; ++i) {
       auto it = object->properties.find(std::to_string(i));
-      j.array.push_back(it == object->properties.end()
-                            ? Json()
-                            : it->second.to_json(depth + 1));
+      j.array.push_back(it == object->properties.end() ? Json() : it->second.to_json(depth + 1));
     }
     return j;
   }
@@ -215,14 +213,14 @@ static uint32_t uint32(double n) {
   uint32_t v = uint32_t(x);
   return n < 0 ? uint32_t(0x100000000ll - v) : v;
 }
-static int32_t int32(double n) { return int32_t(uint32(n)); }
+static int32_t int32(double n) {
+  return int32_t(uint32(n));
+}
 static Value binary(const std::string &op, const Value &a, const Value &b) {
   if (op == "+") {
     if (a.type == Value::Type::String || b.type == Value::Type::String ||
-        (a.type == Value::Type::Object && a.object &&
-         a.object->kind != Object::Kind::Array) ||
-        (b.type == Value::Type::Object && b.object &&
-         b.object->kind != Object::Kind::Array))
+        (a.type == Value::Type::Object && a.object && a.object->kind != Object::Kind::Array) ||
+        (b.type == Value::Type::Object && b.object && b.object->kind != Object::Kind::Array))
       return Value(a.to_string() + b.to_string());
     return Value(a.to_number() + b.to_number());
   }
@@ -235,8 +233,7 @@ static Value binary(const std::string &op, const Value &a, const Value &b) {
   if (op == "!=")
     return Value(!loose_equals(a, b));
   if (op == "<" || op == ">" || op == "<=" || op == ">=") {
-    bool strings =
-        a.type == Value::Type::String && b.type == Value::Type::String;
+    bool strings = a.type == Value::Type::String && b.type == Value::Type::String;
     if (strings) {
       if (op == "<")
         return Value(a.string < b.string);
@@ -329,7 +326,9 @@ Object *Runtime::allocate(Object::Kind kind) {
   ++allocated_since_gc_;
   return p;
 }
-size_t Runtime::object_count() const { return objects_.size() - free_.size(); }
+size_t Runtime::object_count() const {
+  return objects_.size() - free_.size();
+}
 void Runtime::mark(Object *o) {
   std::vector<Object *> stack;
   if (o)
@@ -390,12 +389,15 @@ void Runtime::collect() {
   allocated_since_gc_ = 0;
 }
 void Runtime::root(Object *o) {
-  if (o && std::find(extra_roots_.begin(), extra_roots_.end(), o) ==
-               extra_roots_.end())
+  if (o && std::find(extra_roots_.begin(), extra_roots_.end(), o) == extra_roots_.end())
     extra_roots_.push_back(o);
 }
-void Runtime::unroot(Object *o) { std::erase(extra_roots_, o); }
-Value Runtime::make_object(Object::Kind kind) { return Value(allocate(kind)); }
+void Runtime::unroot(Object *o) {
+  std::erase(extra_roots_, o);
+}
+Value Runtime::make_object(Object::Kind kind) {
+  return Value(allocate(kind));
+}
 Value Runtime::make_array(const Values &values) {
   Value v = make_object(Object::Kind::Array);
   for (size_t i = 0; i < values.size(); ++i)
@@ -418,7 +420,9 @@ Value Runtime::host_value(int id, const std::string &type) {
   hosts_[id] = v.object;
   return v;
 }
-void Runtime::reset_fuel() { fuel_ = 2000000; }
+void Runtime::reset_fuel() {
+  fuel_ = 2000000;
+}
 void Runtime::tick() {
   if (fuel_ == 0)
     throw std::runtime_error("JavaScript task instruction limit");
@@ -434,8 +438,7 @@ Value Runtime::declare(Env &env, const std::string &name, const Value &value) {
   env.properties[name] = value;
   return value;
 }
-Value Runtime::assign_identifier(Env &env, const std::string &name,
-                                 const Value &value) {
+Value Runtime::assign_identifier(Env &env, const std::string &name, const Value &value) {
   Env *e = find_env(env, name);
   if (e)
     e->properties[name] = value;
@@ -474,8 +477,7 @@ Value Runtime::get_member(const Value &base, const std::string &key) {
           v = s.substr(0, s.size() - v.size());
         return Value(v);
       });
-    if (key == "charAt" || key == "at" || key == "codePointAt" ||
-        key == "charCodeAt")
+    if (key == "charAt" || key == "at" || key == "codePointAt" || key == "charCodeAt")
       return make_native([s, key](Values &a) {
         auto cps = utf8_decode(s);
         int i = a.empty() ? 0 : int(a[0].to_number());
@@ -483,11 +485,9 @@ Value Runtime::get_member(const Value &base, const std::string &key) {
           i += int(cps.size());
         if (i < 0 || i >= int(cps.size()))
           return key == "charAt" ? Value("")
-                 : key == "at"
-                     ? Value()
-                     : Value(std::numeric_limits<double>::quiet_NaN());
-        return key == "charAt" || key == "at" ? Value(utf8_encode(cps[i]))
-                                              : Value(double(cps[i]));
+                 : key == "at"   ? Value()
+                                 : Value(std::numeric_limits<double>::quiet_NaN());
+        return key == "charAt" || key == "at" ? Value(utf8_encode(cps[i])) : Value(double(cps[i]));
       });
     if (key == "slice" || key == "substring" || key == "substr")
       return make_native([s, key](Values &a) {
@@ -522,8 +522,7 @@ Value Runtime::get_member(const Value &base, const std::string &key) {
           size_t pos = 0;
           while (true) {
             size_t n = s.find(sep, pos);
-            out.emplace_back(
-                s.substr(pos, n == std::string::npos ? n : n - pos));
+            out.emplace_back(s.substr(pos, n == std::string::npos ? n : n - pos));
             if (n == std::string::npos)
               break;
             pos = n + sep.size();
@@ -533,8 +532,8 @@ Value Runtime::get_member(const Value &base, const std::string &key) {
         }
         return r.make_array(out);
       });
-    if (key == "indexOf" || key == "lastIndexOf" || key == "includes" ||
-        key == "startsWith" || key == "endsWith")
+    if (key == "indexOf" || key == "lastIndexOf" || key == "includes" || key == "startsWith" ||
+        key == "endsWith")
       return make_native([s, key](Values &a) {
         std::string needle = a.empty() ? "undefined" : a[0].to_string();
         size_t n = key == "lastIndexOf" ? s.rfind(needle) : s.find(needle);
@@ -558,8 +557,7 @@ Value Runtime::get_member(const Value &base, const std::string &key) {
         std::string out = s;
         do {
           out.replace(p, from.size(), to);
-          p = key == "replaceAll" ? out.find(from, p + to.size())
-                                  : std::string::npos;
+          p = key == "replaceAll" ? out.find(from, p + to.size()) : std::string::npos;
         } while (p != std::string::npos);
         return Value(out);
       });
@@ -679,9 +677,7 @@ Value Runtime::get_member(const Value &base, const std::string &key) {
         size_t n = size_t(arr.object->properties["length"].to_number());
         for (size_t i = 0; i < n; ++i) {
           auto it = arr.object->properties.find(std::to_string(i));
-          if (strict_equals(it == arr.object->properties.end() ? Value()
-                                                               : it->second,
-                            needle))
+          if (strict_equals(it == arr.object->properties.end() ? Value() : it->second, needle))
             return key == "includes" ? Value(true) : Value(double(i));
         }
         return key == "includes" ? Value(false) : Value(-1.0);
@@ -691,8 +687,7 @@ Value Runtime::get_member(const Value &base, const std::string &key) {
         Values out;
         size_t n = size_t(arr.object->properties["length"].to_number());
         int start = a.empty() || key == "concat" ? 0 : int(a[0].to_number()),
-            end =
-                a.size() > 1 && key == "slice" ? int(a[1].to_number()) : int(n);
+            end = a.size() > 1 && key == "slice" ? int(a[1].to_number()) : int(n);
         if (start < 0)
           start += int(n);
         if (end < 0)
@@ -740,8 +735,8 @@ Value Runtime::get_member(const Value &base, const std::string &key) {
         p["length"] = Value(double(n + a.size()));
         return Value(double(n + a.size()));
       });
-    if (key == "forEach" || key == "map" || key == "filter" || key == "find" ||
-        key == "some" || key == "every" || key == "reduce")
+    if (key == "forEach" || key == "map" || key == "filter" || key == "find" || key == "some" ||
+        key == "every" || key == "reduce")
       return make_native([&r, arr, key](Values &a) {
         if (a.empty())
           throw std::runtime_error("array callback required");
@@ -794,12 +789,11 @@ Value Runtime::get_member(const Value &base, const std::string &key) {
         for (size_t i = 0; i < n; ++i)
           values.push_back(p[std::to_string(i)]);
         Value fn = a.empty() ? Value() : a[0];
-        std::stable_sort(values.begin(), values.end(),
-                         [&](const Value &x, const Value &y) {
-                           if (fn.truthy())
-                             return r.call(fn, {x, y}).to_number() < 0;
-                           return x.to_string() < y.to_string();
-                         });
+        std::stable_sort(values.begin(), values.end(), [&](const Value &x, const Value &y) {
+          if (fn.truthy())
+            return r.call(fn, {x, y}).to_number() < 0;
+          return x.to_string() < y.to_string();
+        });
         for (size_t i = 0; i < n; ++i)
           p[std::to_string(i)] = values[i];
         return arr;
@@ -807,8 +801,7 @@ Value Runtime::get_member(const Value &base, const std::string &key) {
   }
   return Value();
 }
-bool Runtime::set_member(const Value &base, const std::string &key,
-                         const Value &value) {
+bool Runtime::set_member(const Value &base, const std::string &key, const Value &value) {
   if (base.type != Value::Type::Object || !base.object)
     return false;
   Object *o = base.object;
@@ -836,8 +829,7 @@ bool Runtime::set_member(const Value &base, const std::string &key,
   if (o->kind == Object::Kind::Array) {
     char *end = nullptr;
     size_t i = std::strtoull(key.c_str(), &end, 10);
-    if (end && !*end && i < 100000 &&
-        i + 1 > o->properties["length"].to_number())
+    if (end && !*end && i < 100000 && i + 1 > o->properties["length"].to_number())
       o->properties["length"] = Value(double(i + 1));
   }
   return true;
@@ -894,8 +886,7 @@ Value Runtime::construct(const Value &constructor, Values &args) {
   Value result = call(constructor, args, object);
   return result.type == Value::Type::Object ? result : object;
 }
-void Runtime::hoist(const std::vector<std::unique_ptr<Stmt>> &statements,
-                    Env &env) {
+void Runtime::hoist(const std::vector<std::unique_ptr<Stmt>> &statements, Env &env) {
   for (auto &s : statements) {
     if (s->kind == Stmt::Kind::Function) {
       Value fn = make_object(Object::Kind::Function);
@@ -909,9 +900,8 @@ void Runtime::hoist(const std::vector<std::unique_ptr<Stmt>> &statements,
           env.properties[d.first] = Value();
   }
 }
-Runtime::Flow
-Runtime::execute_block(const std::vector<std::unique_ptr<Stmt>> &statements,
-                       Env &env, Value this_value) {
+Runtime::Flow Runtime::execute_block(const std::vector<std::unique_ptr<Stmt>> &statements, Env &env,
+                                     Value this_value) {
   Flow last;
   for (auto &s : statements) {
     Flow f = execute(*s, env, this_value);
@@ -1003,9 +993,8 @@ Runtime::Flow Runtime::execute(const Stmt &s, Env &env, Value this_value) {
       if (iterable.object->kind == Object::Kind::Array) {
         size_t n = size_t(iterable.object->properties["length"].to_number());
         for (size_t i = 0; i < n; ++i)
-          keys.push_back(s.text == "of"
-                             ? iterable.object->properties[std::to_string(i)]
-                             : Value(std::to_string(i)));
+          keys.push_back(s.text == "of" ? iterable.object->properties[std::to_string(i)]
+                                        : Value(std::to_string(i)));
       } else
         for (auto &p : iterable.object->properties)
           keys.push_back(s.text == "of" ? p.second : Value(p.first));
@@ -1024,15 +1013,13 @@ Runtime::Flow Runtime::execute(const Stmt &s, Env &env, Value this_value) {
     return {};
   }
   case Stmt::Kind::Return:
-    return {Flow::Kind::Return,
-            s.expression ? evaluate(*s.expression, env, this_value) : Value()};
+    return {Flow::Kind::Return, s.expression ? evaluate(*s.expression, env, this_value) : Value()};
   case Stmt::Kind::Break:
     return {Flow::Kind::Break, {}};
   case Stmt::Kind::Continue:
     return {Flow::Kind::Continue, {}};
   case Stmt::Kind::Throw:
-    throw JsError{s.expression ? evaluate(*s.expression, env, this_value)
-                               : Value()};
+    throw JsError{s.expression ? evaluate(*s.expression, env, this_value) : Value()};
   case Stmt::Kind::Try: {
     Flow f;
     try {
@@ -1091,8 +1078,7 @@ Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
   }
   case Expr::Kind::Member: {
     Value base = evaluate(*e.left, env, this_value);
-    std::string key =
-        e.computed ? evaluate(*e.right, env, this_value).to_string() : e.text;
+    std::string key = e.computed ? evaluate(*e.right, env, this_value).to_string() : e.text;
     return get_member(base, key);
   }
   case Expr::Kind::Unary: {
@@ -1115,8 +1101,7 @@ Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
     break;
   }
   case Expr::Kind::Binary: {
-    Value a = evaluate(*e.left, env, this_value),
-          b = evaluate(*e.right, env, this_value);
+    Value a = evaluate(*e.left, env, this_value), b = evaluate(*e.right, env, this_value);
     return binary(e.text, a, b);
   }
   case Expr::Kind::Logical: {
@@ -1136,11 +1121,9 @@ Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
       if (e.left->kind == Expr::Kind::Identifier)
         old = evaluate(*e.left, env, this_value);
       else
-        old = get_member(
-            evaluate(*e.left->left, env, this_value),
-            e.left->computed
-                ? evaluate(*e.left->right, env, this_value).to_string()
-                : e.left->text);
+        old = get_member(evaluate(*e.left->left, env, this_value),
+                         e.left->computed ? evaluate(*e.left->right, env, this_value).to_string()
+                                          : e.left->text);
       v = binary(e.text, old, v);
     }
     if (e.left->kind == Expr::Kind::Identifier)
@@ -1148,9 +1131,8 @@ Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
     else if (e.left->kind == Expr::Kind::Member) {
       Value base = evaluate(*e.left->left, env, this_value);
       set_member(base,
-                 e.left->computed
-                     ? evaluate(*e.left->right, env, this_value).to_string()
-                     : e.left->text,
+                 e.left->computed ? evaluate(*e.left->right, env, this_value).to_string()
+                                  : e.left->text,
                  v);
     } else
       throw JsError{Value("ReferenceError: invalid assignment")};
@@ -1161,35 +1143,29 @@ Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
     if (e.left->kind == Expr::Kind::Identifier)
       old = evaluate(*e.left, env, this_value);
     else
-      old =
-          get_member(evaluate(*e.left->left, env, this_value),
-                     e.left->computed
-                         ? evaluate(*e.left->right, env, this_value).to_string()
-                         : e.left->text);
+      old = get_member(evaluate(*e.left->left, env, this_value),
+                       e.left->computed ? evaluate(*e.left->right, env, this_value).to_string()
+                                        : e.left->text);
     Value next = binary(e.text == "++" ? "+" : "-", old, Value(1));
     if (e.left->kind == Expr::Kind::Identifier)
       assign_identifier(env, e.left->text, next);
     else
       set_member(evaluate(*e.left->left, env, this_value),
-                 e.left->computed
-                     ? evaluate(*e.left->right, env, this_value).to_string()
-                     : e.left->text,
+                 e.left->computed ? evaluate(*e.left->right, env, this_value).to_string()
+                                  : e.left->text,
                  next);
     return e.prefix ? next : Value(old.to_number());
   }
   case Expr::Kind::Conditional:
-    return evaluate(*e.left, env, this_value).truthy()
-               ? evaluate(*e.right, env, this_value)
-               : evaluate(*e.third, env, this_value);
+    return evaluate(*e.left, env, this_value).truthy() ? evaluate(*e.right, env, this_value)
+                                                       : evaluate(*e.third, env, this_value);
   case Expr::Kind::Call: {
     Value fn, this_value_call;
     Values args;
     if (e.left->kind == Expr::Kind::Member) {
       Value base = evaluate(*e.left->left, env, this_value);
       std::string key =
-          e.left->computed
-              ? evaluate(*e.left->right, env, this_value).to_string()
-              : e.left->text;
+          e.left->computed ? evaluate(*e.left->right, env, this_value).to_string() : e.left->text;
       fn = get_member(base, key);
       this_value_call = base;
     } else
@@ -1244,8 +1220,7 @@ void Runtime::install_builtins() {
   g.properties["Infinity"] = Value(std::numeric_limits<double>::infinity());
   g.properties["document"] = host_value(-1, "Document");
   Value nav = make_object();
-  nav.object->properties["userAgent"] =
-      Value("PsychoVault/0.1 (owned engine; development)");
+  nav.object->properties["userAgent"] = Value("PsychoVault/0.1 (owned engine; development)");
   nav.object->properties["platform"] = Value(
 #ifdef _WIN32
       "Win32"
@@ -1271,11 +1246,10 @@ void Runtime::install_builtins() {
     });
   g.properties["console"] = console;
   Value math = make_object();
-  for (std::string name : {"floor", "ceil", "round", "trunc", "abs", "sqrt",
-                           "sin", "cos", "tan", "log", "exp"})
+  for (std::string name :
+       {"floor", "ceil", "round", "trunc", "abs", "sqrt", "sin", "cos", "tan", "log", "exp"})
     math.object->properties[name] = make_native([name](Values &a) {
-      double x = a.empty() ? std::numeric_limits<double>::quiet_NaN()
-                           : a[0].to_number();
+      double x = a.empty() ? std::numeric_limits<double>::quiet_NaN() : a[0].to_number();
       if (name == "floor")
         return Value(std::floor(x));
       if (name == "ceil")
@@ -1313,11 +1287,10 @@ void Runtime::install_builtins() {
     return Value(x);
   });
   math.object->properties["pow"] = make_native([](Values &a) {
-    return Value(std::pow(a.size() > 0 ? a[0].to_number() : 0,
-                          a.size() > 1 ? a[1].to_number() : 0));
+    return Value(
+        std::pow(a.size() > 0 ? a[0].to_number() : 0, a.size() > 1 ? a[1].to_number() : 0));
   });
-  math.object->properties["random"] =
-      make_native([](Values &) { return Value(0.5); });
+  math.object->properties["random"] = make_native([](Values &) { return Value(0.5); });
   g.properties["Math"] = math;
   math.object->properties["random"] = make_native([](Values &) -> Value {
     auto bytes = random_bytes(8);
@@ -1326,10 +1299,10 @@ void Runtime::install_builtins() {
       bits = (bits << 8) | b;
     return Value(double(bits >> 11) / 9007199254740992.0);
   });
-  g.properties["String"] = make_native(
-      [](Values &a) { return Value(a.empty() ? "" : a[0].to_string()); });
-  g.properties["Number"] = make_native(
-      [](Values &a) { return Value(a.empty() ? 0 : a[0].to_number()); });
+  g.properties["String"] =
+      make_native([](Values &a) { return Value(a.empty() ? "" : a[0].to_string()); });
+  g.properties["Number"] =
+      make_native([](Values &a) { return Value(a.empty() ? 0 : a[0].to_number()); });
   g.properties["Boolean"] =
       make_native([](Values &a) { return Value(!a.empty() && a[0].truthy()); });
   g.properties["parseInt"] = make_native([](Values &a) {
@@ -1337,19 +1310,17 @@ void Runtime::install_builtins() {
     int base = a.size() > 1 ? int(a[1].to_number()) : starts(s, "0x") ? 16 : 10;
     char *end = nullptr;
     double n = double(std::strtoll(s.c_str(), &end, base));
-    return Value(end == s.c_str() ? std::numeric_limits<double>::quiet_NaN()
-                                  : n);
+    return Value(end == s.c_str() ? std::numeric_limits<double>::quiet_NaN() : n);
   });
   g.properties["parseFloat"] = make_native([](Values &a) {
     std::string s = trim(a.empty() ? "" : a[0].to_string());
     char *end = nullptr;
     double n = std::strtod(s.c_str(), &end);
-    return Value(end == s.c_str() ? std::numeric_limits<double>::quiet_NaN()
-                                  : n);
+    return Value(end == s.c_str() ? std::numeric_limits<double>::quiet_NaN() : n);
   });
   g.properties["isNaN"] = make_native([](Values &a) {
-    return Value(std::isnan(a.empty() ? std::numeric_limits<double>::quiet_NaN()
-                                      : a[0].to_number()));
+    return Value(
+        std::isnan(a.empty() ? std::numeric_limits<double>::quiet_NaN() : a[0].to_number()));
   });
   g.properties["Array"] = make_native([this](Values &a) {
     if (a.size() == 1 && a[0].type == Value::Type::Number) {
@@ -1398,12 +1369,10 @@ void Runtime::install_builtins() {
   });
   g.properties["Object"] = object;
   Value json = make_object();
-  json.object->properties["stringify"] = make_native([](Values &a) {
-    return a.empty() ? Value() : Value(a[0].to_json().dump());
-  });
+  json.object->properties["stringify"] =
+      make_native([](Values &a) { return a.empty() ? Value() : Value(a[0].to_json().dump()); });
   json.object->properties["parse"] = make_native([this](Values &a) {
-    auto parsed =
-        Json::parse(a.empty() ? "" : a[0].to_string(), 2u * 1024u * 1024u);
+    auto parsed = Json::parse(a.empty() ? "" : a[0].to_string(), 2u * 1024u * 1024u);
     if (!parsed)
       throw JsError{Value("SyntaxError: invalid JSON")};
     return from_json(*parsed, *this);
@@ -1420,15 +1389,13 @@ void Runtime::install_builtins() {
     g.properties[name] = make_native([this, name](Values &a) {
       Value e = make_object();
       e.object->properties["name"] = Value(name);
-      e.object->properties["message"] =
-          Value(a.empty() ? "" : a[0].to_string());
+      e.object->properties["message"] = Value(a.empty() ? "" : a[0].to_string());
       return e;
     });
   g.properties["setTimeout"] = make_native([this](Values &a) {
     if (a.empty() || a[0].type_of() != "function")
       throw JsError{Value("TypeError: timer callback required")};
-    double delay =
-        std::clamp(a.size() > 1 ? a[1].to_number() : 0, 0.0, 86400000.0);
+    double delay = std::clamp(a.size() > 1 ? a[1].to_number() : 0, 0.0, 86400000.0);
     if (timers.size() >= 256)
       throw std::runtime_error("timer limit");
     double now = double(std::chrono::duration_cast<std::chrono::milliseconds>(

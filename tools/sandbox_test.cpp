@@ -8,8 +8,7 @@ int main() {
   wchar_t temp[MAX_PATH];
   GetTempPathW(MAX_PATH, temp);
   std::string dir;
-  int n =
-      WideCharToMultiByte(CP_UTF8, 0, temp, -1, nullptr, 0, nullptr, nullptr);
+  int n = WideCharToMultiByte(CP_UTF8, 0, temp, -1, nullptr, 0, nullptr, nullptr);
   dir.resize(n ? n - 1 : 0);
   if (n)
     WideCharToMultiByte(CP_UTF8, 0, temp, -1, dir.data(), n, nullptr, nullptr);
@@ -20,8 +19,7 @@ int main() {
   }
   Process p;
   std::string error;
-  if (!p.start(executable_dir() + "\\pv-sandbox-probe.exe",
-               "\"" + sentinel + "\"", true, error)) {
+  if (!p.start(executable_dir() + "\\pv-sandbox-probe.exe", "\"" + sentinel + "\"", true, error)) {
     std::cerr << "sandbox start failed: " << error << "\n";
     return 1;
   }
@@ -33,8 +31,7 @@ int main() {
     if (available) {
       char buf[4096];
       DWORD got = 0;
-      ReadFile(p.read, buf, std::min<DWORD>(available, sizeof(buf) - 1), &got,
-               nullptr);
+      ReadFile(p.read, buf, std::min<DWORD>(available, sizeof(buf) - 1), &got, nullptr);
       buf[got] = 0;
       output += buf;
       if (output.find('\n') != std::string::npos)

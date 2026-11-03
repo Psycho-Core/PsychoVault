@@ -32,8 +32,8 @@ void Canvas::pixel(int x, int y, uint32_t c) {
   if (x < 0 || y < 0 || x >= width || y >= height)
     return;
   size_t i = (size_t(y) * width + x) * 4;
-  uint32_t d = 0xff000000 | (uint32_t(pixels[i + 2]) << 16) |
-               (uint32_t(pixels[i + 1]) << 8) | pixels[i];
+  uint32_t d =
+      0xff000000 | (uint32_t(pixels[i + 2]) << 16) | (uint32_t(pixels[i + 1]) << 8) | pixels[i];
   uint32_t o = blend(d, c);
   pixels[i] = o;
   pixels[i + 1] = o >> 8;
@@ -67,8 +67,7 @@ void Canvas::stroke(Rect r, uint32_t c, double t) {
   fill({r.x, r.y, t, r.h}, c);
   fill({r.x + r.w - t, r.y, t, r.h}, c);
 }
-void Canvas::line(double x1, double y1, double x2, double y2, uint32_t c,
-                  double t) {
+void Canvas::line(double x1, double y1, double x2, double y2, uint32_t c, double t) {
   int steps = int(std::max(std::fabs(x2 - x1), std::fabs(y2 - y1))) + 1;
   if (steps > 16384)
     return;
@@ -96,15 +95,13 @@ struct WinFont {
     std::wstring fam;
     for (auto c : utf8_decode(family))
       fam += wchar_t(c);
-    std::wstring k = fam + L"|" + std::to_wstring(int(size * 10)) + L"|" +
-                     (bold ? L"1" : L"0");
+    std::wstring k = fam + L"|" + std::to_wstring(int(size * 10)) + L"|" + (bold ? L"1" : L"0");
     if (!dc)
       dc = CreateCompatibleDC(nullptr);
     if (k == key && font)
       return;
-    HFONT f = CreateFontW(-int(size), 0, 0, 0, bold ? FW_BOLD : FW_NORMAL,
-                          FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                          OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+    HFONT f = CreateFontW(-int(size), 0, 0, 0, bold ? FW_BOLD : FW_NORMAL, FALSE, FALSE, FALSE,
+                          DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                           CLEARTYPE_QUALITY, DEFAULT_PITCH, fam.c_str());
     if (!font) {
       old = SelectObject(dc, f);
@@ -140,8 +137,8 @@ double Canvas::text_width(std::string_view s, double size, bool bold,
   return utf8_decode(s).size() * size * 0.6;
 #endif
 }
-void Canvas::text(double x, double y, std::string_view text, double size,
-                  uint32_t color, bool bold, std::string_view family) {
+void Canvas::text(double x, double y, std::string_view text, double size, uint32_t color, bool bold,
+                  std::string_view family) {
 #ifdef _WIN32
   auto w = wide_text(text);
   if (w.empty())
@@ -170,10 +167,9 @@ void Canvas::text(double x, double y, std::string_view text, double size,
   std::memset(bits, 0, size_t(tw) * th * 4);
   HGDIOBJ oldbmp = SelectObject(dc, bmp);
   HFONT font =
-      CreateFontW(-int(size), 0, 0, 0, bold ? FW_BOLD : FW_NORMAL, FALSE, FALSE,
-                  FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                  CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH,
-                  std::wstring(family.begin(), family.end()).c_str());
+      CreateFontW(-int(size), 0, 0, 0, bold ? FW_BOLD : FW_NORMAL, FALSE, FALSE, FALSE,
+                  DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                  DEFAULT_PITCH, std::wstring(family.begin(), family.end()).c_str());
   HGDIOBJ oldfont = SelectObject(dc, font);
   SetBkMode(dc, TRANSPARENT);
   SetTextColor(dc, RGB(255, 255, 255));
@@ -184,8 +180,7 @@ void Canvas::text(double x, double y, std::string_view text, double size,
     for (int col = 0; col < tw; ++col) {
       uint8_t intensity = p[(size_t(row) * tw + col) * 4];
       if (intensity)
-        pixel(int(x) + col, int(y) + row,
-              (uint32_t(intensity) << 24) | (color & 0x00ffffff));
+        pixel(int(x) + col, int(y) + row, (uint32_t(intensity) << 24) | (color & 0x00ffffff));
     }
   SelectObject(dc, oldfont);
   DeleteObject(font);
@@ -206,9 +201,7 @@ void Canvas::text(double x, double y, std::string_view text, double size,
     for (int row = 0; row < 7; ++row)
       for (int col = 0; col < 5; ++col)
         if (g[row] & (1 << (4 - col)))
-          fill({x + col * scale, y + row * scale, scale + (bold ? 0.5 : 0),
-                scale},
-               color);
+          fill({x + col * scale, y + row * scale, scale + (bold ? 0.5 : 0), scale}, color);
     x += advance;
   }
 #endif
@@ -244,8 +237,7 @@ static void chunk(Bytes &out, const char *type, const Bytes &data) {
   be32(out, crc32(out.data() + start, out.size() - start));
 }
 Bytes encode_png(int w, int h, const Bytes &bgra) {
-  if (w <= 0 || h <= 0 || w > 8192 || h > 16384 ||
-      bgra.size() != size_t(w) * h * 4)
+  if (w <= 0 || h <= 0 || w > 8192 || h > 16384 || bgra.size() != size_t(w) * h * 4)
     throw std::runtime_error("invalid PNG surface");
   Bytes raw;
   raw.reserve(size_t(h) * (size_t(w) * 4 + 1));

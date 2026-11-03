@@ -1,8 +1,7 @@
 #include "page.hpp"
 #include <chrono>
 namespace pv {
-static constexpr int kDocument = -1, kLocation = -3, kStyleBase = 1000000,
-                     kClassBase = 2000000;
+static constexpr int kDocument = -1, kLocation = -3, kStyleBase = 1000000, kClassBase = 2000000;
 static bool has_attr(const Node &n, const std::string &key) {
   std::string v;
   return n.get_attribute(key, v);
@@ -17,8 +16,7 @@ public:
   Page &page;
   explicit PageHost(Page &p) : page(p) {}
   js::Value node(int id) {
-    return page.js_->host_value(id,
-                                id == kDocument ? "Document" : "HTMLElement");
+    return page.js_->host_value(id, id == kDocument ? "Document" : "HTMLElement");
   }
   js::Value list(const std::vector<int> &ids) {
     js::Values values;
@@ -83,8 +81,7 @@ public:
         });
       if (name == "querySelectorAll")
         return r.make_native([this](js::Values &a) {
-          return list(a.empty() ? std::vector<int>{}
-                                : page.doc.query(a[0].to_string()));
+          return list(a.empty() ? std::vector<int>{} : page.doc.query(a[0].to_string()));
         });
       if (name == "getElementsByTagName")
         return r.make_native([this](js::Values &a) {
@@ -97,15 +94,13 @@ public:
         });
       if (name == "createElement")
         return r.make_native([this](js::Values &a) {
-          int id = page.doc.create(Node::Type::Element,
-                                   a.empty() ? "div" : a[0].to_string());
+          int id = page.doc.create(Node::Type::Element, a.empty() ? "div" : a[0].to_string());
           page.dirty_ = true;
           return node(id);
         });
       if (name == "createTextNode")
         return r.make_native([this](js::Values &a) {
-          int id = page.doc.create(Node::Type::Text, "#text",
-                                   a.empty() ? "" : a[0].to_string());
+          int id = page.doc.create(Node::Type::Text, "#text", a.empty() ? "" : a[0].to_string());
           page.dirty_ = true;
           return node(id);
         });
@@ -195,8 +190,7 @@ public:
         });
       if (name == "contains")
         return r.make_native([this, n](js::Values &a) {
-          return js::Value(!a.empty() &&
-                           page.doc.nodes[n].has_class(a[0].to_string()));
+          return js::Value(!a.empty() && page.doc.nodes[n].has_class(a[0].to_string()));
         });
       if (name == "toggle")
         return r.make_native([this, n](js::Values &a) {
@@ -229,8 +223,7 @@ public:
                        : n.type == Node::Type::Text  ? 3.0
                                                      : 9.0);
     if (name == "tagName" || name == "nodeName")
-      return js::Value(n.type == Node::Type::Element ? upper_tag(n.name)
-                                                     : n.name);
+      return js::Value(n.type == Node::Type::Element ? upper_tag(n.name) : n.name);
     if (name == "id")
       return js::Value(n.attribute("id"));
     if (name == "className")
@@ -240,8 +233,7 @@ public:
     if (name == "innerHTML")
       return js::Value(serialize_children(d, id));
     if (name == "value")
-      return js::Value(n.name == "textarea" ? d.text_content(id)
-                                            : n.attribute("value"));
+      return js::Value(n.name == "textarea" ? d.text_content(id) : n.attribute("value"));
     if (name == "checked")
       return js::Value(has_attr(n, "checked"));
     if (name == "href" || name == "src")
@@ -286,8 +278,7 @@ public:
     if (name == "hasAttribute")
       return r.make_native([this, id](js::Values &a) {
         std::string v;
-        return js::Value(!a.empty() &&
-                         page.doc.nodes[id].get_attribute(a[0].to_string(), v));
+        return js::Value(!a.empty() && page.doc.nodes[id].get_attribute(a[0].to_string(), v));
       });
     if (name == "appendChild" || name == "append")
       return r.make_native([this, id](js::Values &a) {
@@ -311,8 +302,7 @@ public:
       });
     if (name == "querySelectorAll")
       return r.make_native([this, id](js::Values &a) {
-        return list(a.empty() ? std::vector<int>{}
-                              : page.doc.query(a[0].to_string(), id));
+        return list(a.empty() ? std::vector<int>{} : page.doc.query(a[0].to_string(), id));
       });
     if (name == "addEventListener")
       return r.make_native([this, id](js::Values &a) {
@@ -393,8 +383,7 @@ public:
       if (value.truthy())
         n.set_attribute("checked", "");
       else
-        std::erase_if(n.attributes,
-                      [](auto &a) { return a.first == "checked"; });
+        std::erase_if(n.attributes, [](auto &a) { return a.first == "checked"; });
       page.dirty_ = true;
       return true;
     }
@@ -437,8 +426,7 @@ public:
     }
     return out;
   }
-  static std::string
-  serialize_inline(const std::map<std::string, std::string> &s) {
+  static std::string serialize_inline(const std::map<std::string, std::string> &s) {
     std::string out;
     for (auto &p : s) {
       if (!out.empty())
@@ -493,10 +481,13 @@ void Page::remove_listener(int node, const std::string &type, js::Value fn) {
       return;
     }
 }
-Page::Page() { js_ = std::make_unique<js::Runtime>(new PageHost(*this)); }
-Page::~Page() { delete js_->host(); }
-void Page::load(const Url &url, const std::string &html,
-                const std::string &mime) {
+Page::Page() {
+  js_ = std::make_unique<js::Runtime>(new PageHost(*this));
+}
+Page::~Page() {
+  delete js_->host();
+}
+void Page::load(const Url &url, const std::string &html, const std::string &mime) {
   doc.url = url;
   doc.content_type = mime;
   doc.parse(html);
@@ -546,12 +537,11 @@ void Page::execute_script(int id) {
   executed_.insert(id);
   const auto &n = doc.nodes[id];
   auto type = lower(n.attribute("type"));
-  if (!type.empty() && type != "text/javascript" &&
-      type != "application/javascript" && type != "module")
+  if (!type.empty() && type != "text/javascript" && type != "application/javascript" &&
+      type != "module")
     return;
   if (type == "module") {
-    diagnostics.push_back(
-        {"js", "ES modules are not implemented; script was not executed"});
+    diagnostics.push_back({"js", "ES modules are not implemented; script was not executed"});
     return;
   }
   try {
@@ -593,8 +583,7 @@ void Page::run_scripts() {
   // Deferred scripts run after the blocking scripts have had their resources
   // delivered.
   for (auto &n : doc.nodes)
-    if (n.name == "script" && has_attr(n, "defer") &&
-        !n.attribute("src").empty()) {
+    if (n.name == "script" && has_attr(n, "defer") && !n.attribute("src").empty()) {
       auto u = resolve_url(doc.url, n.attribute("src"));
       if (u && resources_.count(u->href()))
         execute_script(n.id);
@@ -708,11 +697,10 @@ void Page::activate(int target) {
   event.object->properties["type"] = js::Value("click");
   event.object->properties["target"] = js_->host_value(target);
   bool prevented = false;
-  event.object->properties["preventDefault"] =
-      js_->make_native([&prevented](js::Values &) {
-        prevented = true;
-        return js::Value();
-      });
+  event.object->properties["preventDefault"] = js_->make_native([&prevented](js::Values &) {
+    prevented = true;
+    return js::Value();
+  });
   event.object->properties["stopPropagation"] =
       js_->make_native([](js::Values &) { return js::Value(); });
   dispatch(target, "click", event);
@@ -728,14 +716,16 @@ void Page::activate(int target) {
     if (node.name == "input" && lower(node.attribute("type")) == "checkbox") {
       std::string v;
       if (node.get_attribute("checked", v))
-        std::erase_if(doc.nodes[n].attributes,
-                      [](auto &a) { return a.first == "checked"; });
+        std::erase_if(doc.nodes[n].attributes, [](auto &a) { return a.first == "checked"; });
       else
         doc.nodes[n].set_attribute("checked", "");
       dirty_ = true;
       return;
     }
-    if (node.name == "button" || (node.name == "input" && (lower(node.attribute("type")) == "submit" || lower(node.attribute("type")) == "button" || lower(node.attribute("type")) == "image"))) {
+    if (node.name == "button" ||
+        (node.name == "input" &&
+         (lower(node.attribute("type")) == "submit" || lower(node.attribute("type")) == "button" ||
+          lower(node.attribute("type")) == "image"))) {
       int form = node.parent;
       while (form >= 0 && doc.nodes[form].name != "form")
         form = doc.nodes[form].parent;
@@ -759,10 +749,8 @@ void Page::key(const std::string &key, const std::string &text) {
   auto &n = doc.nodes[focused_];
   if (n.name == "input" || n.name == "textarea") {
     auto type = lower(n.attribute("type"));
-    if (type != "checkbox" && type != "radio" && type != "button" &&
-        type != "submit") {
-      std::string value = n.name == "textarea" ? doc.text_content(focused_)
-                                               : n.attribute("value");
+    if (type != "checkbox" && type != "radio" && type != "button" && type != "submit") {
+      std::string value = n.name == "textarea" ? doc.text_content(focused_) : n.attribute("value");
       if (key == "Backspace" && !value.empty()) {
         auto cps = utf8_decode(value);
         cps.pop_back();
@@ -809,14 +797,11 @@ void Page::submit_form(int form) {
     auto name = input.attribute("name");
     if (name.empty())
       continue;
-    if ((input.name == "input" || input.name == "textarea" ||
-         input.name == "select")) {
-      std::string value = input.name == "textarea" ? doc.text_content(n)
-                                                   : input.attribute("value");
+    if ((input.name == "input" || input.name == "textarea" || input.name == "select")) {
+      std::string value = input.name == "textarea" ? doc.text_content(n) : input.attribute("value");
       if (input.name == "select") {
         for (int o : input.children)
-          if (doc.nodes[o].name == "option" &&
-              has_attr(doc.nodes[o], "selected"))
+          if (doc.nodes[o].name == "option" && has_attr(doc.nodes[o], "selected"))
             value = doc.text_content(o);
       }
       if (!query.empty())

@@ -8,9 +8,8 @@
 #include <ws2tcpip.h>
 int main(int argc, char **argv) {
   std::string target = argc > 1 ? argv[1] : "C:\\Windows\\win.ini";
-  HANDLE file =
-      CreateFileA(target.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
-                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  HANDLE file = CreateFileA(target.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                            FILE_ATTRIBUTE_NORMAL, nullptr);
   DWORD file_error = file == INVALID_HANDLE_VALUE ? GetLastError() : 0;
   if (file != INVALID_HANDLE_VALUE)
     CloseHandle(file);
@@ -23,10 +22,9 @@ int main(int argc, char **argv) {
   WSACleanup();
   std::cout << "{\"fileDenied\":"
             << (file == INVALID_HANDLE_VALUE &&
-                (file_error == ERROR_ACCESS_DENIED ||
-                 file_error == ERROR_SHARING_VIOLATION))
-            << ",\"fileError\":" << file_error << ",\"networkDenied\":"
-            << (sock == INVALID_SOCKET && network_error == WSAEACCES)
+                (file_error == ERROR_ACCESS_DENIED || file_error == ERROR_SHARING_VIOLATION))
+            << ",\"fileError\":" << file_error
+            << ",\"networkDenied\":" << (sock == INVALID_SOCKET && network_error == WSAEACCES)
             << ",\"networkError\":" << network_error << "}\n";
   return 0;
 }

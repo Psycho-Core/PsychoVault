@@ -16,8 +16,7 @@ struct Process {
   ~Process();
   Process(const Process &) = delete;
   Process &operator=(const Process &) = delete;
-  bool start(const std::string &exe, const std::string &args, bool sandbox,
-             std::string &error);
+  bool start(const std::string &exe, const std::string &args, bool sandbox, std::string &error);
   bool send(const Json &message, std::string &error);
   std::optional<Json> receive(int timeout_ms);
   void terminate();

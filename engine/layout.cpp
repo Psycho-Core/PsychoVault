@@ -18,8 +18,7 @@ struct Layout {
          const std::map<std::string, Resource> &r, double w)
       : doc(d), styles(s), measure(c), resources(r), viewport_width(w) {}
   double outer_extra(const Style &s) {
-    return s.margin[1] + s.margin[3] + s.padding[1] + s.padding[3] +
-           s.border[1] + s.border[3];
+    return s.margin[1] + s.margin[3] + s.padding[1] + s.padding[3] + s.border[1] + s.border[3];
   }
   double block(int id, double x, double y, double available, int depth = 0) {
     if (id < 0 || id >= int(doc.nodes.size()) || depth > kMaxDomDepth)
@@ -41,13 +40,11 @@ struct Layout {
     if (s.margin[1] < 0 && s.margin[3] < 0 && s.width >= 0)
       left = x + std::max(0.0, (available - w - outer_extra(s)) / 2);
     double top = y + s.margin[0];
-    double inner_x = left + s.border[3] + s.padding[3],
-           inner_y = top + s.border[0] + s.padding[0];
+    double inner_x = left + s.border[3] + s.padding[3], inner_y = top + s.border[0] + s.padding[0];
     double inner_w = std::max(0.0, w);
     out.paint.push_back(
         {PaintCommand::Kind::Rect,
-         {left, top,
-          w + s.padding[1] + s.padding[3] + s.border[1] + s.border[3], 0},
+         {left, top, w + s.padding[1] + s.padding[3] + s.border[1] + s.border[3], 0},
          s.background.bgra(),
          {},
          0,
@@ -60,8 +57,7 @@ struct Layout {
     if (s.display == "flex" && s.flex_direction == "row") {
       std::vector<int> children;
       for (int c : n.children)
-        if (styles[c].display != "none" &&
-            doc.nodes[c].type == Node::Type::Element)
+        if (styles[c].display != "none" && doc.nodes[c].type == Node::Type::Element)
           children.push_back(c);
       double used = 0;
       int autos = 0;
@@ -73,17 +69,14 @@ struct Layout {
           ++autos;
       }
       double share =
-          autos
-              ? std::max(0.0, (inner_w - used -
-                               s.gap * std::max(0, int(children.size() - 1))) /
-                                  autos)
-              : 0;
+          autos ? std::max(0.0,
+                           (inner_w - used - s.gap * std::max(0, int(children.size() - 1))) / autos)
+                : 0;
       double cx = inner_x;
       double maxh = 0;
       for (int c : children) {
         double cw = styles[c].width >= 0 ? styles[c].width : share;
-        double h =
-            block(c, cx, inner_y, cw + outer_extra(styles[c]), depth + 1);
+        double h = block(c, cx, inner_y, cw + outer_extra(styles[c]), depth + 1);
         cx += cw + outer_extra(styles[c]) + s.gap;
         maxh = std::max(maxh, h);
       }
@@ -114,24 +107,22 @@ struct Layout {
                                run.node,
                                {}});
           if (run.style.underline)
-            out.paint.push_back(
-                {PaintCommand::Kind::Line,
-                 {tx, cursor + run.style.font_size + 2, run.width, 1},
-                 run.style.color.bgra(),
-                 {},
-                 0,
-                 1,
-                 false,
-                 run.node,
-                 {}});
+            out.paint.push_back({PaintCommand::Kind::Line,
+                                 {tx, cursor + run.style.font_size + 2, run.width, 1},
+                                 run.style.color.bgra(),
+                                 {},
+                                 0,
+                                 1,
+                                 false,
+                                 run.node,
+                                 {}});
           auto box = out.boxes.find(run.node);
           if (box == out.boxes.end())
             out.boxes[run.node] = {tx, cursor, run.width, line_height};
           else {
             box->second.x = std::min(box->second.x, tx);
             box->second.y = std::min(box->second.y, cursor);
-            box->second.w =
-                std::max(box->second.w, tx + run.width - box->second.x);
+            box->second.w = std::max(box->second.w, tx + run.width - box->second.x);
             box->second.h = std::max(box->second.h, line_height);
           }
           tx += run.width;
@@ -179,8 +170,7 @@ struct Layout {
             flush();
             continue;
           }
-          double ww =
-              measure.text_width(word, st.font_size, st.bold, st.font_family);
+          double ww = measure.text_width(word, st.font_size, st.bold, st.font_family);
           if (line_width + ww > inner_w && !line.empty() && word != " ")
             flush();
           if (word == " " && line.empty())
@@ -212,8 +202,7 @@ struct Layout {
         }
         if (child.name == "img") {
           flush();
-          double iw = cs.width >= 0 ? cs.width : 120,
-                 ih = cs.height >= 0 ? cs.height : 80;
+          double iw = cs.width >= 0 ? cs.width : 120, ih = cs.height >= 0 ? cs.height : 80;
           out.paint.push_back({PaintCommand::Kind::Image,
                                {inner_x, cursor, iw, ih},
                                0,
@@ -227,11 +216,11 @@ struct Layout {
           cursor += ih + cs.margin[0] + cs.margin[2];
           return;
         }
-        if (child.name == "input" || child.name == "button" ||
-            child.name == "select" || child.name == "textarea") {
+        if (child.name == "input" || child.name == "button" || child.name == "select" ||
+            child.name == "textarea") {
           flush();
-          std::string label = child.name == "button" ? doc.text_content(c)
-                                                     : child.attribute("value");
+          std::string label =
+              child.name == "button" ? doc.text_content(c) : child.attribute("value");
           if (child.name == "input" && child.attribute("type") == "checkbox")
             label = child.get_attribute("checked", label) ? "[x]" : "[ ]";
           if (child.name == "select") {
@@ -246,16 +235,13 @@ struct Layout {
           }
           if (label.empty())
             label = child.attribute("placeholder");
-          double cw = cs.width >= 0
-                          ? cs.width
-                          : std::max(80.0,
-                                     measure.text_width(label, cs.font_size) +
-                                         cs.padding[1] + cs.padding[3] + 16),
-                 ch = cs.height >= 0 ? cs.height
-                      : child.name == "textarea"
-                          ? 80
-                          : cs.font_size + cs.padding[0] + cs.padding[2] +
-                                cs.border[0] + cs.border[2];
+          double cw = cs.width >= 0 ? cs.width
+                                    : std::max(80.0, measure.text_width(label, cs.font_size) +
+                                                         cs.padding[1] + cs.padding[3] + 16),
+                 ch = cs.height >= 0             ? cs.height
+                      : child.name == "textarea" ? 80
+                                                 : cs.font_size + cs.padding[0] + cs.padding[2] +
+                                                       cs.border[0] + cs.border[2];
           out.paint.push_back({PaintCommand::Kind::Rect,
                                {inner_x, cursor, cw, ch},
                                cs.background.bgra(),
@@ -274,16 +260,16 @@ struct Layout {
                                false,
                                c,
                                {}});
-          out.paint.push_back({PaintCommand::Kind::Text,
-                               {inner_x + cs.padding[3] + 4,
-                                cursor + cs.padding[0] + 2, cw - 8, ch - 4},
-                               cs.color.bgra(),
-                               label,
-                               cs.font_size,
-                               0,
-                               cs.bold,
-                               c,
-                               {}});
+          out.paint.push_back(
+              {PaintCommand::Kind::Text,
+               {inner_x + cs.padding[3] + 4, cursor + cs.padding[0] + 2, cw - 8, ch - 4},
+               cs.color.bgra(),
+               label,
+               cs.font_size,
+               0,
+               cs.bold,
+               c,
+               {}});
           out.boxes[c] = {inner_x, cursor, cw, ch};
           cursor += ch + cs.margin[0] + cs.margin[2];
           return;
@@ -295,8 +281,7 @@ struct Layout {
         const auto &cs = styles[c];
         if (cs.display == "none")
           continue;
-        bool is_block = doc.nodes[c].type == Node::Type::Element &&
-                        cs.display != "inline" &&
+        bool is_block = doc.nodes[c].type == Node::Type::Element && cs.display != "inline" &&
                         cs.display != "inline-block" && c != 0;
         if (is_block) {
           flush();
@@ -314,12 +299,10 @@ struct Layout {
     if (s.max_height >= 0)
       h = std::min(h, s.max_height);
     h = std::max(h, s.min_height);
-    double border_box =
-        h + s.padding[0] + s.padding[2] + s.border[0] + s.border[2];
+    double border_box = h + s.padding[0] + s.padding[2] + s.border[0] + s.border[2];
     out.paint[bg].rect.h = border_box;
-    out.boxes[id] = {
-        left, top, w + s.padding[1] + s.padding[3] + s.border[1] + s.border[3],
-        border_box};
+    out.boxes[id] = {left, top, w + s.padding[1] + s.padding[3] + s.border[1] + s.border[3],
+                     border_box};
     if (s.border[0] > 0)
       out.paint.push_back({PaintCommand::Kind::Border,
                            {left, top, out.boxes[id].w, border_box},
@@ -343,10 +326,8 @@ struct Layout {
     return border_box + s.margin[0] + s.margin[2];
   }
 };
-LayoutResult layout_document(const Document &doc,
-                             const std::vector<Style> &styles, double width,
-                             double height,
-                             const std::map<std::string, Resource> &resources,
+LayoutResult layout_document(const Document &doc, const std::vector<Style> &styles, double width,
+                             double height, const std::map<std::string, Resource> &resources,
                              Canvas &measure) {
   Layout l(doc, styles, measure, resources, width);
   uint32_t bg = styles[doc.body].background.bgra();
@@ -364,8 +345,7 @@ LayoutResult layout_document(const Document &doc,
   l.out.paint[0].rect.h = l.out.height;
   return l.out;
 }
-void paint_commands(Canvas &canvas, const std::vector<PaintCommand> &commands,
-                    double scroll_y,
+void paint_commands(Canvas &canvas, const std::vector<PaintCommand> &commands, double scroll_y,
                     const std::map<std::string, Resource> &resources) {
   (void)resources;
   for (auto &c : commands) {
@@ -389,8 +369,7 @@ void paint_commands(Canvas &canvas, const std::vector<PaintCommand> &commands,
     case PaintCommand::Kind::Image:
       canvas.fill(r, 0xff202833);
       canvas.stroke(r, 0xff506070);
-      canvas.text(r.x + 4, r.y + 4, c.text.empty() ? "[image]" : c.text, 12,
-                  0xffb8c4d0);
+      canvas.text(r.x + 4, r.y + 4, c.text.empty() ? "[image]" : c.text, 12, 0xffb8c4d0);
       break;
     }
   }

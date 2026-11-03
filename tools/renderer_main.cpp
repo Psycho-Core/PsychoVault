@@ -87,8 +87,7 @@ int main() {
         width = message->num("width", 1000);
         height = message->num("height", 700);
         scroll = 0;
-        page.load(*url, message->str("html"),
-                  message->str("mime", "text/html"));
+        page.load(*url, message->str("html"), message->str("mime", "text/html"));
         loaded = true;
         emit(page, width, height, scroll);
       } else if (tag == "resource" && loaded) {

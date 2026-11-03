@@ -17,19 +17,16 @@ static std::wstring wide(const std::string &s) {
   return w;
 }
 static std::string narrow(const std::wstring &w) {
-  int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), int(w.size()), nullptr, 0,
-                              nullptr, nullptr);
+  int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), int(w.size()), nullptr, 0, nullptr, nullptr);
   std::string s(n, 0);
-  WideCharToMultiByte(CP_UTF8, 0, w.c_str(), int(w.size()), s.data(), n,
-                      nullptr, nullptr);
+  WideCharToMultiByte(CP_UTF8, 0, w.c_str(), int(w.size()), s.data(), n, nullptr, nullptr);
   return s;
 }
 #endif
 std::string default_profile_directory() {
 #ifdef _WIN32
   wchar_t *local = nullptr;
-  if (SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local) != S_OK ||
-      !local)
+  if (SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local) != S_OK || !local)
     return ".psychovault";
   std::wstring path = std::wstring(local) + L"\\PsychoVault\\Owned";
   CoTaskMemFree(local);
@@ -47,8 +44,7 @@ static bool make_directory(const std::string &path) {
     std::wstring part = w.substr(0, pos);
     CreateDirectoryW(part.c_str(), nullptr);
   }
-  return CreateDirectoryW(w.c_str(), nullptr) ||
-         GetLastError() == ERROR_ALREADY_EXISTS;
+  return CreateDirectoryW(w.c_str(), nullptr) || GetLastError() == ERROR_ALREADY_EXISTS;
 #else
   return mkdir(path.c_str(), 0700) == 0 || errno == EEXIST;
 #endif
@@ -111,32 +107,29 @@ bool Profile::save() {
   settings.set("restoreTabs", restore_tabs);
   settings.set("workspaces", workspaces);
   settings.set("customSearch", custom_search);
-  Json bookmarks = Json::make_array();
-  for (auto &b : bookmarks) {
+  Json bookmarks_json = Json::make_array();
+  for (auto &b : this->bookmarks) {
     Json j = Json::make_object();
     j.set("title", b.title);
     j.set("url", b.url);
-    bookmarks.array.push_back(j);
+    bookmarks_json.array.push_back(j);
   }
-  Json history = Json::make_array();
-  for (auto &h : history) {
+  Json history_json = Json::make_array();
+  for (auto &h : this->history) {
     Json j = Json::make_object();
     j.set("title", h.title);
     j.set("url", h.url);
     j.set("visited", h.visited);
-    history.array.push_back(j);
+    history_json.array.push_back(j);
   }
   Json session = Json::make_array();
   for (auto &t : session_tabs)
     session.array.push_back(Json(t));
-  return write_file_atomic(directory + "/owned-settings.json",
-                           settings.dump() + "\n", error) &&
-         write_file_atomic(directory + "/owned-bookmarks.json",
-                           bookmarks.dump() + "\n", error) &&
-         write_file_atomic(directory + "/owned-history.json",
-                           history.dump() + "\n", error) &&
-         write_file_atomic(directory + "/owned-session.json",
-                           session.dump() + "\n", error);
+  return write_file_atomic(directory + "/owned-settings.json", settings.dump() + "\n", error) &&
+         write_file_atomic(directory + "/owned-bookmarks.json", bookmarks_json.dump() + "\n",
+                           error) &&
+         write_file_atomic(directory + "/owned-history.json", history_json.dump() + "\n", error) &&
+         write_file_atomic(directory + "/owned-session.json", session.dump() + "\n", error);
 }
 void Profile::visit(const std::string &title, const std::string &url) {
   if (private_mode || !starts(url, "http"))
