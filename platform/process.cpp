@@ -213,6 +213,11 @@ bool Process::start(const std::string &exe, const std::string &args, bool sandbo
       error = "cannot grant renderer execute access";
       return false;
     }
+    auto slash = exe.find_last_of("/\\");
+    if (slash != std::string::npos && !grant_execute(wide(exe.substr(0, slash)), app_sid)) {
+      error = "cannot grant renderer directory traversal";
+      return false;
+    }
   }
   STARTUPINFOEXW si{};
   si.StartupInfo.cb = sizeof(si);

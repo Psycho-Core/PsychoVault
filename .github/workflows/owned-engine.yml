@@ -81,6 +81,13 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force build | Out-Null
           "I did not publish a release. This build failed for commit $env:GITHUB_SHA. Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID" | Set-Content build/FAILURE.txt
+          if (Test-Path build/sandbox-test.txt) {
+            $sandbox = Get-Content build/sandbox-test.txt -Tail 40
+            "## Sandbox test output`n`n``````" | Add-Content $env:GITHUB_STEP_SUMMARY
+            $sandbox | Add-Content $env:GITHUB_STEP_SUMMARY
+            "``````" | Add-Content $env:GITHUB_STEP_SUMMARY
+            foreach ($line in $sandbox) { Write-Host "::error::$line" }
+          }
           if (Test-Path build/build.log) {
             $tail = Get-Content build/build.log -Tail 120
             $tail | Set-Content build/build-tail.txt
