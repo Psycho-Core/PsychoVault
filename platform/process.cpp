@@ -235,10 +235,14 @@ bool Process::start(const std::string &exe, const std::string &args, bool sandbo
       error = "cannot grant renderer execute access";
       return false;
     }
-    auto slash = exe.find_last_of("/\\");
-    if (slash != std::string::npos && !grant_execute(wide(exe.substr(0, slash)), app_sid)) {
-      error = "cannot grant renderer directory traversal";
-      return false;
+    for (size_t cut = exe.find_last_of("/\\"); cut != std::string::npos && cut > 0;
+         cut = exe.find_last_of("/\\", cut - 1)) {
+      if (!grant_execute(wide(exe.substr(0, cut)), app_sid)) {
+        error = "cannot grant renderer directory traversal";
+        return false;
+      }
+      if (cut <= 2)
+        break;
     }
     if (!grant_object(GetProcessWindowStation(), app_sid,
                       GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE)) {
