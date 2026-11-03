@@ -250,7 +250,7 @@ bool Process::start(const std::string &exe, const std::string &args, bool sandbo
       return false;
     }
     if (!grant_object(GetThreadDesktop(GetCurrentThreadId()), app_sid,
-                      DESKTOP_ALL_ACCESS)) {
+                      (STANDARD_RIGHTS_REQUIRED | 0x01FF))) {
       error = "cannot grant renderer desktop access";
       return false;
     }
