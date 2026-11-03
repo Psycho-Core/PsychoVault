@@ -41,13 +41,14 @@ def main():
     if compiler=="auto":compiler="msvc" if windows else "gcc"
     env=msvc_env() if compiler=="msvc" else os.environ.copy()
     cxx="cl" if compiler=="msvc" else os.environ.get("CXX","g++")
-    def target(name,sources,libs=(),subsystem=None):
+    def target(name,sources,libs=(),subsystem=None,entry=None):
         obj=out/"obj"/name;obj.parent.mkdir(parents=True,exist_ok=True);obj.mkdir(exist_ok=True)
         if compiler=="msvc":
             cmd=[cxx,"/nologo","/std:c++20","/EHsc","/O2","/MT","/W3","/WX","/permissive-","/DUNICODE","/D_UNICODE","/D_CRT_SECURE_NO_WARNINGS","/sdl","/GS","/guard:cf","/I"+str(ROOT),"/Fo"+str(obj)+os.sep]
             cmd+= [str(ROOT/s) for s in sources]
             cmd+=["/link","/DYNAMICBASE","/NXCOMPAT","/HIGHENTROPYVA","/INCREMENTAL:NO"]
             if subsystem:cmd+=["/SUBSYSTEM:"+subsystem]
+            if entry:cmd+=["/ENTRY:"+entry]
             cmd+= [l+".lib" for l in libs]
             cmd+=["/OUT:"+str(out/(name+".exe"))]
         else:
@@ -60,7 +61,7 @@ def main():
     winlibs=["kernel32","user32","gdi32","advapi32","userenv","bcrypt","winhttp","shell32","ole32","dwmapi"]
     target("pv-engine",ENGINE+["tools/engine_cli.cpp"],winlibs if windows else [])
     target("pv-tests",ENGINE+PLATFORM+["tests/test_main.cpp"],winlibs if windows else [])
-    target("pv-renderer",ENGINE+["platform/process.cpp","tools/renderer_main.cpp"],winlibs + ["ws2_32"] if windows else [])
+    target("pv-renderer",ENGINE+["platform/process.cpp","tools/renderer_main.cpp"],winlibs + ["ws2_32"] if windows else [],"WINDOWS" if windows else None,"mainCRTStartup" if windows else None)
     if windows:
         target("PsychoVault",ENGINE+PLATFORM+["shell/win_main.cpp"],winlibs,"WINDOWS")
         target("pv-sandbox-test",ENGINE+["platform/process.cpp","tools/sandbox_test.cpp"],winlibs)

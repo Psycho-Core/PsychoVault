@@ -448,7 +448,8 @@ bool Process::start(const std::string &exe, const std::string &args, bool sandbo
   }
   STARTUPINFOEXW si{};
   si.StartupInfo.cb = DWORD(sizeof(si));
-  si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+  si.StartupInfo.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+  si.StartupInfo.wShowWindow = SW_HIDE;
   si.StartupInfo.hStdInput = child.value;
   si.StartupInfo.hStdOutput = child.value;
   si.StartupInfo.hStdError = child.value;
@@ -479,7 +480,7 @@ bool Process::start(const std::string &exe, const std::string &args, bool sandbo
   si.lpAttributeList = attrs;
   std::wstring command = L"\"" + wide(exe) + L"\" " + wide(args);
   PROCESS_INFORMATION pi{};
-  DWORD flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_NO_WINDOW;
+  DWORD flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED;
   BOOL created = CreateProcessW(wide(exe).c_str(), command.data(), nullptr, nullptr, TRUE, flags,
                                 nullptr, nullptr, &si.StartupInfo, &pi);
   DWORD create_error = created ? 0 : GetLastError();
