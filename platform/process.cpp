@@ -567,6 +567,11 @@ bool Process::start(const std::string &exe, const std::string &args, bool sandbo
   limits.ProcessMemoryLimit = SIZE_T(512) * 1024 * 1024;
   if (!SetInformationJobObject(job_, JobObjectExtendedLimitInformation, &limits, sizeof(limits)))
     return fail(os_error("SetInformationJobObject"));
+  JOBOBJECT_BASIC_UI_RESTRICTIONS ui{};
+  ui.UIRestrictionsClass = JOB_OBJECT_UILIMIT_HANDLES | JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS |
+                           JOB_OBJECT_UILIMIT_DISPLAYSETTINGS | JOB_OBJECT_UILIMIT_EXITWINDOWS;
+  if (!SetInformationJobObject(job_, JobObjectBasicUIRestrictions, &ui, sizeof(ui)))
+    return fail(os_error("SetInformationJobObject UI restrictions"));
   if (!AssignProcessToJobObject(job_, process_))
     return fail(os_error("AssignProcessToJobObject"));
   if (ResumeThread(thread_) == DWORD(-1))

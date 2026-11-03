@@ -92,6 +92,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -c "import json; d=json.load(open('build/sandbox-test.json', encoding='utf-8')); print(json.dumps(d, indent=2)); assert d.get('ok') is True"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "## Required sandbox gate`n`n``````json" | Add-Content $env:GITHUB_STEP_SUMMARY
+          Get-Content build/sandbox-test.json | Add-Content $env:GITHUB_STEP_SUMMARY
+          "``````" | Add-Content $env:GITHUB_STEP_SUMMARY
       - name: Package Windows preview ZIP
         shell: pwsh
         run: |
