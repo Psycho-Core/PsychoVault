@@ -2,7 +2,6 @@
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include <iostream>
 #include <string>
 int main(int argc, char **argv) {
   HANDLE token = nullptr;
@@ -25,8 +24,11 @@ int main(int argc, char **argv) {
     CloseHandle(file);
   bool file_denied = file == INVALID_HANDLE_VALUE &&
                      (file_error == ERROR_ACCESS_DENIED || file_error == ERROR_SHARING_VIOLATION);
-  std::cout << "{\"appContainer\":" << is_appcontainer << ",\"tokenError\":" << token_error
-            << ",\"fileDenied\":" << file_denied << ",\"fileError\":" << file_error
-            << ",\"networkTested\":false}\n";
+  std::string out = "{\"appContainer\":" + std::to_string(is_appcontainer) +
+                    ",\"tokenError\":" + std::to_string(token_error) +
+                    ",\"fileDenied\":" + (file_denied ? "1" : "0") +
+                    ",\"fileError\":" + std::to_string(file_error) + ",\"networkTested\":false}\n";
+  DWORD written = 0;
+  WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), out.data(), DWORD(out.size()), &written, nullptr);
   return 0;
 }
