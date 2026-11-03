@@ -33,6 +33,6 @@ I fixed actual hosted failures instead of hiding them: MSVC environment discover
 ## Build links
 
 - PR #63: https://github.com/Psycho-Core/PsychoVault/pull/63
-- Development workflow: https://github.com/Psycho-Core/PsychoVault/actions/workflows/owned-engine.yml
+- Development workflow: https://github.com/Psycho-Core/PsychoVault/actions/workflows/Psycho_owned-engine.yml
 
 - Preview build links: https://github.com/Psycho-Core/PsychoVault/actions/runs/41574713466 and https://github.com/Psycho-Core/PsychoVault/actions/runs/41575214798

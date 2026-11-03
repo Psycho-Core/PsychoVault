@@ -81,7 +81,7 @@ def main() -> int:
             text = text.replace(old, new)
         # Bare basenames appear in #include "...", compiler source lists and logs.
         for old, new in ordered_names:
-            text = re.sub(r"(?<![\w/])" + re.escape(old), new, text)
+            text = re.sub(r"(?<!\w)" + re.escape(old), new, text)
         if text != original:
             target.write_text(text, encoding="utf-8")
             rewritten += 1

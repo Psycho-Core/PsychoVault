@@ -77,9 +77,9 @@ jobs:
           $server = Start-Process python -ArgumentList '-m','http.server','8765','--directory','tests/fixtures' -PassThru -WindowStyle Hidden
           try {
             Start-Sleep -Seconds 1
-            .\build\PsychoVault.exe --smoke --url http://127.0.0.1:8765/engine-smoke.html --capture build/captures/native-engine.png --profile build/test-profile
+            .\build\PsychoVault.exe --smoke --url http://127.0.0.1:8765/Psycho_engine-smoke.html --capture build/captures/native-engine.png --profile build/test-profile
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            .\build\PsychoVault.exe --smoke --expect-image --url http://127.0.0.1:8765/browser-smoke.html --capture build/captures/native-browser.png --profile build/test-profile
+            .\build\PsychoVault.exe --smoke --expect-image --url http://127.0.0.1:8765/Psycho_browser-smoke.html --capture build/captures/native-browser.png --profile build/test-profile
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } finally {
             Stop-Process -Id $server.Id -ErrorAction SilentlyContinue

@@ -2,7 +2,7 @@
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path $PSScriptRoot -Parent)
 $repo = 'Psycho-Core/PsychoVault'
-$actions = "https://github.com/$repo/actions/workflows/owned-engine.yml"
+$actions = "https://github.com/$repo/actions/workflows/Psycho_owned-engine.yml"
 $branch = (& git rev-parse --abbrev-ref HEAD).Trim()
 $head = (& git rev-parse HEAD).Trim()
 $remote = (& git ls-remote origin "refs/heads/$branch")

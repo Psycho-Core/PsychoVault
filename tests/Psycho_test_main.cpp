@@ -167,7 +167,7 @@ int main() {
         *parse_url("https://local.test/"),
         "<!doctype html><body style='margin:0'><img src='Psycho_pixel.png' width='6' height='10'></body>");
     Resource image;
-    image.url = "https://local.test/pixel.png";
+    image.url = "https://local.test/Psycho_pixel.png";
     image.mime = "image/png";
     image.bytes.assign(fixtures::rgba_filters.begin(), fixtures::rgba_filters.end());
     image_page.resource(image);
@@ -178,7 +178,7 @@ int main() {
           command.num("h") == 10)
         painted = true;
     CHECK(painted);
-    CHECK(image_page.images().count("https://local.test/pixel.png") == 1);
+    CHECK(image_page.images().count("https://local.test/Psycho_pixel.png") == 1);
     Canvas surface(20, 20, 0xff000000);
     surface.image(image_page.images().begin()->second, {0, 0, 6, 10});
     CHECK(surface.pixels[2] == 255);
