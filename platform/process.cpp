@@ -177,6 +177,45 @@ bool grant_object(HANDLE object, PSID sid, ACCESS_MASK access, std::string &erro
   }
   return true;
 }
+bool grant_private_object_principals(HANDLE object, PSID app_sid, ACCESS_MASK access,
+                                     std::string &error) {
+  if (!grant_object(object, app_sid, access, error))
+    return false;
+  HANDLE token = nullptr;
+  std::vector<uint8_t> buffer;
+  if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+    DWORD needed = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &needed);
+    buffer.resize(needed);
+    if (needed && GetTokenInformation(token, TokenUser, buffer.data(), needed, &needed)) {
+      PSID user = reinterpret_cast<PTOKEN_USER>(buffer.data())->User.Sid;
+      if (!grant_object(object, user, access, error)) {
+        CloseHandle(token);
+        return false;
+      }
+    }
+    needed = 0;
+    GetTokenInformation(token, TokenLogonSid, nullptr, 0, &needed);
+    buffer.resize(needed);
+    if (needed && GetTokenInformation(token, TokenLogonSid, buffer.data(), needed, &needed)) {
+      PSID logon = reinterpret_cast<PTOKEN_GROUPS>(buffer.data())->Groups[0].Sid;
+      if (!grant_object(object, logon, access, error)) {
+        CloseHandle(token);
+        return false;
+      }
+    }
+    CloseHandle(token);
+  }
+  SID_IDENTIFIER_AUTHORITY authority = {0, 0, 0, 0, 0, 15};
+  PSID all_packages = nullptr;
+  if (AllocateAndInitializeSid(&authority, 2, 2, 1, 0, 0, 0, 0, 0, 0, &all_packages)) {
+    bool ok = grant_object(object, all_packages, access, error);
+    FreeSid(all_packages);
+    if (!ok)
+      return false;
+  }
+  return true;
+}
 bool overlapped_io(HANDLE file, void *data, DWORD size, bool reading, HANDLE stop, int timeout,
                    size_t &transferred, std::string &error) {
   transferred = 0;
@@ -433,28 +472,14 @@ bool Process::start(const std::string &exe, const std::string &args, bool sandbo
     desktop_ = CreateDesktopW(L"Renderer", nullptr, nullptr, 0, DESKTOP_ALL_ACCESS, nullptr);
     if (!desktop_)
       return fail(os_error("CreateDesktop"));
-    // The child token is checked against both the user principal and the
-    // AppContainer principal. These grants are on private objects only.
-    HANDLE user_token = nullptr;
-    std::vector<uint8_t> user_buffer;
-    PSID user_sid = nullptr;
-    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &user_token)) {
-      DWORD needed = 0;
-      GetTokenInformation(user_token, TokenUser, nullptr, 0, &needed);
-      user_buffer.resize(needed);
-      if (needed && GetTokenInformation(user_token, TokenUser, user_buffer.data(), needed, &needed))
-        user_sid = reinterpret_cast<PTOKEN_USER>(user_buffer.data())->User.Sid;
-      CloseHandle(user_token);
-    }
+    // These grants are on private renderer objects only. I include the user,
+    // logon and application-package principals because USER32 initialization
+    // can check more than the package SID alone.
     ACCESS_MASK station_access = WINSTA_ALL_ACCESS | STANDARD_RIGHTS_REQUIRED;
     ACCESS_MASK desktop_access = DESKTOP_ALL_ACCESS;
-    if (user_sid && !grant_object(station_, user_sid, station_access, error))
-      return fail("cannot grant private window-station user access: " + error);
-    if (!grant_object(station_, app_sid, station_access, error))
+    if (!grant_private_object_principals(station_, app_sid, station_access, error))
       return fail("cannot grant private window-station access: " + error);
-    if (user_sid && !grant_object(desktop_, user_sid, desktop_access, error))
-      return fail("cannot grant private desktop user access: " + error);
-    if (!grant_object(desktop_, app_sid, desktop_access, error))
+    if (!grant_private_object_principals(desktop_, app_sid, desktop_access, error))
       return fail("cannot grant private desktop access: " + error);
     desktop_name = station_name + L"\\Renderer";
     restricted = true;
