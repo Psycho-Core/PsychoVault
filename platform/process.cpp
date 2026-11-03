@@ -426,7 +426,8 @@ bool Process::start(const std::string &exe, const std::string &args, bool sandbo
         return fail("cannot grant renderer ancestor traversal");
     }
     std::wstring station_name = L"PsychoVault." + wide(unique);
-    station_ = CreateWindowStationW(station_name.c_str(), 0, WINSTA_ALL_ACCESS, nullptr);
+    station_ = CreateWindowStationW(station_name.c_str(), 0,
+                                    WINSTA_ALL_ACCESS | STANDARD_RIGHTS_REQUIRED, nullptr);
     if (!station_)
       return fail(os_error("CreateWindowStation"));
     desktop_ = CreateDesktopW(L"Renderer", nullptr, nullptr, 0, DESKTOP_ALL_ACCESS, nullptr);
@@ -434,12 +435,12 @@ bool Process::start(const std::string &exe, const std::string &args, bool sandbo
       return fail(os_error("CreateDesktop"));
     if (!grant_object(station_, app_sid,
                       WINSTA_ENUMERATE | WINSTA_ENUMDESKTOPS | WINSTA_READATTRIBUTES |
-                          WINSTA_ACCESSGLOBALATOMS | READ_CONTROL | SYNCHRONIZE,
+                          WINSTA_ACCESSGLOBALATOMS | READ_CONTROL,
                       error))
       return fail("cannot grant private window-station access: " + error);
     if (!grant_object(desktop_, app_sid,
                       DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_CREATEWINDOW |
-                          DESKTOP_ENUMERATE | READ_CONTROL | SYNCHRONIZE,
+                          DESKTOP_ENUMERATE | READ_CONTROL,
                       error))
       return fail("cannot grant private desktop access: " + error);
     desktop_name = station_name + L"\\Renderer";
