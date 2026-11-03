@@ -31,6 +31,9 @@ def exempt(path: str) -> bool:
     # Captured legacy evidence keeps its original identity.
     if path.startswith("docs/reference/"):
         return True
+    # My extension loader and every third-party extension need this exact name.
+    if name == "manifest.json" and path.startswith("extensions/"):
+        return True
     return pathlib.PurePosixPath(path).suffix not in CODE_SUFFIXES
 
 

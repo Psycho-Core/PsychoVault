@@ -44,6 +44,8 @@ def exempt(path: str) -> str | None:
         return "tool-required dotfile"
     if path.startswith("docs/reference/"):
         return "captured legacy evidence keeps its capture identity"
+    if name == "manifest.json" and path.startswith("extensions/"):
+        return "the extension format requires this exact filename"
     if pathlib.PurePosixPath(path).suffix not in CODE_SUFFIXES:
         return "not authored source"
     return None

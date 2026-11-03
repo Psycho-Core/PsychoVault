@@ -1,39 +1,36 @@
 # My implementation status
 
-I am building the browser in the open, but I am not calling this finished. This page records what the current source actually does and what still has to pass.
+I am building this in the open. This page records what my source actually does and what still has to pass. I do not call this a finished browser.
 
-## Implemented in source
+## Implemented in my own code
 
-| Area | Current implementation | Evidence I still require |
+| Area | What I wrote | Evidence |
 | --- | --- | --- |
-| Base | URL parsing/resolution, UTF-8, JSON, atomic profile writes, OS random bytes | Unit tests and fuzzing |
-| HTML/DOM | Tokenizer, tree builder, entities, forms, selectors, DOM mutation | Pinned WPT subsets |
-| CSS | Syntax, cascade, inheritance, box model, block/inline/flex layout, media queries | Pinned WPT subsets and visual tests |
-| JavaScript | Parser, tree-walking interpreter, closures, objects/arrays, mark-sweep GC, timers, DOM events | Pinned Test262 subsets and long-run stability |
-| Painting | Display list, software raster, owned PNG decoder/encoder, image blitting, Windows OS text rendering | Visual regression and performance tests |
-| Shell | Native Windows window, per-tab renderer sessions, omnibox, Unicode input/paste, stop/reload, home, bookmarks/history, General settings | Full reference UI parity and hosted interaction tests |
-| Networking | Broker-owned WinHTTP GET, TLS validation, redirects, size limits | Proxy, cookies, cache, POST, streaming and leak tests |
-| Process model | Renderer executable, framed binary-resource IPC, private low-labelled desktop AppContainer launcher, job object, required token/file/TCP/UDP probe | Hosted sandbox proof passed; escape tests and crash recovery still open |
-| Profile | Validated owned-profile JSON files, corruption backups, atomic replacement, private mode, active-tab session restore | Migration fixtures and rollback |
-| Builds | GitHub-hosted Windows build, engine tests, sandbox probe, GUI captures | Repeated green runs and signed release gates |
+| Base | URL parsing/resolution, UTF-8, JSON, atomic writes with corruption backups, OS random, monotonic clock | 214 local checks |
+| HTML/DOM | Tokenizer, tree builder, entities, forms, selectors, mutation | Local checks; WPT not run |
+| CSS | Syntax, cascade, inheritance, box model, block/inline/flex, media queries | Local checks; WPT not run |
+| JavaScript | Parser, tree-walking interpreter, closures, objects/arrays, mark-sweep GC, timers, DOM events | Local checks incl. operator-classification regressions; Test262 not run |
+| Painting | Display list, software raster, owned PNG decoder/encoder, image blitting, OS text | Headless and native captures |
+| Shell | Native window, per-tab sandboxed renderers, omnibox, Unicode input/paste, stop/reload, bookmarks, history, downloads panel, all ten settings categories | Native captures; full UI parity not run |
+| Networking | Broker WinHTTP with TLS validation, redirects, size limits, proxy routing, proxy auth, DNT/referrer/UA policy, host block lists | Local policy checks; live proxy not run |
+| Proxy/VPN | Fixed servers, bypass lists incl. CIDR and globs, PAC evaluated in my own interpreter, fail-closed routing | Local routing and PAC checks |
+| Extensions | MV2/MV3 manifest validation, path-traversal rejection, default-deny permissions, gated `chrome.runtime/storage/proxy/webRequest/privacy/alarms/action`, bundled install, persisted storage | Local permission and end-to-end bridge checks |
+| VPN bridge | My own bundled provider extension driving my real proxy, storage, WebRTC policy and auth-provider paths | End-to-end local check |
+| Downloads | Threaded transfers, progress, cancel, safe filenames, collision handling, partial-file commit, persisted list | Local naming and policy checks; live download not run |
+| Process model | Framed IPC, private low-labelled desktop AppContainer, job limits, required token/file/TCP/UDP gate | Passed on hosted Windows |
+| Profile | Validated JSON, corruption backups, private-mode separation, active-tab restore, all new settings persisted | Local round-trip checks |
+| Release | Version file, ZIP + bare executables + SHA-256 + update manifest, gated publish, post-publish asset verification | Release workflow; first publish pending |
 
-## Not implemented yet
+## Not implemented, and I show honest status instead of fake controls
 
-I have not implemented the extension host, Proton VPN, PAC/proxy ownership, WebRTC, full JavaScript/CSS compatibility, non-PNG image formats, media, canvas, workers, IndexedDB, Web Crypto, vault migration, updater signing, installer, Android, or the full 125-control settings contract.
+- **Media.** No `<video>`/`<audio>` pipeline, no Media Source Extensions, no DRM. YouTube and Netflix do not play. DRM can only ever arrive as a separately licensed extension, never inside my engine.
+- **Proton VPN.** Not bundled. Proton's extension is TypeScript needing their Node toolchain, and its worker needs modern JavaScript my engine lacks. My own VPN bridge is bundled and clearly labelled as mine.
+- **TLS-to-proxy and SOCKS5.** I refuse these rather than leak a direct connection. This is a real gap because Proton uses TLS-to-proxy.
+- **Modern JavaScript.** No classes, modules, promises, async/await, regular expressions, Proxy or Symbol.
+- **Vault and passwords.** Not implemented. I refuse to show a password field that stores nothing, and I have migrated no existing vault data.
+- WebRTC stack, canvas, workers, IndexedDB, Web Crypto, translation, spelling dictionary, media keys, mod CSS.
+- Installer, code signing, updater install-and-rollback, Android, full 125-control settings parity.
 
-I will not show fake controls for those features. I will add them when the behaviour behind them exists.
+## My naming rule
 
-## Language decision
-
-My earlier plan proposed Rust. I am implementing the first engine in dependency-free C++20 because the available compiler lets me compile and test the engine immediately, and the Windows SDK gives me direct access to the platform APIs I need. I am recording this as a change, not pretending the plan always said C++.
-
-I am using RAII, bounded containers, explicit limits, compiler warnings, address/undefined-behaviour sanitizers and a restricted renderer process. I am not claiming C++ gives me Rust's memory-safety guarantees.
-
-## Current verification
-
-- Local GCC engine tests: 33 checks passed.
-- Local GCC address/undefined-behaviour sanitizer run: 33 checks passed, no sanitizer report.
-- Windows hosted build: PR #63 builds and runs the engine tests, headless render and native GUI captures. My direct Winsock sandbox probe failed DLL initialization under AppContainer, so I split the gate: file/token isolation is tested, direct network denial is not claimed. See `docs/Psycho_VERIFICATION.md`.
-- Proton live test: not run.
-- Full UI parity: not run.
-- Android: not run.
+Every file I author starts with `Psycho_` or `PsychoVault`. I keep only these conventional names: `README.md`, `PSYCHO.md`, `NOTICE.txt`, tool-required dotfiles, the captured legacy evidence under `docs/reference/`, and `manifest.json` inside an extension folder because the extension format requires that exact filename. My `tools/Psycho_audit_names.py` enforces this and checks that no stale pre-rename reference survives.

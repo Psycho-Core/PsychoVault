@@ -31,5 +31,37 @@ check('one heavy build concurrency group','group: psychovault-heavy' in workflow
 check('hosted build is Windows','runs-on: windows-2022' in workflow)
 check('double-click build delegates to GitHub','gh workflow run' in (ROOT/'tools/Psycho_start-build.ps1').read_text())
 check('no release publish step in development workflow','gh release create' not in workflow and 'softprops/action-gh-release' not in workflow)
+# My release pipeline must never publish an unverified or mislabelled build.
+release_path=ROOT/'.github/workflows/Psycho_release.yml'
+check('I have a release workflow',release_path.exists())
+if release_path.exists():
+    release=release_path.read_text()
+    order=[('build','Psycho_build.py'),('tests','pv-tests.exe'),('sandbox','--sandbox-test'),
+           ('package','Psycho_package.py'),('verify','verify_package.py'),('publish','gh release create')]
+    positions=[(label,release.find(token)) for label,token in order]
+    check('every release stage is present',all(pos>=0 for _,pos in positions),
+          ','.join(label for label,pos in positions if pos<0))
+    check('I publish only after my build, tests, sandbox and hash verification',
+          all(positions[i][1]<positions[i+1][1] for i in range(len(positions)-1)))
+    check('release workflow shares my one-heavy-build group','group: psychovault-heavy' in release)
+    check('I refuse to overwrite a published release','I do not overwrite a published release' in release)
+    check('I refuse a tag that does not match my version file','does not match Psycho_VERSION.txt' in release)
+    check('I verify asset hashes before publishing','hash mismatch' in release)
+    check('I verify published assets after publishing','gh release view' in release)
+    check('I mark the preview as a prerelease','--prerelease' in release)
+    check('release notes state YouTube and Netflix do not play','YouTube and Netflix do not play' in release)
+    check('release notes state Proton is not bundled','Proton VPN is not bundled' in release)
+
+# My extension boundary must stay default-deny.
+extension=(ROOT/'platform/Psycho_extension.cpp').read_text()
+check('my extension host grants permissions explicitly','bool ExtensionHost::grant(' in extension)
+check('a denied API raises a catchable JS error','throw_extension_error' in extension)
+check('I validate extension script paths against traversal','unsafe script path' in extension)
+proxy=(ROOT/'platform/Psycho_proxy.cpp').read_text()
+check('my proxy refuses to leak when fail-closed','fail-closed' in proxy)
+network=(ROOT/'platform/Psycho_network.cpp').read_text()
+check('I refuse a proxy scheme I cannot tunnel','refusing the request rather than connecting directly' in network)
+check('I stream downloads to a partial file before committing','psychovault-part' in network)
+
 print(f'\n{passed} passed, {len(fail)} failed')
 sys.exit(1 if fail else 0)
