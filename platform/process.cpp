@@ -248,7 +248,7 @@ bool Process::start(const std::string &exe, const std::string &args, bool sandbo
   std::vector<wchar_t> cmd(command.begin(), command.end());
   cmd.push_back(0);
   PROCESS_INFORMATION pi{};
-  DWORD flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED;
+  DWORD flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | (sandbox ? CREATE_NO_WINDOW : 0);
   BOOL created = CreateProcessW(wide(exe).c_str(), cmd.data(), nullptr, nullptr, TRUE, flags,
                                 nullptr, nullptr, &si.StartupInfo, &pi);
   DeleteProcThreadAttributeList(attrs);
