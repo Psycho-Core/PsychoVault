@@ -13,7 +13,7 @@ I am building the browser in the open, but I am not calling this finished. This 
 | Painting | Display list, software raster, PNG encoder, Windows OS text rendering | Visual regression and performance tests |
 | Shell | Native Windows window, tabs, omnibox, home, bookmarks/history, General settings | Full reference UI parity |
 | Networking | Broker-owned WinHTTP GET, TLS validation, redirects, size limits | Proxy, cookies, cache, POST, streaming and leak tests |
-| Process model | Renderer executable, framed IPC, AppContainer and job object | Sandbox escape tests and crash recovery |
+| Process model | Renderer executable, framed IPC, AppContainer and job object | File-isolation probe, direct network denial probe, escape tests and crash recovery |
 | Profile | Separate owned-profile JSON files, private mode, session restore | Migration fixtures and rollback |
 | Builds | GitHub-hosted Windows build, engine tests, sandbox probe, GUI captures | Repeated green runs and signed release gates |
 
@@ -33,7 +33,7 @@ I am using RAII, bounded containers, explicit limits, compiler warnings, address
 
 - Local GCC engine tests: 33 checks passed.
 - Local GCC address/undefined-behaviour sanitizer run: 33 checks passed, no sanitizer report.
-- Windows hosted build: PR #63 is the first real build. I have fixed MSVC environment discovery, Windows header order and narrowing warnings from actual hosted failures. I will keep the final run link here when it passes.
+- Windows hosted build: PR #63 builds and runs the engine tests, headless render and native GUI captures. My direct Winsock sandbox probe failed DLL initialization under AppContainer, so I split the gate: file/token isolation is tested, direct network denial is not claimed. See `docs/VERIFICATION.md`.
 - Proton live test: not run.
 - Full UI parity: not run.
 - Android: not run.
