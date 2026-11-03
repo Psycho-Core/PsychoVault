@@ -70,6 +70,47 @@ int main() {
     }
     CHECK(threw);
   }
+  // My own pattern engine, driven from script.
+  CHECK(js_eval("/ab+c/.test('xabbbcy')") == "true");
+  CHECK(js_eval("/ab+c/.test('xacy')") == "false");
+  CHECK(js_eval("var m=/a(b+)(c)/.exec('xxabbbcyy');m[0]+'|'+m[1]+'|'+m[2]+'|'+m.index") ==
+        "abbbc|bbb|c|2");
+  CHECK(js_eval("'a1b22c'.match(/\\d+/g).join(',')") == "1,22");
+  CHECK(js_eval("'a1b22c'.search(/\\d+/)") == "1");
+  CHECK(js_eval("'a1b22c'.split(/\\d+/).join('-')") == "a-b-c");
+  CHECK(js_eval("'2026-11-03'.replace(/(\\d+)-(\\d+)-(\\d+)/,'$3/$2/$1')") == "03/11/2026");
+  CHECK(js_eval("'x y x'.replace(/x/g,function(m){return m.toUpperCase();})") == "X y X");
+  CHECK(js_eval("new RegExp('a.c','i').test('AxC')") == "true");
+  CHECK(js_eval("String(new RegExp('a+b','gi'))") == "/a+b/gi");
+  CHECK(js_eval("var re=/a/g;re.exec('aa');re.lastIndex") == "1");
+  CHECK(js_eval("/(?<y>\\d{4})/.exec('in 2026')[1]") == "2026");
+  CHECK(js_eval("(()=>{try{new RegExp('(');return 'no';}catch(e){return 'threw';}})()") == "threw");
+  // Promises: handlers are queued and run when the script finishes.
+  {
+    js::Runtime r;
+    r.run("var log=[];Promise.resolve(1).then(function(v){log.push('a'+v);return v+1;})"
+          ".then(function(v){log.push('b'+v);});"
+          "Promise.all([Promise.resolve(10),Promise.resolve(20)]).then(function(v){"
+          "log.push('c'+v.join('+'));});"
+          "Promise.race([Promise.reject('no'),Promise.resolve('yes')])"
+          ".then(null,function(e){log.push('d'+e);});"
+          "Promise.allSettled([1,Promise.reject(2)]).then(function(v){"
+          "log.push('e'+v[0].status+'-'+v[1].status);});"
+          "queueMicrotask(function(){log.push('f');});");
+    CHECK(r.run("log.join(' ')").to_string() == "a1 f b2 c10+20 dno efulfilled-rejected");
+    r.run("var out=[];Promise.reject('e').catch(function(x){out.push(x);});");
+    CHECK(r.run("out.join(',')").to_string() == "e");
+    r.run("var thrown=[];Promise.resolve(1).then(function(){throw new Error('boom');})"
+          ".catch(function(e){thrown.push(e.message);});");
+    CHECK(r.run("thrown.join(',')").to_string() == "boom");
+    bool bad = false;
+    try {
+      r.run("new Promise(3)");
+    } catch (js::JsError &) {
+      bad = true;
+    }
+    CHECK(bad);
+  }
   Page page;
   page.load(*parse_url("https://local.test/"),
             "<!doctype "

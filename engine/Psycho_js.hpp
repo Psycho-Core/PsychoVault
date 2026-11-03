@@ -1,5 +1,6 @@
 #pragma once
 #include "Psycho_base.hpp"
+#include <deque>
 namespace pv::js {
 struct Object;
 struct Env;
@@ -29,6 +30,11 @@ struct Value {
   Json to_json(int depth = 0) const;
 };
 using Values = std::vector<Value>;
+// A promise keeps the handlers waiting on it and the promise each handler
+// settles when it finishes.
+struct PromiseReaction {
+  Value on_fulfilled, on_rejected, child;
+};
 struct Object {
   enum class Kind { Plain, Array, Function, Native, Environment, Host };
   Kind kind = Kind::Plain;
@@ -48,6 +54,14 @@ struct Object {
   Object *setter = nullptr;
   // A class constructor keeps its declaration so new can assign fields.
   const Expr *class_ast = nullptr;
+  // I keep a promise's state, its settled value and everything waiting on it
+  // here, so a promise is an ordinary object to the rest of my engine.
+  int promise_state = 0; // 0 pending, 1 fulfilled, 2 rejected
+  Value promise_result;
+  bool promise_handled = false;
+  std::vector<PromiseReaction> reactions;
+  // An object may own engine state, such as a compiled pattern.
+  std::shared_ptr<void> internal;
   bool marked = false;
 };
 struct Env : Object {
@@ -60,6 +74,8 @@ struct Token {
   std::string text;
   int line = 1;
   bool newline = false;
+  // Only a pattern literal uses this.
+  std::string flags;
 };
 struct Expr {
   enum class Kind {
@@ -79,7 +95,8 @@ struct Expr {
     New,
     Function,
     Template,
-    Class
+    Class,
+    Regex
   };
   Kind kind;
   Value literal;
@@ -93,6 +110,8 @@ struct Expr {
   // Class fields are assigned to every new instance.
   std::vector<std::pair<std::string, std::unique_ptr<Expr>>> fields;
   Function *function = nullptr;
+  // A pattern literal carries its flags beside its source text.
+  std::string flags;
   int line = 1;
   explicit Expr(Kind k) : kind(k) {}
 };
@@ -160,6 +179,16 @@ public:
   Value make_array(const Values &values = {});
   Value make_native(std::function<Value(Values &)> fn);
   Value host_value(int id, const std::string &type = "node");
+  // I compile a pattern here so a literal and a constructor behave the same.
+  Value make_regex(const std::string &pattern, const std::string &flags);
+  Value make_promise();
+  void settle_promise(Object *promise, int state, const Value &value);
+  Value promise_then(const Value &promise, const Value &on_fulfilled, const Value &on_rejected);
+  // I run queued promise work. My page calls this after every script and timer.
+  void drain_microtasks(size_t limit = 200000);
+  bool has_microtasks() const {
+    return !microtasks_.empty();
+  }
   Object *allocate(Object::Kind kind);
   Env &global() {
     return *global_;
@@ -202,6 +231,25 @@ private:
   int depth_ = 0;
   size_t allocated_since_gc_ = 0;
   Value last_statement_;
+  struct Microtask {
+    std::function<void()> run;
+    // I mark these values while the task is queued, so a collection cannot free
+    // a promise that is still waiting its turn.
+    std::vector<Value> roots;
+  };
+  std::deque<Microtask> microtasks_;
+  Object *regex_prototype_ = nullptr;
+  Object *promise_prototype_ = nullptr;
+  void enqueue_microtask(std::function<void()> run, std::vector<Value> roots);
+  // Patterns: one entry point each for the string methods that take one.
+  Value regex_exec(const Value &self, const Value &input);
+  Value string_match(const std::string &subject, const Value &pattern);
+  Value string_search(const std::string &subject, const Value &pattern);
+  Value string_split(const std::string &subject, const Value &separator);
+  Value string_replace(const std::string &subject, const Value &pattern, const Value &replacement,
+                       bool all);
+  Value settle_reaction(Object *promise, const PromiseReaction &reaction, int state,
+                        const Value &value);
   void install_builtins();
   void hoist(const std::vector<std::unique_ptr<Stmt>> &statements, Env &env);
   Flow execute(const Stmt &statement, Env &env, Value this_value);

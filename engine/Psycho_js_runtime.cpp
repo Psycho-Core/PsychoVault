@@ -1,9 +1,16 @@
 #include "Psycho_js.hpp"
+#include "Psycho_regex.hpp"
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <iomanip>
 namespace pv::js {
+namespace {
+bool callable(const Value &value) {
+  return value.type == Value::Type::Object && value.object &&
+         (value.object->kind == Object::Kind::Function || value.object->kind == Object::Kind::Native);
+}
+} // namespace
 Value Value::undef() {
   return {};
 }
@@ -110,7 +117,12 @@ std::string Value::to_string() const {
              "() { [PsychoVault code] }";
     if (object->kind == Object::Kind::Native)
       return "function () { [PsychoVault code] }";
+    if (object->host_type == "RegExp")
+      return "/" + object->properties["source"].to_string() + "/" +
+             object->properties["flags"].to_string();
     if (object->kind == Object::Kind::Host)
+      return "[object " + object->host_type + "]";
+    if (!object->host_type.empty())
       return "[object " + object->host_type + "]";
     return "[object Object]";
   }
@@ -377,6 +389,16 @@ void Runtime::mark(Object *o) {
     for (auto &v : p->properties)
       if (v.second.type == Value::Type::Object && v.second.object)
         stack.push_back(v.second.object);
+    if (p->promise_result.type == Value::Type::Object && p->promise_result.object)
+      stack.push_back(p->promise_result.object);
+    for (auto &reaction : p->reactions) {
+      if (reaction.on_fulfilled.type == Value::Type::Object && reaction.on_fulfilled.object)
+        stack.push_back(reaction.on_fulfilled.object);
+      if (reaction.on_rejected.type == Value::Type::Object && reaction.on_rejected.object)
+        stack.push_back(reaction.on_rejected.object);
+      if (reaction.child.type == Value::Type::Object && reaction.child.object)
+        stack.push_back(reaction.child.object);
+    }
   }
 }
 void Runtime::collect() {
@@ -396,6 +418,10 @@ void Runtime::collect() {
       if (v.type == Value::Type::Object)
         mark(v.object);
   }
+  for (auto &task : microtasks_)
+    for (auto &v : task.roots)
+      if (v.type == Value::Type::Object && v.object)
+        mark(v.object);
   size_t live = 0;
   for (auto &o : objects_)
     if (o) {
@@ -554,7 +580,6 @@ Value Runtime::get_member(const Value &base, const std::string &key) {
   if (base.type == Value::Type::String) {
     if (key == "length")
       return Value(double(utf8_decode(base.string).size()));
-    Runtime &r = *this;
     std::string s = base.string;
     if (key == "toUpperCase" || key == "toLowerCase")
       return make_native([s, key](Values &) {
@@ -612,28 +637,14 @@ Value Runtime::get_member(const Value &base, const std::string &key) {
         return Value(out);
       });
     if (key == "split")
-      return make_native([&r, s](Values &a) {
-        Values out;
-        if (a.empty() || a[0].type == Value::Type::Undefined)
-          return r.make_array({Value(s)});
-        std::string sep = a[0].to_string();
-        if (sep.empty()) {
-          for (auto c : utf8_decode(s))
-            out.emplace_back(utf8_encode(c));
-        } else {
-          size_t pos = 0;
-          while (true) {
-            size_t n = s.find(sep, pos);
-            out.emplace_back(s.substr(pos, n == std::string::npos ? n : n - pos));
-            if (n == std::string::npos)
-              break;
-            pos = n + sep.size();
-            if (out.size() > 100000)
-              throw std::runtime_error("string split limit");
-          }
-        }
-        return r.make_array(out);
-      });
+      return make_native(
+          [this, s](Values &a) { return string_split(s, a.empty() ? Value() : a[0]); });
+    if (key == "match")
+      return make_native(
+          [this, s](Values &a) { return string_match(s, a.empty() ? Value() : a[0]); });
+    if (key == "search")
+      return make_native(
+          [this, s](Values &a) { return string_search(s, a.empty() ? Value() : a[0]); });
     if (key == "indexOf" || key == "lastIndexOf" || key == "includes" || key == "startsWith" ||
         key == "endsWith")
       return make_native([s, key](Values &a) {
@@ -648,20 +659,9 @@ Value Runtime::get_member(const Value &base, const std::string &key) {
         return Value(n == std::string::npos ? -1.0 : double(n));
       });
     if (key == "replace" || key == "replaceAll")
-      return make_native([s, key](Values &a) {
-        std::string from = a.empty() ? "undefined" : a[0].to_string(),
-                    to = a.size() > 1 ? a[1].to_string() : "undefined";
-        if (from.empty())
-          return Value(to + s);
-        size_t p = s.find(from);
-        if (p == std::string::npos)
-          return Value(s);
-        std::string out = s;
-        do {
-          out.replace(p, from.size(), to);
-          p = key == "replaceAll" ? out.find(from, p + to.size()) : std::string::npos;
-        } while (p != std::string::npos);
-        return Value(out);
+      return make_native([this, s, key](Values &a) {
+        return string_replace(s, a.empty() ? Value() : a[0], a.size() > 1 ? a[1] : Value(),
+                              key == "replaceAll");
       });
     if (key == "repeat")
       return make_native([s](Values &a) {
@@ -734,6 +734,51 @@ Value Runtime::get_member(const Value &base, const std::string &key) {
     auto it = p->properties.find(key);
     if (it != p->properties.end())
       return it->second;
+  }
+  if (o->host_type == "Promise") {
+    Value self = base;
+    if (key == "then")
+      return make_native([this, self](Values &a) {
+        return promise_then(self, a.empty() ? Value() : a[0], a.size() > 1 ? a[1] : Value());
+      });
+    if (key == "catch")
+      return make_native(
+          [this, self](Values &a) { return promise_then(self, Value(), a.empty() ? Value() : a[0]); });
+    if (key == "finally")
+      return make_native([this, self](Values &a) {
+        Value handler = a.empty() ? Value() : a[0];
+        Value on_ok = make_native([this, handler](Values &args) {
+          if (callable(handler)) {
+            Values none;
+            call(handler, none, Value());
+          }
+          return args.empty() ? Value() : args[0];
+        });
+        Value on_err = make_native([this, handler](Values &args) -> Value {
+          if (callable(handler)) {
+            Values none;
+            call(handler, none, Value());
+          }
+          // I pass the rejection along instead of swallowing it.
+          throw JsError{args.empty() ? Value("undefined") : args[0]};
+        });
+        return promise_then(self, on_ok, on_err);
+      });
+  }
+  if (o->host_type == "RegExp") {
+    Value self = base;
+    if (key == "test")
+      return make_native([this, self](Values &a) {
+        return Value(regex_exec(self, a.empty() ? Value() : a[0]).type != Value::Type::Null);
+      });
+    if (key == "exec")
+      return make_native(
+          [this, self](Values &a) { return regex_exec(self, a.empty() ? Value() : a[0]); });
+    if (key == "toString")
+      return make_native([self](Values &) {
+        return Value("/" + self.object->properties["source"].to_string() + "/" +
+                     self.object->properties["flags"].to_string());
+      });
   }
   if (o->kind == Object::Kind::Function && key == "name")
     return Value(o->function ? o->function->name : "");
@@ -1228,6 +1273,8 @@ Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
   switch (e.kind) {
   case Expr::Kind::Literal:
     return e.literal;
+  case Expr::Kind::Regex:
+    return make_regex(e.text, e.flags);
   case Expr::Kind::This:
     return this_value;
   case Expr::Kind::Identifier: {
@@ -1474,12 +1521,490 @@ Value Runtime::run(std::string_view source) {
     }
   } catch (...) {
     env_stack_.pop_back();
+    try {
+      drain_microtasks();
+    } catch (...) {
+    }
     collect();
     throw;
   }
   env_stack_.pop_back();
+  drain_microtasks();
   collect();
   return last;
+}
+
+
+// ---------------------------------------------------------------------------
+// Patterns
+// ---------------------------------------------------------------------------
+Value Runtime::make_regex(const std::string &pattern, const std::string &flags) {
+  std::string error;
+  auto compiled = Regex::compile(pattern, flags, error);
+  if (!compiled)
+    throw JsError{Value("SyntaxError: " + error)};
+  Value value = make_object();
+  value.object->host_type = "RegExp";
+  value.object->internal = std::make_shared<Regex>(std::move(*compiled));
+  const Regex *re = static_cast<const Regex *>(value.object->internal.get());
+  value.object->properties["source"] = Value(pattern);
+  value.object->properties["flags"] = Value(flags);
+  value.object->properties["global"] = Value(re->global());
+  value.object->properties["ignoreCase"] = Value(re->ignore_case());
+  value.object->properties["multiline"] = Value(re->multiline());
+  value.object->properties["sticky"] = Value(re->sticky());
+  value.object->properties["lastIndex"] = Value(0.0);
+  if (regex_prototype_) {
+    value.object->prototype = regex_prototype_;
+    value.object->properties["__proto__"] = Value(regex_prototype_);
+  }
+  return value;
+}
+
+namespace {
+// I slice a run of code points back into text.
+std::string slice_codepoints(const std::vector<uint32_t> &cps, size_t begin, size_t end) {
+  std::string out;
+  for (size_t i = begin; i < end && i < cps.size(); ++i)
+    out += utf8_encode(cps[i]);
+  return out;
+}
+} // namespace
+
+Value Runtime::regex_exec(const Value &self, const Value &input) {
+  if (self.type != Value::Type::Object || !self.object)
+    return Value::null();
+  auto compiled = std::static_pointer_cast<Regex>(self.object->internal);
+  if (!compiled)
+    return Value::null();
+  std::string subject;
+  if (input.type != Value::Type::Undefined && input.type != Value::Type::Null)
+    subject = input.to_string();
+  auto cps = utf8_decode(subject);
+  bool stateful = compiled->global() || compiled->sticky();
+  long long last = stateful ? (long long)self.object->properties["lastIndex"].to_number() : 0;
+  RegexResult result;
+  bool matched = false;
+  try {
+    matched = compiled->search(cps, size_t(std::max(0LL, last)), result);
+  } catch (const std::exception &e) {
+    throw JsError{Value(std::string("RegExp: ") + e.what())};
+  }
+  if (!matched) {
+    if (stateful)
+      self.object->properties["lastIndex"] = Value(0.0);
+    return Value::null();
+  }
+  if (stateful)
+    self.object->properties["lastIndex"] = Value(double(result.groups[0].end));
+  Values pieces;
+  for (const auto &group : result.groups) {
+    pieces.push_back(group.matched ? Value(slice_codepoints(cps, group.begin, group.end)) : Value());
+  }
+  if (pieces.empty())
+    pieces.push_back(Value());
+  Value out = make_array(pieces);
+  out.object->properties["index"] = Value(double(result.groups[0].begin));
+  out.object->properties["input"] = Value(subject);
+  return out;
+}
+
+Value Runtime::string_match(const std::string &subject, const Value &pattern) {
+  if (pattern.type != Value::Type::Object || !pattern.object ||
+      pattern.object->host_type != "RegExp")
+    return regex_exec(make_regex(pattern.to_string(), ""), Value(subject));
+  auto compiled = std::static_pointer_cast<Regex>(pattern.object->internal);
+  if (!compiled)
+    return Value::null();
+  if (!compiled->global())
+    return regex_exec(pattern, Value(subject));
+  auto cps = utf8_decode(subject);
+  Values out;
+  size_t position = 0;
+  try {
+    while (position <= cps.size()) {
+      RegexResult result;
+      if (!compiled->search(cps, position, result))
+        break;
+      out.push_back(Value(slice_codepoints(cps, result.groups[0].begin, result.groups[0].end)));
+      position = result.groups[0].end == result.groups[0].begin ? result.groups[0].end + 1
+                                                               : result.groups[0].end;
+      if (out.size() > 100000)
+        break;
+    }
+  } catch (const std::exception &e) {
+    throw JsError{Value(std::string("RegExp: ") + e.what())};
+  }
+  pattern.object->properties["lastIndex"] = Value(0.0);
+  return out.empty() ? Value::null() : make_array(out);
+}
+
+Value Runtime::string_search(const std::string &subject, const Value &pattern) {
+  Value target = pattern;
+  if (pattern.type != Value::Type::Object || !pattern.object ||
+      pattern.object->host_type != "RegExp")
+    target = make_regex(pattern.to_string(), "");
+  auto compiled = std::static_pointer_cast<Regex>(target.object->internal);
+  if (!compiled)
+    return Value(-1.0);
+  RegexResult result;
+  try {
+    if (!compiled->search(utf8_decode(subject), 0, result))
+      return Value(-1.0);
+  } catch (const std::exception &e) {
+    throw JsError{Value(std::string("RegExp: ") + e.what())};
+  }
+  return Value(double(result.groups[0].begin));
+}
+
+Value Runtime::string_split(const std::string &subject, const Value &separator) {
+  if (separator.type == Value::Type::Object && separator.object &&
+      separator.object->host_type == "RegExp") {
+    auto compiled = std::static_pointer_cast<Regex>(separator.object->internal);
+    if (!compiled)
+      return make_array({Value(subject)});
+    auto cps = utf8_decode(subject);
+    Values out;
+    size_t position = 0, scan = 0;
+    try {
+      while (scan <= cps.size()) {
+        RegexResult result;
+        if (!compiled->search(cps, scan, result))
+          break;
+        size_t begin = result.groups[0].begin, end = result.groups[0].end;
+        if (end == begin) {
+          if (begin >= cps.size())
+            break;
+          if (begin == scan) {
+            ++scan;
+            continue;
+          }
+        }
+        out.push_back(Value(slice_codepoints(cps, position, begin)));
+        for (size_t g = 1; g < result.groups.size(); ++g)
+          out.push_back(result.groups[g].matched
+                            ? Value(slice_codepoints(cps, result.groups[g].begin, result.groups[g].end))
+                            : Value());
+        position = end;
+        scan = end == begin ? end + 1 : end;
+        if (out.size() > 100000)
+          break;
+      }
+    } catch (const std::exception &e) {
+      throw JsError{Value(std::string("RegExp: ") + e.what())};
+    }
+    out.push_back(Value(slice_codepoints(cps, position, cps.size())));
+    return make_array(out);
+  }
+  Values out;
+  if (separator.type == Value::Type::Undefined)
+    return make_array({Value(subject)});
+  std::string sep = separator.to_string();
+  if (sep.empty()) {
+    for (auto cp : utf8_decode(subject))
+      out.emplace_back(utf8_encode(cp));
+    return make_array(out);
+  }
+  size_t position = 0;
+  while (true) {
+    size_t found = subject.find(sep, position);
+    out.emplace_back(subject.substr(position, found == std::string::npos ? found : found - position));
+    if (found == std::string::npos)
+      break;
+    position = found + sep.size();
+    if (out.size() > 100000)
+      break;
+  }
+  return make_array(out);
+}
+
+namespace {
+// I expand $&, $`, $', $$ and $1..$99 the way a replacement string expects.
+std::string expand_replacement(const std::string &replacement, const RegexResult &result,
+                               const std::vector<uint32_t> &cps) {
+  std::string out;
+  for (size_t i = 0; i < replacement.size(); ++i) {
+    char c = replacement[i];
+    if (c != '$' || i + 1 >= replacement.size()) {
+      out += c;
+      continue;
+    }
+    char next = replacement[i + 1];
+    if (next == '$') {
+      out += '$';
+      ++i;
+    } else if (next == '&') {
+      out += slice_codepoints(cps, result.groups[0].begin, result.groups[0].end);
+      ++i;
+    } else if (next == '`') {
+      out += slice_codepoints(cps, 0, result.groups[0].begin);
+      ++i;
+    } else if (next == '\'') {
+      out += slice_codepoints(cps, result.groups[0].end, cps.size());
+      ++i;
+    } else if (next >= '0' && next <= '9') {
+      size_t index = size_t(next - '0');
+      size_t consumed = 2;
+      if (i + 2 < replacement.size() && replacement[i + 2] >= '0' && replacement[i + 2] <= '9') {
+        size_t two = index * 10 + size_t(replacement[i + 2] - '0');
+        if (two < result.groups.size()) {
+          index = two;
+          consumed = 3;
+        }
+      }
+      if (index < result.groups.size() && result.groups[index].matched)
+        out += slice_codepoints(cps, result.groups[index].begin, result.groups[index].end);
+      i += consumed - 1;
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+} // namespace
+
+Value Runtime::string_replace(const std::string &subject, const Value &pattern,
+                              const Value &replacement, bool all) {
+  bool is_regex = pattern.type == Value::Type::Object && pattern.object &&
+                  pattern.object->host_type == "RegExp";
+  if (!is_regex) {
+    std::string from = pattern.to_string();
+    auto cps = utf8_decode(subject);
+    if (from.empty()) {
+      // An empty search string inserts at the start, like the language says.
+      std::string inserted;
+      if (callable(replacement)) {
+        Values args{Value(""), Value(0.0), Value(subject)};
+        inserted = call(replacement, args, Value()).to_string();
+      } else {
+        RegexResult empty_result;
+        empty_result.groups.push_back(RegexGroup{true, 0, 0});
+        inserted = expand_replacement(replacement.to_string(), empty_result, cps);
+      }
+      return Value(inserted + subject);
+    }
+    std::string out;
+    size_t position = 0;
+    size_t count = 0;
+    while (position <= subject.size()) {
+      size_t found = subject.find(from, position);
+      if (found == std::string::npos) {
+        out += subject.substr(position);
+        break;
+      }
+      out += subject.substr(position, found - position);
+      size_t match_begin = found, match_end = found + from.size();
+      if (callable(replacement)) {
+        Values args{Value(from), Value(double(match_begin)), Value(subject)};
+        out += call(replacement, args, Value()).to_string();
+      } else {
+        RegexResult plain;
+        plain.groups.push_back(RegexGroup{true, match_begin, match_end});
+        out += expand_replacement(replacement.to_string(), plain, cps);
+      }
+      position = match_end;
+      if (!all || ++count > 100000)
+        {
+          out += subject.substr(position);
+          break;
+        }
+    }
+    return Value(out);
+  }
+  auto compiled = std::static_pointer_cast<Regex>(pattern.object->internal);
+  if (!compiled)
+    return Value(subject);
+  bool every = all || compiled->global();
+  auto cps = utf8_decode(subject);
+  std::string out;
+  size_t position = 0, scan = 0;
+  try {
+    while (scan <= cps.size()) {
+      RegexResult result;
+      if (!compiled->search(cps, scan, result))
+        break;
+      size_t begin = result.groups[0].begin, end = result.groups[0].end;
+      out += slice_codepoints(cps, position, begin);
+      if (callable(replacement)) {
+        Values args;
+        for (const auto &group : result.groups)
+          args.push_back(group.matched ? Value(slice_codepoints(cps, group.begin, group.end))
+                                       : Value());
+        args.push_back(Value(double(begin)));
+        args.push_back(Value(subject));
+        out += call(replacement, args, Value()).to_string();
+      } else {
+        out += expand_replacement(replacement.to_string(), result, cps);
+      }
+      position = end;
+      if (!every) {
+        out += slice_codepoints(cps, position, cps.size());
+        return Value(out);
+      }
+      if (end == begin) {
+        if (end >= cps.size())
+          break;
+        out += utf8_encode(cps[end]);
+        ++end;
+      }
+      scan = end;
+      position = end;
+    }
+  } catch (const std::exception &e) {
+    throw JsError{Value(std::string("RegExp: ") + e.what())};
+  }
+  out += slice_codepoints(cps, position, cps.size());
+  return Value(out);
+}
+
+// ---------------------------------------------------------------------------
+// Promises
+// ---------------------------------------------------------------------------
+Value Runtime::make_promise() {
+  Value promise = make_object();
+  promise.object->host_type = "Promise";
+  promise.object->promise_state = 0;
+  if (promise_prototype_) {
+    promise.object->prototype = promise_prototype_;
+    promise.object->properties["__proto__"] = Value(promise_prototype_);
+  }
+  return promise;
+}
+
+void Runtime::enqueue_microtask(std::function<void()> run, std::vector<Value> roots) {
+  if (microtasks_.size() >= 200000)
+    throw std::runtime_error("microtask limit");
+  microtasks_.push_back(Microtask{std::move(run), std::move(roots)});
+}
+
+Value Runtime::settle_reaction(Object *promise, const PromiseReaction &reaction, int state,
+                               const Value &value) {
+  Value handler = state == 1 ? reaction.on_fulfilled : reaction.on_rejected;
+  if (!callable(handler)) {
+    if (reaction.child.type == Value::Type::Object && reaction.child.object)
+      settle_promise(reaction.child.object, state, value);
+    return Value();
+  }
+  try {
+    Values args{value};
+    Value result = call(handler, args, Value());
+    if (reaction.child.type == Value::Type::Object && reaction.child.object)
+      settle_promise(reaction.child.object, 1, result);
+  } catch (JsError &error) {
+    if (reaction.child.type == Value::Type::Object && reaction.child.object)
+      settle_promise(reaction.child.object, 2, error.value);
+  } catch (const std::exception &error) {
+    if (reaction.child.type == Value::Type::Object && reaction.child.object)
+      settle_promise(reaction.child.object, 2, Value(std::string(error.what())));
+  }
+  (void)promise;
+  return Value();
+}
+
+void Runtime::settle_promise(Object *promise, int state, const Value &value) {
+  if (!promise || promise->promise_state != 0)
+    return;
+  if (value.type == Value::Type::Object && value.object == promise)
+    return;
+  if (state == 1 && value.type == Value::Type::Object && value.object) {
+    // I adopt another thenable rather than settling on it.
+    Value then;
+    try {
+      then = get_member(value, "then");
+    } catch (JsError &) {
+      then = Value();
+    } catch (const std::exception &) {
+      then = Value();
+    }
+    if (callable(then)) {
+      Value target(promise);
+      auto already = std::make_shared<bool>(false);
+      Runtime *runtime = this;
+      Value resolve_fn = make_native([runtime, target, already](Values &a) {
+        if (*already)
+          return Value();
+        *already = true;
+        runtime->settle_promise(target.object, 1, a.empty() ? Value() : a[0]);
+        return Value();
+      });
+      Value reject_fn = make_native([runtime, target, already](Values &a) {
+        if (*already)
+          return Value();
+        *already = true;
+        runtime->settle_promise(target.object, 2, a.empty() ? Value() : a[0]);
+        return Value();
+      });
+      try {
+        Values args{resolve_fn, reject_fn};
+        call(then, args, value);
+      } catch (JsError &error) {
+        if (!*already) {
+          *already = true;
+          settle_promise(promise, 2, error.value);
+        }
+      } catch (const std::exception &error) {
+        if (!*already) {
+          *already = true;
+          settle_promise(promise, 2, Value(std::string(error.what())));
+        }
+      }
+      return;
+    }
+  }
+  promise->promise_state = state;
+  promise->promise_result = value;
+  if (state == 2 && promise->reactions.empty())
+    promise->promise_handled = false;
+  std::vector<PromiseReaction> waiting = promise->reactions;
+  promise->reactions.clear();
+  Value self(promise);
+  for (const auto &reaction : waiting) {
+    PromiseReaction copy = reaction;
+    Value reason = value;
+    int settled = state;
+    enqueue_microtask(
+        [this, promise, copy, settled, reason]() {
+          settle_reaction(promise, copy, settled, reason);
+        },
+        {self, copy.on_fulfilled, copy.on_rejected, copy.child, value});
+  }
+}
+
+Value Runtime::promise_then(const Value &promise, const Value &on_fulfilled,
+                            const Value &on_rejected) {
+  if (promise.type != Value::Type::Object || !promise.object)
+    throw JsError{Value("TypeError: then called on a non-promise")};
+  Object *object = promise.object;
+  Value child = make_promise();
+  if (object->promise_state == 0) {
+    object->reactions.push_back(PromiseReaction{on_fulfilled, on_rejected, child});
+    return child;
+  }
+  if (object->promise_state == 2)
+    object->promise_handled = true;
+  PromiseReaction reaction{on_fulfilled, on_rejected, child};
+  int state = object->promise_state;
+  Value value = object->promise_result;
+  enqueue_microtask(
+      [this, object, reaction, state, value]() mutable {
+        settle_reaction(object, reaction, state, value);
+      },
+      {promise, on_fulfilled, on_rejected, child, value});
+  return child;
+}
+
+void Runtime::drain_microtasks(size_t limit) {
+  size_t ran = 0;
+  while (!microtasks_.empty()) {
+    if (++ran > limit)
+      throw std::runtime_error("microtask limit");
+    Microtask task = std::move(microtasks_.front());
+    microtasks_.pop_front();
+    reset_fuel();
+    task.run();
+  }
+  if (depth_ == 0 && allocated_since_gc_ > 4096)
+    collect();
 }
 
 void Runtime::install_builtins() {
@@ -1886,5 +2411,202 @@ void Runtime::install_builtins() {
     std::erase_if(timers, [id](const Timer &t) { return t.id == id; });
     return Value();
   });
+  // My pattern constructor and the prototype my literals share.
+  Value regex_proto = make_object();
+  regex_prototype_ = regex_proto.object;
+  root(regex_prototype_);
+  Value regexp = make_native([this](Values &a) {
+    if (!a.empty() && a[0].type == Value::Type::Object && a[0].object &&
+        a[0].object->host_type == "RegExp") {
+      std::string pattern = a[0].object->properties["source"].to_string();
+      std::string flags = a.size() > 1 && a[1].type != Value::Type::Undefined
+                              ? a[1].to_string()
+                              : a[0].object->properties["flags"].to_string();
+      return make_regex(pattern, flags);
+    }
+    std::string pattern =
+        a.empty() || a[0].type == Value::Type::Undefined ? std::string() : a[0].to_string();
+    std::string flags =
+        a.size() > 1 && a[1].type != Value::Type::Undefined ? a[1].to_string() : std::string();
+    return make_regex(pattern, flags);
+  });
+  regexp.object->properties["prototype"] = regex_proto;
+  g.properties["RegExp"] = regexp;
+
+  // My promise constructor. The executor runs now; handlers run as microtasks.
+  Value promise_proto = make_object();
+  promise_prototype_ = promise_proto.object;
+  root(promise_prototype_);
+  Value promise_ctor = make_native([this](Values &a) {
+    if (a.empty() || !callable(a[0]))
+      throw JsError{Value("TypeError: Promise resolver is not a function")};
+    Value promise = make_promise();
+    auto settled = std::make_shared<bool>(false);
+    Runtime *runtime = this;
+    Value resolve_fn = make_native([runtime, promise, settled](Values &args) {
+      if (*settled)
+        return Value();
+      *settled = true;
+      runtime->settle_promise(promise.object, 1, args.empty() ? Value() : args[0]);
+      return Value();
+    });
+    Value reject_fn = make_native([runtime, promise, settled](Values &args) {
+      if (*settled)
+        return Value();
+      *settled = true;
+      runtime->settle_promise(promise.object, 2, args.empty() ? Value() : args[0]);
+      return Value();
+    });
+    Values executor_args{resolve_fn, reject_fn};
+    try {
+      call(a[0], executor_args, Value());
+    } catch (JsError &error) {
+      if (!*settled) {
+        *settled = true;
+        settle_promise(promise.object, 2, error.value);
+      }
+    } catch (const std::exception &error) {
+      if (!*settled) {
+        *settled = true;
+        settle_promise(promise.object, 2, Value(std::string(error.what())));
+      }
+    }
+    return promise;
+  });
+  promise_ctor.object->properties["prototype"] = promise_proto;
+  promise_ctor.object->properties["resolve"] = make_native([this](Values &a) {
+    if (!a.empty() && a[0].type == Value::Type::Object && a[0].object &&
+        a[0].object->host_type == "Promise")
+      return a[0];
+    Value promise = make_promise();
+    settle_promise(promise.object, 1, a.empty() ? Value() : a[0]);
+    return promise;
+  });
+  promise_ctor.object->properties["reject"] = make_native([this](Values &a) {
+    Value promise = make_promise();
+    settle_promise(promise.object, 2, a.empty() ? Value() : a[0]);
+    return promise;
+  });
+  promise_ctor.object->properties["all"] = make_native([this](Values &a) {
+    Value result = make_promise();
+    Values items;
+    if (!a.empty())
+      append_spread(items, a[0]);
+    auto collected = std::make_shared<Values>(items.size());
+    auto remaining = std::make_shared<size_t>(items.size());
+    auto failed = std::make_shared<bool>(false);
+    Runtime *runtime = this;
+    for (size_t i = 0; i < items.size(); ++i) {
+      Value item = items[i];
+      if (!(item.type == Value::Type::Object && item.object &&
+            item.object->host_type == "Promise")) {
+        (*collected)[i] = item;
+        --*remaining;
+        continue;
+      }
+      Value on_ok = make_native([runtime, result, collected, remaining, failed, i](Values &args) {
+        if (*failed)
+          return Value();
+        (*collected)[i] = args.empty() ? Value() : args[0];
+        if (--*remaining == 0)
+          runtime->settle_promise(result.object, 1, runtime->make_array(*collected));
+        return Value();
+      });
+      Value on_err = make_native([runtime, result, failed](Values &args) {
+        if (*failed)
+          return Value();
+        *failed = true;
+        runtime->settle_promise(result.object, 2, args.empty() ? Value() : args[0]);
+        return Value();
+      });
+      runtime->promise_then(item, on_ok, on_err);
+    }
+    if (*remaining == 0)
+      settle_promise(result.object, 1, make_array(*collected));
+    return result;
+  });
+  promise_ctor.object->properties["allSettled"] = make_native([this](Values &a) {
+    Value result = make_promise();
+    Values items;
+    if (!a.empty())
+      append_spread(items, a[0]);
+    auto collected = std::make_shared<Values>(items.size());
+    auto remaining = std::make_shared<size_t>(items.size());
+    Runtime *runtime = this;
+    if (items.empty()) {
+      settle_promise(result.object, 1, make_array({}));
+      return result;
+    }
+    for (size_t i = 0; i < items.size(); ++i) {
+      Value item = items[i];
+      auto finish = make_native([runtime, result, collected, remaining](Values &) {
+        if (--*remaining == 0)
+          runtime->settle_promise(result.object, 1, runtime->make_array(*collected));
+        return Value();
+      });
+      Value on_ok = make_native([this, collected, finish, i](Values &args) {
+        Value entry = make_object();
+        entry.object->properties["status"] = Value("fulfilled");
+        entry.object->properties["value"] = args.empty() ? Value() : args[0];
+        (*collected)[i] = entry;
+        Values none;
+        return call(finish, none, Value());
+      });
+      Value on_err = make_native([this, collected, finish, i](Values &args) {
+        Value entry = make_object();
+        entry.object->properties["status"] = Value("rejected");
+        entry.object->properties["reason"] = args.empty() ? Value() : args[0];
+        (*collected)[i] = entry;
+        Values none;
+        return call(finish, none, Value());
+      });
+      if (item.type == Value::Type::Object && item.object && item.object->host_type == "Promise")
+        runtime->promise_then(item, on_ok, on_err);
+      else
+        runtime->promise_then(([&] {
+          Value settled_promise = runtime->make_promise();
+          runtime->settle_promise(settled_promise.object, 1, item);
+          return settled_promise;
+        })(), on_ok, on_err);
+    }
+    return result;
+  });
+  promise_ctor.object->properties["race"] = make_native([this](Values &a) {
+    Value result = make_promise();
+    Values items;
+    if (!a.empty())
+      append_spread(items, a[0]);
+    Runtime *runtime = this;
+    for (const auto &item : items) {
+      Value on_ok = make_native([runtime, result](Values &args) {
+        runtime->settle_promise(result.object, 1, args.empty() ? Value() : args[0]);
+        return Value();
+      });
+      Value on_err = make_native([runtime, result](Values &args) {
+        runtime->settle_promise(result.object, 2, args.empty() ? Value() : args[0]);
+        return Value();
+      });
+      if (item.type == Value::Type::Object && item.object && item.object->host_type == "Promise")
+        runtime->promise_then(item, on_ok, on_err);
+      else
+        settle_promise(result.object, 1, item);
+    }
+    return result;
+  });
+  g.properties["Promise"] = promise_ctor;
+  // I queue a function to run after the current script finishes.
+  g.properties["queueMicrotask"] = make_native([this](Values &a) {
+    if (a.empty() || !callable(a[0]))
+      throw JsError{Value("TypeError: queueMicrotask needs a function")};
+    Value callback = a[0];
+    enqueue_microtask(
+        [this, callback]() {
+          Values none;
+          call(callback, none, Value());
+        },
+        {callback});
+    return Value();
+  });
+
 }
 } // namespace pv::js

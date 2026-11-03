@@ -8,6 +8,16 @@ static bool ident_start(char c) {
 static bool ident_part(char c) {
   return ident_start(c) || std::isdigit(static_cast<unsigned char>(c));
 }
+// After these words a slash starts a pattern, not a division, because the word
+// cannot end a value.
+static bool open_keyword(const std::string &text) {
+  static const std::set<std::string> names = {
+      "return",  "typeof", "instanceof", "in",     "of",    "new",   "delete", "void",
+      "throw",   "case",   "do",         "else",   "yield", "await", "var",    "let",
+      "const",   "if",     "while",      "for",    "switch", "try",  "catch",  "finally",
+      "function", "class", "extends",    "break",  "continue", "default", "with"};
+  return names.count(text) != 0;
+}
 static std::vector<Token> lex(std::string_view s) {
   if (s.size() > 2u * 1024u * 1024u)
     throw std::runtime_error("JavaScript source limit");
@@ -15,6 +25,9 @@ static std::vector<Token> lex(std::string_view s) {
   size_t p = 0;
   int line = 1;
   bool newline = false;
+  // I track whether the last token ended a value, which is what tells a pattern
+  // literal apart from a division sign.
+  bool regex_allowed = true;
   while (p < s.size()) {
     char c = s[p];
     if (c == '\n') {
@@ -55,7 +68,45 @@ static std::vector<Token> lex(std::string_view s) {
     t.line = line;
     t.newline = newline;
     newline = false;
-    if (c == '"' || c == '\'' || c == '`') {
+    bool ends_value = false;
+    if (c == '/' && regex_allowed) {
+      // A pattern literal: I scan to the closing slash that is not escaped and
+      // not inside a character class.
+      ++p;
+      std::string pattern;
+      bool in_class = false;
+      bool closed = false;
+      while (p < s.size()) {
+        char ch = s[p];
+        if (ch == '\\' && p + 1 < s.size()) {
+          pattern += ch;
+          pattern += s[p + 1];
+          p += 2;
+          continue;
+        }
+        if (ch == '\n')
+          throw std::runtime_error("unterminated regular expression literal");
+        if (ch == '[')
+          in_class = true;
+        else if (ch == ']')
+          in_class = false;
+        else if (ch == '/' && !in_class) {
+          closed = true;
+          ++p;
+          break;
+        }
+        pattern += ch;
+        ++p;
+      }
+      if (!closed)
+        throw std::runtime_error("unterminated regular expression literal");
+      std::string flags;
+      while (p < s.size() && ident_part(s[p]))
+        flags += s[p++];
+      t.text = "regex:" + pattern;
+      t.flags = flags;
+      ends_value = true;
+    } else if (c == '"' || c == '\'' || c == '`') {
       char quote = c;
       ++p;
       std::string value;
@@ -149,6 +200,7 @@ static std::vector<Token> lex(std::string_view s) {
         t.text = "template:" + value;
       } else
         t.text = "string:" + value;
+      ends_value = true;
     } else if (std::isdigit(static_cast<unsigned char>(c)) ||
                (c == '.' && p + 1 < s.size() &&
                 std::isdigit(static_cast<unsigned char>(s[p + 1])))) {
@@ -172,11 +224,13 @@ static std::vector<Token> lex(std::string_view s) {
         }
         t.text = "number:" + std::string(s.substr(a, p - a));
       }
+      ends_value = true;
     } else if (ident_start(c)) {
       size_t a = p;
       while (p < s.size() && ident_part(s[p]))
         ++p;
       t.text = std::string(s.substr(a, p - a));
+      ends_value = !open_keyword(t.text);
     } else {
       static const std::vector<std::string> ops = {">>>=",
                                                    "===",
@@ -223,12 +277,19 @@ static std::vector<Token> lex(std::string_view s) {
         t.text = std::string(1, c);
         ++p;
       }
+      ends_value = t.text == ")" || t.text == "]" || t.text == "}" || t.text == "++" ||
+                   t.text == "--";
     }
+    regex_allowed = !ends_value;
     out.push_back(std::move(t));
     if (out.size() > 150000)
       throw std::runtime_error("JavaScript token limit");
   }
-  out.push_back({"<eof>", line, true});
+  Token eof;
+  eof.text = "<eof>";
+  eof.line = line;
+  eof.newline = true;
+  out.push_back(std::move(eof));
   return out;
 }
 class Parser {
@@ -459,6 +520,15 @@ public:
     if (starts(tok().text, "number:")) {
       auto e = make(Expr::Kind::Literal);
       e->literal = Value(std::strtod(tok().text.c_str() + 7, nullptr));
+      ++p;
+      return postfix(std::move(e), allow_call);
+    }
+    if (starts(tok().text, "regex:")) {
+      // Each evaluation of a literal makes a fresh pattern object, so I keep the
+      // source and flags in the expression rather than building a value here.
+      auto e = make(Expr::Kind::Regex);
+      e->text = tok().text.substr(6);
+      e->flags = tok().flags;
       ++p;
       return postfix(std::move(e), allow_call);
     }

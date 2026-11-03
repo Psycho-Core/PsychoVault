@@ -853,6 +853,14 @@ void Page::tick() {
     } catch (std::exception &e) {
       diagnostics.push_back({"timer", e.what()});
     }
+    // My promise callbacks run as soon as the timer job finishes.
+    try {
+      js_->drain_microtasks();
+    } catch (js::JsError &e) {
+      diagnostics.push_back({"microtask", e.value.to_string()});
+    } catch (std::exception &e) {
+      diagnostics.push_back({"microtask", e.what()});
+    }
     dirty_ = true;
   }
 }
