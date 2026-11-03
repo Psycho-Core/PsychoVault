@@ -177,6 +177,28 @@ Process::~Process() {
   if (sid)
     FreeSid(sid);
 }
+static bool grant_object(HANDLE object, PSID sid, ACCESS_MASK access) {
+  PACL old_dacl = nullptr;
+  PSECURITY_DESCRIPTOR sd = nullptr;
+  if (GetSecurityInfo(object, SE_WINDOW_OBJECT, DACL_SECURITY_INFORMATION, nullptr, nullptr,
+                      &old_dacl, &sd) != ERROR_SUCCESS)
+    return false;
+  EXPLICIT_ACCESSW ea{};
+  ea.grfAccessPermissions = access;
+  ea.grfAccessMode = GRANT_ACCESS;
+  ea.grfInheritance = NO_INHERITANCE;
+  BuildTrusteeWithSidW(&ea.Trustee, sid);
+  PACL new_dacl = nullptr;
+  if (SetEntriesInAclW(1, &ea, old_dacl, &new_dacl) != ERROR_SUCCESS) {
+    LocalFree(sd);
+    return false;
+  }
+  DWORD rc = SetSecurityInfo(object, SE_WINDOW_OBJECT, DACL_SECURITY_INFORMATION, nullptr, nullptr,
+                             new_dacl, nullptr);
+  LocalFree(new_dacl);
+  LocalFree(sd);
+  return rc == ERROR_SUCCESS;
+}
 bool Process::start(const std::string &exe, const std::string &args, bool sandbox,
                     std::string &error) {
   SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
@@ -216,6 +238,16 @@ bool Process::start(const std::string &exe, const std::string &args, bool sandbo
     auto slash = exe.find_last_of("/\\");
     if (slash != std::string::npos && !grant_execute(wide(exe.substr(0, slash)), app_sid)) {
       error = "cannot grant renderer directory traversal";
+      return false;
+    }
+    if (!grant_object(GetProcessWindowStation(), app_sid,
+                      GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE)) {
+      error = "cannot grant renderer window station access";
+      return false;
+    }
+    if (!grant_object(GetThreadDesktop(GetCurrentThreadId()), app_sid,
+                      GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE)) {
+      error = "cannot grant renderer desktop access";
       return false;
     }
   }
