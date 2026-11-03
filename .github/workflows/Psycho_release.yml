@@ -1,0 +1,299 @@
+name: Publish my Windows release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish (leave empty to use Psycho_VERSION.txt)'
+        required: false
+        default: ''
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+# I share the heavy-build group so I never run two Windows builds at once.
+concurrency:
+  group: psychovault-heavy
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, verify and publish Windows x64
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Resolve my version and tag
+        id: version
+        shell: pwsh
+        run: |
+          $version = (Get-Content Psycho_VERSION.txt -Raw).Trim()
+          $tag = "${{ github.event.inputs.tag }}"
+          if ([string]::IsNullOrWhiteSpace($tag)) {
+            if ($env:GITHUB_REF -like 'refs/tags/*') { $tag = $env:GITHUB_REF_NAME }
+            else { $tag = "v$version" }
+          }
+          if ($tag -ne "v$version") {
+            Write-Host "::error::Tag $tag does not match Psycho_VERSION.txt ($version). I refuse to publish a mislabelled build."
+            exit 1
+          }
+          "version=$version" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+          "tag=$tag" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+          Write-Host "I am publishing $tag"
+
+      - name: Record toolchain
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build | Out-Null
+          python --version | Tee-Object build/toolchain.txt
+          git rev-parse HEAD | Tee-Object -Append build/toolchain.txt
+
+      - name: Set up MSVC x64 environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        with:
+          arch: x64
+
+      - name: Audit my source ownership
+        shell: pwsh
+        run: |
+          python tools/Psycho_audit-source.py 2>&1 | Tee-Object build/audit-source.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Audit my file naming
+        shell: pwsh
+        run: |
+          python tools/Psycho_audit_names.py 2>&1 | Tee-Object build/audit-names.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build my browser and tests
+        shell: pwsh
+        run: |
+          python tools/Psycho_build.py --compiler msvc --outdir build 2>&1 | Tee-Object build/build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run engine tests
+        shell: pwsh
+        run: |
+          .\build\pv-tests.exe | Tee-Object build/engine-tests.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Render headless engine fixture
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build/captures | Out-Null
+          .\build\pv-engine.exe --input tests/fixtures/Psycho_engine-smoke.html --out build/captures/headless-engine.png > build/headless-frame.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Capture native home window
+        shell: pwsh
+        run: |
+          .\build\PsychoVault.exe --smoke --capture build/captures/native-home.png --profile build/test-profile
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Capture native window rendering fetched pages
+        shell: pwsh
+        run: |
+          $server = Start-Process python -ArgumentList '-m','http.server','8765','--directory','tests/fixtures' -PassThru -WindowStyle Hidden
+          try {
+            Start-Sleep -Seconds 1
+            .\build\PsychoVault.exe --smoke --url http://127.0.0.1:8765/Psycho_engine-smoke.html --capture build/captures/native-engine.png --profile build/test-profile
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            .\build\PsychoVault.exe --smoke --expect-image --url http://127.0.0.1:8765/Psycho_browser-smoke.html --capture build/captures/native-browser.png --profile build/test-profile
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
+          }
+
+      - name: Prove my single executable renders with no sibling files
+        shell: pwsh
+        run: |
+          # I copy ONLY PsychoVault.exe into an empty folder. If it cannot render
+          # a fetched page from there, my one-file promise is broken.
+          $solo = Join-Path $env:RUNNER_TEMP 'psychovault-solo'
+          Remove-Item -Recurse -Force $solo -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force $solo | Out-Null
+          Copy-Item build/PsychoVault.exe $solo/PsychoVault.exe
+          $count = (Get-ChildItem $solo -File).Count
+          if ($count -ne 1) { throw "My solo folder has $count files, expected 1" }
+          New-Item -ItemType Directory -Force build/captures | Out-Null
+          Remove-Item build/captures/standalone.png -ErrorAction SilentlyContinue
+          Remove-Item build/captures/standalone.png.failure.json -ErrorAction SilentlyContinue
+          $server = Start-Process python -ArgumentList '-m','http.server','8766','--directory','tests/fixtures' -PassThru -WindowStyle Hidden
+          $render = 1
+          try {
+            Start-Sleep -Seconds 2
+            # PowerShell does not reliably surface a GUI exit code, so I wait on
+            # the process handle and read its real code.
+            $p = Start-Process -FilePath "$solo/PsychoVault.exe" -ArgumentList '--smoke','--expect-image','--url','http://127.0.0.1:8766/Psycho_browser-smoke.html','--capture','build/captures/standalone.png','--profile','build/solo-profile' -PassThru
+            if ($p.WaitForExit(60000)) { $render = $p.ExitCode } else { $render = 99; try { $p.Kill($true) } catch {} }
+          } finally {
+            Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
+          }
+          # I print my diagnostics before I decide, and I exit outside try/finally
+          # so a finally block can never swallow my failure.
+          "## My single-file exe gate" | Add-Content $env:GITHUB_STEP_SUMMARY
+          "render exit=$render" | Add-Content $env:GITHUB_STEP_SUMMARY
+          '```json' | Add-Content $env:GITHUB_STEP_SUMMARY
+          if (Test-Path build/captures/standalone.png.failure.json) {
+            Write-Host '--- my standalone render failure ---'
+            Get-Content build/captures/standalone.png.failure.json | Tee-Object -FilePath build/standalone-failure.json
+            Get-Content build/captures/standalone.png.failure.json | Add-Content $env:GITHUB_STEP_SUMMARY
+          } else {
+            'no render failure report was written' | Add-Content $env:GITHUB_STEP_SUMMARY
+          }
+          '```' | Add-Content $env:GITHUB_STEP_SUMMARY
+          Write-Host "standalone render exit=$render"
+          # Job summaries are not readable through the API, but annotations are,
+          # so my failure reason is published as an annotation too.
+          if ($render -ne 0) {
+            $detail = 'no failure report was written'
+            if (Test-Path build/captures/standalone.png.failure.json) {
+              $detail = (Get-Content build/captures/standalone.png.failure.json -Raw)
+            }
+            $detail = ($detail -replace "`r", '') -replace "`n", ' '
+            Write-Host "::error::SOLO-DIAG exit=$render $detail"
+            Write-Host "::error::My standalone exe failed to render a fetched page (exit $render)"
+            exit 1
+          }
+          # A real picture, and still exactly one file in my folder: that is what
+          # my one-file promise means.
+          python -c "import pathlib,sys; d=pathlib.Path('build/captures/standalone.png').read_bytes(); sys.exit(0 if d[:8]==bytes([137,80,78,71,13,10,26,10]) and len(d)>1000 else 1)"
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::My standalone capture is not a real PNG"; exit 1 }
+          $after = (Get-ChildItem $solo -File).Count
+          if ($after -ne 1) { Write-Host "::error::My lone exe left $after files in my empty folder, so it is not self contained"; exit 1 }
+          "## My single-file exe rendered on its own" | Add-Content $env:GITHUB_STEP_SUMMARY
+
+      - name: Package my release and update manifest
+        shell: pwsh
+        run: |
+          python tools/Psycho_package.py --outdir build --commit $env:GITHUB_SHA --tag "${{ steps.version.outputs.tag }}" --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify my packaged manifest before I publish
+        shell: pwsh
+        run: |
+          python tools/Psycho_verify_package.py --outdir build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Write my release notes
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $notes = @"
+          # PsychoVault $version - Windows x64 development preview
+
+          I build my own browser engine. This is a development preview I can test, not a finished browser.
+
+          ## What I verified in this build
+
+          - I built with MSVC on a GitHub-hosted Windows runner.
+          - My engine test suite passed.
+          - My single executable rendered a fetched page with images from an empty folder containing nothing else, and it left no second file behind.
+          - I rendered a fetched page with CSS, JavaScript and a decoded PNG through my own engine inside my own browser process.
+          - My bundled VPN bridge drove my real proxy, storage and WebRTC-policy code, and my fail-closed routing refused to leak when no proxy was usable.
+          - My download manager, PAC evaluator and extension permission checks passed their regression tests.
+
+          ## How I run it
+
+          I download **PsychoVault.exe** and double-click it. That is the whole install.
+
+          My engine and my page host are compiled into that one file, so nothing is unpacked and nothing sits beside it. My CI proves this by copying only ``PsychoVault.exe`` into an empty folder, rendering a fetched page with images from there, and checking the folder still holds one file afterwards.
+
+          I also publish ``PsychoVault-windows-x64.zip`` with my test tools for anyone who wants them, but I do not need it to browse.
+
+          ## How my updater reads this release
+
+          I publish ``PsychoVault-update.json`` with the version, tag and a SHA-256 for every asset. ``PsychoVault.exe`` is the update payload, so an update replaces one file. I verify the hash before I offer to install anything.
+
+          ## What I am not claiming
+
+          - YouTube and Netflix do not play. My engine has no media pipeline, no Media Source Extensions and no DRM. DRM will only ever arrive as a separately licensed extension, never inside my engine.
+          - Proton VPN is not bundled. The included VPN bridge is my own code and needs a proxy I point it at.
+          - My vault, password manager, translation, media keys and full legacy settings parity are not finished.
+          - This build is unsigned, so Windows SmartScreen may warn me.
+
+          ## No warranty
+
+          I provide this preview as-is, without warranty.
+          "@
+          $notes | Set-Content -Encoding utf8 build/RELEASE-NOTES.md
+          Get-Content build/RELEASE-NOTES.md | Add-Content $env:GITHUB_STEP_SUMMARY
+
+      - name: Publish my release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ steps.version.outputs.tag }}"
+          $assets = @(
+            'build/PsychoVault.exe',
+            'build/PsychoVault-windows-x64.zip',
+            'build/PsychoVault-update.json',
+            'build/package/SHA256SUMS.txt',
+            'build/BUILD-INFO.txt'
+          )
+          foreach ($asset in $assets) {
+            if (-not (Test-Path $asset)) { Write-Host "::error::Missing release asset $asset"; exit 1 }
+          }
+          $existing = gh release view $tag --repo $env:GITHUB_REPOSITORY 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "::error::Release $tag already exists. I do not overwrite a published release."
+            exit 1
+          }
+          gh release create $tag $assets --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "PsychoVault $tag - Windows x64 preview" --notes-file build/RELEASE-NOTES.md --prerelease
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify my published release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ steps.version.outputs.tag }}"
+          gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName,isPrerelease,assets | Tee-Object build/published-release.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -c "import json; d=json.load(open('build/published-release.json', encoding='utf-8-sig')); names={a['name'] for a in d['assets']}; required={'PsychoVault.exe','PsychoVault-windows-x64.zip','PsychoVault-update.json','SHA256SUMS.txt'}; missing=required-names; assert not missing, missing; print('I verified my published release assets:', sorted(names))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "## I published $tag" | Add-Content $env:GITHUB_STEP_SUMMARY
+
+      - name: Write my failure note
+        if: failure()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build | Out-Null
+          "I did not publish a release. This run failed for commit $env:GITHUB_SHA. Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID" | Set-Content build/FAILURE.txt
+          if (Test-Path build/build.log) {
+            $tail = Get-Content build/build.log -Tail 120
+            "## Build failure tail`n`n``````" | Add-Content $env:GITHUB_STEP_SUMMARY
+            $tail | Add-Content $env:GITHUB_STEP_SUMMARY
+            "``````" | Add-Content $env:GITHUB_STEP_SUMMARY
+            foreach ($line in $tail) { if ($line -match 'error [A-Z]+[0-9]+|fatal error|build failed:') { Write-Host "::error::$line" } }
+          }
+          foreach ($file in @('build/audit-source.txt','build/audit-names.txt','build/engine-tests.txt')) {
+            if (Test-Path $file) {
+              "## $file`n`n``````" | Add-Content $env:GITHUB_STEP_SUMMARY
+              Get-Content $file -Tail 40 | Add-Content $env:GITHUB_STEP_SUMMARY
+              "``````" | Add-Content $env:GITHUB_STEP_SUMMARY
+            }
+          }
+
+      - name: Upload release evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: psychovault-release-${{ github.sha }}
+          path: |
+            build/*.exe
+            build/*.zip
+            build/*.json
+            build/*.txt
+            build/*.md
+            build/*.log
+            build/package/SHA256SUMS.txt
+            build/captures/*.png
+          if-no-files-found: warn
+          retention-days: 30

@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "PsychoVault VPN Bridge",
+  "version": "1.0.0",
+  "description": "My own VPN provider bridge. It drives my chrome.proxy implementation so my VPN transport is exercised by real extension code. This is not Proton VPN.",
+  "permissions": [
+    "proxy",
+    "storage",
+    "privacy",
+    "alarms",
+    "webRequest",
+    "webRequestAuthProvider"
+  ],
+  "background": {
+    "service_worker": "Psycho_service.js"
+  },
+  "action": {
+    "default_title": "PsychoVault VPN Bridge"
+  }
+}
