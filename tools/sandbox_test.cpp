@@ -17,6 +17,27 @@ int main() {
       std::cerr << "sandbox fixture failed: " << error << "\n";
       return 1;
     }
+    Process minimal;
+    if (!minimal.start(executable_dir() + "\\pv-sandbox-minimal.exe",
+                       "--sandbox-probe \"" + sentinel.string() + "\"", true, error)) {
+      std::cerr << "minimal sandbox start failed: " << error << "\n";
+    } else {
+      auto report = minimal.receive(5000);
+      auto exit = minimal.exit_code();
+      if (report) {
+        std::cout << "Minimal probe: AppContainer=" << report->flag("appContainer")
+                  << " fileDenied=" << report->flag("fileDenied")
+                  << " networkDenied=" << report->flag("networkDenied") << "\n";
+      } else {
+        std::cout << "Minimal probe failed. Exit code=";
+        if (exit)
+          std::cout << *exit;
+        else
+          std::cout << "running";
+        std::cout << "; I/O=" << minimal.io_error() << "\n";
+      }
+      minimal.terminate();
+    }
     Process renderer;
     if (!renderer.start(executable_dir() + "\\pv-renderer.exe",
                         "--sandbox-probe \"" + sentinel.string() + "\"", true, error)) {

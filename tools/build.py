@@ -65,6 +65,7 @@ def main():
     if windows:
         target("PsychoVault",ENGINE+PLATFORM+["shell/win_main.cpp"],winlibs,"WINDOWS")
         target("pv-sandbox-test",ENGINE+["platform/process.cpp","tools/sandbox_test.cpp"],winlibs)
+        target("pv-sandbox-minimal",["tools/sandbox_minimal.cpp"],["kernel32","advapi32","ws2_32"],"WINDOWS","mainCRTStartup")
     print("Built",out)
 if __name__=="__main__":
     try:main()
