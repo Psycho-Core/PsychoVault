@@ -21,6 +21,7 @@ Host::~Host() = default;
 Resource Host::fetch(const std::string &url) const {
   Resource failure;
   failure.url = url;
+  failure.status = 0;
   if (!fetch_) {
     failure.ok = false;
     failure.error = "I have no fetcher, so I cannot load this page";
@@ -36,6 +37,7 @@ Resource Host::fetch(const std::string &url) const {
     // page or the thread that drives it.
     Resource resource;
     resource.url = url;
+    resource.status = 0;
     resource.ok = false;
     resource.error = e.what();
     return resource;

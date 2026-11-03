@@ -572,7 +572,10 @@ void Page::install_fetch() {
       res.ok = false;
       res.error = e.what();
     }
-    if (!res.ok) {
+    // A response I received resolves even when its status is an error status;
+    // only a request that never produced one rejects.
+    bool received = res.status >= 100;
+    if (!res.ok && !received) {
       r.settle_promise(promise.object, 2,
                        js::Value("TypeError: " + (res.error.empty() ? "network error" : res.error)));
       return promise;
@@ -760,6 +763,7 @@ Json Page::render(double width, double height, double scroll) {
     j.set("bold", c.bold);
     j.set("node", c.node);
     j.set("url", c.url);
+    j.set("fixed", c.fixed);
     paint.array.push_back(std::move(j));
   }
   frame.set("paint", std::move(paint));

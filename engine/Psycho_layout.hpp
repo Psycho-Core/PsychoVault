@@ -12,6 +12,8 @@ struct PaintCommand {
   bool bold = false;
   int node = -1;
   std::string url;
+  // A fixed command stays where it is when the page scrolls.
+  bool fixed = false;
 };
 struct LayoutResult {
   std::vector<PaintCommand> paint;

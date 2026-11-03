@@ -5,11 +5,19 @@ I separate what passed from what failed, what is blocked and what I have not run
 ## Passed locally
 
 - My GCC build of the engine, my page host and my test suite, and a full Clang/MinGW cross-build of the Windows browser executable.
-- My engine test suite: **312 checks passed**. This covers URL/JSON/UTF-8, DOM, CSS, my JavaScript interpreter, PNG decode, layout, proxy routing, PAC evaluation, extension permissions, download naming, profile persistence, my bundled VPN bridge, and my page host loading a page, fetching its subresources, decoding an image and reporting frames.
-- My source-ownership and boundary audit: **121 passed, 0 failed**. This now includes the single-executable promise: no second executable, no resource compiler, no helper process.
+- My engine test suite: **353 checks passed**. This covers URL/JSON/UTF-8, DOM, CSS, my JavaScript interpreter, PNG decode, layout, proxy routing, PAC evaluation, extension permissions, download naming, profile persistence, my bundled VPN bridge, and my page host loading a page, fetching its subresources, decoding an image and reporting frames.
+- My source-ownership and boundary audit: **162 passed, 0 failed**. This now includes the single-executable promise: no second executable, no resource compiler, no helper process.
 - My file-naming audit: **18 passed, 0 failed**.
 - My plan audit: **377 passed, 0 failed**.
 - Windows cross-compilation of every module with Clang/MinGW targeting `x86_64-windows-gnu`, including a full link of `PsychoVault.exe`, which catches MSVC-class errors before I spend a hosted build.
+
+## Real bugs my step 2 audit found and I fixed
+
+- **`fetch` treated an error status as a network failure.** A 404 resolved in a browser; mine rejected the promise. My network layer had no way to say "a response arrived" versus "nothing arrived", so I made that explicit with status zero and now only a missing response rejects.
+- **`split` ignored its limit argument.** `'a,b,c'.split(',', 2)` returned three items instead of two.
+- **`for...of` over a `Map` or a `Set` produced nonsense.** It walked object properties and handed back native functions. I wrote one iterator walk and made spread, `for...of` and `Array.from` share it, so a non-iterable now raises a `TypeError` instead of inventing values.
+- **`async` methods in classes and object literals did not parse.** They were read as a property named `async`.
+- **`matchAll` was missing**, and `Symbol` did not exist at all.
 
 ## Real bugs my own tests found and I fixed
 

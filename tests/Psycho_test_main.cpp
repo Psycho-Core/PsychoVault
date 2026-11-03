@@ -18,6 +18,25 @@ static int passed = 0;
     }                                                                                              \
     ++passed;                                                                                      \
   } while (0)
+// I read back where a box ended up, which is how I check my layout maths.
+static Rect node_box(Page &page, const char *id, bool *fixed = nullptr) {
+  auto frame = page.render(800, 600, 0);
+  int node = page.doc.by_id(id);
+  const Json *paint = frame.find("paint");
+  if (paint) {
+    for (const auto &command : paint->array) {
+      if (int(command.num("node", -1)) == node && int(command.num("kind", -1)) == 0) {
+        if (fixed)
+          *fixed = command.flag("fixed");
+        return Rect{command.num("x"), command.num("y"), command.num("w"), command.num("h")};
+      }
+    }
+  }
+  return Rect{0, 0, -1, -1};
+}
+static bool near(double a, double b) {
+  return std::abs(a - b) < 1.0;
+}
 static std::string js_eval(const std::string &s) {
   js::Runtime r;
   return r.run(s).to_string();
@@ -85,6 +104,13 @@ int main() {
   CHECK(js_eval("var re=/a/g;re.exec('aa');re.lastIndex") == "1");
   CHECK(js_eval("/(?<y>\\d{4})/.exec('in 2026')[1]") == "2026");
   CHECK(js_eval("(()=>{try{new RegExp('(');return 'no';}catch(e){return 'threw';}})()") == "threw");
+  CHECK(js_eval("var s=0;for(var v of new Set([1,2,3]))s+=v;s") == "6");
+  CHECK(js_eval("var s=0;for(var e of new Map([['a',1],['b',2]]))s+=e[1];s") == "3");
+  CHECK(js_eval("[...new Set([1,2,2])].join(',')") == "1,2");
+  CHECK(js_eval("typeof Symbol") == "function");
+  CHECK(js_eval("Array.from('abc').join('-')") == "a-b-c");
+  CHECK(js_eval("'a,b,c'.split(',',2).length") == "2");
+  CHECK(js_eval("var o={f:async function(){return 1;}};typeof o.f") == "function");
   // Promises: handlers are queued and run when the script finishes.
   {
     js::Runtime r;
@@ -111,6 +137,95 @@ int main() {
     }
     CHECK(bad);
   }
+  // Positioning, flex, grid and transforms, measured from my own paint list.
+  {
+    Page page;
+    page.load(*parse_url("https://layout.test/"),
+              "<!doctype html><style>body{margin:0}"
+              "#p{position:relative;width:400px;height:200px;margin:10px}"
+              "#a{position:absolute;top:10px;left:20px;width:50px;height:30px}"
+              "</style><div id=p><div id=a>x</div></div>");
+    Rect a = node_box(page, "a");
+    CHECK(near(a.x, 30) && near(a.y, 20) && near(a.w, 50) && near(a.h, 30));
+  }
+  {
+    Page page;
+    page.load(*parse_url("https://layout.test/"),
+              "<!doctype html><style>body{margin:0}"
+              "#r{position:relative;top:5px;left:7px;width:100px;height:20px}"
+              "</style><div id=r>rel</div>");
+    Rect r = node_box(page, "r");
+    CHECK(near(r.x, 7) && near(r.y, 5));
+  }
+  {
+    Page page;
+    page.load(*parse_url("https://layout.test/"),
+              "<!doctype html><style>body{margin:0}"
+              "#f{position:fixed;top:0;left:0;width:100px;height:20px}"
+              "</style><div id=f>fixed</div>");
+    bool fixed = false;
+    Rect f = node_box(page, "f", &fixed);
+    CHECK(near(f.x, 0) && near(f.y, 0) && fixed);
+  }
+  {
+    Page page;
+    page.load(*parse_url("https://layout.test/"),
+              "<!doctype html><style>body{margin:0}"
+              "#f{display:flex;justify-content:center;width:300px;height:40px}"
+              "#a,#b{width:50px;height:20px}"
+              "</style><div id=f><div id=a>a</div><div id=b>b</div></div>");
+    Rect a = node_box(page, "a"), b = node_box(page, "b");
+    CHECK(near(a.x, 100) && near(b.x, 150));
+  }
+  {
+    Page page;
+    page.load(*parse_url("https://layout.test/"),
+              "<!doctype html><style>body{margin:0}"
+              "#f{display:flex;width:300px;height:40px}"
+              "#a{flex:1;height:20px}#b{flex:2;height:20px}"
+              "</style><div id=f><div id=a>a</div><div id=b>b</div></div>");
+    Rect a = node_box(page, "a"), b = node_box(page, "b");
+    CHECK(near(a.w, 100) && near(b.w, 200));
+  }
+  {
+    Page page;
+    page.load(*parse_url("https://layout.test/"),
+              "<!doctype html><style>body{margin:0}"
+              "#f{display:flex;align-items:center;height:100px;width:200px}"
+              "#a{width:40px;height:20px}"
+              "</style><div id=f><div id=a>a</div></div>");
+    Rect a = node_box(page, "a");
+    CHECK(near(a.y, 40));
+  }
+  {
+    Page page;
+    page.load(*parse_url("https://layout.test/"),
+              "<!doctype html><style>body{margin:0}"
+              "#f{display:flex;flex-direction:column;gap:10px;width:200px}"
+              "#a{height:20px}#b{height:30px}"
+              "</style><div id=f><div id=a>a</div><div id=b>b</div></div>");
+    Rect a = node_box(page, "a"), b = node_box(page, "b");
+    CHECK(near(a.y, 0) && near(b.y, 30));
+  }
+  {
+    Page page;
+    page.load(*parse_url("https://layout.test/"),
+              "<!doctype html><style>body{margin:0}"
+              "#g{display:grid;grid-template-columns:100px 1fr;gap:10px;width:310px}"
+              "#a,#b{height:20px}"
+              "</style><div id=g><div id=a>a</div><div id=b>b</div></div>");
+    Rect a = node_box(page, "a"), b = node_box(page, "b");
+    CHECK(near(a.w, 100) && near(b.x, 110) && near(b.w, 200));
+  }
+  {
+    Page page;
+    page.load(*parse_url("https://layout.test/"),
+              "<!doctype html><style>body{margin:0}"
+              "#t{transform:translate(15px,25px);width:100px;height:20px}"
+              "</style><div id=t>t</div>");
+    Rect t = node_box(page, "t");
+    CHECK(near(t.x, 15) && near(t.y, 25));
+  }
   // fetch() goes through my own network hook and resolves through promises.
   {
     Page page;
@@ -122,8 +237,16 @@ int main() {
         r.text = "{\"name\":\"vault\",\"items\":[1,2]}";
         return r;
       }
+      if (url == "https://local.test/offline") {
+        // No response at all: this is what a fetch promise rejects on.
+        r.status = 0;
+        r.ok = false;
+        r.error = "connection failed";
+        return r;
+      }
+      r.status = 404;
       r.ok = false;
-      r.error = "not found";
+      r.error = "HTTP 404";
       return r;
     };
     page.load(*parse_url("https://local.test/"),
@@ -132,15 +255,18 @@ int main() {
               ".then(function(j){document.title=j.name+j.items.length;});"
               "</script>");
     CHECK(page.title() == "vault2");
-    bool failed = false;
-    try {
-      page.load(*parse_url("https://local.test/"), "<!doctype html><script>fetch('/missing')"
-                                                   ".catch(function(e){document.title=e;})</script>");
-    } catch (std::exception &) {
-      failed = true;
-    }
-    CHECK(!failed);
-    CHECK(page.title().find("TypeError") != std::string::npos);
+    // An error status is still a response, so it resolves with ok false.
+    page.load(*parse_url("https://local.test/"),
+              "<!doctype html><title>before</title><script>fetch('/missing')"
+              ".then(function(r){document.title=(r.ok?'ok':'bad')+r.status;})"
+              ".catch(function(e){document.title='rejected';});</script>");
+    CHECK(page.title() == "bad404");
+    // A request that never got a response rejects.
+    page.load(*parse_url("https://local.test/"),
+              "<!doctype html><title>before</title><script>fetch('/offline')"
+              ".then(function(r){document.title='resolved';})"
+              ".catch(function(e){document.title='rejected:'+e;});</script>");
+    CHECK(page.title().rfind("rejected:", 0) == 0);
   }
   // await waits for a timer even though my engine runs one statement at a time.
   {

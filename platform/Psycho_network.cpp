@@ -218,6 +218,9 @@ Resource fetch_url(const Url &initial, const NetworkPolicy &policy, int timeout_
                    size_t max_bytes) {
   Resource out;
   out.url = initial.href();
+  // Zero means I never got a response, which is what a fetch promise rejects
+  // on. A response with an error status still counts as a response.
+  out.status = 0;
   std::string blocked;
   if (policy_blocks(policy, initial, blocked)) {
     out.ok = false;
@@ -565,6 +568,7 @@ DownloadOutcome download_to_file(const Url &initial, const std::string &destinat
 Resource fetch_url(const Url &url, const NetworkPolicy &policy, int, size_t) {
   Resource r;
   r.url = url.href();
+  r.status = 0;
   std::string reason;
   if (policy_blocks(policy, url, reason)) {
     r.ok = false;
@@ -578,6 +582,7 @@ Resource fetch_url(const Url &url, const NetworkPolicy &policy, int, size_t) {
     return r;
   }
   r.ok = false;
+  r.status = 0;
   r.error = "broker networking is implemented on Windows; headless CLI uses supplied resources";
   return r;
 }

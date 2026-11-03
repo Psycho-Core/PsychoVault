@@ -346,10 +346,83 @@ static void apply(Style &s, const std::map<std::string, std::string> &d, double 
     s.align_items = *v;
   if (auto v = get("gap"))
     s.gap = css_length(*v, parent_width, s.font_size, root, viewport, "gap", 0);
-  if (auto v = get("top"))
+  if (auto v = get("top")) {
     s.top = css_length(*v, parent_width, s.font_size, root, viewport, "top", 0);
-  if (auto v = get("left"))
+    s.has_top = lower(*v) != "auto";
+  }
+  if (auto v = get("left")) {
     s.left = css_length(*v, parent_width, s.font_size, root, viewport, "left", 0);
+    s.has_left = lower(*v) != "auto";
+  }
+  if (auto v = get("right")) {
+    s.right = css_length(*v, parent_width, s.font_size, root, viewport, "right", 0);
+    s.has_right = lower(*v) != "auto";
+  }
+  if (auto v = get("bottom")) {
+    s.bottom = css_length(*v, parent_width, s.font_size, root, viewport, "bottom", 0);
+    s.has_bottom = lower(*v) != "auto";
+  }
+  if (auto v = get("flex-wrap"))
+    s.flex_wrap = lower(*v);
+  if (auto v = get("flex-grow")) {
+    try {
+      s.flex_grow = std::max(0.0, std::stod(*v));
+    } catch (...) {
+    }
+  }
+  if (auto v = get("flex-shrink")) {
+    try {
+      s.flex_shrink = std::max(0.0, std::stod(*v));
+    } catch (...) {
+    }
+  }
+  if (auto v = get("flex-basis"))
+    s.flex_basis = lower(*v) == "auto"
+                       ? -1
+                       : css_length(*v, parent_width, s.font_size, root, viewport, "flex-basis", -1);
+  if (auto v = get("flex")) {
+    // I read the one, two and three value forms: grow, grow shrink, grow shrink basis.
+    auto parts = split(*v, ' ');
+    std::vector<std::string> numbers;
+    for (auto &part : parts)
+      if (!part.empty())
+        numbers.push_back(part);
+    auto number = [](const std::string &text, double fallback) {
+      try {
+        return std::stod(text);
+      } catch (...) {
+        return fallback;
+      }
+    };
+    if (!numbers.empty() && numbers[0] != "none" && numbers[0] != "auto") {
+      s.flex_grow = std::max(0.0, number(numbers[0], s.flex_grow));
+      if (numbers.size() > 1 && numbers[1] != "auto")
+        s.flex_shrink = std::max(0.0, number(numbers[1], s.flex_shrink));
+      if (!numbers.empty() && numbers.back() != numbers[0] && numbers.back() != "auto" &&
+          !numbers.back().empty() && !std::isdigit(static_cast<unsigned char>(numbers.back()[0])))
+        s.flex_basis = css_length(numbers.back(), parent_width, s.font_size, root, viewport,
+                                  "flex-basis", -1);
+      if (numbers.size() >= 3 && numbers[2] == "auto")
+        s.flex_basis = -1;
+    } else if (!numbers.empty() && numbers[0] == "auto") {
+      s.flex_grow = 1;
+      s.flex_basis = -1;
+    }
+  }
+  if (auto v = get("grid-template-columns"))
+    s.grid_columns = *v;
+  if (auto v = get("grid-column")) {
+    s.grid_column = *v;
+    auto parts = split(lower(*v), ' ');
+    if (parts.size() == 2 && parts[0] == "span") {
+      try {
+        s.grid_span = std::clamp(std::stoi(parts[1]), 1, 12);
+      } catch (...) {
+      }
+    }
+  }
+  if (auto v = get("transform"))
+    s.transform = *v;
 }
 static bool media_matches(const std::string &media, double viewport) {
   if (media.empty())

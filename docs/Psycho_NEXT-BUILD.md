@@ -7,17 +7,29 @@ I am working through my browser one step at a time, in the order that gets me so
 | Step | Work | State |
 | --- | --- | --- |
 | 1 | One executable that renders my pages itself | Done, published as 0.4.0 |
-| 2 | Modern JavaScript: promises, async/await, regular expressions, fetch, modules | Patterns, promises, async/await and fetch are in this build; modules, iterators and typed arrays are still to come |
-| 3 | Browsing fundamentals: cookies, local storage, forms, find in page, zoom | Not started |
-| 4 | More image formats and canvas | Not started |
-| 5 | CSS and layout correctness: flexbox, grid, positioning, overflow | Not started |
+| 2 | Modern JavaScript: promises, async/await, regular expressions, iterators, fetch, modules | Patterns, promises, async/await, iterators, `Symbol`, `matchAll` and `fetch` are in; typed arrays and modules are still to come |
+| 3 | CSS and layout: positioning, flexbox, grid, transforms | Done in this build for positioning, flexbox, grid and translate/scale transforms |
+| 4 | Browsing fundamentals: cookies, local storage, forms, find in page, zoom | Not started |
+| 5 | More image formats and canvas | Not started |
 | 6 | Media: audio, video and Media Source Extensions | Not started |
 | 7 | VPN transport, including the TLS-to-proxy path Proton needs | Not started |
 | 8 | Security: operating-system containment for page code, certificate policy, ad blocking | Not started |
 | 9 | Conformance measurement with Test262 and web-platform-tests subsets | Not started |
-| 10 | Published release and a verified updater cycle | Partly built, not yet published |
+| 10 | Published release and a verified updater cycle | Publishing on every build; the install and rollback half is not tested |
 
-## What this build adds over 0.4.0
+## What this build adds over 0.5.0
+
+- **Positioning.** `static`, `relative`, `absolute` and `fixed` now work. An absolute box is measured against the nearest positioned ancestor, a relative box keeps its place in the flow but paints where it is told, and a fixed box stays put while the page scrolls because I mark its commands and my painter skips the scroll for them.
+- **Flexbox.** Row and column, `row-reverse` and `column-reverse`, `flex-wrap`, `flex-grow`, `flex-shrink`, `flex-basis` and the `flex` shorthand, plus `justify-content` and `align-items` with stretch, centring and end alignment. A single line in a box with a set height fills that height, which is what makes centring work.
+- **Grid.** `display: grid` with `grid-template-columns` in pixels, percentages, `fr` units and `repeat()`, plus `gap` and `grid-column: span N`. Rows size themselves to their tallest item.
+- **Transforms.** `translate`, `translateX`, `translateY`, `scale`, `scaleX` and `scaleY`, applied about the centre of the box. I have not implemented `rotate`.
+- **Fixed defects found while auditing step 2.** `split` ignored its limit argument; `fetch` rejected on an error status instead of resolving with `ok: false`, because my network layer gave no way to tell "a response arrived" from "nothing arrived"; `async` methods in classes and object literals did not parse; `for...of` over a `Map` or a `Set` silently produced nonsense instead of iterating, so I wrote a real iterator walk that spread and `for...of` share; `matchAll` was missing.
+
+### What step 2 still needs
+
+Typed arrays and ES modules are not in. I would rather say that plainly than pretend the step is finished.
+
+## What 0.4.0 added
 
 - My own pattern engine in `engine/Psycho_regex.cpp`: parser, classes and ranges, `\\d \\w \\s` and their negations, anchors with the multiline flag, greedy and lazy quantifiers, capturing and named groups, back references, lookahead, escapes and the usual flags. Every match runs against code points decoded from UTF-8 and stops at a step and nesting limit instead of looping forever.
 - Pattern literals lex as patterns rather than as division, and `match`, `search`, `split`, `replace` and `replaceAll` accept a pattern, honour the global flag, expand `$1` to `$99` and ``$&``, and accept a function as the replacement.

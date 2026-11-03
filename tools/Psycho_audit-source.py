@@ -113,6 +113,23 @@ check('my page installs fetch on my own fetcher','void Page::install_fetch()' in
 check('my fetch cannot bypass my network policy','fetcher(href)' in page_text)
 check('my await pump still lets due timers run','bool Page::pump_for_await()' in page_text)
 check('my page host gives my engine its own fetcher','page_->fetcher = [this]' in host_cpp)
+# My CSS and layout handle the boxes real pages are built from.
+css_text=(ROOT/'engine/Psycho_css.cpp').read_text()
+check('I parse positioning, offsets, flex, grid and transforms',
+      all(k in css_text for k in ('"position"','"flex-grow"','"grid-template-columns"','"transform"','"right"')))
+layout_text=(ROOT/'engine/Psycho_layout.cpp').read_text()
+check('my layout places an absolute box against its containing block','place_positioned(' in layout_text)
+check('my layout offsets a relative box without moving the flow','move_box(' in layout_text)
+check('my flexbox covers direction, wrapping, growth and alignment',
+      all(k in layout_text for k in ('flex_children','justify_content','align_items','flex_wrap')))
+check('my grid turns a track list into track widths','track_sizes(' in layout_text)
+check('my transforms move what a box painted','apply_transform(' in layout_text)
+check('a fixed box ignores the scroll position','if (!c.fixed)' in layout_text)
+check('my tests measure my layout cases','node_box(' in tests_text)
+# The step 2 audit fixes stay fixed.
+check('my iterator walk is shared by spread and for..of','bool Runtime::iterate(' in runtime_text)
+check('my fetch rejects only when no response arrived','bool received = res.status >= 100;' in page_text)
+check('my strings honour a split limit','size_t stop = limit >=' in runtime_text)
 check('my tests cover patterns, promises, async and fetch',
       all(k in tests_text for k in ('/ab+c/.test','Promise.all(','async function',"fetch('/api.json'")))
 for wf in ('.github/workflows/Psycho_owned-engine.yml','.github/workflows/Psycho_release.yml'):
