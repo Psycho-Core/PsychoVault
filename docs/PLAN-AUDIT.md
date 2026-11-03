@@ -6,7 +6,7 @@ This audit checks my planning documents and reference evidence. It does not prov
 
 ## Result
 
-Final local audit: **377 passed, 0 failed**.
+Final local plan audit: **377 passed, 0 failed**. My source-boundary audit: **68 passed, 0 failed**.
 
 I also added `.github/workflows/plan-audit.yml` so the same audit runs in GitHub Actions on relevant pull requests and on `Master`. I pinned the checkout action to `11bd71901bbe5b1630ceea73d27597364c9af683` and verified that commit exists upstream.
 

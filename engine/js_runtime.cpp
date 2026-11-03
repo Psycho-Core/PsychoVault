@@ -1107,7 +1107,7 @@ Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
     if (e.text == "+")
       return Value(v.to_number());
     if (e.text == "~")
-      return Value(int32(~uint32(v.to_number())));
+      return Value(double(int32_t(~uint32(v.to_number()))));
     if (e.text == "typeof")
       return Value(v.type_of());
     if (e.text == "void")

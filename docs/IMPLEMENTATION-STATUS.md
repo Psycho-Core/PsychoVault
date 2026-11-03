@@ -32,8 +32,8 @@ I am using RAII, bounded containers, explicit limits, compiler warnings, address
 ## Current verification
 
 - Local GCC engine tests: 33 checks passed.
-- Local sanitizer run: in progress while I write this page; I will update it with the result.
-- Windows hosted build: PR #63 is the first real build. I will record the first failure and the fix rather than hiding it.
+- Local GCC address/undefined-behaviour sanitizer run: 33 checks passed, no sanitizer report.
+- Windows hosted build: PR #63 is the first real build. I have fixed MSVC environment discovery, Windows header order and narrowing warnings from actual hosted failures. I will keep the final run link here when it passes.
 - Proton live test: not run.
 - Full UI parity: not run.
 - Android: not run.
