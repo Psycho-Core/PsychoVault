@@ -13,6 +13,7 @@
 #include <condition_variable>
 #include <deque>
 #include <dwmapi.h>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <shellapi.h>
@@ -1080,10 +1081,59 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   return DefWindowProcW(hwnd, msg, wp, lp);
 }
 } // namespace pv
+static int run_sandbox_test(const std::string &report_path) {
+  using namespace pv;
+  std::filesystem::path sentinel;
+  Json result = Json::make_object();
+  bool ok = false;
+  try {
+    auto suffix = base64_encode(random_bytes(12));
+    for (char &c : suffix)
+      if (c == '+' || c == '/')
+        c = 'x';
+    sentinel = std::filesystem::temp_directory_path() /
+               ("psychovault-sandbox-sentinel-" + suffix + ".tmp");
+    std::string error;
+    if (!write_file_atomic(sentinel.string(), "broker-only sandbox sentinel\n", error))
+      throw std::runtime_error(error);
+    Process renderer;
+    bool started = renderer.start(executable_dir() + "\\pv-renderer.exe",
+                                  "--sandbox-probe \"" + sentinel.string() + "\"", true, error);
+    result.set("started", started);
+    result.set("startError", error);
+    if (started) {
+      auto report = renderer.receive(5000);
+      result.set("sandboxed", renderer.sandboxed());
+      result.set("ioError", renderer.io_error());
+      auto exit = renderer.exit_code();
+      if (exit)
+        result.set("exitCode", double(*exit));
+      if (report) {
+        for (auto &entry : report->object)
+          result.set(entry.first, entry.second);
+        ok = renderer.sandboxed() && report->flag("appContainer") && report->flag("fileDenied") &&
+             report->flag("networkTested") && report->flag("networkDenied");
+      }
+      renderer.terminate();
+    }
+  } catch (const std::exception &e) {
+    result.set("exception", e.what());
+  }
+  if (!sentinel.empty()) {
+    std::error_code ignored;
+    std::filesystem::remove(sentinel, ignored);
+  }
+  result.set("ok", ok);
+  std::string error;
+  if (!report_path.empty() && !write_file_atomic(report_path, result.dump() + "\n", error))
+    return 1;
+  return ok ? 0 : 1;
+}
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
   using namespace pv;
   std::string capture, url = "psychovault://newtab", profile_dir;
-  bool smoke = false, private_mode = false, expect_image = false;
+  bool smoke = false, private_mode = false, expect_image = false, sandbox_test = false;
+  std::string sandbox_report;
   std::vector<std::string> args;
   int argc = 0;
   LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -1108,6 +1158,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     else if (args[i] == "--profile" && i + 1 < args.size())
       profile_dir = args[++i];
   }
+  if (sandbox_test)
+    return run_sandbox_test(sandbox_report);
   WNDCLASSEXW wc{};
   wc.cbSize = sizeof(wc);
   wc.lpfnWndProc = wndproc;

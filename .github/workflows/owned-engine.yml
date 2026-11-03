@@ -88,7 +88,9 @@ jobs:
         id: sandbox
         shell: pwsh
         run: |
-          .\build\pv-sandbox-test.exe 2>&1 | Tee-Object build/sandbox-test.txt
+          .\build\PsychoVault.exe --sandbox-test --sandbox-report build/sandbox-test.json --profile build/test-profile
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -c "import json; d=json.load(open('build/sandbox-test.json', encoding='utf-8')); print(json.dumps(d, indent=2)); assert d.get('ok') is True"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Package Windows preview ZIP
         shell: pwsh
@@ -101,8 +103,8 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force build | Out-Null
           "I did not publish a release. This build failed for commit $env:GITHUB_SHA. Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID" | Set-Content build/FAILURE.txt
-          if (Test-Path build/sandbox-test.txt) {
-            $sandbox = Get-Content build/sandbox-test.txt -Tail 40
+          if (Test-Path build/sandbox-test.json) {
+            $sandbox = Get-Content build/sandbox-test.json -Tail 40
             "## Sandbox test output`n`n``````" | Add-Content $env:GITHUB_STEP_SUMMARY
             $sandbox | Add-Content $env:GITHUB_STEP_SUMMARY
             "``````" | Add-Content $env:GITHUB_STEP_SUMMARY
