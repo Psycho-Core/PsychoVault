@@ -1,4 +1,5 @@
 #pragma once
+#include "Psycho_canvas.hpp"
 #include "Psycho_cookies.hpp"
 #include "Psycho_js.hpp"
 #include "Psycho_layout.hpp"
@@ -54,6 +55,13 @@ public:
   const std::map<std::string, Image> &images() const {
     return images_;
   }
+  // A canvas paints its own bitmap, so my shell asks for the latest ones.
+  const std::map<int, Image> &canvas_images() const {
+    return canvas_images_;
+  }
+  const std::map<int, uint64_t> &canvas_revisions() const {
+    return canvas_revisions_;
+  }
   double content_height() const {
     return content_height_;
   }
@@ -68,6 +76,11 @@ private:
   std::vector<Listener> listeners_;
   std::map<std::string, Resource> resources_;
   std::map<std::string, Image> images_;
+  std::map<int, Canvas2D> canvases_;
+  std::map<int, Gradient> gradients_;
+  std::map<int, Image> canvas_images_;
+  std::map<int, uint64_t> canvas_revisions_;
+  int next_gradient_ = 0;
   std::set<int> executed_;
   std::set<std::string> requested_;
   CookieJar own_cookies_;

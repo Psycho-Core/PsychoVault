@@ -4,7 +4,8 @@
 namespace pv {
 struct Image;
 struct PaintCommand {
-  enum class Kind { Rect, Border, Text, Image, Line } kind;
+  // I keep the order stable because the frame I send my shell carries it as a number.
+  enum class Kind { Rect, Border, Text, Image, Line, Canvas, PushClip, PopClip } kind;
   Rect rect;
   uint32_t color = 0xff000000;
   std::string text;
@@ -12,6 +13,8 @@ struct PaintCommand {
   bool bold = false;
   int node = -1;
   std::string url;
+  // A gradient background keeps its CSS text until the paint pass parses it.
+  std::string gradient;
   // A fixed command stays where it is when the page scrolls.
   bool fixed = false;
 };

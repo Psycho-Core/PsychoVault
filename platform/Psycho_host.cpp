@@ -186,6 +186,26 @@ void Host::emit() {
     event.image = std::make_shared<const Image>(image);
     report_(std::move(event));
   }
+  // A canvas keeps its own bitmap, so I send the new pixels whenever it has
+  // been drawn on since the last frame.
+  for (const auto &[node, image] : page_->canvas_images()) {
+    if (!image.valid())
+      continue;
+    auto seen = sent_canvas_.find(node);
+    auto revision = page_->canvas_revisions().find(node);
+    if (seen != sent_canvas_.end() && revision != page_->canvas_revisions().end() &&
+        seen->second == revision->second)
+      continue;
+    if (revision != page_->canvas_revisions().end())
+      sent_canvas_[node] = revision->second;
+    if (!report_)
+      continue;
+    HostEvent event;
+    event.tag = "image";
+    event.url = "canvas:" + std::to_string(node);
+    event.image = std::make_shared<const Image>(image);
+    report_(std::move(event));
+  }
   if (report_) {
     HostEvent event;
     event.tag = "frame";

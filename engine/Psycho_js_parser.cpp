@@ -369,7 +369,10 @@ public:
       node->right = expr(prec + (prec == 1 || op == "**" ? 0 : 1));
       left = std::move(node);
     }
-    if (min == 0 && take("?")) {
+    // The conditional sits between assignment and everything looser, so I take
+    // it when this call is parsing at assignment level or below. Testing only
+    // for zero here made `a = b ? c : d` assign the test instead of the branch.
+    if (min <= 1 && take("?")) {
       auto node = make(Expr::Kind::Conditional);
       node->left = std::move(left);
       node->right = expr();

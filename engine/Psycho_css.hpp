@@ -13,18 +13,27 @@ struct Style {
   std::string display = "block", font_family = "Segoe UI", text_align = "left", weight = "normal",
               box_sizing = "content-box", white_space = "normal", position = "static",
               overflow = "visible", flex_direction = "row", justify_content = "flex-start",
-              align_items = "stretch", flex_wrap = "nowrap", grid_columns, grid_column, transform;
+              align_items = "stretch", align_self = "auto", flex_wrap = "nowrap", grid_columns,
+              grid_rows, grid_column, transform,
+              // A gradient keeps its own text until my paint pass has the box.
+              background_image;
   Color color{230, 237, 243, 255, false}, background{0, 0, 0, 0, true},
       border_color{70, 80, 95, 255, false};
   double font_size = 16, line_height = 1.45, opacity = 1, gap = 0;
   double margin[4] = {0, 0, 0, 0}, padding[4] = {0, 0, 0, 0}, border[4] = {0, 0, 0, 0};
+  // An auto margin is not a length, so I remember it separately instead of
+  // pretending it is zero.
+  bool auto_left = false, auto_right = false;
   double width = -1, height = -1, min_width = 0, max_width = -1, min_height = 0, max_height = -1,
          radius = 0;
   double top = 0, left = 0, right = 0, bottom = 0;
   // Auto offsets stay absent so I can tell "not set" from zero.
   bool has_top = false, has_left = false, has_right = false, has_bottom = false;
   double flex_grow = 0, flex_shrink = 1, flex_basis = -1;
-  int grid_span = 1;
+  int grid_span = 1, order = 0;
+  // A percentage height resolves against the containing block at layout time,
+  // so I keep the fraction instead of a width-based length.
+  double height_percent = -1, row_gap = -1;
   bool bold = false, italic = false, underline = false, list_item = false;
   std::map<std::string, std::string> raw;
 };

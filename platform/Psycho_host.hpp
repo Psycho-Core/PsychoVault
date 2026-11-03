@@ -69,6 +69,9 @@ private:
   Reporter report_;
   std::string reported_url_;
   std::set<std::string> sent_images_;
+  // I remember which canvas revision I last handed over, so an idle canvas is
+  // not copied again.
+  std::map<int, uint64_t> sent_canvas_;
   double width_ = 1000, height_ = 700, scroll_ = 0;
   bool loaded_ = false;
 };

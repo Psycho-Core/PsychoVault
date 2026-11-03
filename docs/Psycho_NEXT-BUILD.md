@@ -8,14 +8,48 @@ I am working through my browser one step at a time, in the order that gets me so
 | --- | --- | --- |
 | 1 | One executable that renders my pages itself | Done, published as 0.4.0 |
 | 2 | Modern JavaScript: promises, async/await, regular expressions, iterators, fetch, modules | Patterns, promises, async/await, iterators, `Symbol`, `matchAll` and `fetch` are in; typed arrays and modules are still to come |
-| 3 | CSS and layout: positioning, flexbox, grid, transforms | Done in this build for positioning, flexbox, grid and translate/scale transforms |
+| 3 | CSS and layout: positioning, flexbox, grid, transforms | Done, and this build fixes nine defects my own audit of it found |
 | 4 | Browsing fundamentals: cookies, local storage, forms, find in page, zoom | Done in this build: my own cookie jar, local and session storage with a quota, GET and POST forms, the history API, find in page and zoom |
-| 5 | More image formats and canvas | Not started |
+| 5 | More image formats and canvas | Done in this build: my own JPEG decoder, my own SVG renderer and a 2D drawing surface |
 | 6 | Media: audio, video and Media Source Extensions | Not started |
 | 7 | VPN transport, including the TLS-to-proxy path Proton needs | Not started |
 | 8 | Security: operating-system containment for page code, certificate policy, ad blocking | Not started |
 | 9 | Conformance measurement with Test262 and web-platform-tests subsets | Not started |
 | 10 | Published release and a verified updater cycle | Publishing on every build; the install and rollback half is not tested |
+
+## What this build adds over 0.7.0
+
+- **Nine layout defects my own audit found.** I wrote 50 small pages with a known
+  correct answer for each box and compared. `border-bottom: 1px solid #ccc` drew
+  nothing because only the `border` shorthand was read. Children inherited
+  properties that do not inherit, so a `div` picked up its parent's
+  `overflow: hidden`, grid columns and transform. Adjacent vertical margins did
+  not collapse. `height: 50%` resolved against the parent's width. `overflow:
+  hidden` did not clip, so a tall child painted over the rest of the page.
+  Gradients were thrown away by my colour parser. `grid-template-rows`,
+  `flex-flow`, `order` and `align-self` were ignored, and `position: sticky`
+  moved a box even when nothing had scrolled. All nine are fixed and each one
+  has a check.
+- **A black bar behind every heading.** While looking at a rendered page I saw
+  a dark rectangle behind each heading on a page that only set a background on
+  the body. An element that did not ask for a background was painting an opaque
+  black box. It now paints nothing, the page canvas is white unless the body
+  says otherwise, and my reported geometry comes from a real layout report
+  instead of from the paint list.
+- **A JPEG decoder of my own.** Baseline and extended sequential, 4:4:4, 4:2:2
+  and 4:2:0 chroma with bilinear upsampling, restart markers, and a grayscale
+  path. I compare it against Pillow on every fixture: the worst channel error is
+  3 out of 255 and the mean is under 0.2.
+- **An SVG renderer of my own.** `rect`, `circle`, `ellipse`, `line`, `polygon`,
+  `polyline`, `path` with the usual commands, `g` with inherited attributes,
+  solid and gradient fills, `viewBox` scaling and transforms.
+- **Canvas 2D.** `getContext('2d')` with fills, strokes, paths, arcs, curves,
+  gradients, patterns, text, transforms, clipping, `getImageData`,
+  `putImageData`, `drawImage` with scaling and source rectangles, `toDataURL`
+  and per-frame invalidation, so a canvas only re-uploads when it changed.
+- **Images on a page.** `img` and `canvas` take their intrinsic size, respect
+  `width` and `height` and aspect ratio, decode through my own code and are
+  painted by my own raster.
 
 ## What this build adds over 0.6.1
 
@@ -57,7 +91,7 @@ I want to be straight about one difference: my engine runs one statement at a ti
 
 ## Evidence required before I hand over a preview
 
-- The engine and page-host tests pass locally and on Windows. They now stand at 385 checks, including pattern matching, promise ordering, async/await and a `fetch` round trip through my page host.
+- The engine and page-host tests pass locally and on Windows. They now stand at 436 checks, including pattern matching, promise ordering, async/await and a `fetch` round trip through my page host.
 - The single-file gate passes on hosted Windows for the exact commit I publish.
 - A local HTTP test proves main-document, stylesheet, script and PNG loading through my page host.
 - The Windows artifact contains only my executables, notices and build metadata - no profile, credential or source-control directory.

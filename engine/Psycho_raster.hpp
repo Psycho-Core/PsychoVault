@@ -8,6 +8,22 @@ struct Rect {
     return px >= x && py >= y && px < x + w && py < y + h;
   }
 };
+struct Point {
+  double x = 0, y = 0;
+};
+// One colour stop, and the gradient it belongs to. A canvas and a background
+// share these so there is one shading implementation.
+struct GradientStop {
+  double at = 0;
+  uint32_t color = 0xff000000u;
+};
+struct Gradient {
+  bool radial = false;
+  double x0 = 0, y0 = 0, x1 = 0, y1 = 0, r0 = 0, r1 = 0;
+  std::vector<GradientStop> stops;
+};
+// I sample a gradient at a point, clamping outside the ends.
+uint32_t gradient_shade(const Gradient &gradient, double x, double y);
 struct Canvas {
   int width = 0, height = 0;
   Bytes pixels;
@@ -22,6 +38,15 @@ struct Canvas {
                     std::string_view family = "Segoe UI") const;
   void pixel(int x, int y, uint32_t color);
   void image(const Image &source, Rect destination);
+  // I fill a closed polygon with a scan line walk, and I stroke a path as a
+  // chain of thick segments. Both clip to my own rectangle.
+  void polygon(const std::vector<Point> &points, uint32_t color);
+  void polyline(const std::vector<Point> &points, uint32_t color, double width = 1,
+                bool closed = false);
+  void circle(double cx, double cy, double radius, uint32_t color);
+  void ellipse(double cx, double cy, double rx, double ry, uint32_t color);
+  // A gradient fills one rectangle, which is what a background needs.
+  void fill_gradient(Rect r, const Gradient &gradient);
 };
 Bytes encode_png(int width, int height, const Bytes &bgra);
 uint32_t blend(uint32_t dst, uint32_t src);

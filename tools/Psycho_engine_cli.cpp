@@ -81,9 +81,15 @@ int main(int argc, char **argv) {
       c.bold = j.flag("bold");
       c.node = int(j.num("node"));
       c.url = j.str("url");
+      c.gradient = j.str("gradient");
       commands.push_back(c);
     }
-    paint_commands(canvas, commands, 0, page.images());
+    // A canvas paints its own bitmap, so I fold those into the same lookup the
+    // paint pass uses for images.
+    std::map<std::string, Image> pictures = page.images();
+    for (const auto &[node, image] : page.canvas_images())
+      pictures["canvas:" + std::to_string(node)] = image;
+    paint_commands(canvas, commands, 0, pictures);
     if (!out.empty()) {
       auto png = encode_png(width, height, canvas.pixels);
       std::ofstream f(out, std::ios::binary);

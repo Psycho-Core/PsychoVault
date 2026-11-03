@@ -3,7 +3,8 @@
 #include <thread>
 namespace pv {
 static constexpr int kDocument = -1, kLocation = -3, kStorageLocal = -5, kStorageSession = -6,
-                     kHistory = -7, kStyleBase = 1000000, kClassBase = 2000000;
+                     kHistory = -7, kStyleBase = 1000000, kClassBase = 2000000,
+                     kCanvasBase = 3000000, kGradientBase = 4000000;
 // Cookies expire against wall-clock seconds, which is what a date header uses.
 static double cookie_now() {
   return double(now_ms()) / 1000.0;
@@ -136,8 +137,288 @@ public:
     event.object->properties["state"] = page.history_[page.history_index_].state;
     page.dispatch(page.doc.root, "popstate", event);
   }
+  // ---- Canvas 2D ---------------------------------------------------------
+  js::Value canvas_context(int node) {
+    if (!page.canvases_.count(node)) {
+      const auto &n = page.doc.nodes[node];
+      auto size = [&](const char *name, int fallback) {
+        auto text = trim(n.attribute(name));
+        try {
+          if (!text.empty()) {
+            size_t used = 0;
+            double value = std::stod(text, &used);
+            if (used == text.size() && value > 0 && value <= 8192)
+              return int(value);
+          }
+        } catch (...) {
+        }
+        return fallback;
+      };
+      page.canvases_.emplace(node, Canvas2D(size("width", 300), size("height", 150)));
+    }
+    return page.js_->host_value(kCanvasBase + node, "CanvasRenderingContext2D");
+  }
+  // I resolve whatever a script passes to drawImage: another canvas, or an
+  // image element whose bytes I already decoded.
+  bool image_argument(const js::Value &value, Image &out) {
+    if (value.type != js::Value::Type::Object || !value.object ||
+        value.object->kind != js::Object::Kind::Host)
+      return false;
+    int node = value.object->host;
+    if (node < 0 || node >= int(page.doc.nodes.size()))
+      return false;
+    const auto &n = page.doc.nodes[node];
+    if (n.name == "canvas") {
+      auto it = page.canvases_.find(node);
+      if (it == page.canvases_.end()) {
+        out.width = 0;
+        out.height = 0;
+        return false;
+      }
+      out = it->second.snapshot();
+      return out.valid();
+    }
+    if (n.name == "img") {
+      auto resolved = resolve_url(page.doc.url, n.attribute("src"));
+      std::string key = resolved ? resolved->href() : n.attribute("src");
+      auto found = page.images_.find(key);
+      if (found == page.images_.end() || !found->second.valid())
+        return false;
+      out = found->second;
+      return true;
+    }
+    return false;
+  }
+  js::Value canvas_member(Canvas2D *c, const std::string &name) {
+    auto &r = *page.js_;
+    auto number = [](js::Values &a, size_t at, double fallback = 0) {
+      return a.size() > at ? a[at].to_number() : fallback;
+    };
+    if (name == "fillStyle")
+      return js::Value(c->state.has_gradient ? std::string("gradient")
+                                             : std::string("#000000"));
+    if (name == "strokeStyle")
+      return js::Value(std::string("#000000"));
+    if (name == "lineWidth")
+      return js::Value(c->state.line_width);
+    if (name == "globalAlpha")
+      return js::Value(c->state.global_alpha);
+    if (name == "font")
+      return js::Value(c->state.font);
+    if (name == "textAlign")
+      return js::Value(c->state.text_align);
+    if (name == "canvas")
+      return js::Value();
+    if (name == "beginPath")
+      return r.make_native([c](js::Values &) {
+        c->begin_path();
+        return js::Value();
+      });
+    if (name == "closePath")
+      return r.make_native([c](js::Values &) {
+        c->close_path();
+        return js::Value();
+      });
+    if (name == "moveTo")
+      return r.make_native([c, number](js::Values &a) {
+        c->move_to(number(a, 0), number(a, 1));
+        return js::Value();
+      });
+    if (name == "lineTo")
+      return r.make_native([c, number](js::Values &a) {
+        c->line_to(number(a, 0), number(a, 1));
+        return js::Value();
+      });
+    if (name == "rect")
+      return r.make_native([c, number](js::Values &a) {
+        c->add_rect(number(a, 0), number(a, 1), number(a, 2), number(a, 3));
+        return js::Value();
+      });
+    if (name == "arc")
+      return r.make_native([c, number](js::Values &a) {
+        c->add_arc(number(a, 0), number(a, 1), number(a, 2), number(a, 3), number(a, 4),
+                   a.size() < 6 || a[5].truthy());
+        return js::Value();
+      });
+    if (name == "ellipse")
+      return r.make_native([c, number](js::Values &a) {
+        c->add_ellipse(number(a, 0), number(a, 1), number(a, 2), number(a, 3), number(a, 4),
+                       number(a, 5), a.size() < 8 || a[7].truthy());
+        return js::Value();
+      });
+    if (name == "quadraticCurveTo")
+      return r.make_native([c, number](js::Values &a) {
+        c->add_quadratic(number(a, 0), number(a, 1), number(a, 2), number(a, 3));
+        return js::Value();
+      });
+    if (name == "bezierCurveTo")
+      return r.make_native([c, number](js::Values &a) {
+        c->add_bezier(number(a, 0), number(a, 1), number(a, 2), number(a, 3), number(a, 4),
+                      number(a, 5));
+        return js::Value();
+      });
+    if (name == "fill")
+      return r.make_native([c](js::Values &) {
+        c->fill();
+        return js::Value();
+      });
+    if (name == "stroke")
+      return r.make_native([c](js::Values &) {
+        c->stroke();
+        return js::Value();
+      });
+    if (name == "fillRect")
+      return r.make_native([c, number](js::Values &a) {
+        c->fill_rect(number(a, 0), number(a, 1), number(a, 2), number(a, 3));
+        return js::Value();
+      });
+    if (name == "strokeRect")
+      return r.make_native([c, number](js::Values &a) {
+        c->stroke_rect(number(a, 0), number(a, 1), number(a, 2), number(a, 3));
+        return js::Value();
+      });
+    if (name == "clearRect")
+      return r.make_native([c, number](js::Values &a) {
+        c->clear_rect(number(a, 0), number(a, 1), number(a, 2), number(a, 3));
+        return js::Value();
+      });
+    if (name == "fillText")
+      return r.make_native([c, number](js::Values &a) {
+        c->fill_text(number(a, 1), number(a, 2), a.empty() ? std::string() : a[0].to_string());
+        return js::Value();
+      });
+    if (name == "strokeText")
+      return r.make_native([c, number](js::Values &a) {
+        c->stroke_text(number(a, 1), number(a, 2), a.empty() ? std::string() : a[0].to_string());
+        return js::Value();
+      });
+    if (name == "measureText")
+      return r.make_native([this, c](js::Values &a) {
+        auto text = a.empty() ? std::string() : a[0].to_string();
+        auto out = page.js_->make_object();
+        out.object->properties["width"] = js::Value(c->text_width(text));
+        return out;
+      });
+    if (name == "save")
+      return r.make_native([c](js::Values &) {
+        c->save();
+        return js::Value();
+      });
+    if (name == "restore")
+      return r.make_native([c](js::Values &) {
+        c->restore();
+        return js::Value();
+      });
+    if (name == "translate")
+      return r.make_native([c, number](js::Values &a) {
+        c->translate(number(a, 0), number(a, 1));
+        return js::Value();
+      });
+    if (name == "scale")
+      return r.make_native([c, number](js::Values &a) {
+        c->scale(number(a, 0), number(a, 1, 1));
+        return js::Value();
+      });
+    if (name == "rotate")
+      return r.make_native([c, number](js::Values &a) {
+        c->rotate(number(a, 0));
+        return js::Value();
+      });
+    if (name == "setTransform")
+      return r.make_native([c, number](js::Values &a) {
+        c->set_transform(number(a, 0, 1), number(a, 1), number(a, 2), number(a, 3, 1), number(a, 4),
+                         number(a, 5));
+        return js::Value();
+      });
+    if (name == "drawImage")
+      return r.make_native([this, c, number](js::Values &a) {
+        if (a.empty())
+          return js::Value();
+        Image source;
+        if (!image_argument(a[0], source))
+          return js::Value();
+        double x = number(a, 1), y = number(a, 2);
+        double w = a.size() > 4 ? number(a, 3) : double(source.width);
+        double h = a.size() > 4 ? number(a, 4) : double(source.height);
+        c->draw_image(source, x, y, w, h);
+        return js::Value();
+      });
+    if (name == "toDataURL")
+      return r.make_native([c](js::Values &) { return js::Value(c->data_url()); });
+    if (name == "getImageData")
+      return r.make_native([this, c, number](js::Values &a) {
+        int x = int(number(a, 0)), y = int(number(a, 1));
+        int w = int(number(a, 2)), h = int(number(a, 3));
+        auto pixels = c->get_pixels(x, y, w, h);
+        js::Values data;
+        data.reserve(pixels.size());
+        for (auto byte : pixels)
+          data.push_back(js::Value(double(byte)));
+        auto out = page.js_->make_object();
+        out.object->properties["width"] = js::Value(double(std::max(1, w)));
+        out.object->properties["height"] = js::Value(double(std::max(1, h)));
+        out.object->properties["data"] = page.js_->make_array(data);
+        return out;
+      });
+    if (name == "putImageData")
+      return r.make_native([this, c, number](js::Values &a) {
+        if (a.empty() || a[0].type != js::Value::Type::Object || !a[0].object)
+          return js::Value();
+        auto &image = a[0].object->properties;
+        int w = int(image["width"].to_number()), h = int(image["height"].to_number());
+        js::Values values;
+        if (!page.js_->iterate(image["data"], values))
+          return js::Value();
+        std::vector<uint8_t> pixels;
+        pixels.reserve(values.size());
+        for (auto &v : values)
+          pixels.push_back(uint8_t(std::clamp(v.to_number(), 0.0, 255.0)));
+        c->put_pixels(int(number(a, 1)), int(number(a, 2)), w, h, pixels);
+        return js::Value();
+      });
+    if (name == "createLinearGradient" || name == "createRadialGradient")
+      return r.make_native([this, number, radial = name == "createRadialGradient"](js::Values &a) {
+        Gradient gradient;
+        gradient.radial = radial;
+        if (radial) {
+          gradient.x0 = number(a, 0);
+          gradient.y0 = number(a, 1);
+          gradient.r0 = number(a, 2);
+          gradient.x1 = number(a, 3);
+          gradient.y1 = number(a, 4);
+          gradient.r1 = number(a, 5);
+        } else {
+          gradient.x0 = number(a, 0);
+          gradient.y0 = number(a, 1);
+          gradient.x1 = number(a, 2);
+          gradient.y1 = number(a, 3);
+        }
+        int index = page.next_gradient_++;
+        page.gradients_[index] = std::move(gradient);
+        return page.js_->host_value(kGradientBase + index, "CanvasGradient");
+      });
+    return js::Value();
+  }
   js::Value get(int id, const std::string &name) override {
     auto &r = *page.js_;
+    // The canvas context and a gradient each answer for themselves.
+    if (id >= kGradientBase && id < kGradientBase + 1000000) {
+      int index = id - kGradientBase;
+      if (name == "addColorStop")
+        return r.make_native([this, index](js::Values &a) {
+          auto it = page.gradients_.find(index);
+          if (a.size() < 2 || it == page.gradients_.end())
+            return js::Value();
+          Color color = parse_color(a[1].to_string());
+          it->second.stops.push_back({std::clamp(a[0].to_number(), 0.0, 1.0), color.bgra()});
+          return js::Value();
+        });
+      return js::Value();
+    }
+    if (id >= kCanvasBase && id < kCanvasBase + 1000000) {
+      auto it = page.canvases_.find(id - kCanvasBase);
+      return it == page.canvases_.end() ? js::Value() : canvas_member(&it->second, name);
+    }
     auto &d = page.doc;
     if (id == kStorageLocal || id == kStorageSession)
       return storage_get(id, name);
@@ -352,6 +633,18 @@ public:
       return js::Value(has_attr(n, "checked"));
     if (name == "href" || name == "src")
       return js::Value(n.attribute(name));
+    if (n.name == "canvas" && (name == "width" || name == "height")) {
+      auto it = page.canvases_.find(id);
+      int bitmap = name == "width" ? (it == page.canvases_.end() ? 300 : it->second.width())
+                                   : (it == page.canvases_.end() ? 150 : it->second.height());
+      return js::Value(double(bitmap));
+    }
+    if (n.name == "canvas" && name == "getContext")
+      return r.make_native([this, id](js::Values &a) {
+        if (a.empty() || lower(a[0].to_string()) != "2d")
+          return js::Value::null();
+        return canvas_context(id);
+      });
     if (name == "style")
       return r.host_value(kStyleBase + id, "CSSStyleDeclaration");
     if (name == "classList")
@@ -446,6 +739,50 @@ public:
   }
   bool set(int id, const std::string &name, const js::Value &value) override {
     auto &d = page.doc;
+    if (id >= kCanvasBase && id < kCanvasBase + 1000000) {
+      auto it = page.canvases_.find(id - kCanvasBase);
+      if (it == page.canvases_.end())
+        return false;
+      Canvas2D &c = it->second;
+      if (name == "fillStyle" || name == "strokeStyle") {
+        bool gradient = value.type == js::Value::Type::Object && value.object &&
+                        value.object->kind == js::Object::Kind::Host &&
+                        value.object->host_type == "CanvasGradient";
+        if (gradient) {
+          auto found = page.gradients_.find(value.object->host - kGradientBase);
+          if (found != page.gradients_.end() && name == "fillStyle") {
+            c.state.fill_gradient = found->second;
+            c.state.has_gradient = true;
+            return true;
+          }
+          return false;
+        }
+        Color color = parse_color(value.to_string());
+        if (name == "fillStyle") {
+          c.state.fill = color.bgra();
+          c.state.has_gradient = false;
+        } else
+          c.state.stroke = color.bgra();
+        return true;
+      }
+      if (name == "lineWidth") {
+        c.state.line_width = std::max(0.0, value.to_number());
+        return true;
+      }
+      if (name == "globalAlpha") {
+        c.state.global_alpha = std::clamp(value.to_number(), 0.0, 1.0);
+        return true;
+      }
+      if (name == "font") {
+        c.state.font = value.to_string();
+        return true;
+      }
+      if (name == "textAlign") {
+        c.state.text_align = lower(value.to_string());
+        return true;
+      }
+      return false;
+    }
     if (id == kStorageLocal || id == kStorageSession) {
       if (!storage_for(id).set(d.url.origin(), name, value.to_string()))
         throw js::JsError{js::Value("QuotaExceededError: web storage is full for this site")};
@@ -482,6 +819,14 @@ public:
     if (id < 0 || id >= int(d.nodes.size()))
       return false;
     auto &n = d.nodes[id];
+    if (n.name == "canvas" && (name == "width" || name == "height")) {
+      auto &ctx = page.canvases_[id];
+      int w = name == "width" ? int(value.to_number()) : ctx.width();
+      int h = name == "height" ? int(value.to_number()) : ctx.height();
+      ctx.resize(std::clamp(w, 1, 8192), std::clamp(h, 1, 8192));
+      page.dirty_ = true;
+      return true;
+    }
     if (name == "textContent" || name == "innerText") {
       d.set_text(id, value.to_string());
       page.dirty_ = true;
@@ -780,18 +1125,42 @@ void Page::request(std::string input) {
 void Page::resource(const Resource &res) {
   Resource stored = res;
   static constexpr uint8_t png_signature[8] = {137, 80, 78, 71, 13, 10, 26, 10};
-  bool png = lower(stored.mime).find("image/png") != std::string::npos ||
-             (stored.bytes.size() >= 8 &&
-              std::equal(png_signature, png_signature + 8, stored.bytes.begin()));
-  if (stored.ok && png) {
+  static constexpr uint8_t jpeg_signature[3] = {0xff, 0xd8, 0xff};
+  auto mime = lower(stored.mime);
+  auto starts = [&](const uint8_t *signature, size_t length) {
+    return stored.bytes.size() >= length &&
+           std::equal(signature, signature + length, stored.bytes.begin());
+  };
+  auto looks_like_svg = [&]() {
+    if (mime.find("image/svg") != std::string::npos)
+      return true;
+    std::string head(stored.bytes.begin(),
+                     stored.bytes.begin() + std::ptrdiff_t(std::min<size_t>(stored.bytes.size(), 512)));
+    auto at = head.find("<svg");
+    return at != std::string::npos && head.find("<?xml") != std::string::npos;
+  };
+  bool png = mime.find("image/png") != std::string::npos || starts(png_signature, 8);
+  bool jpeg = mime.find("image/jpeg") != std::string::npos ||
+              mime.find("image/JPEG") != std::string::npos || starts(jpeg_signature, 3);
+  bool svg = looks_like_svg();
+  if (stored.ok && (png || jpeg || svg)) {
     try {
-      Image image = decode_png(stored.bytes);
+      Image image;
+      std::string kind = png ? "PNG" : jpeg ? "JPEG" : "SVG";
+      if (png)
+        image = decode_png(stored.bytes);
+      else if (jpeg)
+        image = decode_jpeg(stored.bytes);
+      else {
+        std::string text(stored.bytes.begin(), stored.bytes.end());
+        image = render_svg(text, int(stored.image_width), int(stored.image_height));
+      }
       stored.image_width = image.width;
       stored.image_height = image.height;
       images_[stored.url] = std::move(image);
     } catch (const std::exception &e) {
       stored.ok = false;
-      stored.error = std::string("PNG decode failed: ") + e.what();
+      stored.error = std::string(png ? "PNG" : jpeg ? "JPEG" : "SVG") + " decode failed: " + e.what();
       diagnostics.push_back({"image", stored.error});
     }
   }
@@ -891,6 +1260,14 @@ Json Page::render(double width, double height, double scroll) {
   if (dirty_)
     rebuild();
   scroll_ = std::min(scroll_, std::max(0.0, content_height_ - height_));
+  // I only copy pixels for a canvas that has been drawn on since the last frame.
+  for (auto &[id, context] : canvases_) {
+    auto seen = canvas_revisions_.find(id);
+    if (seen != canvas_revisions_.end() && seen->second == context.revision)
+      continue;
+    canvas_images_[id] = context.snapshot();
+    canvas_revisions_[id] = context.revision;
+  }
   Json frame = Json::make_object();
   frame.set("tag", "frame");
   frame.set("title", title());
@@ -914,10 +1291,27 @@ Json Page::render(double width, double height, double scroll) {
     j.set("bold", c.bold);
     j.set("node", c.node);
     j.set("url", c.url);
+    j.set("gradient", c.gradient);
     j.set("fixed", c.fixed);
     paint.array.push_back(std::move(j));
   }
   frame.set("paint", std::move(paint));
+  // The real laid-out box for each element. The paint list is not a layout
+  // report: a box with no background paints nothing, so anything that needs a
+  // box must read it from here.
+  Json boxes = Json::make_array();
+  for (auto &[id, r] : layout_.boxes) {
+    if (boxes.array.size() >= 20000)
+      break;
+    Json j = Json::make_object();
+    j.set("node", id);
+    j.set("x", r.x);
+    j.set("y", r.y);
+    j.set("w", r.w);
+    j.set("h", r.h);
+    boxes.array.push_back(std::move(j));
+  }
+  frame.set("boxes", std::move(boxes));
   return frame;
 }
 std::string Page::title() const {

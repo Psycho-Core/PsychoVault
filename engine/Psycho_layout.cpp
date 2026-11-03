@@ -1,6 +1,10 @@
 #include "Psycho_image.hpp"
 #include "Psycho_layout.hpp"
 namespace pv {
+namespace {
+// No background rectangle was painted for this box.
+constexpr size_t kNoPaint = static_cast<size_t>(-1);
+} // namespace
 struct Run {
   std::string text;
   int node;
@@ -109,6 +113,8 @@ struct Layout {
         auto close = inner.find(')');
         if (close != std::string::npos)
           inner = inner.substr(0, close);
+        // repeat(3, 1fr) puts a comma between the count and the track.
+        std::replace(inner.begin(), inner.end(), ',', ' ');
         auto parts = tokens(inner);
         int count = parts.empty() ? 0 : int(std::clamp(number_of(parts[0], 0), 0.0, 12.0));
         std::vector<std::string> each(parts.begin() + (parts.empty() ? 0 : 1), parts.end());
@@ -186,6 +192,9 @@ struct Layout {
     }
     if (items.empty())
       return;
+    // `order` runs before the direction reverses anything.
+    std::stable_sort(items.begin(), items.end(),
+                     [&](int a, int b) { return styles[a].order < styles[b].order; });
     if (reverse)
       std::reverse(items.begin(), items.end());
     struct Entry {
@@ -303,29 +312,32 @@ struct Layout {
       for (size_t k = 0; k < line.size(); ++k) {
         int c = entries[line[k]].id;
         const auto &cs = styles[c];
+        // align-self wins over the container's align-items for this one item.
+        const std::string &align = cs.align_self == "auto" ? s.align_items : cs.align_self;
         if (row) {
           double forced = -1;
-          if (s.align_items == "stretch" && cs.height < 0) {
+          if (align == "stretch" && cs.height < 0) {
             forced = std::max(0.0, line_cross - cs.margin[0] - cs.margin[2]);
             cross[k] = forced + cs.margin[0] + cs.margin[2];
           }
           // I work the cross-axis offset out before laying the item out, so the
           // item and everything inside it land in one place.
           double dy = 0;
-          if (s.align_items == "center")
+          if (align == "center")
             dy = std::max(0.0, (line_cross - cross[k]) / 2);
-          else if (s.align_items == "flex-end" || s.align_items == "end")
+          else if (align == "flex-end" || align == "end")
             dy = std::max(0.0, line_cross - cross[k]);
-          block(c, pos, cross_y + dy, sizes[k], depth + 1, cb, forced);
+          double content_w = std::max(0.0, sizes[k] - outer_extra(cs));
+          block(c, pos, cross_y + dy, sizes[k], depth + 1, cb, forced, content_w);
         } else {
           double forced = std::max(0.0, sizes[k] - cs.margin[0] - cs.margin[2]);
-          block(c, inner_x + cross_offset(s, cs, inner_w), pos, inner_w, depth + 1, cb,
+          block(c, inner_x + cross_offset(align, cs, inner_w), pos, inner_w, depth + 1, cb,
                 forced);
         }
         pos += sizes[k] + s.gap + extra_gap;
       }
       if (row)
-        cross_y += line_cross + s.gap;
+        cross_y += line_cross + (s.row_gap >= 0 ? s.row_gap : s.gap);
       else
         main += span + s.gap;
     }
@@ -344,36 +356,58 @@ struct Layout {
     }
     if (items.empty())
       return;
-    auto sizes = track_sizes(s.grid_columns, inner_w, s.gap);
-    if (sizes.empty())
-      sizes.push_back(inner_w);
-    double y = inner_y, row_h = 0, bottom = inner_y;
-    size_t col = 0;
+    auto columns = track_sizes(s.grid_columns, inner_w, s.gap);
+    if (columns.empty())
+      columns.push_back(inner_w);
+    double row_gap = s.row_gap >= 0 ? s.row_gap : s.gap;
+    // An explicit row list fixes track heights; otherwise a row is as tall as
+    // its tallest item.
+    auto rows = track_sizes(s.grid_rows, 0, row_gap);
+    struct Cell {
+      int id;
+      size_t column, row;
+      double x, w, h;
+    };
+    std::vector<Cell> cells;
+    size_t column = 0, row = 0;
     for (int c : items) {
       const auto &cs = styles[c];
-      size_t span = size_t(std::clamp(cs.grid_span, 1, int(sizes.size())));
-      if (col + span > sizes.size()) {
-        col = 0;
-        y += row_h + s.gap;
-        row_h = 0;
+      size_t span = size_t(std::clamp(cs.grid_span, 1, int(columns.size())));
+      if (column + span > columns.size()) {
+        column = 0;
+        ++row;
       }
       double x = inner_x, w = 0;
-      for (size_t i = 0; i < col; ++i)
-        x += sizes[i] + s.gap;
-      for (size_t i = col; i < col + span && i < sizes.size(); ++i)
-        w += sizes[i] + (i > col ? s.gap : 0);
-      double h = measure_h(c, w, depth);
-      block(c, x, y, w, depth + 1, cb);
-      row_h = std::max(row_h, h);
-      bottom = std::max(bottom, y + h);
-      col += span;
-      if (col >= sizes.size()) {
-        col = 0;
-        y += row_h + s.gap;
-        row_h = 0;
+      for (size_t i = 0; i < column; ++i)
+        x += columns[i] + s.gap;
+      for (size_t i = column; i < column + span && i < columns.size(); ++i)
+        w += columns[i] + (i > column ? s.gap : 0);
+      cells.push_back({c, column, row, x, w, measure_h(c, w, depth)});
+      column += span;
+      if (column >= columns.size()) {
+        column = 0;
+        ++row;
       }
     }
-    cursor = std::max(cursor, bottom);
+    std::vector<double> heights(row + 1, 0);
+    for (auto &cell : cells)
+      heights[cell.row] = std::max(heights[cell.row], cell.h);
+    for (size_t r = 0; r < rows.size() && r < heights.size(); ++r)
+      heights[r] = std::max(heights[r], rows[r]);
+    std::vector<double> row_y(heights.size());
+    double y = inner_y;
+    for (size_t r = 0; r < heights.size(); ++r) {
+      row_y[r] = y;
+      y += heights[r] + row_gap;
+    }
+    for (auto &cell : cells) {
+      const auto &cs = styles[cell.id];
+      // A grid stretches an item that has no height of its own.
+      double forced = cs.height < 0 && cs.height_percent < 0 ? heights[cell.row] : -1;
+      block(cell.id, cell.x, row_y[cell.row], cell.w, depth + 1, cb, forced, -1,
+            heights[cell.row]);
+    }
+    cursor = std::max(cursor, heights.empty() ? inner_y : row_y.back() + heights.back());
   }
   // ---- positioning ------------------------------------------------------
   void place_positioned(int id, const Style &s, const Rect &cb, double left, double top,
@@ -397,13 +431,14 @@ struct Layout {
       if (cs.has_bottom && !cs.has_top)
         y = used.y + used.h - cs.bottom - (cs.height >= 0 ? cs.height + extra_h : 0);
       size_t from = out.paint.size();
-      block(c, x, y, std::max(0.0, used.w - (cs.has_left ? cs.left : 0.0)), depth + 1, &used);
+      block(c, x, y, std::max(0.0, used.w - (cs.has_left ? cs.left : 0.0)), depth + 1, &used, -1,
+            -1, used.h);
       if (cs.position == "fixed")
         mark_fixed(from);
     }
   }
   // ---- transforms -------------------------------------------------------
-  void apply_transform(size_t from, size_t to, const Style &s, const Rect &box) {
+  void apply_transform(size_t from, size_t to, const Style &s, const Rect &box, int node) {
     if (s.transform.empty() || s.transform == "none")
       return;
     double tx = 0, ty = 0, sx = 1, sy = 1;
@@ -449,6 +484,7 @@ struct Layout {
       return;
     // I scale about the middle of the box, which is what the default origin does.
     double ox = box.x + box.w / 2, oy = box.y + box.h / 2;
+    std::vector<int> moved{node};
     for (size_t i = from; i < to && i < out.paint.size(); ++i) {
       auto &r = out.paint[i].rect;
       r.x = tx + ox + (r.x - ox) * sx;
@@ -457,22 +493,38 @@ struct Layout {
       r.h *= sy;
       if (out.paint[i].kind == PaintCommand::Kind::Text)
         out.paint[i].size *= sy;
+      if (out.paint[i].node >= 0 &&
+          std::find(moved.begin(), moved.end(), out.paint[i].node) == moved.end())
+        moved.push_back(out.paint[i].node);
+    }
+    // A transform moves the element for a click as well as for the eye, so the
+    // boxes I report and hit-test with move too.
+    for (int node : moved) {
+      auto found = out.boxes.find(node);
+      if (found == out.boxes.end())
+        continue;
+      auto &b = found->second;
+      b.x = tx + ox + (b.x - ox) * sx;
+      b.y = ty + oy + (b.y - oy) * sy;
+      b.w *= sx;
+      b.h *= sy;
     }
   }
 
   // In a column the cross axis is horizontal, so align-items only moves the box
   // when it has a width of its own.
-  double cross_offset(const Style &s, const Style &cs, double inner_w) {
+  double cross_offset(const std::string &align, const Style &cs, double inner_w) {
     if (cs.width < 0 || inner_w <= 0)
       return 0;
-    if (s.align_items == "center")
+    if (align == "center")
       return std::max(0.0, (inner_w - cs.width) / 2);
-    if (s.align_items == "flex-end" || s.align_items == "end")
+    if (align == "flex-end" || align == "end")
       return std::max(0.0, inner_w - cs.width);
     return 0;
   }
   double block(int id, double x, double y, double available, int depth = 0,
-               const Rect *cb = nullptr, double forced_h = -1) {
+               const Rect *cb = nullptr, double forced_h = -1, double forced_w = -1,
+               double avail_h = -1) {
     (void)cb;
     size_t start = out.paint.size();
     if (id < 0 || id >= int(doc.nodes.size()) || depth > kMaxDomDepth)
@@ -484,29 +536,73 @@ struct Layout {
     if (n.type == Node::Type::Text)
       return 0;
     double mw = std::max(0.0, available - s.margin[1] - s.margin[3]);
-    double w = s.width >= 0 ? s.width : mw;
-    if (s.box_sizing == "border-box")
-      w -= s.padding[1] + s.padding[3] + s.border[1] + s.border[3];
+    double sideways = s.padding[1] + s.padding[3] + s.border[1] + s.border[3];
+    double w = 0;
+    if (forced_w >= 0) {
+      // Flex and grid have already decided this one.
+      w = forced_w;
+    } else if (s.width >= 0) {
+      w = s.width;
+      if (s.box_sizing == "border-box")
+        w -= sideways;
+    } else {
+      // An auto width fills what is left, so padding and border come out of it
+      // rather than pushing the box past its parent.
+      w = std::max(0.0, mw - sideways);
+    }
     if (s.max_width >= 0)
-      w = std::min(w, s.max_width);
+      w = std::min(w, s.width >= 0 ? s.max_width : std::max(0.0, s.max_width - sideways));
     w = std::max({w, s.min_width, 0.0});
     double left = x + s.margin[3];
-    if (s.margin[1] < 0 && s.margin[3] < 0 && s.width >= 0)
-      left = x + std::max(0.0, (available - w - outer_extra(s)) / 2);
+    // An auto margin takes the free space, so two of them centre the box.
+    if (forced_w < 0) {
+      double free_space = available - w - sideways - s.margin[1] - s.margin[3];
+      if (s.auto_left && s.auto_right)
+        left = x + s.margin[3] + std::max(0.0, free_space / 2);
+      else if (s.auto_left)
+        left = x + s.margin[3] + std::max(0.0, free_space);
+    }
     double top = y + s.margin[0];
     double inner_x = left + s.border[3] + s.padding[3], inner_y = top + s.border[0] + s.padding[0];
     double inner_w = std::max(0.0, w);
-    out.paint.push_back(
-        {PaintCommand::Kind::Rect,
-         {left, top, w + s.padding[1] + s.padding[3] + s.border[1] + s.border[3], 0},
-         s.background.bgra(),
-         {},
-         0,
-         0,
-         false,
-         id,
-         {}});
-    size_t bg = out.paint.size() - 1;
+    // An element with no background paints nothing. I used to push an opaque
+    // black rectangle for every box, which put a black bar behind every heading
+    // on a page that only set a colour on the body.
+    size_t bg = kNoPaint;
+    if (!s.background.transparent || !s.background_image.empty()) {
+      out.paint.push_back(
+          {PaintCommand::Kind::Rect,
+           {left, top, w + s.padding[1] + s.padding[3] + s.border[1] + s.border[3], 0},
+           s.background.bgra(),
+           {},
+           0,
+           0,
+           false,
+           id,
+           {}, {}});
+      bg = out.paint.size() - 1;
+      if (!s.background_image.empty())
+        out.paint[bg].gradient = s.background_image;
+    }
+    // Overflow hides what spills out, so I open a clip here and close it after
+    // the last child has painted.
+    bool clips_children = s.overflow == "hidden" || s.overflow == "clip" || s.overflow == "auto" ||
+                          s.overflow == "scroll";
+    size_t clip_at = 0;
+    if (clips_children) {
+      out.paint.push_back({PaintCommand::Kind::PushClip,
+                           {left, top, w + s.padding[1] + s.padding[3] + s.border[1] + s.border[3], 0},
+                           0,
+                           {},
+                           0,
+                           0,
+                           false,
+                           id,
+                           {},
+                           {},
+                           {}});
+      clip_at = out.paint.size() - 1;
+    }
     double cursor = inner_y;
     if (s.display == "flex" || s.display == "inline-flex") {
       flex_children(id, s, inner_x, inner_y, inner_w, cursor, depth, cb);
@@ -516,7 +612,7 @@ struct Layout {
       std::vector<Run> line;
       double line_width = 0, line_height = 0;
       auto flush = [&]() {
-        if (line.empty())
+        if (line.empty() && line_height <= 0)
           return;
         line_height = std::max(line_height, 16.0);
         double tx = inner_x;
@@ -536,7 +632,7 @@ struct Layout {
                                0,
                                run.style.bold,
                                run.node,
-                               {}});
+                               {}, {}, {}});
           if (run.style.underline)
             out.paint.push_back({PaintCommand::Kind::Line,
                                  {tx, cursor + run.style.font_size + 2, run.width, 1},
@@ -546,7 +642,7 @@ struct Layout {
                                  1,
                                  false,
                                  run.node,
-                                 {}});
+                                 {}, {}, {}});
           auto box = out.boxes.find(run.node);
           if (box == out.boxes.end())
             out.boxes[run.node] = {tx, cursor, run.width, line_height};
@@ -674,9 +770,57 @@ struct Layout {
                                0,
                                false,
                                c,
-                               key});
+                               key, {}, {}});
           out.boxes[c] = {inner_x + cs.margin[3], cursor + cs.margin[0], iw, ih};
           cursor += ih + cs.margin[0] + cs.margin[2];
+          return;
+        }
+        if (child.name == "canvas") {
+          flush();
+          auto attr_length = [&](const char *name, double fallback) -> double {
+            auto value = trim(child.attribute(name));
+            if (value.empty())
+              return fallback;
+            try {
+              size_t used = 0;
+              double n = std::stod(value, &used);
+              if (used == value.size() && n > 0 && n <= 8192)
+                return n;
+            } catch (...) {
+            }
+            return fallback;
+          };
+          // The width and height attributes set the bitmap; CSS sets the box.
+          double bw = attr_length("width", 300), bh = attr_length("height", 150);
+          double cw = cs.width >= 0 ? cs.width : bw, ch = cs.height >= 0 ? cs.height : bh;
+          out.paint.push_back({PaintCommand::Kind::Canvas,
+                               {inner_x + cs.margin[3], cursor + cs.margin[0], cw, ch},
+                               0,
+                               {},
+                               cs.font_size,
+                               0,
+                               false,
+                               c,
+                               "canvas:" + std::to_string(c), {}, {}});
+          size_t entry = out.paint.size() - 1;
+          out.boxes[c] = out.paint[entry].rect;
+          cursor += ch + cs.margin[0] + cs.margin[2];
+          return;
+        }
+        // A form control keeps its own shrink-to-fit sizing, which my control
+        // branch below already works out.
+        bool control = child.name == "input" || child.name == "button" ||
+                       child.name == "select" || child.name == "textarea";
+        if (cs.display == "inline-block" && !control) {
+          double bw = cs.width >= 0 ? cs.width : std::max(0.0, inner_w - line_width);
+          // A box that no longer fits starts a new line.
+          if (line_width > 0 && line_width + bw > inner_w + 0.5)
+            flush();
+          double bx = inner_x + line_width;
+          block(c, bx, cursor, bw, dep + 1);
+          auto found = out.boxes.find(c);
+          line_width += bw;
+          line_height = std::max(line_height, found == out.boxes.end() ? 0.0 : found->second.h);
           return;
         }
         if (child.name == "input" || child.name == "button" || child.name == "select" ||
@@ -705,15 +849,16 @@ struct Layout {
                       : child.name == "textarea" ? 80
                                                  : cs.font_size + cs.padding[0] + cs.padding[2] +
                                                        cs.border[0] + cs.border[2];
-          out.paint.push_back({PaintCommand::Kind::Rect,
-                               {inner_x, cursor, cw, ch},
-                               cs.background.bgra(),
-                               {},
-                               0,
-                               0,
-                               false,
-                               c,
-                               {}});
+          if (!cs.background.transparent)
+            out.paint.push_back({PaintCommand::Kind::Rect,
+                                 {inner_x, cursor, cw, ch},
+                                 cs.background.bgra(),
+                                 {},
+                                 0,
+                                 0,
+                                 false,
+                                 c,
+                                 {}, {}, {}});
           out.paint.push_back({PaintCommand::Kind::Border,
                                {inner_x, cursor, cw, ch},
                                cs.border_color.bgra(),
@@ -722,7 +867,7 @@ struct Layout {
                                1,
                                false,
                                c,
-                               {}});
+                               {}, {}, {}});
           out.paint.push_back(
               {PaintCommand::Kind::Text,
                {inner_x + cs.padding[3] + 4, cursor + cs.padding[0] + 2, cw - 8, ch - 4},
@@ -732,7 +877,7 @@ struct Layout {
                0,
                cs.bold,
                c,
-               {}});
+               {}, {}});
           out.boxes[c] = {inner_x, cursor, cw, ch};
           cursor += ch + cs.margin[0] + cs.margin[2];
           return;
@@ -740,6 +885,12 @@ struct Layout {
         for (int gc : child.children)
           inline_child(gc, dep + 1);
       };
+      double last_margin = 0;
+      // A percentage height resolves against the containing block, never the
+      // width, so I pass the height a child may use.
+      double child_height = s.height >= 0 ? s.height
+                            : (s.height_percent >= 0 && avail_h > 0 ? avail_h * s.height_percent
+                                                                    : -1);
       for (int c : n.children) {
         const auto &cs = styles[c];
         if (cs.display == "none" || positioned(cs))
@@ -748,10 +899,13 @@ struct Layout {
                         cs.display != "inline-block" && c != 0;
         if (is_block) {
           flush();
-          if (s.list_item && out.boxes.count(c) == 0) {
-          }
-          double h = block(c, inner_x, cursor, inner_w, depth + 1);
-          cursor += h;
+          // Adjacent vertical margins collapse to the larger of the two, so I
+          // step back over the margin I already counted.
+          double gap = std::max(last_margin, cs.margin[0]);
+          double y = cursor - last_margin + gap - cs.margin[0];
+          double h = block(c, inner_x, y, inner_w, depth + 1, cb, -1, -1, child_height);
+          cursor = y + h;
+          last_margin = cs.margin[2];
         } else
           inline_child(c, 0);
       }
@@ -759,11 +913,17 @@ struct Layout {
     }
     double content_h = cursor - inner_y;
     double h = forced_h >= 0 ? forced_h : (s.height >= 0 ? s.height : content_h);
+    if (forced_h < 0 && s.height < 0 && s.height_percent >= 0 && avail_h > 0)
+      h = avail_h * s.height_percent;
+    // In border-box the height I was given already contains padding and border.
+    if (forced_h < 0 && s.height >= 0 && s.box_sizing == "border-box")
+      h -= s.padding[0] + s.padding[2] + s.border[0] + s.border[2];
     if (s.max_height >= 0)
       h = std::min(h, s.max_height);
     h = std::max(h, s.min_height);
     double border_box = h + s.padding[0] + s.padding[2] + s.border[0] + s.border[2];
-    out.paint[bg].rect.h = border_box;
+    if (bg != kNoPaint)
+      out.paint[bg].rect.h = border_box;
     out.boxes[id] = {left, top, w + s.padding[1] + s.padding[3] + s.border[1] + s.border[3],
                      border_box};
     if (s.border[0] > 0)
@@ -775,7 +935,7 @@ struct Layout {
                            s.border[0],
                            false,
                            id,
-                           {}});
+                           {}, {}, {}});
     if (s.list_item)
       out.paint.push_back({PaintCommand::Kind::Text,
                            {left - 16, top, 12, s.font_size * 1.4},
@@ -785,16 +945,32 @@ struct Layout {
                            0,
                            false,
                            id,
-                           {}});
+                           {}, {}, {}});
     // Anything positioned is measured against the nearest positioned box.
     double box_w = w + s.padding[1] + s.padding[3] + s.border[1] + s.border[3];
     place_positioned(id, s, cb ? *cb : Rect{0, 0, viewport_width, viewport_height}, left, top,
                      box_w, border_box, depth);
     // A relative box keeps its place in the flow but paints where it is told.
-    if (s.position == "relative" || s.position == "sticky")
+    if (clips_children) {
+      out.paint[clip_at].rect.h = border_box;
+      out.paint.push_back({PaintCommand::Kind::PopClip,
+                           {left, top, out.paint[clip_at].rect.w, border_box},
+                           0,
+                           {},
+                           0,
+                           0,
+                           false,
+                           id,
+                           {},
+                           {},
+                           {}});
+    }
+    // Sticky stays in the flow until a scroll position asks for it, and I have
+    // not built that clamp yet, so I leave it where the flow put it.
+    if (s.position == "relative")
       move_box(start, id, s.left, s.top);
     if (!s.transform.empty())
-      apply_transform(start, out.paint.size(), s, out.boxes[id]);
+      apply_transform(start, out.paint.size(), s, out.boxes[id], id);
     return border_box + s.margin[0] + s.margin[2];
   }
 };
@@ -802,7 +978,10 @@ LayoutResult layout_document(const Document &doc, const std::vector<Style> &styl
                              double height, const std::map<std::string, Resource> &resources,
                              Canvas &measure) {
   Layout l(doc, styles, measure, resources, width);
-  uint32_t bg = styles[doc.body].background.bgra();
+  // The canvas is white unless the body asks for something else. A missing
+  // background is transparent, not black.
+  const Style &body_style = styles[doc.body];
+  uint32_t bg = body_style.background.transparent ? 0xffffffffu : body_style.background.bgra();
   l.out.paint.push_back({PaintCommand::Kind::Rect,
                          {0, 0, width, std::max(height, 1.0)},
                          bg,
@@ -811,7 +990,7 @@ LayoutResult layout_document(const Document &doc, const std::vector<Style> &styl
                          0,
                          false,
                          doc.body,
-                         {}});
+                         {}, {}, {}});
   l.viewport_height = height;
   Rect viewport{0, 0, width, height};
   double used = l.block(doc.body, 0, 0, width, 0, &viewport);
@@ -819,8 +998,91 @@ LayoutResult layout_document(const Document &doc, const std::vector<Style> &styl
   l.out.paint[0].rect.h = l.out.height;
   return l.out;
 }
+// I parse the small linear and radial gradients a page uses into stops.
+bool parse_gradient(const std::string &spec, Rect box, Gradient &out) {
+  size_t open = spec.find("gradient(");
+  if (open == std::string::npos)
+    return false;
+  bool radial = lower(spec.substr(0, open)).find("radial") != std::string::npos;
+  size_t close = spec.rfind(')');
+  if (close == std::string::npos || close <= open)
+    return false;
+  std::string body = spec.substr(open + 9, close - open - 9);
+  auto parts = split(body, ',');
+  std::erase_if(parts, [](const std::string &p) { return trim(p).empty(); });
+  if (parts.empty())
+    return false;
+  double angle = 180; // CSS default is top to bottom
+  size_t first_stop = 0;
+  auto head = lower(trim(parts[0]));
+  if (head.find("deg") != std::string::npos) {
+    try {
+      angle = std::stod(head);
+    } catch (...) {
+      angle = 180;
+    }
+    first_stop = 1;
+  } else if (head.find("to ") == 0 || head.find("at ") != std::string::npos) {
+    if (head.find("left") != std::string::npos)
+      angle = 270;
+    else if (head.find("right") != std::string::npos)
+      angle = 90;
+    else if (head.find("top") != std::string::npos)
+      angle = 0;
+    else
+      angle = 180;
+    first_stop = 1;
+  }
+  std::vector<std::pair<double, uint32_t>> raw;
+  for (size_t i = first_stop; i < parts.size(); ++i) {
+    auto text = trim(parts[i]);
+    auto colour = parse_color(text);
+    size_t stop_at = colour.transparent ? 0 : text.find('%');
+    if (colour.transparent && text.find('%') != std::string::npos)
+      continue;
+    double at = -1;
+    if (stop_at != std::string::npos) {
+      try {
+        at = std::clamp(std::stod(text.substr(0, stop_at)) / 100.0, 0.0, 1.0);
+      } catch (...) {
+      }
+    }
+    raw.emplace_back(at, colour.bgra());
+    if (raw.size() >= 16)
+      break;
+  }
+  if (raw.empty())
+    return false;
+  // Stops without a position are spread evenly between their neighbours.
+  for (size_t i = 0; i < raw.size(); ++i)
+    if (raw[i].first < 0)
+      raw[i].first = raw.size() == 1 ? 0 : double(i) / double(raw.size() - 1);
+  out = Gradient{};
+  out.radial = radial;
+  double radians = angle * 3.14159265358979323846 / 180.0;
+  double cx = box.x + box.w / 2, cy = box.y + box.h / 2;
+  if (radial) {
+    out.x0 = cx;
+    out.y0 = cy;
+    out.r0 = 0;
+    out.r1 = std::max(box.w, box.h) / 2;
+  } else {
+    // I project the box onto the gradient direction so the first stop starts at
+    // one edge and the last ends at the other.
+    double dx = std::sin(radians), dy = -std::cos(radians);
+    double half = (std::fabs(dx) * box.w + std::fabs(dy) * box.h) / 2;
+    out.x0 = cx - dx * half;
+    out.y0 = cy - dy * half;
+    out.x1 = cx + dx * half;
+    out.y1 = cy + dy * half;
+  }
+  for (auto &[at, colour] : raw)
+    out.stops.push_back({at, colour});
+  return out.stops.size() >= 1;
+}
 void paint_commands(Canvas &canvas, const std::vector<PaintCommand> &commands, double scroll_y,
                     const std::map<std::string, Image> &images) {
+  std::vector<Rect> clips;
   for (auto &c : commands) {
     Rect r = c.rect;
     if (!c.fixed)
@@ -828,9 +1090,29 @@ void paint_commands(Canvas &canvas, const std::vector<PaintCommand> &commands, d
     if (r.y + r.h < 0 || r.y > canvas.height)
       continue;
     switch (c.kind) {
-    case PaintCommand::Kind::Rect:
-      canvas.fill(r, c.color);
+    case PaintCommand::Kind::PushClip: {
+      // Overflow clips what is inside the box, so the stack survives nesting.
+      Rect clipped{std::max(r.x, canvas.clip.x), std::max(r.y, canvas.clip.y), 0, 0};
+      clipped.w = std::max(0.0, std::min(r.x + r.w, canvas.clip.x + canvas.clip.w) - clipped.x);
+      clipped.h = std::max(0.0, std::min(r.y + r.h, canvas.clip.y + canvas.clip.h) - clipped.y);
+      clips.push_back(canvas.clip);
+      canvas.clip = clipped;
       break;
+    }
+    case PaintCommand::Kind::PopClip:
+      if (!clips.empty()) {
+        canvas.clip = clips.back();
+        clips.pop_back();
+      }
+      break;
+    case PaintCommand::Kind::Rect: {
+      Gradient gradient;
+      if (!c.gradient.empty() && parse_gradient(c.gradient, r, gradient))
+        canvas.fill_gradient(r, gradient);
+      else
+        canvas.fill(r, c.color);
+      break;
+    }
     case PaintCommand::Kind::Border:
       canvas.stroke(r, c.color, c.thickness);
       break;
@@ -840,6 +1122,13 @@ void paint_commands(Canvas &canvas, const std::vector<PaintCommand> &commands, d
     case PaintCommand::Kind::Text:
       canvas.text(r.x, r.y, c.text, c.size, c.color, c.bold);
       break;
+    case PaintCommand::Kind::Canvas: {
+      // My page hands me a finished bitmap for each canvas, keyed by its node.
+      auto found = images.find(c.url);
+      if (found != images.end() && found->second.valid())
+        canvas.image(found->second, r);
+      break;
+    }
     case PaintCommand::Kind::Image: {
       auto found = images.find(c.url);
       if (found != images.end() && found->second.valid()) {

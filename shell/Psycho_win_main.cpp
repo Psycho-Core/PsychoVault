@@ -1169,6 +1169,7 @@ struct Browser {
       p.bold = j.flag("bold");
       p.node = int(j.num("node"));
       p.url = j.str("url");
+      p.gradient = j.str("gradient");
       commands.push_back(p);
     }
     Rect old = c.clip;
@@ -1753,6 +1754,11 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     // the pixels I have not shown yet.
     if (tab && up->generation == tab->generation && up->image && up->image->valid()) {
       const size_t bytes = up->image->pixels.size();
+      // A canvas sends a fresh bitmap whenever it is redrawn, so I give the old
+      // one back before I count the new one.
+      auto previous = tab->images.find(up->url);
+      if (previous != tab->images.end())
+        tab->image_bytes -= previous->second.pixels.size();
       if (tab->image_bytes + bytes <= 128u * 1024u * 1024u) {
         tab->image_bytes += bytes;
         tab->images[up->url] = *up->image;

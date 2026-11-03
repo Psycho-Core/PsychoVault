@@ -1024,6 +1024,35 @@ Value Runtime::get_member(const Value &base, const std::string &key) {
           return Value(every);
         return Value();
       });
+    if (key == "at")
+      return make_native([arr](Values &a) {
+        double n = a.empty() ? 0 : a[0].to_number();
+        double length = arr.object->properties["length"].to_number();
+        if (n < 0)
+          n += length;
+        if (n < 0 || n >= length)
+          return Value();
+        return arr.object->properties[std::to_string(int(n))];
+      });
+    if (key == "flat")
+      return make_native([&r, arr](Values &a) {
+        int depth = a.empty() ? 1 : int(std::clamp(a[0].to_number(), 0.0, 32.0));
+        Values out;
+        std::function<void(const Value &, int)> walk = [&](const Value &value, int left) {
+          if (value.type == Value::Type::Object && value.object &&
+              value.object->kind == Object::Kind::Array && left > 0) {
+            double length = value.object->properties["length"].to_number();
+            for (int i = 0; i < int(length); ++i) {
+              auto it = value.object->properties.find(std::to_string(i));
+              walk(it == value.object->properties.end() ? Value() : it->second, left - 1);
+            }
+            return;
+          }
+          out.push_back(value);
+        };
+        walk(arr, depth);
+        return r.make_array(out);
+      });
     if (key == "sort")
       return make_native([&r, arr](Values &a) {
         auto &p = arr.object->properties;
@@ -1523,6 +1552,28 @@ Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
                : a;
   }
   case Expr::Kind::Assign: {
+    // A logical assignment only touches its right side when it has to.
+    if (e.text == "??" || e.text == "&&" || e.text == "||") {
+      Value old = e.left->kind == Expr::Kind::Identifier
+                      ? evaluate(*e.left, env, this_value)
+                      : get_member(evaluate(*e.left->left, env, this_value),
+                                   e.left->computed ? evaluate(*e.left->right, env, this_value).to_string()
+                                                    : e.left->text);
+      bool take = e.text == "??" ? (old.type == Value::Type::Null || old.type == Value::Type::Undefined)
+                 : e.text == "&&" ? old.truthy()
+                                  : !old.truthy();
+      if (!take)
+        return old;
+      Value next = evaluate(*e.right, env, this_value);
+      if (e.left->kind == Expr::Kind::Identifier)
+        assign_identifier(env, e.left->text, next);
+      else
+        set_member(evaluate(*e.left->left, env, this_value),
+                   e.left->computed ? evaluate(*e.left->right, env, this_value).to_string()
+                                    : e.left->text,
+                   next);
+      return next;
+    }
     Value v = evaluate(*e.right, env, this_value);
     if (e.text != "=") {
       Value old;
@@ -2521,6 +2572,21 @@ void Runtime::install_builtins() {
           out.push_back(make_array({Value(p.first), p.second}));
     return make_array(out);
   });
+  object.object->properties["fromEntries"] = make_native([this](Values &a) {
+    Value out = make_object();
+    if (a.empty())
+      return out;
+    Values pairs;
+    iterate(a[0], pairs);
+    for (auto &pair : pairs) {
+      if (pair.type != Value::Type::Object || !pair.object)
+        continue;
+      Value key = pair.object->properties["0"];
+      Value value = pair.object->properties["1"];
+      out.object->properties[key.to_string()] = value;
+    }
+    return out;
+  });
   object.object->properties["assign"] = make_native([](Values &a) {
     if (a.empty())
       return Value();
@@ -2568,6 +2634,25 @@ void Runtime::install_builtins() {
             Values(a.begin() + std::min(size_t(2), a.size()), a.end()), false};
     timers.push_back(t);
     return Value(t.id);
+  });
+  // A canvas animation asks for the next frame the same way it would anywhere
+  // else, so I schedule the callback on my own timer wheel.
+  g.properties["requestAnimationFrame"] = make_native([this](Values &a) {
+    if (a.empty() || a[0].type_of() != "function")
+      throw JsError{Value("TypeError: frame callback required")};
+    if (timers.size() >= 256)
+      throw std::runtime_error("timer limit");
+    double now = double(std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch())
+                            .count());
+    Timer t{next_timer++, now + 16, a[0], Values{Value(now)}, false};
+    timers.push_back(t);
+    return Value(t.id);
+  });
+  g.properties["cancelAnimationFrame"] = make_native([this](Values &a) {
+    double id = a.empty() ? 0 : a[0].to_number();
+    std::erase_if(timers, [id](const Timer &t) { return t.id == id; });
+    return Value();
   });
   g.properties["clearTimeout"] = make_native([this](Values &a) {
     double id = a.empty() ? 0 : a[0].to_number();
@@ -2753,6 +2838,39 @@ void Runtime::install_builtins() {
         runtime->promise_then(item, on_ok, on_err);
       else
         settle_promise(result.object, 1, item);
+    }
+    return result;
+  });
+  promise_ctor.object->properties["any"] = make_native([this](Values &a) {
+    Value result = make_promise();
+    Values items;
+    if (!a.empty())
+      append_spread(*this, items, a[0]);
+    auto reasons = std::make_shared<Values>();
+    auto remaining = std::make_shared<size_t>(items.size());
+    Runtime *runtime = this;
+    if (items.empty()) {
+      settle_promise(result.object, 2, Value("AggregateError: no promise was given"));
+      return result;
+    }
+    for (const auto &item : items) {
+      Value on_ok = make_native([runtime, result](Values &args) {
+        runtime->settle_promise(result.object, 1, args.empty() ? Value() : args[0]);
+        return Value();
+      });
+      Value on_err = make_native([runtime, result, reasons, remaining](Values &args) {
+        reasons->push_back(args.empty() ? Value() : args[0]);
+        if (--*remaining == 0 && result.object->promise_state == 0)
+          runtime->settle_promise(result.object, 2,
+                                  Value("AggregateError: every promise was rejected"));
+        return Value();
+      });
+      if (item.type == Value::Type::Object && item.object && item.object->host_type == "Promise")
+        runtime->promise_then(item, on_ok, on_err);
+      else {
+        settle_promise(result.object, 1, item);
+        return result;
+      }
     }
     return result;
   });
