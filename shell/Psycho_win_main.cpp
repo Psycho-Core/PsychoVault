@@ -1527,6 +1527,26 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
           web && (b->current().frame.type != Json::Type::Object || !b->current().error.empty() ||
                   !b->current().session || !b->current().session->process.sandboxed() ||
                   (b->expect_image && b->current().images.empty()));
+      if (failed) {
+        // I record exactly why my smoke gate failed so CI shows a real reason
+        // instead of a bare exit code.
+        Json why = Json::make_object();
+        why.set("url", b->current().url);
+        why.set("error", b->current().error);
+        why.set("hasFrame", b->current().frame.type == Json::Type::Object);
+        why.set("hasSession", b->current().session != nullptr);
+        why.set("sandboxed", b->current().session && b->current().session->process.sandboxed());
+        why.set("imageCount", double(b->current().images.size()));
+        why.set("expectImage", b->expect_image);
+        why.set("rendererEmbedded", renderer_is_embedded());
+        std::string renderer_error;
+        why.set("rendererPath", renderer_executable(renderer_error));
+        why.set("rendererError", renderer_error);
+        auto report = b->capture_path.empty() ? std::string("smoke-failure.json")
+                                             : b->capture_path + ".failure.json";
+        std::string write_error;
+        write_file_atomic(report, why.dump() + "\n", write_error);
+      }
       PostQuitMessage(failed ? 1 : 0);
     }
     return 0;
