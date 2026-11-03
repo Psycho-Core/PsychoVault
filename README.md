@@ -7,10 +7,10 @@ This is an early development build. It can parse and render a limited subset of 
 ## Where I am keeping the work
 
 - [PSYCHO.md](PSYCHO.md) - my project guide and non-negotiable requirements.
-- [docs/PLAN.md](docs/PLAN.md) - my architecture, gates and delivery sequence.
-- [docs/IMPLEMENTATION-STATUS.md](docs/IMPLEMENTATION-STATUS.md) - what works, what does not, and what I have actually tested.
-- [docs/FEATURE-INVENTORY.md](docs/FEATURE-INVENTORY.md) - the old features and settings I am keeping myself accountable to.
-- [docs/PLAN-AUDIT.md](docs/PLAN-AUDIT.md) - my planning audit.
+- [docs/Psycho_PLAN.md](docs/Psycho_PLAN.md) - my architecture, gates and delivery sequence.
+- [docs/Psycho_IMPLEMENTATION-STATUS.md](docs/Psycho_IMPLEMENTATION-STATUS.md) - what works, what does not, and what I have actually tested.
+- [docs/Psycho_FEATURE-INVENTORY.md](docs/Psycho_FEATURE-INVENTORY.md) - the old features and settings I am keeping myself accountable to.
+- [docs/Psycho_PLAN-AUDIT.md](docs/Psycho_PLAN-AUDIT.md) - my planning audit.
 
 ## Builds
 
