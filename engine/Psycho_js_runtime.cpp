@@ -1712,6 +1712,21 @@ void Runtime::install_builtins() {
     }
     return self;
   });
+  // Object rest for my destructuring patterns copies the keys not taken.
+  g.properties["__pv_rest"] = make_native([this](Values &a) {
+    Value out = make_object();
+    if (a.empty() || a[0].type != Value::Type::Object || !a[0].object)
+      return out;
+    for (auto &p : a[0].object->properties) {
+      bool excluded = false;
+      for (size_t i = 1; i < a.size(); ++i)
+        if (a[i].to_string() == p.first) { excluded = true; break; }
+      if (!excluded && p.first.compare(0, 4, "get:") != 0 && p.first.compare(0, 4, "set:") != 0 &&
+          p.first != "__proto__" && p.first != "__class__")
+        out.object->properties[p.first] = p.second;
+    }
+    return out;
+  });
   g.properties["Set"] = make_native([this](Values &a) {
     Value self = make_object();
     Values init;

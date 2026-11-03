@@ -237,6 +237,7 @@ public:
   std::vector<Token> tokens;
   size_t p = 0;
   int depth = 0;
+  int temp_counter = 0;
   explicit Parser(std::string_view source) : tokens(lex(source)) {}
   const Token &tok(size_t offset = 0) const {
     return tokens[std::min(p + offset, tokens.size() - 1)];
@@ -710,6 +711,134 @@ public:
     return e;
   }
   // A class builds a constructor plus a prototype holding its methods.
+  // I desugar a destructuring pattern into ordinary declarations that read from
+  // a hidden temporary, so the rest of my interpreter needs no new machinery.
+  std::string temp_name() { return "__pv_pattern" + std::to_string(++temp_counter); }
+  static std::unique_ptr<Expr> identifier_expr(const std::string &name, int line) {
+    auto e = std::make_unique<Expr>(Expr::Kind::Identifier);
+    e->text = name;
+    e->line = line;
+    return e;
+  }
+  static std::unique_ptr<Expr> member_of(std::unique_ptr<Expr> base, std::unique_ptr<Expr> key,
+                                         bool computed) {
+    auto e = std::make_unique<Expr>(Expr::Kind::Member);
+    e->left = std::move(base);
+    e->computed = computed;
+    if (computed)
+      e->right = std::move(key);
+    else
+      e->text = key->text;
+    return e;
+  }
+  void pattern(std::vector<std::pair<std::string, std::unique_ptr<Expr>>> &out,
+               std::unique_ptr<Expr> base) {
+    if (take("[")) {
+      std::string holder = temp_name();
+      size_t slot = out.size();
+      out.emplace_back(holder, std::move(base));
+      size_t index = 0;
+      while (!is("]") && !is("<eof>")) {
+        if (take(",")) { ++index; continue; }
+        if (take("...")) {
+          auto name = identifier();
+          auto call = std::make_unique<Expr>(Expr::Kind::Call);
+          call->left = member_of(identifier_expr(holder, tok().line), identifier_expr("slice", tok().line), false);
+          auto number = std::make_unique<Expr>(Expr::Kind::Literal);
+          number->literal = Value(double(index));
+          call->items.push_back(std::move(number));
+          out.emplace_back(name, std::move(call));
+          break;
+        }
+        auto key = std::make_unique<Expr>(Expr::Kind::Literal);
+        key->literal = Value(double(index));
+        auto read = member_of(identifier_expr(holder, tok().line), std::move(key), true);
+        if (is("[") || is("{")) {
+          pattern(out, std::move(read));
+        } else {
+          auto name = identifier();
+          if (take("=")) {
+            auto fallback = expr();
+            auto cond = std::make_unique<Expr>(Expr::Kind::Conditional);
+            auto test = std::make_unique<Expr>(Expr::Kind::Binary);
+            test->text = "===";
+            test->left = member_of(identifier_expr(holder, tok().line),
+                                   [&] { auto k = std::make_unique<Expr>(Expr::Kind::Literal);
+                                         k->literal = Value(double(index)); return k; }(), true);
+            test->right = identifier_expr("undefined", tok().line);
+            cond->left = std::move(test);
+            cond->right = std::move(fallback);
+            cond->third = std::move(read);
+            out.emplace_back(name, std::move(cond));
+          } else
+            out.emplace_back(name, std::move(read));
+        }
+        ++index;
+        if (!is("]")) expect(",");
+      }
+      expect("]");
+      if (!out[slot].second) {
+        expect("=");
+        out[slot].second = expr();
+      }
+      return;
+    }
+    expect("{");
+    std::string holder = temp_name();
+    size_t slot = out.size();
+    out.emplace_back(holder, std::move(base));
+    std::vector<std::string> taken_keys;
+    while (!is("}") && !is("<eof>")) {
+      if (take("...")) {
+        // Object rest copies the own keys I have not already taken.
+        auto name = identifier();
+        auto call = std::make_unique<Expr>(Expr::Kind::Call);
+        call->left = identifier_expr("__pv_rest", tok().line);
+        call->items.push_back(identifier_expr(holder, tok().line));
+        for (auto &taken : taken_keys) {
+          auto literal = std::make_unique<Expr>(Expr::Kind::Literal);
+          literal->literal = Value(taken);
+          call->items.push_back(std::move(literal));
+        }
+        out.emplace_back(name, std::move(call));
+        break;
+      }
+      std::string key = tok().text;
+      if (starts(key, "string:")) key = key.substr(7);
+      if (key.empty() || key == "<eof>") error("destructuring key expected");
+      taken_keys.push_back(key);
+      ++p;
+      std::string name = key;
+      if (take(":")) {
+        if (is("[") || is("{")) {
+          pattern(out, member_of(identifier_expr(holder, tok().line), identifier_expr(key, tok().line), false));
+          if (!is("}")) expect(",");
+          continue;
+        }
+        name = identifier();
+      }
+      auto read = member_of(identifier_expr(holder, tok().line), identifier_expr(key, tok().line), false);
+      if (take("=")) {
+        auto fallback = expr();
+        auto cond = std::make_unique<Expr>(Expr::Kind::Conditional);
+        auto test = std::make_unique<Expr>(Expr::Kind::Binary);
+        test->text = "===";
+        test->left = member_of(identifier_expr(holder, tok().line), identifier_expr(key, tok().line), false);
+        test->right = identifier_expr("undefined", tok().line);
+        cond->left = std::move(test);
+        cond->right = std::move(fallback);
+        cond->third = std::move(read);
+        out.emplace_back(name, std::move(cond));
+      } else
+        out.emplace_back(name, std::move(read));
+      if (!is("}")) expect(",");
+    }
+    expect("}");
+    if (!out[slot].second) {
+      expect("=");
+      out[slot].second = expr();
+    }
+  }
   std::unique_ptr<Expr> class_expression() {
     expect("class");
     auto e = make(Expr::Kind::Class);
@@ -881,6 +1010,11 @@ public:
       s->text = tok().text;
       ++p;
       do {
+        if (is("[") || is("{")) {
+          pattern(s->declarations, nullptr);
+          if (!take(",")) break;
+          continue;
+        }
         auto name = identifier();
         std::unique_ptr<Expr> value;
         if (take("="))

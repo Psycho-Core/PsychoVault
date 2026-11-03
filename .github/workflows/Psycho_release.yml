@@ -168,6 +168,22 @@ jobs:
           }
           '```' | Add-Content $env:GITHUB_STEP_SUMMARY
           Write-Host "standalone render exit=$render sandbox exit=$sandbox"
+          # Job summaries are not readable through the API, but annotations are.
+          # I publish my failure report as an annotation so I can diagnose without
+          # downloading job logs or artifacts.
+          if ($render -ne 0) {
+            $detail = 'no failure report was written'
+            if (Test-Path build/captures/standalone.png.failure.json) {
+              $detail = (Get-Content build/captures/standalone.png.failure.json -Raw)
+            }
+            $detail = ($detail -replace "`r", '') -replace "`n", ' '
+            Write-Host "::error::SOLO-DIAG exit=$render $detail"
+          }
+          if ($sandbox -ne 0 -and (Test-Path build/solo-sandbox.json)) {
+            $sd = (Get-Content build/solo-sandbox.json -Raw)
+            $sd = ($sd -replace "`r", '') -replace "`n", ' '
+            Write-Host "::error::SOLO-SANDBOX exit=$sandbox $sd"
+          }
           if ($render -ne 0) { Write-Host "::error::My standalone exe failed to render a fetched page (exit $render)"; exit 1 }
           if ($sandbox -ne 0) { Write-Host "::error::My standalone exe failed its sandbox gate (exit $sandbox)"; exit 1 }
           python -c "import json; d=json.load(open('build/solo-sandbox.json', encoding='utf-8')); assert d.get('ok') is True, d; print('My lone exe unpacked its renderer and passed containment.')"

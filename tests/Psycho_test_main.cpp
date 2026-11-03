@@ -688,6 +688,23 @@ int main() {
     CHECK(js_eval("function f(a,b){return this.n+a+b}var g=f.bind({n:1},2);g(3)") == "6");
     CHECK(js_eval("class A{f(x=4){return x}}new A().f()") == "4");
   }
+  // Destructuring desugars into ordinary declarations.
+  {
+    CHECK(js_eval("var [a,b]=[1,2];a+b") == "3");
+    CHECK(js_eval("var {a,b}={a:1,b:2};a+b") == "3");
+    CHECK(js_eval("var {a:x}={a:7};x") == "7");
+    CHECK(js_eval("var [a,b=9]=[1];a+b") == "10");
+    CHECK(js_eval("var {a,b=9}={a:1};a+b") == "10");
+    CHECK(js_eval("var {a=5}={a:1};a") == "1");
+    CHECK(js_eval("var {a:{b}}={a:{b:7}};b") == "7");
+    CHECK(js_eval("var [[a],b]=[[1],2];a+b") == "3");
+    CHECK(js_eval("var [a,...r]=[1,2,3];r.join(',')") == "2,3");
+    CHECK(js_eval("var {a,...r}={a:1,b:2,c:3};Object.keys(r).join(',')") == "b,c");
+    CHECK(js_eval("var [,b]=[1,2];b") == "2");
+    CHECK(js_eval("let {a}={a:4};a") == "4");
+    CHECK(js_eval("const [a]=[6];a") == "6");
+    CHECK(js_eval("function f(){return {x:3}}var {x}=f();x") == "3");
+  }
   std::cout << passed << " engine checks passed\n";
   return 0;
 }
