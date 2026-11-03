@@ -10,16 +10,16 @@ I am building the browser in the open, but I am not calling this finished. This 
 | HTML/DOM | Tokenizer, tree builder, entities, forms, selectors, DOM mutation | Pinned WPT subsets |
 | CSS | Syntax, cascade, inheritance, box model, block/inline/flex layout, media queries | Pinned WPT subsets and visual tests |
 | JavaScript | Parser, tree-walking interpreter, closures, objects/arrays, mark-sweep GC, timers, DOM events | Pinned Test262 subsets and long-run stability |
-| Painting | Display list, software raster, PNG encoder, Windows OS text rendering | Visual regression and performance tests |
-| Shell | Native Windows window, tabs, omnibox, home, bookmarks/history, General settings | Full reference UI parity |
+| Painting | Display list, software raster, owned PNG decoder/encoder, image blitting, Windows OS text rendering | Visual regression and performance tests |
+| Shell | Native Windows window, per-tab renderer sessions, omnibox, Unicode input/paste, stop/reload, home, bookmarks/history, General settings | Full reference UI parity and hosted interaction tests |
 | Networking | Broker-owned WinHTTP GET, TLS validation, redirects, size limits | Proxy, cookies, cache, POST, streaming and leak tests |
-| Process model | Renderer executable, framed IPC, AppContainer and job object | File-isolation probe, direct network denial probe, escape tests and crash recovery |
-| Profile | Separate owned-profile JSON files, private mode, session restore | Migration fixtures and rollback |
+| Process model | Renderer executable, framed binary-resource IPC, private-desktop AppContainer launcher, job object, required token/file/TCP/UDP probe | Hosted sandbox proof, escape tests and crash recovery |
+| Profile | Validated owned-profile JSON files, corruption backups, atomic replacement, private mode, active-tab session restore | Migration fixtures and rollback |
 | Builds | GitHub-hosted Windows build, engine tests, sandbox probe, GUI captures | Repeated green runs and signed release gates |
 
 ## Not implemented yet
 
-I have not implemented the extension host, Proton VPN, PAC/proxy ownership, WebRTC, full JavaScript/CSS compatibility, images beyond placeholders, media, canvas, workers, IndexedDB, Web Crypto, vault migration, updater signing, installer, Android, or the full 125-control settings contract.
+I have not implemented the extension host, Proton VPN, PAC/proxy ownership, WebRTC, full JavaScript/CSS compatibility, non-PNG image formats, media, canvas, workers, IndexedDB, Web Crypto, vault migration, updater signing, installer, Android, or the full 125-control settings contract.
 
 I will not show fake controls for those features. I will add them when the behaviour behind them exists.
 

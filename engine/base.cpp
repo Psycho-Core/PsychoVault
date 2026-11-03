@@ -37,6 +37,58 @@ Bytes random_bytes(size_t count) {
   return out;
 }
 
+std::string base64_encode(const Bytes &bytes) {
+  static constexpr char alphabet[] =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  if (bytes.size() > (std::numeric_limits<size_t>::max() - 2) / 4 * 3)
+    throw std::runtime_error("base64 input limit");
+  std::string out;
+  out.reserve((bytes.size() + 2) / 3 * 4);
+  for (size_t i = 0; i < bytes.size(); i += 3) {
+    uint32_t n = uint32_t(bytes[i]) << 16;
+    if (i + 1 < bytes.size())
+      n |= uint32_t(bytes[i + 1]) << 8;
+    if (i + 2 < bytes.size())
+      n |= bytes[i + 2];
+    out += alphabet[(n >> 18) & 63];
+    out += alphabet[(n >> 12) & 63];
+    out += i + 1 < bytes.size() ? alphabet[(n >> 6) & 63] : '=';
+    out += i + 2 < bytes.size() ? alphabet[n & 63] : '=';
+  }
+  return out;
+}
+Bytes base64_decode(std::string_view text, size_t max_bytes) {
+  if (text.size() % 4 || text.size() / 4 * 3 > max_bytes + 2)
+    throw std::runtime_error("invalid base64 length");
+  auto value = [](char c) -> int {
+    if (c >= 'A' && c <= 'Z')
+      return c - 'A';
+    if (c >= 'a' && c <= 'z')
+      return c - 'a' + 26;
+    if (c >= '0' && c <= '9')
+      return c - '0' + 52;
+    return c == '+' ? 62 : c == '/' ? 63 : -1;
+  };
+  Bytes out;
+  out.reserve(text.size() / 4 * 3);
+  for (size_t i = 0; i < text.size(); i += 4) {
+    int a = value(text[i]), b = value(text[i + 1]);
+    bool pad3 = text[i + 2] == '=', pad4 = text[i + 3] == '=';
+    int c = pad3 ? 0 : value(text[i + 2]), d = pad4 ? 0 : value(text[i + 3]);
+    if (a < 0 || b < 0 || c < 0 || d < 0 || (pad3 && !pad4) || (pad3 && (c || d)) || (pad4 && d) ||
+        (i + 4 < text.size() && (pad3 || pad4)))
+      throw std::runtime_error("invalid base64 data");
+    out.push_back(uint8_t((a << 2) | (b >> 4)));
+    if (!pad3)
+      out.push_back(uint8_t((b << 4) | (c >> 2)));
+    if (!pad4)
+      out.push_back(uint8_t((c << 6) | d));
+  }
+  if (out.size() > max_bytes)
+    throw std::runtime_error("base64 output limit");
+  return out;
+}
+
 std::string lower(std::string_view value) {
   std::string out(value);
   for (char &c : out)
@@ -924,17 +976,36 @@ bool write_file_atomic(const std::string &path, const std::string &data, std::st
     error = "profile record exceeds size limit";
     return false;
   }
-  std::string tmp = path + ".tmp";
+  std::string suffix;
+  try {
+    for (auto byte : random_bytes(8)) {
+      const char *hex = "0123456789abcdef";
+      suffix += hex[byte >> 4];
+      suffix += hex[byte & 15];
+    }
+  } catch (...) {
+    error = "cannot create private temporary name";
+    return false;
+  }
+  std::string tmp = path + "." + suffix + ".tmp";
 #ifdef _WIN32
-  HANDLE h = CreateFileW(wide_path(tmp).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+  HANDLE h = CreateFileW(wide_path(tmp).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
                          FILE_ATTRIBUTE_NORMAL, nullptr);
   if (h == INVALID_HANDLE_VALUE) {
     error = "cannot create profile temporary file";
     return false;
   }
-  DWORD written = 0;
-  BOOL ok =
-      WriteFile(h, data.data(), DWORD(data.size()), &written, nullptr) && written == data.size();
+  size_t pos = 0;
+  bool ok = true;
+  while (pos < data.size()) {
+    DWORD written = 0;
+    DWORD chunk = DWORD(std::min<size_t>(data.size() - pos, 1u << 20));
+    if (!WriteFile(h, data.data() + pos, chunk, &written, nullptr) || !written) {
+      ok = false;
+      break;
+    }
+    pos += written;
+  }
   ok = FlushFileBuffers(h) && ok;
   CloseHandle(h);
   if (!ok || !MoveFileExW(wide_path(tmp).c_str(), wide_path(path).c_str(),
@@ -944,7 +1015,7 @@ bool write_file_atomic(const std::string &path, const std::string &data, std::st
     return false;
   }
 #else
-  int h = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+  int h = open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
   if (h < 0) {
     error = "cannot create profile temporary file";
     return false;
@@ -952,6 +1023,8 @@ bool write_file_atomic(const std::string &path, const std::string &data, std::st
   size_t pos = 0;
   while (pos < data.size()) {
     auto n = write(h, data.data() + pos, data.size() - pos);
+    if (n < 0 && errno == EINTR)
+      continue;
     if (n <= 0) {
       close(h);
       ::unlink(tmp.c_str());
@@ -966,6 +1039,13 @@ bool write_file_atomic(const std::string &path, const std::string &data, std::st
     ::unlink(tmp.c_str());
     error = "cannot commit profile file";
     return false;
+  }
+  auto slash = path.find_last_of('/');
+  std::string dir = slash == std::string::npos ? "." : path.substr(0, slash);
+  int dfd = open(dir.c_str(), O_RDONLY | O_DIRECTORY);
+  if (dfd >= 0) {
+    fsync(dfd);
+    close(dfd);
   }
 #endif
   return true;

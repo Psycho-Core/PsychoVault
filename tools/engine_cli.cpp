@@ -83,7 +83,7 @@ int main(int argc, char **argv) {
       c.url = j.str("url");
       commands.push_back(c);
     }
-    paint_commands(canvas, commands, 0, resources);
+    paint_commands(canvas, commands, 0, page.images());
     if (!out.empty()) {
       auto png = encode_png(width, height, canvas.pixels);
       std::ofstream f(out, std::ios::binary);

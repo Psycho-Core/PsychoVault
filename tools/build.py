@@ -3,7 +3,7 @@
 from __future__ import annotations
 import argparse, os, pathlib, shutil, subprocess, sys
 ROOT=pathlib.Path(__file__).resolve().parents[1]
-ENGINE=["engine/base.cpp","engine/dom.cpp","engine/css.cpp","engine/js_parser.cpp","engine/js_runtime.cpp","engine/raster.cpp","engine/layout.cpp","engine/page.cpp"]
+ENGINE=["engine/base.cpp","engine/dom.cpp","engine/css.cpp","engine/js_parser.cpp","engine/js_runtime.cpp","engine/raster.cpp","engine/image.cpp","engine/layout.cpp","engine/page.cpp"]
 PLATFORM=["platform/process.cpp","platform/network.cpp","platform/profile.cpp"]
 def run(cmd,env=None):
     print("+",subprocess.list2cmdline([str(x) for x in cmd]),flush=True)
@@ -59,8 +59,8 @@ def main():
         run(cmd,env)
     winlibs=["kernel32","user32","gdi32","advapi32","userenv","bcrypt","winhttp","shell32","ole32","dwmapi"]
     target("pv-engine",ENGINE+["tools/engine_cli.cpp"],winlibs if windows else [])
-    target("pv-tests",ENGINE+["tests/test_main.cpp"],winlibs if windows else [])
-    target("pv-renderer",ENGINE+["platform/process.cpp","tools/renderer_main.cpp"],winlibs if windows else [])
+    target("pv-tests",ENGINE+PLATFORM+["tests/test_main.cpp"],winlibs if windows else [])
+    target("pv-renderer",ENGINE+["platform/process.cpp","tools/renderer_main.cpp"],winlibs + ["ws2_32"] if windows else [])
     if windows:
         target("PsychoVault",ENGINE+PLATFORM+["shell/win_main.cpp"],winlibs,"WINDOWS")
         target("pv-sandbox-test",ENGINE+["platform/process.cpp","tools/sandbox_test.cpp"],winlibs)

@@ -2,6 +2,7 @@
 #include "css.hpp"
 #include "raster.hpp"
 namespace pv {
+struct Image;
 struct PaintCommand {
   enum class Kind { Rect, Border, Text, Image, Line } kind;
   Rect rect;
@@ -21,5 +22,5 @@ LayoutResult layout_document(const Document &doc, const std::vector<Style> &styl
                              double height, const std::map<std::string, Resource> &resources,
                              Canvas &measure);
 void paint_commands(Canvas &canvas, const std::vector<PaintCommand> &commands, double scroll_y,
-                    const std::map<std::string, Resource> &resources);
+                    const std::map<std::string, Image> &images);
 } // namespace pv

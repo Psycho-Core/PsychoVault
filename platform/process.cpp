@@ -1,9 +1,14 @@
 #include "process.hpp"
 #ifdef _WIN32
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #include <aclapi.h>
 #include <userenv.h>
+#ifndef DESKTOP_ALL_ACCESS
+#define DESKTOP_ALL_ACCESS (STANDARD_RIGHTS_REQUIRED | 0x01FF)
+#endif
 #else
 #include <cerrno>
 #include <cstring>
@@ -14,140 +19,120 @@
 #include <unistd.h>
 #endif
 namespace pv {
-static void put32(uint8_t *p, uint32_t n) {
-  p[0] = n;
-  p[1] = n >> 8;
-  p[2] = n >> 16;
-  p[3] = n >> 24;
+namespace {
+void put32(uint8_t *p, uint32_t n) {
+  for (int i = 0; i < 4; ++i)
+    p[i] = uint8_t(n >> (8 * i));
 }
-static uint32_t get32(const uint8_t *p) {
-  return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
+uint32_t get32(const uint8_t *p) {
+  uint32_t n = 0;
+  for (int i = 0; i < 4; ++i)
+    n |= uint32_t(p[i]) << (8 * i);
+  return n;
 }
-static bool write_all(void *h, const uint8_t *data, size_t n) {
+bool write_all(void *h, const uint8_t *data, size_t n) {
+  while (n) {
 #ifdef _WIN32
-  HANDLE handle = h;
-  while (n) {
     DWORD done = 0;
-    if (!WriteFile(handle, data, DWORD(std::min<size_t>(n, 1u << 20)), &done, nullptr) || !done)
+    if (!WriteFile(h, data, DWORD(std::min<size_t>(n, 1u << 20)), &done, nullptr) || !done)
       return false;
-    data += done;
-    n -= done;
-  }
-  return true;
 #else
-  int fd = int(intptr_t(h));
-  while (n) {
-    ssize_t done = ::write(fd, data, n);
-    if (done <= 0) {
-      if (errno == EINTR)
-        continue;
+    ssize_t done = ::write(int(intptr_t(h)), data, n);
+    if (done < 0 && errno == EINTR)
+      continue;
+    if (done <= 0)
       return false;
-    }
+#endif
     data += done;
     n -= size_t(done);
   }
   return true;
-#endif
 }
-static bool read_all(void *h, uint8_t *data, size_t n) {
+bool read_all(void *h, uint8_t *data, size_t n) {
+  while (n) {
 #ifdef _WIN32
-  HANDLE handle = h;
-  while (n) {
     DWORD done = 0;
-    if (!ReadFile(handle, data, DWORD(std::min<size_t>(n, 1u << 20)), &done, nullptr) || !done)
+    if (!ReadFile(h, data, DWORD(std::min<size_t>(n, 1u << 20)), &done, nullptr) || !done)
       return false;
-    data += done;
-    n -= done;
-  }
-  return true;
 #else
-  int fd = int(intptr_t(h));
-  while (n) {
-    ssize_t done = ::read(fd, data, n);
-    if (done <= 0) {
-      if (done < 0 && errno == EINTR)
-        continue;
+    ssize_t done = ::read(int(intptr_t(h)), data, n);
+    if (done < 0 && errno == EINTR)
+      continue;
+    if (done <= 0)
       return false;
-    }
+#endif
     data += done;
     n -= size_t(done);
   }
   return true;
-#endif
 }
-bool write_frame(void *h, const Json &message, std::string &error) {
-  auto text = message.dump();
-  if (text.size() > kMaxResourceBytes) {
-    error = "IPC message too large";
-    return false;
-  }
-  uint8_t header[4];
-  put32(header, uint32_t(text.size()));
-  if (!write_all(h, header, 4) ||
-      !write_all(h, reinterpret_cast<const uint8_t *>(text.data()), text.size())) {
-    error = "IPC write failed";
-    return false;
-  }
-  return true;
-}
-std::optional<Json> read_frame(void *h, int timeout_ms) {
-#ifdef _WIN32
-  HANDLE handle = h;
-  DWORD available = 0;
-  int waited = 0;
-  while (true) {
-    if (!PeekNamedPipe(handle, nullptr, 0, nullptr, &available, nullptr))
-      return std::nullopt;
-    if (available >= 4)
-      break;
-    if (timeout_ms >= 0 && waited >= timeout_ms)
-      return std::nullopt;
-    Sleep(5);
-    waited += 5;
-  }
-#else
-  int fd = int(intptr_t(h));
-  pollfd p{fd, POLLIN, 0};
-  int rc = poll(&p, 1, timeout_ms);
-  if (rc <= 0)
+std::optional<Json> decode_frame(Bytes &buffer) {
+  if (buffer.size() < 4)
     return std::nullopt;
-#endif
-  uint8_t header[4];
-  if (!read_all(h, header, 4))
+  uint32_t n = get32(buffer.data());
+  if (n > kMaxIpcBytes)
+    throw std::runtime_error("IPC frame exceeds byte limit");
+  if (buffer.size() < size_t(n) + 4)
     return std::nullopt;
-  uint32_t n = get32(header);
-  if (n > kMaxResourceBytes)
-    return std::nullopt;
-  std::string text(n, '\0');
-  if (n && !read_all(h, reinterpret_cast<uint8_t *>(text.data()), n))
-    return std::nullopt;
-  return Json::parse(text, kMaxResourceBytes);
+  std::string_view text(reinterpret_cast<const char *>(buffer.data() + 4), n);
+  auto result = Json::parse(text, kMaxIpcBytes);
+  buffer.erase(buffer.begin(), buffer.begin() + 4 + n);
+  if (!result)
+    throw std::runtime_error("IPC frame is not valid JSON");
+  if (result->type != Json::Type::Object)
+    throw std::runtime_error("IPC frame is not an object");
+  return result;
 }
 #ifdef _WIN32
-static std::wstring wide(const std::string &s) {
+struct WinHandle {
+  HANDLE value = nullptr;
+  WinHandle() = default;
+  explicit WinHandle(HANDLE h) : value(h) {}
+  ~WinHandle() {
+    reset();
+  }
+  WinHandle(const WinHandle &) = delete;
+  WinHandle &operator=(const WinHandle &) = delete;
+  void reset(HANDLE h = nullptr) {
+    if (value && value != INVALID_HANDLE_VALUE)
+      CloseHandle(value);
+    value = h;
+  }
+  HANDLE release() {
+    HANDLE h = value;
+    value = nullptr;
+    return h;
+  }
+};
+std::wstring wide(const std::string &s) {
   if (s.empty())
     return {};
-  int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), int(s.size()), nullptr, 0);
-  std::wstring w(n, 0);
-  MultiByteToWideChar(CP_UTF8, 0, s.c_str(), int(s.size()), w.data(), n);
+  int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.data(), int(s.size()), nullptr, 0);
+  if (n <= 0)
+    throw std::runtime_error("invalid UTF-8 in platform string");
+  std::wstring w(size_t(n), 0);
+  MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.data(), int(s.size()), w.data(), n);
   return w;
 }
-static std::string narrow(const std::wstring &w) {
+std::string narrow(const std::wstring &w) {
   if (w.empty())
     return {};
-  int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), int(w.size()), nullptr, 0, nullptr, nullptr);
-  std::string s(n, 0);
-  WideCharToMultiByte(CP_UTF8, 0, w.c_str(), int(w.size()), s.data(), n, nullptr, nullptr);
+  int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), int(w.size()), nullptr, 0, nullptr, nullptr);
+  std::string s(size_t(n), 0);
+  WideCharToMultiByte(CP_UTF8, 0, w.data(), int(w.size()), s.data(), n, nullptr, nullptr);
   return s;
 }
-static bool grant_execute(const std::wstring &path, PSID sid) {
+std::string os_error(const char *operation, DWORD code = GetLastError()) {
+  return std::string(operation) + " (Windows error " + std::to_string(code) + ")";
+}
+bool grant_path(const std::wstring &path, PSID sid, ACCESS_MASK access) {
   PACL old = nullptr;
   PSECURITY_DESCRIPTOR sd = nullptr;
   if (GetNamedSecurityInfoW(path.c_str(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, nullptr,
                             nullptr, &old, nullptr, &sd) != ERROR_SUCCESS)
     return false;
   EXPLICIT_ACCESSW ea{};
-  ea.grfAccessPermissions = FILE_GENERIC_READ | FILE_GENERIC_EXECUTE;
+  ea.grfAccessPermissions = access;
   ea.grfAccessMode = GRANT_ACCESS;
   ea.grfInheritance = NO_INHERITANCE;
   BuildTrusteeWithSidW(&ea.Trustee, sid);
@@ -162,206 +147,456 @@ static bool grant_execute(const std::wstring &path, PSID sid) {
     LocalFree(sd);
   return ok;
 }
-Process::~Process() {
-  terminate();
-  if (read)
-    CloseHandle(read);
-  if (write)
-    CloseHandle(write);
-  if (job)
-    CloseHandle(job);
-  if (thread)
-    CloseHandle(thread);
-  if (process)
-    CloseHandle(process);
-  if (sid)
-    FreeSid(sid);
-}
-static bool grant_object(HANDLE object, PSID sid, ACCESS_MASK access) {
-  PACL old_dacl = nullptr;
+bool grant_object(HANDLE object, PSID sid, ACCESS_MASK access) {
+  PACL old = nullptr;
   PSECURITY_DESCRIPTOR sd = nullptr;
-  if (GetSecurityInfo(object, SE_WINDOW_OBJECT, DACL_SECURITY_INFORMATION, nullptr, nullptr,
-                      &old_dacl, nullptr, &sd) != ERROR_SUCCESS)
+  if (GetSecurityInfo(object, SE_WINDOW_OBJECT, DACL_SECURITY_INFORMATION, nullptr, nullptr, &old,
+                      nullptr, &sd) != ERROR_SUCCESS)
     return false;
   EXPLICIT_ACCESSW ea{};
   ea.grfAccessPermissions = access;
   ea.grfAccessMode = GRANT_ACCESS;
   ea.grfInheritance = NO_INHERITANCE;
   BuildTrusteeWithSidW(&ea.Trustee, sid);
-  PACL new_dacl = nullptr;
-  if (SetEntriesInAclW(1, &ea, old_dacl, &new_dacl) != ERROR_SUCCESS) {
+  PACL updated = nullptr;
+  bool ok = SetEntriesInAclW(1, &ea, old, &updated) == ERROR_SUCCESS &&
+            SetSecurityInfo(object, SE_WINDOW_OBJECT, DACL_SECURITY_INFORMATION, nullptr, nullptr,
+                            updated, nullptr) == ERROR_SUCCESS;
+  if (updated)
+    LocalFree(updated);
+  if (sd)
     LocalFree(sd);
+  return ok;
+}
+bool overlapped_io(HANDLE file, void *data, DWORD size, bool reading, HANDLE stop, int timeout,
+                   size_t &transferred, std::string &error) {
+  transferred = 0;
+  DWORD done = 0;
+  WinHandle event(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+  if (!event.value) {
+    error = os_error("CreateEvent");
     return false;
   }
-  DWORD rc = SetSecurityInfo(object, SE_WINDOW_OBJECT, DACL_SECURITY_INFORMATION, nullptr, nullptr,
-                             new_dacl, nullptr);
-  LocalFree(new_dacl);
-  LocalFree(sd);
-  return rc == ERROR_SUCCESS;
+  OVERLAPPED ov{};
+  ov.hEvent = event.value;
+  BOOL ok = reading ? ReadFile(file, data, size, nullptr, &ov)
+                    : WriteFile(file, data, size, nullptr, &ov);
+  DWORD code = ok ? ERROR_SUCCESS : GetLastError();
+  if (!ok && code != ERROR_IO_PENDING) {
+    error = os_error(reading ? "ReadFile" : "WriteFile", code);
+    return false;
+  }
+  if (!ok) {
+    HANDLE waits[2] = {event.value, stop};
+    DWORD wait =
+        WaitForMultipleObjects(stop ? 2 : 1, waits, FALSE, timeout < 0 ? INFINITE : DWORD(timeout));
+    if (wait != WAIT_OBJECT_0) {
+      CancelIoEx(file, &ov);
+      // The OVERLAPPED and its buffer must stay alive until cancellation ends.
+      GetOverlappedResult(file, &ov, &done, TRUE);
+      transferred = done;
+      error = wait == WAIT_OBJECT_0 + 1 ? "I/O cancelled" : "I/O timeout";
+      return false;
+    }
+  }
+  if (!GetOverlappedResult(file, &ov, &done, FALSE)) {
+    error = os_error("GetOverlappedResult");
+    return false;
+  }
+  transferred = done;
+  if (!transferred)
+    error = "I/O end of stream";
+  return transferred != 0;
 }
+#endif
+} // namespace
+bool write_frame(void *h, const Json &message, std::string &error) {
+  if (!h) {
+    error = "IPC handle is closed";
+    return false;
+  }
+  auto text = message.dump();
+  if (text.size() > kMaxIpcBytes) {
+    error = "IPC message too large";
+    return false;
+  }
+  uint8_t header[4];
+  put32(header, uint32_t(text.size()));
+  if (!write_all(h, header, 4) ||
+      !write_all(h, reinterpret_cast<const uint8_t *>(text.data()), text.size())) {
+    error = "IPC write failed";
+    return false;
+  }
+  return true;
+}
+std::optional<Json> read_frame(void *h, int timeout_ms) {
+  if (!h)
+    return std::nullopt;
+#ifdef _WIN32
+  DWORD available = 0;
+  int waited = 0;
+  while (true) {
+    if (!PeekNamedPipe(h, nullptr, 0, nullptr, &available, nullptr))
+      return std::nullopt;
+    if (available >= 4)
+      break;
+    if (timeout_ms >= 0 && waited >= timeout_ms)
+      return std::nullopt;
+    Sleep(5);
+    waited += 5;
+  }
+#else
+  pollfd p{int(intptr_t(h)), POLLIN, 0};
+  if (poll(&p, 1, timeout_ms) <= 0)
+    return std::nullopt;
+#endif
+  uint8_t header[4];
+  if (!read_all(h, header, 4))
+    return std::nullopt;
+  uint32_t n = get32(header);
+  if (n > kMaxIpcBytes)
+    return std::nullopt;
+  std::string text(n, '\0');
+  if (n && !read_all(h, reinterpret_cast<uint8_t *>(text.data()), n))
+    return std::nullopt;
+  auto j = Json::parse(text, kMaxIpcBytes);
+  if (!j || j->type != Json::Type::Object)
+    return std::nullopt;
+  return j;
+}
+Process::Process() {
+#ifdef _WIN32
+  stop_event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+#endif
+}
+Process::~Process() {
+  terminate();
+  close_transport();
+#ifdef _WIN32
+  if (desktop_)
+    CloseDesktop(HDESK(desktop_));
+  if (station_)
+    CloseWindowStation(HWINSTA(station_));
+  if (job_)
+    CloseHandle(job_);
+  if (stop_event_)
+    CloseHandle(stop_event_);
+  if (sid_)
+    FreeSid(sid_);
+#endif
+}
+void Process::close_transport() {
+#ifdef _WIN32
+  if (read_)
+    CloseHandle(read_);
+  if (write_)
+    CloseHandle(write_);
+#else
+  if (read_)
+    ::close(int(intptr_t(read_)));
+  if (write_)
+    ::close(int(intptr_t(write_)));
+#endif
+  read_ = write_ = nullptr;
+  input_buffer_.clear();
+}
+void Process::request_stop() {
+  stop_requested_.store(true, std::memory_order_release);
+#ifdef _WIN32
+  if (stop_event_)
+    SetEvent(stop_event_);
+#endif
+}
+bool Process::read_more(int timeout_ms) {
+  uint8_t chunk[65536];
+  size_t got = 0;
+#ifdef _WIN32
+  if (!overlapped_io(read_, chunk, static_cast<DWORD>(sizeof(chunk)), true, stop_event_, timeout_ms,
+                     got, io_error_))
+    return false;
+#else
+  pollfd p{int(intptr_t(read_)), POLLIN, 0};
+  int rc = poll(&p, 1, timeout_ms);
+  if (stop_requested_.load()) {
+    io_error_ = "I/O cancelled";
+    return false;
+  }
+  if (rc == 0) {
+    io_error_ = "I/O timeout";
+    return true;
+  }
+  if (rc < 0) {
+    io_error_ = "poll failed";
+    return false;
+  }
+  ssize_t n = ::read(int(intptr_t(read_)), chunk, sizeof(chunk));
+  if (n <= 0) {
+    io_error_ = "I/O end of stream";
+    return false;
+  }
+  got = size_t(n);
+#endif
+  if (input_buffer_.size() + got > kMaxIpcBytes + 4) {
+    io_error_ = "IPC buffered bytes exceed limit";
+    return false;
+  }
+  input_buffer_.insert(input_buffer_.end(), chunk, chunk + got);
+  return true;
+}
+#ifdef _WIN32
 bool Process::start(const std::string &exe, const std::string &args, bool sandbox,
                     std::string &error) {
-  SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
-  HANDLE in_read = nullptr, in_write = nullptr, out_read = nullptr, out_write = nullptr;
-  if (!CreatePipe(&in_read, &in_write, &sa, 0) || !CreatePipe(&out_read, &out_write, &sa, 0)) {
-    error = "cannot create renderer pipes";
+  if (process_ || stopping()) {
+    error = "process cannot be restarted";
     return false;
   }
-  SetHandleInformation(in_write, HANDLE_FLAG_INHERIT, 0);
-  SetHandleInformation(out_read, HANDLE_FLAG_INHERIT, 0);
+  if (!stop_event_) {
+    error = os_error("CreateEvent");
+    return false;
+  }
+  auto fail = [&](const std::string &message) {
+    error = message;
+    terminate();
+    close_transport();
+    return false;
+  };
+  std::string unique;
+  for (auto b : random_bytes(12)) {
+    const char *hex = "0123456789abcdef";
+    unique += hex[b >> 4];
+    unique += hex[b & 15];
+  }
+  std::wstring pipe_name =
+      L"\\\\.\\pipe\\PsychoVault." + std::to_wstring(GetCurrentProcessId()) + L"." + wide(unique);
+  SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
+  WinHandle server(CreateNamedPipeW(
+      pipe_name.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
+      PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, 1, 65536, 65536,
+      0, &sa));
+  if (server.value == INVALID_HANDLE_VALUE) {
+    server.value = nullptr;
+    return fail(os_error("CreateNamedPipe"));
+  }
+  SetHandleInformation(server.value, HANDLE_FLAG_INHERIT, 0);
+  WinHandle child(CreateFileW(pipe_name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, &sa,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+  if (child.value == INVALID_HANDLE_VALUE) {
+    child.value = nullptr;
+    return fail(os_error("Connect renderer pipe"));
+  }
+  WinHandle connect_event(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+  OVERLAPPED connect_ov{};
+  connect_ov.hEvent = connect_event.value;
+  if (!ConnectNamedPipe(server.value, &connect_ov)) {
+    DWORD rc = GetLastError();
+    if (rc == ERROR_IO_PENDING && WaitForSingleObject(connect_event.value, 5000) == WAIT_OBJECT_0) {
+      DWORD ignored = 0;
+      GetOverlappedResult(server.value, &connect_ov, &ignored, FALSE);
+    } else if (rc != ERROR_PIPE_CONNECTED)
+      return fail(os_error("ConnectNamedPipe", rc));
+  }
   PSID app_sid = nullptr;
-  bool made_profile = false;
-  std::wstring container = L"PsychoVault.Renderer";
+  std::wstring desktop_name;
   if (sandbox) {
+    std::wstring container = L"PsychoVault.Renderer";
     HRESULT hr =
         CreateAppContainerProfile(container.c_str(), L"PsychoVault renderer",
                                   L"Isolated PsychoVault website renderer", nullptr, 0, &app_sid);
-    if (FAILED(hr)) {
-      if (hr == HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS))
-        hr = DeriveAppContainerSidFromAppContainerName(container.c_str(), &app_sid);
-    } else
-      made_profile = true;
-    if (FAILED(hr) || !app_sid) {
-      error = "cannot create AppContainer identity";
-      CloseHandle(in_read);
-      CloseHandle(in_write);
-      CloseHandle(out_read);
-      CloseHandle(out_write);
-      return false;
-    }
-    sid = app_sid;
-    restricted = true;
-    if (!grant_execute(wide(exe), app_sid)) {
-      error = "cannot grant renderer execute access";
-      return false;
-    }
-    for (size_t cut = exe.find_last_of("/\\"); cut != std::string::npos && cut > 0;
+    if (hr == HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS))
+      hr = DeriveAppContainerSidFromAppContainerName(container.c_str(), &app_sid);
+    if (FAILED(hr) || !app_sid)
+      return fail(os_error("CreateAppContainerProfile", DWORD(hr)));
+    sid_ = app_sid;
+    if (!grant_path(wide(exe), app_sid, FILE_GENERIC_READ | FILE_GENERIC_EXECUTE))
+      return fail("cannot grant read/execute on renderer executable");
+    // Only traverse ancestors. Do not grant directory listing or write access.
+    for (size_t cut = exe.find_last_of("/\\"); cut != std::string::npos && cut > 2;
          cut = exe.find_last_of("/\\", cut - 1)) {
-      if (!grant_execute(wide(exe.substr(0, cut)), app_sid)) {
-        error = "cannot grant renderer directory traversal";
-        return false;
-      }
-      if (cut <= 2)
-        break;
+      if (!grant_path(wide(exe.substr(0, cut)), app_sid,
+                      FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE))
+        return fail("cannot grant renderer ancestor traversal");
     }
-    if (!grant_object(GetProcessWindowStation(), app_sid,
-                      WINSTA_ALL_ACCESS)) {
-      error = "cannot grant renderer window station access";
-      return false;
-    }
-    if (!grant_object(GetThreadDesktop(GetCurrentThreadId()), app_sid,
-                      (STANDARD_RIGHTS_REQUIRED | 0x01FF))) {
-      error = "cannot grant renderer desktop access";
-      return false;
-    }
+    std::wstring station_name = L"PsychoVault." + wide(unique);
+    station_ = CreateWindowStationW(station_name.c_str(), 0, WINSTA_ALL_ACCESS, nullptr);
+    if (!station_)
+      return fail(os_error("CreateWindowStation"));
+    desktop_ = CreateDesktopW(L"Renderer", nullptr, nullptr, 0, DESKTOP_ALL_ACCESS, nullptr);
+    if (!desktop_)
+      return fail(os_error("CreateDesktop"));
+    if (!grant_object(station_, app_sid,
+                      WINSTA_ENUMERATE | WINSTA_ENUMDESKTOPS | WINSTA_READATTRIBUTES |
+                          WINSTA_ACCESSGLOBALATOMS | READ_CONTROL | SYNCHRONIZE))
+      return fail("cannot grant private window-station access");
+    if (!grant_object(desktop_, app_sid,
+                      DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_CREATEWINDOW |
+                          DESKTOP_ENUMERATE | READ_CONTROL | SYNCHRONIZE))
+      return fail("cannot grant private desktop access");
+    desktop_name = station_name + L"\\Renderer";
+    restricted = true;
   }
   STARTUPINFOEXW si{};
-  si.StartupInfo.cb = sizeof(si);
+  si.StartupInfo.cb = DWORD(sizeof(si));
   si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-  si.StartupInfo.hStdInput = in_read;
-  si.StartupInfo.hStdOutput = out_write;
-  si.StartupInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+  si.StartupInfo.hStdInput = child.value;
+  si.StartupInfo.hStdOutput = child.value;
+  si.StartupInfo.hStdError = child.value;
+  if (!desktop_name.empty())
+    si.StartupInfo.lpDesktop = desktop_name.data();
   SIZE_T size = 0;
   DWORD attribute_count = sandbox ? 2 : 1;
   InitializeProcThreadAttributeList(nullptr, attribute_count, 0, &size);
+  if (!size)
+    return fail(os_error("InitializeProcThreadAttributeList size"));
   std::vector<uint8_t> buffer(size);
   auto attrs = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(buffer.data());
-  InitializeProcThreadAttributeList(attrs, attribute_count, 0, &size);
-  HANDLE inherit[2] = {in_read, out_write};
-  UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit, sizeof(inherit),
-                            nullptr, nullptr);
+  if (!InitializeProcThreadAttributeList(attrs, attribute_count, 0, &size))
+    return fail(os_error("InitializeProcThreadAttributeList"));
+  HANDLE inherit[1] = {child.value};
   SECURITY_CAPABILITIES caps{};
   caps.AppContainerSid = app_sid;
-  caps.CapabilityCount = 0;
-  caps.Capabilities = nullptr;
-  if (sandbox && !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
-                                            &caps, sizeof(caps), nullptr, nullptr)) {
-    error = "cannot set AppContainer security capabilities";
-    return false;
+  bool attrs_ok = UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit,
+                                            sizeof(inherit), nullptr, nullptr) != FALSE;
+  if (sandbox)
+    attrs_ok =
+        attrs_ok && UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
+                                              &caps, sizeof(caps), nullptr, nullptr) != FALSE;
+  if (!attrs_ok) {
+    DeleteProcThreadAttributeList(attrs);
+    return fail(os_error("UpdateProcThreadAttribute"));
   }
   si.lpAttributeList = attrs;
   std::wstring command = L"\"" + wide(exe) + L"\" " + wide(args);
-  std::vector<wchar_t> cmd(command.begin(), command.end());
-  cmd.push_back(0);
   PROCESS_INFORMATION pi{};
-  DWORD flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | (sandbox ? CREATE_NO_WINDOW : 0);
-  BOOL created = CreateProcessW(wide(exe).c_str(), cmd.data(), nullptr, nullptr, TRUE, flags,
+  DWORD flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_NO_WINDOW;
+  BOOL created = CreateProcessW(wide(exe).c_str(), command.data(), nullptr, nullptr, TRUE, flags,
                                 nullptr, nullptr, &si.StartupInfo, &pi);
+  DWORD create_error = created ? 0 : GetLastError();
   DeleteProcThreadAttributeList(attrs);
-  CloseHandle(in_read);
-  CloseHandle(out_write);
-  if (!created) {
-    error = "CreateProcess failed: " + std::to_string(GetLastError());
-    CloseHandle(in_write);
-    CloseHandle(out_read);
-    return false;
-  }
-  process = pi.hProcess;
-  thread = pi.hThread;
+  child.reset();
+  if (!created)
+    return fail(os_error("CreateProcess", create_error));
+  process_ = pi.hProcess;
+  thread_ = pi.hThread;
   pid = int(pi.dwProcessId);
-  read = out_read;
-  write = in_write;
-  job = CreateJobObjectW(nullptr, nullptr);
+  read_ = write_ = server.release();
+  job_ = CreateJobObjectW(nullptr, nullptr);
+  if (!job_)
+    return fail(os_error("CreateJobObject"));
   JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
   limits.BasicLimitInformation.LimitFlags =
       JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION |
       JOB_OBJECT_LIMIT_ACTIVE_PROCESS | JOB_OBJECT_LIMIT_PROCESS_MEMORY;
   limits.BasicLimitInformation.ActiveProcessLimit = 1;
-  limits.ProcessMemoryLimit = 256ull * 1024 * 1024;
-  SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits));
-  if (!AssignProcessToJobObject(job, process)) {
-    error = "cannot assign renderer job";
-    TerminateProcess(process, 1);
-    return false;
-  }
-  ResumeThread(thread);
-  (void)made_profile;
+  limits.ProcessMemoryLimit = SIZE_T(512) * 1024 * 1024;
+  if (!SetInformationJobObject(job_, JobObjectExtendedLimitInformation, &limits, sizeof(limits)))
+    return fail(os_error("SetInformationJobObject"));
+  JOBOBJECT_BASIC_UI_RESTRICTIONS ui{};
+  ui.UIRestrictionsClass = JOB_OBJECT_UILIMIT_HANDLES | JOB_OBJECT_UILIMIT_READCLIPBOARD |
+                           JOB_OBJECT_UILIMIT_WRITECLIPBOARD | JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS |
+                           JOB_OBJECT_UILIMIT_DISPLAYSETTINGS | JOB_OBJECT_UILIMIT_EXITWINDOWS;
+  if (!SetInformationJobObject(job_, JobObjectBasicUIRestrictions, &ui, sizeof(ui)))
+    return fail(os_error("SetInformationJobObject UI restrictions"));
+  if (!AssignProcessToJobObject(job_, process_))
+    return fail(os_error("AssignProcessToJobObject"));
+  if (ResumeThread(thread_) == DWORD(-1))
+    return fail(os_error("ResumeThread"));
   return true;
 }
 bool Process::send(const Json &j, std::string &error) {
-  std::lock_guard lock(write_mutex);
-  return write_frame(write, j, error);
+  std::lock_guard lock(write_mutex_);
+  if (stopping() || io_broken_ || !write_) {
+    error = "renderer I/O is stopped";
+    return false;
+  }
+  auto text = j.dump();
+  if (text.size() > kMaxIpcBytes) {
+    error = "IPC message too large";
+    return false;
+  }
+  Bytes framed(4 + text.size());
+  put32(framed.data(), uint32_t(text.size()));
+  std::copy(text.begin(), text.end(), framed.begin() + 4);
+  size_t done = 0;
+  if (!overlapped_io(write_, framed.data(), DWORD(framed.size()), false, stop_event_, 5000, done,
+                     error) ||
+      done != framed.size()) {
+    io_broken_ = true;
+    io_error_ = error;
+    return false;
+  }
+  return true;
 }
 std::optional<Json> Process::receive(int timeout) {
-  return read_frame(read, timeout);
+  if (io_broken_ || stopping() || !read_)
+    return std::nullopt;
+  try {
+    auto result = decode_frame(input_buffer_);
+    if (result)
+      return result;
+    if (!read_more(timeout)) {
+      if (stopping() || io_error_ == "I/O timeout")
+        return std::nullopt;
+      io_broken_ = true;
+      return std::nullopt;
+    }
+    return decode_frame(input_buffer_);
+  } catch (const std::exception &e) {
+    io_broken_ = true;
+    io_error_ = e.what();
+    return std::nullopt;
+  }
 }
 void Process::terminate() {
-  if (process)
-    TerminateProcess(process, 0);
-  if (process) {
-    WaitForSingleObject(process, 2000);
-    CloseHandle(process);
-    process = nullptr;
+  request_stop();
+  if (process_)
+    TerminateProcess(process_, 0);
+  if (process_) {
+    WaitForSingleObject(process_, 2000);
+    CloseHandle(process_);
+    process_ = nullptr;
   }
-  if (thread) {
-    CloseHandle(thread);
-    thread = nullptr;
+  if (thread_) {
+    CloseHandle(thread_);
+    thread_ = nullptr;
   }
 }
 bool Process::alive() const {
-  return process && WaitForSingleObject(process, 0) == WAIT_TIMEOUT;
+  return process_ && WaitForSingleObject(process_, 0) == WAIT_TIMEOUT;
+}
+std::optional<uint32_t> Process::exit_code() const {
+  if (!process_)
+    return std::nullopt;
+  DWORD code = 0;
+  if (!GetExitCodeProcess(process_, &code) || code == STILL_ACTIVE)
+    return std::nullopt;
+  return uint32_t(code);
 }
 std::string executable_path() {
-  wchar_t buf[32768];
-  DWORD n = GetModuleFileNameW(nullptr, buf, 32768);
-  return narrow(std::wstring(buf, n));
+  std::vector<wchar_t> buf(32768);
+  DWORD n = GetModuleFileNameW(nullptr, buf.data(), DWORD(buf.size()));
+  if (!n || n >= buf.size())
+    return {};
+  return narrow(std::wstring(buf.data(), n));
 }
 #else
-Process::~Process() {
-  terminate();
-  if (read)
-    close(int(intptr_t(read)));
-  if (write)
-    close(int(intptr_t(write)));
-}
 bool Process::start(const std::string &exe, const std::string &args, bool sandbox,
                     std::string &error) {
   if (sandbox) {
     error = "Windows AppContainer sandbox is not available on this platform";
     return false;
   }
+  if (pid || stopping()) {
+    error = "process cannot be restarted";
+    return false;
+  }
   int in_pipe[2], out_pipe[2];
-  if (pipe(in_pipe) || pipe(out_pipe)) {
+  if (pipe(in_pipe)) {
+    error = "pipe failed";
+    return false;
+  }
+  if (pipe(out_pipe)) {
+    ::close(in_pipe[0]);
+    ::close(in_pipe[1]);
     error = "pipe failed";
     return false;
   }
@@ -374,33 +609,54 @@ bool Process::start(const std::string &exe, const std::string &args, bool sandbo
   argv.push_back(nullptr);
   pid_t child_pid = fork();
   if (child_pid < 0) {
+    for (int fd : {in_pipe[0], in_pipe[1], out_pipe[0], out_pipe[1]})
+      ::close(fd);
     error = "fork failed";
     return false;
   }
   if (child_pid == 0) {
     dup2(in_pipe[0], 0);
     dup2(out_pipe[1], 1);
-    close(in_pipe[1]);
-    close(out_pipe[0]);
+    for (int fd : {in_pipe[0], in_pipe[1], out_pipe[0], out_pipe[1]})
+      ::close(fd);
     execv(exe.c_str(), argv.data());
     _exit(127);
   }
-  close(in_pipe[0]);
-  close(out_pipe[1]);
-  write = reinterpret_cast<void *>(intptr_t(in_pipe[1]));
-  read = reinterpret_cast<void *>(intptr_t(out_pipe[0]));
+  ::close(in_pipe[0]);
+  ::close(out_pipe[1]);
+  write_ = reinterpret_cast<void *>(intptr_t(in_pipe[1]));
+  read_ = reinterpret_cast<void *>(intptr_t(out_pipe[0]));
   pid = child_pid;
-  restricted = false;
   return true;
 }
 bool Process::send(const Json &j, std::string &error) {
-  std::lock_guard lock(write_mutex);
-  return write_frame(write, j, error);
+  std::lock_guard lock(write_mutex_);
+  if (stopping() || io_broken_) {
+    error = "renderer I/O is stopped";
+    return false;
+  }
+  return write_frame(write_, j, error);
 }
 std::optional<Json> Process::receive(int timeout) {
-  return read_frame(read, timeout);
+  if (io_broken_ || stopping() || !read_)
+    return std::nullopt;
+  try {
+    auto result = decode_frame(input_buffer_);
+    if (result)
+      return result;
+    if (!read_more(timeout)) {
+      io_broken_ = true;
+      return std::nullopt;
+    }
+    return decode_frame(input_buffer_);
+  } catch (const std::exception &e) {
+    io_broken_ = true;
+    io_error_ = e.what();
+    return std::nullopt;
+  }
 }
 void Process::terminate() {
+  request_stop();
   if (pid > 0) {
     kill(pid, SIGKILL);
     waitpid(pid, nullptr, 0);
@@ -409,6 +665,14 @@ void Process::terminate() {
 }
 bool Process::alive() const {
   return pid > 0 && kill(pid, 0) == 0;
+}
+std::optional<uint32_t> Process::exit_code() const {
+  if (pid <= 0)
+    return std::nullopt;
+  int status = 0;
+  if (waitpid(pid, &status, WNOHANG) != pid)
+    return std::nullopt;
+  return WIFEXITED(status) ? uint32_t(WEXITSTATUS(status)) : uint32_t(128 + WTERMSIG(status));
 }
 std::string executable_path() {
   char buf[4096];

@@ -25,6 +25,7 @@ using Bytes = std::vector<uint8_t>;
 constexpr size_t kMaxDocument = 8u * 1024u * 1024u;
 constexpr size_t kMaxResources = 32;
 constexpr size_t kMaxResourceBytes = 16u * 1024u * 1024u;
+constexpr size_t kMaxIpcBytes = 96u * 1024u * 1024u;
 constexpr int kMaxDomNodes = 30000;
 constexpr int kMaxDomDepth = 256;
 std::string lower(std::string_view value);
@@ -40,6 +41,8 @@ std::string entity_decode(std::string_view text);
 std::string percent_encode(std::string_view text, bool query = false);
 std::string legacy_decode(const Bytes &bytes);
 Bytes random_bytes(size_t count);
+std::string base64_encode(const Bytes &bytes);
+Bytes base64_decode(std::string_view text, size_t max_bytes = kMaxResourceBytes);
 
 struct Url {
   std::string scheme, host, path, query, fragment, port;
@@ -88,6 +91,7 @@ struct Resource {
   std::string url, mime, text;
   Bytes bytes;
   int status = 200;
+  int image_width = 0, image_height = 0;
   bool ok = true;
   std::string error;
 };
