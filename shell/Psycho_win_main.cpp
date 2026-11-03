@@ -1618,7 +1618,28 @@ static int run_sandbox_test(const std::string &report_path) {
     result.set("started", started);
     result.set("startError", error);
     if (started) {
-      auto report = renderer.receive(5000);
+      // My renderer sends a boot marker first, so I read until the real report
+      // arrives rather than assuming the first frame is the answer.
+      std::optional<Json> report;
+      bool saw_boot = false;
+      for (int attempt = 0; attempt < 40; ++attempt) {
+        auto message = renderer.receive(500);
+        if (!message) {
+          if (renderer.exit_code())
+            break;
+          continue;
+        }
+        auto tag = message->str("tag", "");
+        if (tag == "boot") {
+          saw_boot = true;
+          continue;
+        }
+        if (tag == "sandbox") {
+          report = message;
+          break;
+        }
+      }
+      result.set("sawBoot", saw_boot);
       result.set("sandboxed", renderer.sandboxed());
       result.set("ioError", renderer.io_error());
       auto exit = renderer.exit_code();

@@ -80,6 +80,13 @@ int main(int argc, char **argv) {
   using namespace pv;
 #ifdef _WIN32
   if (argc > 2 && std::string(argv[1]) == "--sandbox-probe") {
+    // I announce myself before touching anything else. If my broker sees this
+    // but no report, my probe logic is at fault; if it sees nothing, I never
+    // reached my own entry point.
+    pv::Json boot = pv::Json::make_object();
+    boot.set("tag", "boot");
+    boot.set("pid", double(GetCurrentProcessId()));
+    send(boot);
     HANDLE token = nullptr;
     DWORD is_appcontainer = 0, token_error = 0;
     if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
@@ -126,7 +133,10 @@ int main(int argc, char **argv) {
     report.set("tcpError", double(tcp_error));
     report.set("udpError", double(udp_error));
     bool ok = is_appcontainer && file_denied && network_denied;
-    return send(report) && ok ? 0 : 1;
+    report.set("reachedReport", true);
+    bool sent = send(report);
+    report.set("tag", "probe-done");
+    return sent && ok ? 0 : 1;
   }
 #else
   (void)argc;
