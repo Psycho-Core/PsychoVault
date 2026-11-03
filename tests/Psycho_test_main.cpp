@@ -460,6 +460,170 @@ int main() {
     std::error_code ignored;
     std::filesystem::remove_all(directory, ignored);
   }
+  // ---- My event payloads reach extension listeners intact ----------------
+  {
+    auto root = std::filesystem::temp_directory_path() /
+                ("psychovault-probe-" + std::to_string(now_ms()));
+    std::filesystem::create_directories(root);
+    std::string error;
+    write_file_atomic((root / "manifest.json").string(),
+                      R"({"manifest_version":3,"name":"Probe","version":"1.0","background":{"service_worker":"w.js"}})", error);
+    write_file_atomic((root / "w.js").string(),
+                      "var g = { enabled: false };"
+                      "function reassign() { g = { enabled: true }; }"
+                      "chrome.runtime.onMessage.addListener(function (m) {"
+                      "  console.log('typeof=' + (typeof m) + ' target=' + m.target + ' n=' + m.n);"
+                      "  console.log('bool=' + (typeof m.enabled) + ' v=' + m.enabled +"
+                      "              ' not=' + (!m.enabled) + ' notnot=' + (!!m.enabled) +"
+                      "              ' eq=' + (m.command === 'configure') + ' or=' + (m.host || 'fallback'));"
+                      "  reassign();"
+                      "  console.log('global=' + g.enabled);"
+                      "});", error);
+    ExtensionHost host;
+    std::vector<std::string> seen;
+    ExtensionEffects effects;
+    effects.log = [&](const std::string &, const std::string &, const std::string &message) {
+      seen.push_back(message);
+    };
+    host.set_effects(std::move(effects));
+    CHECK(host.install_directory(root.string(), error));
+    auto id = host.list()[0].manifest.id;
+    CHECK(host.start_worker(id, error));
+    Json payload = Json::make_object();
+    payload.set("target", "probe-target");
+    payload.set("n", 42);
+    payload.set("enabled", true);
+    payload.set("command", "configure");
+    payload.set("host", "127.0.0.1");
+    host.broadcast("runtime.onMessage", payload);
+    CHECK(seen.size() >= 1);
+    CHECK(seen[0].find("target=probe-target") != std::string::npos);
+    CHECK(seen[0].find("n=42") != std::string::npos);
+    CHECK(seen.size() >= 3);
+    CHECK(seen[1].find("bool=boolean") != std::string::npos);
+    CHECK(seen[1].find("notnot=true") != std::string::npos);
+    CHECK(seen[1].find("eq=true") != std::string::npos);
+    CHECK(seen[2].find("global=true") != std::string::npos);
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+  }
+  // ---- My bundled VPN bridge drives my real proxy path -------------------
+  {
+    ExtensionHost host;
+    ProxyConfig applied = ProxyConfig::direct();
+    bool set_called = false, clear_called = false;
+    std::string webrtc;
+    std::vector<std::string> log;
+    ExtensionEffects effects;
+    effects.set_proxy = [&](const std::string &, const ProxyConfig &config, std::string &) {
+      applied = config; set_called = true; return true;
+    };
+    effects.get_proxy = [&](const std::string &) { return applied; };
+    effects.clear_proxy = [&](const std::string &, std::string &) {
+      applied = ProxyConfig::direct(); clear_called = true; return true;
+    };
+    effects.set_webrtc_policy = [&](const std::string &, const std::string &value, std::string &) {
+      webrtc = value; return true;
+    };
+    effects.log = [&](const std::string &, const std::string &, const std::string &message) {
+      log.push_back(message);
+    };
+    host.set_effects(std::move(effects));
+    std::string error;
+    auto repo_root = std::filesystem::path(__FILE__).parent_path().parent_path();
+    std::string bridge = (repo_root / "extensions" / "PsychoVault-VPN-Bridge").string();
+    CHECK(host.install_directory(bridge, error));
+    auto records = host.list();
+    CHECK(records.size() == 1);
+    auto id = records[0].manifest.id;
+    CHECK(records[0].manifest.has_permission("proxy"));
+    CHECK(records[0].manifest.has_permission("webRequestAuthProvider"));
+    // My bridge must start in my own interpreter with no shim.
+    bool started = host.start_worker(id, error);
+    if (!started) std::cerr << "bridge start error: " << error << "\n";
+    CHECK(started);
+    CHECK(host.list()[0].install_error.empty());
+    // Starting disabled must clear routing rather than leave a stale proxy.
+    CHECK(clear_called);
+    CHECK(!applied.active());
+    // I configure it the way my UI would, through a runtime message.
+    Json configure = Json::make_object();
+    configure.set("target", "psychovault-vpn");
+    configure.set("command", "configure");
+    configure.set("scheme", "http");
+    configure.set("host", "127.0.0.1");
+    configure.set("port", 3128);
+    configure.set("enabled", true);
+    host.broadcast("runtime.onMessage", configure);
+    if (!set_called) std::cerr << "bridge worker error: " << host.worker_error(id) << "\n";
+    CHECK(set_called);
+    CHECK(applied.mode == ProxyConfig::Mode::FixedServers);
+    CHECK(applied.single.authority() == "127.0.0.1:3128");
+    CHECK(applied.fail_closed);
+    CHECK(webrtc == "disable_non_proxied_udp");
+    CHECK(host.list()[0].storage.flag("enabled"));
+    CHECK(host.list()[0].storage.num("port") == 3128);
+    // The routing it installed must actually route and bypass correctly.
+    ProxyServer server;
+    std::string reason;
+    CHECK(applied.route(*parse_url("https://example.com/"), server, reason));
+    CHECK(server.authority() == "127.0.0.1:3128");
+    CHECK(applied.route(*parse_url("http://localhost/"), server, reason));
+    CHECK(server.empty());
+    // Disconnecting must drop back to direct and restore WebRTC policy.
+    Json disconnect = Json::make_object();
+    disconnect.set("target", "psychovault-vpn");
+    disconnect.set("command", "disconnect");
+    host.broadcast("runtime.onMessage", disconnect);
+    CHECK(!applied.active());
+    CHECK(webrtc == "default");
+    CHECK(!host.list()[0].storage.flag("enabled"));
+    // Enabling with no server must refuse rather than claim a VPN is on.
+    Json unconfigured = Json::make_object();
+    unconfigured.set("target", "psychovault-vpn");
+    unconfigured.set("command", "configure");
+    unconfigured.set("host", "");
+    unconfigured.set("port", 0);
+    unconfigured.set("enabled", true);
+    host.broadcast("runtime.onMessage", unconfigured);
+    CHECK(!applied.active());
+    CHECK(!host.list()[0].storage.flag("enabled"));
+    CHECK(!log.empty());
+  }
+  // ---- Comparison operators must never write to their left operand --------
+  // I misclassified every operator ending in '=' as a compound assignment, so
+  // ===, ==, <= and >= silently overwrote the value they were comparing.
+  {
+    CHECK(js_eval("var o={c:'configure'};var r=(o.c==='configure');r+':'+o.c") == "true:configure");
+    CHECK(js_eval("var o={c:'configure'};var r=(o.c==='status');r+':'+o.c") == "false:configure");
+    CHECK(js_eval("var o={c:'configure'};(o.c==='status')+':'+(o.c==='configure')+':'+(typeof o.c)") ==
+          "false:true:string");
+    CHECK(js_eval("var a=5;var b=(a==5);b+':'+a") == "true:5");
+    CHECK(js_eval("var a=5;var b=(a!=6);b+':'+a") == "true:5");
+    CHECK(js_eval("var a=5;var b=(a!==6);b+':'+a") == "true:5");
+    CHECK(js_eval("var a=5;var b=(a<=5);b+':'+a") == "true:5");
+    CHECK(js_eval("var a=5;var b=(a>=5);b+':'+a") == "true:5");
+    CHECK(js_eval("var a=5;var b=(a<6);b+':'+a") == "true:5");
+    CHECK(js_eval("var a=5;var b=(a>4);b+':'+a") == "true:5");
+    // A real compound assignment must still write.
+    CHECK(js_eval("var a=5;a+=3;a") == "8");
+    CHECK(js_eval("var a=5;a-=3;a") == "2");
+    CHECK(js_eval("var a=5;a*=3;a") == "15");
+    CHECK(js_eval("var a=6;a/=3;a") == "2");
+    CHECK(js_eval("var a=7;a%=3;a") == "1");
+    CHECK(js_eval("var a=2;a**=3;a") == "8");
+    CHECK(js_eval("var a=1;a<<=3;a") == "8");
+    CHECK(js_eval("var a=8;a>>=2;a") == "2");
+    CHECK(js_eval("var a=6;a&=3;a") == "2");
+    CHECK(js_eval("var a=6;a|=1;a") == "7");
+    CHECK(js_eval("var a=6;a^=3;a") == "5");
+    // Branching on a comparison must take the correct arm.
+    CHECK(js_eval("var o={c:'configure'};var out='none';"
+                  "if(o.c==='status'){out='status';}else if(o.c==='configure'){out='configure';}out") ==
+          "configure");
+    CHECK(js_eval("var o={c:'configure'};var n=0;"
+                  "if(o.c==='configure'){n++;}if(o.c==='configure'){n++;}n") == "2");
+  }
   std::cout << passed << " engine checks passed\n";
   return 0;
 }

@@ -31,6 +31,17 @@ js::Value json_to_js(js::Runtime &runtime, const Json &json) {
   }
   return js::Value();
 }
+// Chrome-style APIs take (details, callback) or just (callback). I pick the last
+// function argument so both forms work and a details object is never invoked.
+void call_callback(js::Runtime &runtime, js::Values &args, const js::Values &result = {}) {
+  for (size_t i = args.size(); i-- > 0;) {
+    if (args[i].type == js::Value::Type::Object && args[i].object &&
+        args[i].object->kind == js::Object::Kind::Function) {
+      runtime.call(args[i], result);
+      return;
+    }
+  }
+}
 // I raise a real JS Error so extension code can catch a refusal. A C++ exception
 // escaping here would kill the whole worker instead of one API call.
 [[noreturn]] void throw_extension_error(js::Runtime &runtime, const std::string &message) {
@@ -197,17 +208,54 @@ bool ExtensionHost::install_directory(const std::string &directory, std::string 
     error = manifest.error;
     return false;
   }
-  if (!manifest.service_worker.empty() &&
-      !fs::is_regular_file(root / manifest.service_worker, ec)) {
-    error = "the declared background script is missing: " + manifest.service_worker;
-    return false;
-  }
   // I derive a stable local id from the install path so reinstalls keep storage.
   auto hash = std::hash<std::string>{}(root.string());
   manifest.id = "local-" + std::to_string(uint64_t(hash));
+  return finish_install(manifest, root.string(), false, error);
+}
+
+bool ExtensionHost::install_bundled(const std::string &directory, const std::string &id,
+                                    std::string &error) {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  auto root = fs::absolute(fs::path(directory), ec);
+  if (ec) {
+    error = "cannot resolve the bundled extension directory";
+    return false;
+  }
+  auto manifest_path = root / "manifest.json";
+  if (!fs::is_regular_file(manifest_path, ec)) {
+    error = "the bundled folder does not contain manifest.json";
+    return false;
+  }
+  ExtensionManifest manifest;
+  try {
+    manifest = ExtensionManifest::parse(read_all(manifest_path.string()));
+  } catch (const std::exception &e) {
+    error = std::string("cannot read the bundled manifest: ") + e.what();
+    return false;
+  }
+  if (!manifest.valid) {
+    error = manifest.error;
+    return false;
+  }
+  manifest.id = id;
+  return finish_install(manifest, root.string(), true, error);
+}
+
+bool ExtensionHost::finish_install(const ExtensionManifest &manifest, const std::string &root,
+                                   bool bundled, std::string &error) {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  if (!manifest.service_worker.empty() &&
+      !fs::is_regular_file(fs::path(root) / manifest.service_worker, ec)) {
+    error = "the declared background script is missing: " + manifest.service_worker;
+    return false;
+  }
   ExtensionRecord record;
   record.manifest = manifest;
-  record.directory = root.string();
+  record.directory = root;
+  record.bundled = bundled;
   auto existing = extensions_.find(manifest.id);
   if (existing != extensions_.end()) {
     record.storage = existing->second.storage;
@@ -352,9 +400,7 @@ void ExtensionHost::install_api(Worker &worker, const ExtensionRecord &record) {
           for (auto &entry : incoming.object) it->second.storage.set(entry.first, entry.second);
           std::string error;
           if (!storage_path_.empty()) save_storage(storage_path_, error);
-          if (!args.empty() && args.size() > 1 &&
-              args[1].type == js::Value::Type::Object)
-            runtime.call(args[1], {});
+          call_callback(runtime, args);
           return js::Value();
         });
     local.object->properties["get"] = runtime.make_native(
@@ -376,8 +422,7 @@ void ExtensionHost::install_api(Worker &worker, const ExtensionRecord &record) {
             }
           }
           auto value = json_to_js(runtime, result);
-          if (args.size() > 1 && args[1].type == js::Value::Type::Object)
-            runtime.call(args[1], {value});
+          call_callback(runtime, args, {value});
           return value;
         });
     local.object->properties["remove"] = runtime.make_native(
@@ -402,8 +447,7 @@ void ExtensionHost::install_api(Worker &worker, const ExtensionRecord &record) {
           }
           std::string error;
           if (!storage_path_.empty()) save_storage(storage_path_, error);
-          if (args.size() > 1 && args[1].type == js::Value::Type::Object)
-            runtime.call(args[1], {});
+          call_callback(runtime, args);
           return js::Value();
         });
     local.object->properties["clear"] = runtime.make_native(
@@ -412,8 +456,7 @@ void ExtensionHost::install_api(Worker &worker, const ExtensionRecord &record) {
           it->second.storage = Json::make_object();
           std::string error;
           if (!storage_path_.empty()) save_storage(storage_path_, error);
-          if (!args.empty() && args[0].type == js::Value::Type::Object)
-            runtime.call(args[0], {});
+          call_callback(runtime, args);
           return js::Value();
         });
     storage.object->properties["local"] = local;
@@ -459,8 +502,7 @@ void ExtensionHost::install_api(Worker &worker, const ExtensionRecord &record) {
                      config.owner_extension == self_id ? "controlled_by_this_extension"
                                                        : "controllable_by_this_extension");
           auto value = json_to_js(runtime, result);
-          if (!args.empty() && args[0].type == js::Value::Type::Object)
-            runtime.call(args[0], {value});
+          call_callback(runtime, args, {value});
           return value;
         });
     settings.object->properties["clear"] = runtime.make_native(
@@ -471,8 +513,7 @@ void ExtensionHost::install_api(Worker &worker, const ExtensionRecord &record) {
             throw_extension_error(runtime, error);
           if (effects_.clear_proxy && !effects_.clear_proxy(self_id, error))
             throw_extension_error(runtime, error);
-          if (!args.empty() && args[0].type == js::Value::Type::Object)
-            runtime.call(args[0], {});
+          call_callback(runtime, args);
           return js::Value();
         });
     proxy.object->properties["settings"] = settings;
@@ -545,8 +586,7 @@ void ExtensionHost::install_api(Worker &worker, const ExtensionRecord &record) {
           Json result = Json::make_object();
           result.set("value", worker.webrtc_policy);
           auto value = json_to_js(runtime, result);
-          if (!args.empty() && args[0].type == js::Value::Type::Object)
-            runtime.call(args[0], {value});
+          call_callback(runtime, args, {value});
           return value;
         });
     network.object->properties["webRTCIPHandlingPolicy"] = policy;
@@ -613,24 +653,21 @@ void ExtensionHost::install_api(Worker &worker, const ExtensionRecord &record) {
         [&worker, &runtime](js::Values &args) {
           if (!args.empty() && args[0].type == js::Value::Type::Object)
             worker.badge = args[0].to_json().str("text");
-          if (args.size() > 1 && args[1].type == js::Value::Type::Object)
-            runtime.call(args[1], {});
+          call_callback(runtime, args);
           return js::Value();
         });
     action.object->properties["setTitle"] = runtime.make_native(
         [&worker, &runtime](js::Values &args) {
           if (!args.empty() && args[0].type == js::Value::Type::Object)
             worker.title = args[0].to_json().str("title");
-          if (args.size() > 1 && args[1].type == js::Value::Type::Object)
-            runtime.call(args[1], {});
+          call_callback(runtime, args);
           return js::Value();
         });
     action.object->properties["setIcon"] = runtime.make_native(
         [&runtime](js::Values &args) {
           // I have not implemented extension icon rasterisation yet, so I accept
           // the call without claiming the icon changed.
-          if (args.size() > 1 && args[1].type == js::Value::Type::Object)
-            runtime.call(args[1], {});
+          call_callback(runtime, args);
           return js::Value();
         });
     auto on_clicked = runtime.make_object();
@@ -790,6 +827,8 @@ void ExtensionHost::broadcast(const std::string &event, const Json &payload) {
       try {
         worker.runtime->reset_fuel();
         worker.runtime->call(listener, {value});
+      } catch (js::JsError &e) {
+        worker.last_error = "uncaught extension error: " + e.value.to_string();
       } catch (const std::exception &e) {
         worker.last_error = e.what();
       }
@@ -831,4 +870,9 @@ bool ExtensionHost::save_storage(const std::string &profile_directory, std::stri
 }
 
 std::vector<std::string> ExtensionHost::diagnostics() const { return diagnostics_; }
+
+std::string ExtensionHost::worker_error(const std::string &id) const {
+  auto found = workers_.find(id);
+  return found == workers_.end() ? std::string() : found->second->last_error;
+}
 } // namespace pv

@@ -53,6 +53,8 @@ public:
   void set_effects(ExtensionEffects effects) { effects_ = std::move(effects); }
   // I load an unpacked extension from a directory I control.
   bool install_directory(const std::string &directory, std::string &error);
+  // A bundled extension ships with me, so I give it a stable id and refuse removal.
+  bool install_bundled(const std::string &directory, const std::string &id, std::string &error);
   bool remove(const std::string &id, std::string &error);
   bool set_enabled(const std::string &id, bool enabled, std::string &error);
 
@@ -72,6 +74,8 @@ public:
 
   // Diagnostics I can show in the UI without pretending an extension works.
   std::vector<std::string> diagnostics() const;
+  // I surface the last worker failure so my UI can explain a broken extension.
+  std::string worker_error(const std::string &id) const;
 
 private:
   struct Worker;
@@ -81,6 +85,8 @@ private:
   std::vector<std::string> diagnostics_;
   std::string storage_path_;
 
+  bool finish_install(const ExtensionManifest &manifest, const std::string &root, bool bundled,
+                      std::string &error);
   void install_api(Worker &worker, const ExtensionRecord &record);
   bool grant(const ExtensionRecord &record, const std::string &permission,
              std::string &error) const;

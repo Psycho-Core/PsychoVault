@@ -247,6 +247,7 @@ struct Browser {
     if (!private_mode) {
       std::string storage_error;
       extensions.load_storage(profile.directory, storage_error);
+      load_bundled_extensions();
       for (const auto &directory : profile.extension_directories) {
         std::string error;
         if (extensions.install_directory(directory, error)) {
@@ -275,6 +276,36 @@ struct Browser {
     out.blocked_hosts = profile.blocked_hosts;
     out.allowed_hosts = profile.block_allow_sites;
     return out;
+  }
+  // I ship my VPN bridge beside the browser so a fresh profile has a real
+  // extension driving my proxy path. I look in the install folder first, then
+  // the source tree so a development run behaves the same way.
+  void load_bundled_extensions() {
+    namespace fs = std::filesystem;
+    std::vector<fs::path> roots;
+    roots.push_back(fs::path(executable_dir()) / "extensions");
+    roots.push_back(fs::path(executable_dir()) / ".." / "extensions");
+    for (const auto &root : roots) {
+      std::error_code ec;
+      if (!fs::is_directory(root, ec)) continue;
+      for (const auto &entry : fs::directory_iterator(root, ec)) {
+        if (!entry.is_directory(ec)) continue;
+        auto name = entry.path().filename().string();
+        std::string error;
+        // My bundled id is stable across machines so storage survives an update.
+        std::string id = "bundled-" + lower(name);
+        if (!extensions.install_bundled(entry.path().string(), id, error)) {
+          extension_error = error;
+          continue;
+        }
+        bool disabled = std::find(profile.disabled_extensions.begin(),
+                                  profile.disabled_extensions.end(), id) !=
+                        profile.disabled_extensions.end();
+        if (disabled) extensions.set_enabled(id, false, error);
+        else if (!extensions.start_worker(id, error)) extension_error = error;
+      }
+      break;
+    }
   }
   void install_extension_effects() {
     ExtensionEffects effects;

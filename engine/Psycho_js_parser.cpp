@@ -160,8 +160,7 @@ static std::vector<Token> lex(std::string_view s) {
                                                    ">>>",
                                                    "&&=",
                                                    "||=",
-                                                   "?"
-                                                   "?=",
+                                                   "?\?=",
                                                    "=>",
                                                    "==",
                                                    "!=",
@@ -270,10 +269,14 @@ public:
       node->left = std::move(left);
       if (op == "&&" || op == "||" || op == "??")
         node->kind = Expr::Kind::Logical;
-      else if (op != "=" && !ends(op, "="))
+      else if (op == "=" || compound_assignment(op)) {
+        // Only a real compound assignment writes to its left operand. Testing
+        // "ends with =" here would turn ===, ==, <= and >= into assignments.
+        node->kind = Expr::Kind::Assign;
+        if (op != "=")
+          node->text = op.substr(0, op.size() - 1);
+      } else
         node->kind = Expr::Kind::Binary;
-      else if (op != "=")
-        node->text = op.substr(0, op.size() - 1);
       node->right = expr(prec + (prec == 1 || op == "**" ? 0 : 1));
       left = std::move(node);
     }
@@ -288,12 +291,16 @@ public:
     --depth;
     return left;
   }
+  static bool compound_assignment(const std::string &op) {
+    static const std::set<std::string> forms = {"+=",  "-=",  "*=",  "/=",  "%=",  "**=",
+                                              "<<=", ">>=", ">>>=", "&=", "|=",  "^=",
+                                              "&&=", "||=", "?\?="};
+    return forms.count(op) != 0;
+  }
   int precedence(const std::string &s) const {
     if (s == "=" || s == "+=" || s == "-=" || s == "*=" || s == "/=" || s == "%=" || s == "**=" ||
         s == "<<=" || s == ">>=" || s == ">>>=" || s == "&=" || s == "|=" || s == "^=" ||
-        s == "&&=" || s == "||=" ||
-        s == "?"
-             "?=")
+        s == "&&=" || s == "||=" || s == "?\?=")
       return 1;
     if (s == "||" || s == "??")
       return 2;
