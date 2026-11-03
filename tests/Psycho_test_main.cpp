@@ -475,6 +475,143 @@ int main() {
     }
     CHECK(page.navigations.empty());
   }
+  // Audit of steps 3 to 5: the fixes I made after measuring real pages.
+  {
+    // An absolute child starts at the padding box of its positioned ancestor,
+    // not at the border box, so a border and padding both move it inwards.
+    Page page;
+    page.load(*parse_url("https://layout.test/"),
+              "<!doctype html><style>body{margin:0}div{background:#222}"
+              "#rel{position:relative;margin:10px;padding:20px;border:5px solid #000;"
+              "width:300px;height:100px}"
+              "#abs{position:absolute;top:0;left:0;width:40px;height:30px}"
+              "</style><div id=rel><div id=abs></div></div>");
+    Rect abs = node_box(page, "abs");
+    CHECK(near(abs.x, 15) && near(abs.y, 15));
+  }
+  {
+    // Max-Age wins over Expires whatever order a server writes them in.
+    CookieJar jar;
+    auto site = *parse_url("https://shop.test/");
+    jar.set_from_header(site, "both=1; Max-Age=10; Expires=Wed, 21 Oct 2037 07:28:00 GMT", 1000);
+    CHECK(jar.header_for(site, 1200).find("both=1") == std::string::npos);
+    jar.set_from_header(site, "either=1; Expires=Wed, 21 Oct 2037 07:28:00 GMT", 1000);
+    CHECK(jar.header_for(site, 1200).find("either=1") != std::string::npos);
+  }
+  {
+    // A ticked box with no value sends "on", and a multiple select sends every
+    // chosen option.
+    Page page;
+    page.load(*parse_url("https://forms.test/"),
+              "<!doctype html><form action='/go' method=get><input name=q value=v>"
+              "<input type=checkbox name=c checked>"
+              "<select name=s multiple><option value=x selected>X</option>"
+              "<option value=y selected>Y</option><option value=z>Z</option></select></form>");
+    page.render(800, 600, 0);
+    page.click(5, 5);
+    page.key("Enter", "");
+    CHECK(!page.navigations.empty());
+    if (!page.navigations.empty()) {
+      auto url = page.navigations[0];
+      CHECK(url.find("c=on") != std::string::npos);
+      CHECK(url.find("s=x") != std::string::npos && url.find("s=y") != std::string::npos);
+      CHECK(url.find("s=z") == std::string::npos);
+    }
+  }
+  {
+    // Find in page walks the text my layout paints, including a word split
+    // across two spans.
+    std::vector<PaintCommand> paint;
+    auto text = [&](double x, double y, std::string body, double width) {
+      PaintCommand command;
+      command.kind = PaintCommand::Kind::Text;
+      command.rect = {x, y, width, 16};
+      command.text = std::move(body);
+      paint.push_back(command);
+    };
+    text(0, 0, "Hel", 20);
+    text(20, 0, "lo there", 60);
+    text(0, 20, "another hello", 90);
+    auto hits = find_in_paint(paint, "hello");
+    CHECK(hits.size() == 2);
+    if (hits.size() == 2) {
+      // "hello" starts in the first run and ends two characters into the second,
+      // so the highlight covers 20px plus two ninths of the 60px run.
+      CHECK(near(hits[0].x, 0) && near(hits[0].y, 0));
+      CHECK(hits[0].w > 30 && hits[0].w < 40);
+      CHECK(near(hits[1].y, 20) && hits[1].x > 50 && hits[1].x < 60);
+    }
+    CHECK(find_in_paint(paint, "HELLO").size() == 2);
+    CHECK(find_in_paint(paint, "nothing").empty());
+  }
+  {
+    // My canvas gives back what a script set, and the element it belongs to.
+    Page page;
+    page.load(*parse_url("https://canvas.test/"),
+              "<!doctype html><canvas id=c width=40 height=30></canvas><script>"
+              "var x=document.getElementById('c').getContext('2d');"
+              "x.fillStyle='#ff0000';x.strokeStyle='#00ff00';x.lineWidth=3;"
+              "console.log(x.fillStyle+'|'+x.strokeStyle+'|'+x.lineWidth+'|'+x.canvas.id);"
+              "x.fillRect(0,0,10,10);"
+              "x.beginPath();x.roundRect(10,10,20,10,3);x.fill();"
+              "x.setLineDash([2,2]);x.beginPath();x.moveTo(0,25);x.lineTo(40,25);x.stroke();"
+              "console.log(x.getImageData(2,2,1,1).data[0]);"
+              "</script>");
+    bool style = false, pixel = false;
+    for (auto &d : page.diagnostics) {
+      if (d.message == "log: #ff0000|#00ff00|3|c")
+        style = true;
+      if (d.message == "log: 255")
+        pixel = true;
+    }
+    CHECK(style);
+    CHECK(pixel);
+    page.render(400, 300, 0);
+    CHECK(page.canvas_images().count(page.doc.by_id("c")) == 1);
+  }
+  {
+    // My JPEG decoder reads a real baseline file, and refuses a progressive one
+    // with a message that says why.
+    auto bytes = base64_decode(
+        "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAIBAQEBAQIBAQECAgICAgQDAgICAgUEBAMEBgUGBgYFBgYGBwkIBgcJBwYGCAsICQoKCgoKBggLDAsKDAkKCgr/2wBDAQICAgICAgUDAwUKBwYHCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgr/wAARCAAIAAgDAREAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD4b/4KYfs8/wDChf8AhCv+Kv8A7V/tX+0v+Yf5HleV9l/6aPuz5ntjHfNfv/7KbiX/AFi/1w/dcnJ/Z/2ua/N9e8la1jyeOPpqf8TgfV/+EH+zP7M5/wDmK+s+1+s8v/UPh+Tk+r/3+bn+zy+9/9k=");
+    auto image = decode_jpeg(bytes);
+    CHECK(image.width == 8 && image.height == 8);
+    if (image.valid()) {
+      auto pixel = [&](int x, int y) {
+        const uint8_t *p = &image.pixels[(size_t(y) * image.width + x) * 4];
+        return std::make_tuple(int(p[2]), int(p[1]), int(p[0]));
+      };
+      auto red = pixel(1, 1), blue = pixel(6, 1);
+      CHECK(std::get<0>(red) > 200 && std::get<1>(red) < 60);
+      CHECK(std::get<2>(blue) > 200 && std::get<0>(blue) < 60);
+    }
+    bool refused = false;
+    try {
+      decode_jpeg(Bytes{0xff, 0xd8, 0xff, 0xc2, 0x00});
+    } catch (const std::exception &) {
+      refused = true;
+    }
+    CHECK(refused);
+  }
+  {
+    // My SVG renderer fills, strokes and centres a circle inside a viewBox.
+    auto image = render_svg(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' width='100' height='100'>"
+        "<rect x='10' y='10' width='80' height='80' fill='#ff0000' stroke='#0000ff'"
+        " stroke-width='4'/><circle cx='50' cy='50' r='20' fill='#00ff00'/></svg>",
+        100, 100);
+    CHECK(image.width == 100 && image.height == 100);
+    if (image.valid()) {
+      auto pixel = [&](int x, int y) {
+        const uint8_t *p = &image.pixels[(size_t(y) * image.width + x) * 4];
+        return std::make_tuple(int(p[2]), int(p[1]), int(p[0]), int(p[3]));
+      };
+      auto centre = pixel(50, 50), edge = pixel(11, 50), corner = pixel(2, 2);
+      CHECK(std::get<1>(centre) > 200 && std::get<0>(centre) < 60);
+      CHECK(std::get<2>(edge) > 150);
+      CHECK(std::get<3>(corner) == 0);
+    }
+  }
   Canvas c(64, 64, 0xff000000);
   c.fill({0, 0, 64, 64}, 0xff112233);
   c.stroke({4, 4, 20, 20}, 0xffffffff);

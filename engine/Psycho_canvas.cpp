@@ -201,11 +201,43 @@ void Canvas2D::fill() {
 void Canvas2D::stroke() {
   ++revision;
   flush_subpath();
+  double width = std::max(1.0, state.line_width);
   for (auto &subpath : path) {
     auto points = mapped(subpath);
     if (points.size() < 2)
       continue;
-    surface.polyline(points, tint(state.stroke), std::max(1.0, state.line_width), false);
+    if (dashes_.empty()) {
+      surface.polyline(points, tint(state.stroke), width, false);
+      continue;
+    }
+    // A dash pattern walks the whole path and paints only the "on" lengths.
+    size_t dash = 0;
+    double left = dashes_[0];
+    bool on = true;
+    for (size_t i = 1; i < points.size(); ++i) {
+      Point from = points[i - 1], to = points[i];
+      double dx = to.x - from.x, dy = to.y - from.y;
+      double length = std::sqrt(dx * dx + dy * dy);
+      if (length <= 0)
+        continue;
+      double travelled = 0;
+      while (travelled < length) {
+        double step = std::min(left, length - travelled);
+        if (on) {
+          Point a{from.x + dx * (travelled / length), from.y + dy * (travelled / length)};
+          Point b{from.x + dx * ((travelled + step) / length),
+                  from.y + dy * ((travelled + step) / length)};
+          surface.polyline({a, b}, tint(state.stroke), width, false);
+        }
+        travelled += step;
+        left -= step;
+        if (left <= 1e-6) {
+          dash = (dash + 1) % dashes_.size();
+          left = dashes_[dash];
+          on = !on;
+        }
+      }
+    }
   }
 }
 
@@ -271,7 +303,11 @@ void Canvas2D::draw_image(const Image &source, double x, double y, double w, dou
   ++revision;
   if (!source.valid())
     return;
-  Rect destination = {x + state.e, y + state.f, w, h};
+  // A scaled context should scale the picture with it, so I map both corners
+  // and paint into the box they describe.
+  Point a = map(x, y), b = map(x + w, y + h);
+  Rect destination = {std::min(a.x, b.x), std::min(a.y, b.y), std::abs(b.x - a.x),
+                      std::abs(b.y - a.y)};
   if (state.global_alpha >= 0.999)
     surface.image(source, destination);
   else {
@@ -281,6 +317,76 @@ void Canvas2D::draw_image(const Image &source, double x, double y, double w, dou
       copy.pixels[i] = uint8_t(double(copy.pixels[i]) * state.global_alpha);
     surface.image(copy, destination);
   }
+}
+
+void Canvas2D::draw_image_rect(const Image &source, double sx, double sy, double sw, double sh,
+                               double x, double y, double w, double h) {
+  ++revision;
+  if (!source.valid() || sw <= 0 || sh <= 0)
+    return;
+  // I sample the source rectangle into a temporary image so the rest of my
+  // pipeline only ever has to blit whole pictures.
+  int ix = int(std::floor(sx)), iy = int(std::floor(sy));
+  int iw = std::max(1, int(std::ceil(sw))), ih = std::max(1, int(std::ceil(sh)));
+  Image piece;
+  piece.width = iw;
+  piece.height = ih;
+  piece.pixels.assign(size_t(iw) * size_t(ih) * 4, 0);
+  for (int row = 0; row < ih; ++row) {
+    int sample_y = std::clamp(iy + row, 0, source.height - 1);
+    for (int column = 0; column < iw; ++column) {
+      int sample_x = std::clamp(ix + column, 0, source.width - 1);
+      const uint8_t *from = &source.pixels[(size_t(sample_y) * source.width + sample_x) * 4];
+      uint8_t *to = &piece.pixels[(size_t(row) * iw + column) * 4];
+      to[0] = from[0];
+      to[1] = from[1];
+      to[2] = from[2];
+      to[3] = from[3];
+    }
+  }
+  draw_image(piece, x, y, w, h);
+}
+
+void Canvas2D::add_round_rect(double x, double y, double w, double h, double radius) {
+  ++revision;
+  radius = std::clamp(radius, 0.0, std::min(std::abs(w), std::abs(h)) / 2);
+  double r = radius;
+  if (r <= 0.5) {
+    add_rect(x, y, w, h);
+    return;
+  }
+  // I walk the four corners with short segments, which is enough for the
+  // rounding to read as a curve at screen sizes.
+  auto arc = [&](double cx, double cy, double from, double to) {
+    for (int step = 0; step <= 6; ++step) {
+      double angle = from + (to - from) * double(step) / 6.0;
+      double px = cx + r * std::cos(angle), py = cy + r * std::sin(angle);
+      if (current.empty())
+        move_to(px, py);
+      else
+        line_to(px, py);
+    }
+  };
+  begin_path();
+  move_to(x + r, y);
+  line_to(x + w - r, y);
+  arc(x + w - r, y + r, -1.5707963267948966, 0.0);
+  line_to(x + w, y + h - r);
+  arc(x + w - r, y + h - r, 0.0, 1.5707963267948966);
+  line_to(x + r, y + h);
+  arc(x + r, y + h - r, 1.5707963267948966, 3.141592653589793);
+  line_to(x, y + r);
+  arc(x + r, y + r, 3.141592653589793, 4.71238898038469);
+  close_path();
+}
+
+void Canvas2D::set_line_dash(const std::vector<double> &dashes) {
+  dashes_.clear();
+  for (double dash : dashes)
+    if (dash > 0)
+      dashes_.push_back(dash);
+  if (dashes_.size() % 2)
+    dashes_.insert(dashes_.end(), dashes_.begin(), dashes_.end());
 }
 
 void Canvas2D::draw_canvas(const Canvas2D &source, double x, double y, double w, double h) {

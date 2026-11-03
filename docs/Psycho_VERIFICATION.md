@@ -5,8 +5,8 @@ I separate what passed from what failed, what is blocked and what I have not run
 ## Passed locally
 
 - My GCC build of the engine, my page host and my test suite, and a full Clang/MinGW cross-build of the Windows browser executable.
-- My engine test suite: **436 checks passed**. This covers URL/JSON/UTF-8, DOM, CSS, my JavaScript interpreter, PNG decode, layout, proxy routing, PAC evaluation, extension permissions, download naming, profile persistence, my bundled VPN bridge, and my page host loading a page, fetching its subresources, decoding an image and reporting frames, my cookie jar, my web storage quota and a real form post.
-- My source-ownership and boundary audit: **181 passed, 0 failed**. This now includes the single-executable promise: no second executable, no resource compiler, no helper process.
+- My engine test suite: **460 checks passed**. This covers URL/JSON/UTF-8, DOM, CSS, my JavaScript interpreter, PNG decode, layout, proxy routing, PAC evaluation, extension permissions, download naming, profile persistence, my bundled VPN bridge, and my page host loading a page, fetching its subresources, decoding an image and reporting frames, my cookie jar, my web storage quota and a real form post.
+- My source-ownership and boundary audit: **207 passed, 0 failed**. This now includes the single-executable promise: no second executable, no resource compiler, no helper process.
 - My file-naming audit: **20 passed, 0 failed**.
 - My plan audit: **377 passed, 0 failed**.
 - Windows cross-compilation of every module with Clang/MinGW targeting `x86_64-windows-gnu`, including a full link of `PsychoVault.exe`, which catches MSVC-class errors before I spend a hosted build.
@@ -93,8 +93,43 @@ compared the box each one should get. The audit found nine real defects.
   new midpoint.
 - **Images on a page.** `img` with a JPEG and an SVG takes their intrinsic
   sizes, and my paint list carries an image command with the right rectangle.
-- **Regression suite.** 436 checks pass, including a page that paints a
+- **Regression suite.** 460 checks pass, including a page that paints a
   gradient, clips an overflowing child and reads the resulting pixels.
+
+## My audit of steps 3, 4 and 5
+
+I did not trust the last three builds because they passed. I wrote three probes
+that measure real pages and compared the numbers against what a browser should
+produce, and I checked each one by hand before I called it a defect.
+
+**Layout.** A flex row with `space-between` puts its three boxes at 0, 125 and
+250 in a 300 pixel row, a wrapped row breaks onto a second line at 60, a box with
+`margin: 0 auto` centres at 300, `width: 50%` resolves to 400, `box-sizing:
+border-box` keeps a bordered box at 100 and `repeat(3, 1fr)` with a 5 pixel gap
+gives 103.33 wide columns. All of those were already right. One was not: an
+absolutely positioned child of a bordered, padded box was placed at the border
+box instead of the padding box, so it sat 25 pixels off in both directions.
+
+**Browsing state.** Cookie path scope, a host-only cookie, a `Secure` cookie over
+plain HTTP, an expired `Expires` date, a foreign `Domain` and the longest-path
+first ordering were all correct. Three were not: `Max-Age` lost to `Expires` when
+the two arrived in that order; a ticked checkbox with no value submitted an empty
+string instead of `on`; and a `<select multiple>` submitted only its first chosen
+option.
+
+**Images and canvas.** My JPEG decoder matched Pillow on 4:2:0, 4:2:2, 4:4:4,
+grayscale and restart-marker files, with a mean channel error between 0.01 and
+0.16 of 255, and it refuses a progressive file by name. My SVG renderer put a
+green centre, a blue stroke and a transparent corner exactly where they belong.
+My canvas drew the right pixels but read `fillStyle` back as `#000000` whatever a
+script set, and `context.canvas` returned nothing.
+
+**Find in page.** This was the one piece I could not test at all, because the
+search lived in my window code where my test suite cannot reach it. I moved the
+walk into my engine as `find_in_paint`, pointed my shell at it, and now a check
+feeds it three text runs and asserts that a word split across two runs is found
+once with the right rectangle, that the next line is found too, that a query in
+capital letters matches, and that a query that is not there returns nothing.
 
 ## Real bugs my step 5 work found and I fixed
 
@@ -106,6 +141,40 @@ compared the box each one should get. The audit found nine real defects.
 - **`drawImage` read outside the source image.** My sampler clamped the *scaled*
   coordinate instead of the source coordinate, so a copy at a non-integer scale
   could read a row past the end of the image.
+
+## Real bugs this audit of steps 3, 4 and 5 found and I fixed
+
+- **An absolute child measured from the wrong box.** My containing block was the
+  ancestor's border box, so `top: 0; left: 0` inside a box with a 5 pixel border
+  and 20 pixels of padding landed 25 pixels up and to the left of where it
+  belonged. It is the padding box now, and a check renders that page and asserts
+  the child sits at 15, 15.
+- **`Max-Age` lost to `Expires`.** I applied whichever attribute came last, so a
+  server that wrote `Max-Age=10; Expires=<years away>` got a cookie that never
+  expired. `Max-Age` now wins whatever the order, and two checks cover both
+  orders.
+- **A ticked checkbox sent an empty value.** It sends `on` when the markup gives
+  it no value of its own, and `radio` does the same.
+- **A multiple select sent one option.** Every selected option is submitted now,
+  and a single select still falls back to its first option.
+- **A canvas context lied about its own style.** `ctx.fillStyle` returned
+  `#000000` after a script set red, because I only stored the parsed colour and
+  never the text. I keep the string a script wrote and return it, keep the
+  gradient object for a gradient fill, and return the canvas element from
+  `ctx.canvas`.
+- **`drawImage` ignored a scaled context.** It applied the translation but not
+  the scale, so a picture drawn under `ctx.scale` came out at its natural size in
+  the wrong place. I map both corners now and paint into the box they describe.
+
+## My step 5 additions in this build
+
+- **Nine argument `drawImage`**, so a script can copy a piece of an image, which
+  is how sprite sheets work.
+- **`roundRect`**, built as a real path so fill and stroke both work on it.
+- **`setLineDash`**, with the dash walk applied to every stroke.
+- **A visible answer for WebP.** I have not written that decoder, so my page now
+  reports the file it could not decode in its diagnostics instead of leaving a
+  silent gap.
 
 ## Real bugs my step 4 work found and I fixed
 

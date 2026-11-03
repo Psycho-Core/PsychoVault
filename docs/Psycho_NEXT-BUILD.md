@@ -51,6 +51,29 @@ I am working through my browser one step at a time, in the order that gets me so
   `width` and `height` and aspect ratio, decode through my own code and are
   painted by my own raster.
 
+## What this build adds over 0.8.0
+
+- **My own JPEG decoder.** Baseline and extended sequential, Huffman coded, with
+  4:4:4, 4:2:2 and 4:2:0 chroma subsampling, grayscale files and restart
+  markers. I compared it channel by channel against Pillow's decode of the same
+  fixtures and the mean error is between 0.01 and 0.16 of 255. A progressive
+  file is refused by name rather than shown with the wrong colours.
+- **My own SVG renderer.** `rect`, `circle`, `ellipse`, `line`, `polygon`,
+  `polyline`, `path` with lines and curves, nested groups, transforms, `viewBox`
+  scaling, fill, stroke, opacity and even-odd fill.
+- **Canvas 2D.** One context per canvas element that draws into the same raster
+  my pages use. Paths with arcs, quadratic and bezier curves and rounded
+  rectangles, fill and stroke with dashes, text with `measureText`, images
+  including the nine argument `drawImage`, linear and radial gradients,
+  `save`/`restore`, translation, scaling and rotation, `getImageData`,
+  `putImageData` and `toDataURL`.
+- **What the audit of steps 3, 4 and 5 fixed.** An absolute child measured from
+  the border box instead of the padding box, `Max-Age` losing to `Expires`, a
+  ticked checkbox sending an empty value, a multiple select sending only one
+  option, a canvas reading its own `fillStyle` back as black, and `drawImage`
+  ignoring a scaled context. Find in page moved out of my window code and into
+  my engine so my test suite can reach it.
+
 ## What this build adds over 0.6.1
 
 - **A cookie jar of my own.** I parse `Set-Cookie` myself, with the name, value, domain, path, expiry date, `Max-Age`, `Secure` and `HttpOnly`. A cookie for a domain I am not talking to is refused, a host-only cookie only returns to the host that set it, a `Secure` cookie never goes out over plain HTTP, and a script sees `document.cookie` without the `HttpOnly` entries. My network layer now reads every `Set-Cookie` a response carries and sends the right `Cookie` header on the next request, including subresources and downloads. The third-party toggle really blocks a cross-site cookie now, because my policy knows which host the page belongs to.
@@ -91,7 +114,7 @@ I want to be straight about one difference: my engine runs one statement at a ti
 
 ## Evidence required before I hand over a preview
 
-- The engine and page-host tests pass locally and on Windows. They now stand at 436 checks, including pattern matching, promise ordering, async/await and a `fetch` round trip through my page host.
+- The engine and page-host tests pass locally and on Windows. They now stand at 460 checks, including pattern matching, promise ordering, async/await and a `fetch` round trip through my page host.
 - The single-file gate passes on hosted Windows for the exact commit I publish.
 - A local HTTP test proves main-document, stylesheet, script and PNG loading through my page host.
 - The Windows artifact contains only my executables, notices and build metadata - no profile, credential or source-control directory.

@@ -12,10 +12,14 @@ namespace pv {
 // plain copy rather than a stack of separate values.
 struct CanvasState {
   uint32_t fill = 0xff000000u, stroke = 0xff000000u;
+  // I keep the text a script handed me, because a script is allowed to read it
+  // back and expects the string it wrote, not a computed colour.
+  std::string fill_style = "#000000", stroke_style = "#000000";
   double line_width = 1, global_alpha = 1;
   std::string font = "10px sans-serif";
   std::string text_align = "start";
   bool has_gradient = false;
+  int fill_gradient_id = -1;
   Gradient fill_gradient;
   double a = 1, b = 0, c = 0, d = 1, e = 0, f = 0; // affine transform
 };
@@ -59,6 +63,12 @@ public:
   void stroke_text(double x, double y, std::string_view text);
   double text_width(std::string_view text) const;
   void draw_image(const Image &source, double x, double y, double w, double h);
+  // The nine argument form takes a piece of the source image.
+  void draw_image_rect(const Image &source, double sx, double sy, double sw, double sh, double x,
+                       double y, double w, double h);
+  // A rounded rectangle is a path, so fill and stroke both work on it.
+  void add_round_rect(double x, double y, double w, double h, double radius);
+  void set_line_dash(const std::vector<double> &dashes);
   // I fit a source canvas into a destination, which is what drawImage does when
   // the source is another canvas.
   void draw_canvas(const Canvas2D &source, double x, double y, double w, double h);
@@ -85,6 +95,7 @@ private:
   std::vector<std::vector<Point>> path;
   std::vector<Point> current;
   std::vector<CanvasState> saved;
+  std::vector<double> dashes_;
   void push(Point p) {
     current.push_back(p);
   }

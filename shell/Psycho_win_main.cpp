@@ -1025,6 +1025,28 @@ struct Browser {
     if (y == size_t(content.y) + 80)
       c.text(content.x + 40, double(y), "Nothing saved yet.", 13, MUTED);
   }
+  // I turn a frame into the paint list my raster reads, in window coordinates.
+  std::vector<PaintCommand> frame_commands(const Tab &t, double origin_x, double origin_y) const {
+    std::vector<PaintCommand> commands;
+    double zoom = t.zoom;
+    for (auto &j : t.frame.at("paint").array) {
+      PaintCommand p;
+      p.kind = PaintCommand::Kind(int(j.num("kind")));
+      p.rect = {j.num("x") * zoom + origin_x, j.num("y") * zoom + origin_y - t.scroll * zoom,
+                j.num("w") * zoom, j.num("h") * zoom};
+      p.color = uint32_t(j.num("color"));
+      p.text = j.str("text");
+      p.size = j.num("size") * zoom;
+      p.thickness = j.num("thickness");
+      p.bold = j.flag("bold");
+      p.node = int(j.num("node"));
+      p.url = j.str("url");
+      p.gradient = j.str("gradient");
+      p.fixed = j.flag("fixed");
+      commands.push_back(p);
+    }
+    return commands;
+  }
   static std::string ascii_lower(std::string text) {
     for (char &ch : text)
       if (ch >= 'A' && ch <= 'Z')
@@ -1039,65 +1061,14 @@ struct Browser {
     Tab &t = current();
     if (!find_open || find_text.empty() || t.frame.type != Json::Type::Object)
       return;
-    struct Span {
-      size_t start, end;
-      double x, w;
-    };
-    struct Line {
-      double y = 0, h = 16;
-      std::string text;
-      std::vector<Span> spans;
-    };
-    std::vector<Line> lines;
-    for (const auto &j : t.frame.at("paint").array) {
-      if (int(j.num("kind")) != int(PaintCommand::Kind::Text))
-        continue;
-      std::string text = j.str("text");
-      if (text.empty())
-        continue;
-      double y = j.num("y");
-      Line *line = nullptr;
-      for (auto &candidate : lines)
-        if (std::abs(candidate.y - y) < 0.7) {
-          line = &candidate;
-          break;
-        }
-      if (!line) {
-        lines.push_back(Line{y, std::max(12.0, j.num("h")), {}, {}});
-        line = &lines.back();
-      }
-      size_t start = line->text.size();
-      line->text += text;
-      line->spans.push_back({start, line->text.size(), j.num("x"), j.num("w")});
-    }
-    std::string needle = ascii_lower(find_text);
-    for (const auto &line : lines) {
-      std::string haystack = ascii_lower(line.text);
-      size_t at = haystack.find(needle);
-      while (at != std::string::npos) {
-        size_t end = at + needle.size();
-        Rect rect{0, line.y, 0, line.h};
-        bool first = true;
-        for (const auto &span : line.spans) {
-          if (span.end <= at || span.start >= end)
-            continue;
-          double local_start = double((at > span.start ? at : span.start) - span.start);
-          double local_end = double((end < span.end ? end : span.end) - span.start);
-          double total = double(span.end - span.start);
-          double x0 = span.x + (total > 0 ? span.w * local_start / total : 0);
-          double x1 = span.x + (total > 0 ? span.w * local_end / total : span.w);
-          if (first) {
-            rect.x = x0;
-            rect.w = x1 - x0;
-            first = false;
-          } else
-            rect.w = x1 - rect.x;
-        }
-        if (rect.w > 0)
-          find_marks.push_back(rect);
-        at = haystack.find(needle, at + 1);
-      }
-    }
+    // I hand the same paint list to the engine that I hand to my raster, so a
+    // highlight can never disagree with what is on screen.
+    auto commands = frame_commands(t, 0, 0);
+    double zoom = t.zoom > 0 ? t.zoom : 1.0;
+    // My frame is already zoomed and scrolled, so I turn each hit back into the
+    // page coordinate my scroll position is kept in.
+    for (auto &rect : find_in_paint(commands, find_text))
+      find_marks.push_back({rect.x / zoom, rect.y / zoom + t.scroll, rect.w / zoom, rect.h / zoom});
   }
   void open_find() {
     find_open = true;
@@ -1155,26 +1126,11 @@ struct Browser {
     }
     if (t.frame.type != Json::Type::Object)
       return;
-    std::vector<PaintCommand> commands;
-    double zoom = t.zoom;
-    for (auto &j : t.frame.at("paint").array) {
-      PaintCommand p;
-      p.kind = PaintCommand::Kind(int(j.num("kind")));
-      p.rect = {j.num("x") * zoom + content.x, j.num("y") * zoom + content.y - t.scroll * zoom,
-                j.num("w") * zoom, j.num("h") * zoom};
-      p.color = uint32_t(j.num("color"));
-      p.text = j.str("text");
-      p.size = j.num("size") * zoom;
-      p.thickness = j.num("thickness");
-      p.bold = j.flag("bold");
-      p.node = int(j.num("node"));
-      p.url = j.str("url");
-      p.gradient = j.str("gradient");
-      commands.push_back(p);
-    }
+    std::vector<PaintCommand> commands = frame_commands(t, content.x, content.y);
     Rect old = c.clip;
     c.clip = content;
     paint_commands(c, commands, 0, t.images);
+    double zoom = t.zoom > 0 ? t.zoom : 1.0;
     for (size_t i = 0; i < find_marks.size(); ++i) {
       const Rect &m = find_marks[i];
       Rect r{m.x * zoom + content.x, m.y * zoom + content.y - t.scroll * zoom, m.w * zoom,

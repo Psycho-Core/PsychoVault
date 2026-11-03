@@ -414,7 +414,11 @@ struct Layout {
                         double border_w, double border_h, int depth) {
     if (id < 0 || id >= int(doc.nodes.size()))
       return;
-    Rect self{left, top, border_w, border_h};
+    // A positioned child is measured against the padding box of its ancestor,
+    // so the border is outside that box and padding is inside it.
+    Rect self{left + s.border[3], top + s.border[0],
+              std::max(0.0, border_w - s.border[1] - s.border[3]),
+              std::max(0.0, border_h - s.border[0] - s.border[2])};
     Rect box = s.position == "static" ? cb : self;
     for (int c : doc.nodes[id].children) {
       const auto &cs = styles[c];
@@ -1079,6 +1083,78 @@ bool parse_gradient(const std::string &spec, Rect box, Gradient &out) {
   for (auto &[at, colour] : raw)
     out.stops.push_back({at, colour});
   return out.stops.size() >= 1;
+}
+std::vector<Rect> find_in_paint(const std::vector<PaintCommand> &commands,
+                                std::string_view needle) {
+  std::vector<Rect> found;
+  if (needle.empty())
+    return found;
+  auto fold = [](std::string text) {
+    for (char &ch : text)
+      if (ch >= 'A' && ch <= 'Z')
+        ch = char(ch - 'A' + 'a');
+    return text;
+  };
+  std::string query = fold(std::string(needle));
+  // I treat every run that shares a baseline as one line of text, so a word
+  // split across spans still matches.
+  struct Span {
+    size_t start, end;
+    double x, w;
+  };
+  struct Line {
+    double y, h;
+    std::string text;
+    std::vector<Span> spans;
+  };
+  std::vector<Line> lines;
+  for (const auto &command : commands) {
+    if (command.kind != PaintCommand::Kind::Text || command.text.empty())
+      continue;
+    Line *line = nullptr;
+    for (auto &candidate : lines)
+      if (std::abs(candidate.y - command.rect.y) < 0.7) {
+        line = &candidate;
+        break;
+      }
+    if (!line) {
+      lines.push_back({command.rect.y, std::max(12.0, command.rect.h), {}, {}});
+      line = &lines.back();
+    }
+    size_t start = line->text.size();
+    line->text += command.text;
+    line->spans.push_back({start, line->text.size(), command.rect.x, command.rect.w});
+  }
+  for (const auto &line : lines) {
+    std::string haystack = fold(line.text);
+    size_t at = haystack.find(query);
+    while (at != std::string::npos) {
+      size_t end = at + query.size();
+      Rect rect{0, line.y, 0, line.h};
+      bool first = true;
+      for (const auto &span : line.spans) {
+        if (span.end <= at || span.start >= end)
+          continue;
+        double total = double(span.end - span.start);
+        auto along = [&](size_t index) {
+          double local = double(index - span.start);
+          return total > 0 ? span.x + span.w * local / total : span.x;
+        };
+        double x0 = along(at > span.start ? at : span.start);
+        double x1 = along(end < span.end ? end : span.end);
+        if (first) {
+          rect.x = x0;
+          rect.w = x1 - x0;
+          first = false;
+        } else
+          rect.w = x1 - rect.x;
+      }
+      if (rect.w > 0)
+        found.push_back(rect);
+      at = haystack.find(query, at + 1);
+    }
+  }
+  return found;
 }
 void paint_commands(Canvas &canvas, const std::vector<PaintCommand> &commands, double scroll_y,
                     const std::map<std::string, Image> &images) {

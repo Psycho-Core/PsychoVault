@@ -6,7 +6,7 @@ I am building this in the open. This page records what my source actually does a
 
 | Area | What I wrote | Evidence |
 | --- | --- | --- |
-| Base | URL parsing/resolution, UTF-8, JSON, atomic writes with corruption backups, OS random, monotonic clock | 436 local checks |
+| Base | URL parsing/resolution, UTF-8, JSON, atomic writes with corruption backups, OS random, monotonic clock | 460 local checks |
 | HTML/DOM | Tokenizer, tree builder, entities, forms, selectors, mutation | Local checks; WPT not run |
 | CSS and layout | Syntax, cascade, inheritance, box model with margin collapsing, block and inline flow, flexbox (direction, wrap, grow, shrink, justify, align, order, align-self, gaps), grid (pixels, percentages, `fr`, `repeat`, gaps, spans, fixed rows), positioning (relative, absolute, fixed, sticky), gradients, overflow clipping, translate and scale transforms, media queries | 50 geometry checks plus 22 and 28 case audits; WPT not run |
 | JavaScript | Parser, tree-walking interpreter, closures, objects/arrays, classes with `extends`/`super`, destructuring, template literals, spread, Map/Set, getters/setters, optional chaining, logical assignment, mark-sweep GC, timers, DOM events, promises and `Promise.any`, `async`/`await`, my own pattern engine, iterators, `Symbol` keys, `fetch` | 78 script checks, 60 pass; no typed arrays, generators or modules; Test262 not run |
@@ -18,7 +18,7 @@ I am building this in the open. This page records what my source actually does a
 | VPN bridge | My own bundled provider extension driving my real proxy, storage, WebRTC policy and auth-provider paths | End-to-end local check |
 | Downloads | Threaded transfers, progress, cancel, safe filenames, collision handling, partial-file commit, persisted list | Local naming and policy checks; live download not run |
 | Page model | One page host per network tab on its own worker thread, engine renders in-process, images handed over without encoding | Local checks driving my page host directly; OS-level containment not implemented |
-| Browsing state | My own cookie jar (domain, path, expiry, `Secure`, `HttpOnly`, third-party policy), local and session storage with a per-origin quota, `GET` and `POST` form submission with urlencoded, multipart and text/plain bodies, `history.pushState`/`replaceState`/`back`/`forward`, find in page over my paint list, per-tab zoom | Local checks incl. jar matching, storage quota and a real form post body; live site sign-in not run |
+| Browsing state | My own cookie jar (domain, path, expiry, `Secure`, `HttpOnly`, third-party policy), local and session storage with a per-origin quota, `GET` and `POST` form submission with urlencoded, multipart and text/plain bodies, `history.pushState`/`replaceState`/`back`/`forward`, find in page over my paint list, per-tab zoom | Local checks incl. jar matching, storage quota, a real form post body and a split-word find; live site sign-in not run |
 | Profile | Validated JSON, corruption backups, private-mode separation, active-tab restore, cookies and local storage persisted with the rest of my settings | Local round-trip checks |
 | Release | Version file, ZIP + bare executables + SHA-256 + update manifest, gated publish, post-publish asset verification | Release workflow; first publish pending |
 
@@ -32,7 +32,7 @@ I am building this in the open. This page records what my source actually does a
 - WebRTC stack, workers, IndexedDB, Web Crypto, translation, spelling dictionary, media keys, mod CSS.
 - **Canvas limits.** 2D drawing works, but there is no WebGL, no `OffscreenCanvas`, and no worker to draw from.
 - **Transforms.** `translate` and `scale` work; `rotate` and 3D transforms do not. A sticky box stays in the flow instead of sticking to an edge while scrolling.
-- **Image formats.** PNG, baseline and extended JPEG and SVG decode in my own code. WebP and progressive JPEG do not.
+- **Image formats.** PNG, baseline and extended JPEG, and SVG decode in my own code. WebP and progressive JPEG do not, and a page now reports which file it could not decode.
 - **Browsing state gaps.** My third-party test compares hosts, not registrable domains, so `cdn.example.com` on `example.com` counts as third party. I do not implement `SameSite` yet, a file input is not uploaded, and `localStorage` has no `storage` event between tabs. Find in page searches the text runs my layout paints, so text a page paints on a canvas is not searchable. Zoom is per tab and is not saved with the session.
 - Installer, code signing, updater install-and-rollback, Android, full 125-control settings parity.
 

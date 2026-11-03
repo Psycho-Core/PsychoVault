@@ -170,6 +170,8 @@ void CookieJar::store(const Url &url, const std::string &text, double now, bool 
   cookie.host_only = true;
   bool default_path = true;
   bool expired = false;
+  bool has_max_age = false, has_expires = false;
+  double expires_date = -1;
   for (size_t i = 1; i < parts.size(); ++i) {
     auto attribute = trim(parts[i]);
     auto split_at = attribute.find('=');
@@ -194,12 +196,14 @@ void CookieJar::store(const Url &url, const std::string &text, double now, bool 
       cookie.path = value[0] == '/' ? value : "/";
       default_path = false;
     } else if (name == "expires") {
+      // Max-Age wins over Expires whatever order the two appear in, so I keep
+      // the date aside until I know no Max-Age was given.
       double when = parse_date(value);
       if (when > 0)
-        cookie.expires = when;
-      if (cookie.expires >= 0 && cookie.expires <= now)
-        expired = true;
-    } else if (name == "max-age") {
+        expires_date = when;
+      has_expires = when > 0;
+    } else if (name == "max-age" && !has_max_age) {
+      has_max_age = true;
       int seconds = std::atoi(value.c_str());
       if (seconds <= 0) {
         expired = true;
@@ -216,6 +220,11 @@ void CookieJar::store(const Url &url, const std::string &text, double now, bool 
   }
   if (default_path)
     cookie.path = normalize_path(url.path);
+  if (!has_max_age && has_expires) {
+    cookie.expires = expires_date;
+    if (expires_date <= now)
+      expired = true;
+  }
   std::lock_guard<std::mutex> lock(mutex_);
   auto key = key_for(cookie);
   if (expired) {

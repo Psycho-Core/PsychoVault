@@ -189,16 +189,18 @@ public:
     }
     return false;
   }
-  js::Value canvas_member(Canvas2D *c, const std::string &name) {
+  js::Value canvas_member(Canvas2D *c, const std::string &name, int canvas_node) {
     auto &r = *page.js_;
     auto number = [](js::Values &a, size_t at, double fallback = 0) {
       return a.size() > at ? a[at].to_number() : fallback;
     };
-    if (name == "fillStyle")
-      return js::Value(c->state.has_gradient ? std::string("gradient")
-                                             : std::string("#000000"));
+    if (name == "fillStyle") {
+      if (c->state.has_gradient && c->state.fill_gradient_id >= 0)
+        return r.host_value(kGradientBase + c->state.fill_gradient_id, "CanvasGradient");
+      return js::Value(c->state.fill_style);
+    }
     if (name == "strokeStyle")
-      return js::Value(std::string("#000000"));
+      return js::Value(c->state.stroke_style);
     if (name == "lineWidth")
       return js::Value(c->state.line_width);
     if (name == "globalAlpha")
@@ -208,7 +210,7 @@ public:
     if (name == "textAlign")
       return js::Value(c->state.text_align);
     if (name == "canvas")
-      return js::Value();
+      return node(canvas_node);
     if (name == "beginPath")
       return r.make_native([c](js::Values &) {
         c->begin_path();
@@ -337,11 +339,37 @@ public:
         Image source;
         if (!image_argument(a[0], source))
           return js::Value();
+        // The three argument form draws at natural size, the five argument form
+        // scales it, and the nine argument form takes a piece of the source.
+        if (a.size() >= 9) {
+          c->draw_image_rect(source, number(a, 1), number(a, 2), number(a, 3), number(a, 4),
+                             number(a, 5), number(a, 6), number(a, 7), number(a, 8));
+          return js::Value();
+        }
         double x = number(a, 1), y = number(a, 2);
         double w = a.size() > 4 ? number(a, 3) : double(source.width);
         double h = a.size() > 4 ? number(a, 4) : double(source.height);
         c->draw_image(source, x, y, w, h);
         return js::Value();
+      });
+    if (name == "roundRect")
+      return r.make_native([c, number](js::Values &a) {
+        c->add_round_rect(number(a, 0), number(a, 1), number(a, 2), number(a, 3), number(a, 4));
+        return js::Value();
+      });
+    if (name == "setLineDash")
+      return r.make_native([this, c](js::Values &a) {
+        std::vector<double> dashes;
+        js::Values values;
+        if (!a.empty() && page.js_->iterate(a[0], values))
+          for (auto &value : values)
+            dashes.push_back(value.to_number());
+        c->set_line_dash(dashes);
+        return js::Value();
+      });
+    if (name == "getLineDash")
+      return r.make_native([this](js::Values &) {
+        return page.js_->make_array({});
       });
     if (name == "toDataURL")
       return r.make_native([c](js::Values &) { return js::Value(c->data_url()); });
@@ -417,7 +445,8 @@ public:
     }
     if (id >= kCanvasBase && id < kCanvasBase + 1000000) {
       auto it = page.canvases_.find(id - kCanvasBase);
-      return it == page.canvases_.end() ? js::Value() : canvas_member(&it->second, name);
+      return it == page.canvases_.end() ? js::Value()
+                                        : canvas_member(&it->second, name, id - kCanvasBase);
     }
     auto &d = page.doc;
     if (id == kStorageLocal || id == kStorageSession)
@@ -752,6 +781,7 @@ public:
           auto found = page.gradients_.find(value.object->host - kGradientBase);
           if (found != page.gradients_.end() && name == "fillStyle") {
             c.state.fill_gradient = found->second;
+            c.state.fill_gradient_id = value.object->host - kGradientBase;
             c.state.has_gradient = true;
             return true;
           }
@@ -760,9 +790,13 @@ public:
         Color color = parse_color(value.to_string());
         if (name == "fillStyle") {
           c.state.fill = color.bgra();
+          c.state.fill_style = value.to_string();
           c.state.has_gradient = false;
-        } else
+          c.state.fill_gradient_id = -1;
+        } else {
           c.state.stroke = color.bgra();
+          c.state.stroke_style = value.to_string();
+        }
         return true;
       }
       if (name == "lineWidth") {
@@ -1139,6 +1173,20 @@ void Page::resource(const Resource &res) {
     auto at = head.find("<svg");
     return at != std::string::npos && head.find("<?xml") != std::string::npos;
   };
+  // WebP is a format I have not written a decoder for yet. I say so once per
+  // file instead of leaving a silent hole where a picture should be.
+  auto looks_like_webp = [&]() {
+    if (mime.find("image/webp") != std::string::npos)
+      return true;
+    return stored.bytes.size() > 12 && std::equal(stored.bytes.begin(), stored.bytes.begin() + 4,
+                                                  "RIFF") &&
+           std::equal(stored.bytes.begin() + 8, stored.bytes.begin() + 12, "WEBP");
+  };
+  if (looks_like_webp() && !webp_reported_.count(stored.url)) {
+    webp_reported_.insert(stored.url);
+    diagnostics.push_back(
+        {"image", "I cannot decode WebP yet, so this picture is empty: " + stored.url});
+  }
   bool png = mime.find("image/png") != std::string::npos || starts(png_signature, 8);
   bool jpeg = mime.find("image/jpeg") != std::string::npos ||
               mime.find("image/JPEG") != std::string::npos || starts(jpeg_signature, 3);
@@ -1486,28 +1534,36 @@ void Page::submit_form(int form) {
         continue;
       if ((type == "checkbox" || type == "radio") && !has_attr(input, "checked"))
         continue;
-      fields.emplace_back(name, input.attribute("value"));
+      // A ticked box with no value of its own submits the word "on".
+      auto value = input.attribute("value");
+      if (value.empty() && (type == "checkbox" || type == "radio"))
+        value = "on";
+      fields.emplace_back(name, value);
     } else if (input.name == "textarea") {
       fields.emplace_back(name, doc.text_content(n));
     } else if (input.name == "select") {
-      std::string value;
-      bool chosen = false;
+      // A multiple select sends every chosen option, a single one sends the
+      // first chosen option and falls back to the first option at all.
+      bool multiple = has_attr(input, "multiple");
+      std::vector<std::string> chosen;
       for (int o : input.children) {
         const auto &option = doc.nodes[o];
         if (option.name != "option" || !has_attr(option, "selected"))
           continue;
-        value = has_attr(option, "value") ? option.attribute("value") : doc.text_content(o);
-        chosen = true;
-        break;
+        chosen.push_back(has_attr(option, "value") ? option.attribute("value")
+                                                   : doc.text_content(o));
+        if (!multiple)
+          break;
       }
-      if (!chosen)
+      if (chosen.empty())
         for (int o : input.children)
           if (doc.nodes[o].name == "option") {
-            value = has_attr(doc.nodes[o], "value") ? doc.nodes[o].attribute("value")
-                                                    : doc.text_content(o);
+            chosen.push_back(has_attr(doc.nodes[o], "value") ? doc.nodes[o].attribute("value")
+                                                             : doc.text_content(o));
             break;
           }
-      fields.emplace_back(name, value);
+      for (auto &value : chosen)
+        fields.emplace_back(name, value);
     }
   }
   if (method == "post") {

@@ -28,4 +28,7 @@ LayoutResult layout_document(const Document &doc, const std::vector<Style> &styl
                              Canvas &measure);
 void paint_commands(Canvas &canvas, const std::vector<PaintCommand> &commands, double scroll_y,
                     const std::map<std::string, Image> &images);
+// Find in page. I search the text my layout actually paints, so a highlight
+// lines up with the glyphs instead of guessing from the source text.
+std::vector<Rect> find_in_paint(const std::vector<PaintCommand> &commands, std::string_view needle);
 } // namespace pv

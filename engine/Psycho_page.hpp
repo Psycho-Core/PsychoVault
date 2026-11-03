@@ -83,6 +83,7 @@ private:
   int next_gradient_ = 0;
   std::set<int> executed_;
   std::set<std::string> requested_;
+  std::set<std::string> webp_reported_;
   CookieJar own_cookies_;
   CookieJar *jar_ = &own_cookies_;
   Storage own_local_;

@@ -49,8 +49,10 @@ if release_path.exists():
           'tools/Psycho_verify_package.py' in release)
     check('I verify published assets after publishing','gh release view' in release)
     check('I mark the preview as a prerelease','--prerelease' in release)
-    check('release notes state YouTube and Netflix do not play','YouTube and Netflix do not play' in release)
-    check('release notes state Proton is not bundled','Proton VPN is not bundled' in release)
+    # My notes now live in my repo, so the workflow and the file must agree.
+    notes_text = (ROOT/'docs/Psycho_RELEASE-NOTES.md').read_text() if (ROOT/'docs/Psycho_RELEASE-NOTES.md').exists() else release
+    check('release notes state YouTube and Netflix do not play','YouTube and Netflix do not play' in notes_text)
+    check('release notes state Proton is not bundled','Proton VPN is not bundled' in notes_text)
 
 # My extension boundary must stay default-deny.
 extension=(ROOT/'platform/Psycho_extension.cpp').read_text()
@@ -177,12 +179,43 @@ check('my page hands a form post to my host with a content type',
 check('my host posts a form through my own network stack','options.method = "POST"' in shell_text)
 check('my network layer attaches my cookies to a request','L"Cookie: "' in network_text)
 check('my network layer keeps what a response set','set_from_header(url, header' in network_text)
-check('my find in page walks the paint list my layout produced',
-      'find_marks' in shell_text and 'PaintCommand::Kind::Text' in shell_text)
+check('my find in page asks my engine to walk the painted text',
+      'find_marks' in shell_text and 'find_in_paint' in shell_text)
 check('my zoom scales the paint list and the clicks','/ current().zoom' in shell_text)
 check('my tests cover cookies, storage, history and a real form post',
       all(k in tests_text for k in ('CookieJar jar;','Storage store;','history.pushState',
                                     'page.posts.size()')))
+
+# Audit of steps 3, 4 and 5: each fix keeps a check so it cannot come back.
+layout_text=(ROOT/'engine/Psycho_layout.cpp').read_text()
+check('an absolute child measures against the padding box',
+      'Rect self{left + s.border[3]' in layout_text)
+check('my find walks the paint list in my engine', 'find_in_paint(' in layout_text)
+check('my shell highlights from that same walk', 'find_in_paint(' in shell_text)
+check('Max-Age beats Expires in either order', 'has_max_age' in cookie_text)
+check('a ticked box with no value sends on', 'value = "on"' in page_text)
+check('a multiple select sends every chosen option', 'bool multiple = has_attr(input, "multiple")' in page_text)
+canvas_text=(ROOT/'engine/Psycho_canvas.cpp').read_text()
+page_header=(ROOT/'engine/Psycho_page.hpp').read_text()
+check('my canvas keeps the text a script set', 'fill_style = value.to_string()' in page_text)
+check('my canvas returns the element that owns it', 'return node(canvas_node)' in page_text)
+check('my canvas honours a scaled drawImage', 'Point a = map(x, y), b = map(x + w, y + h);' in canvas_text)
+check('my canvas can draw a piece of an image', 'draw_image_rect' in canvas_text)
+check('my canvas can dash a stroke', 'set_line_dash' in canvas_text)
+check('a WebP tells me it cannot decode instead of going quiet',
+      'I cannot decode WebP yet' in page_text)
+check('my tests cover the step 3 to 5 audit', all(k in tests_text for k in (
+      'find_in_paint(paint, "hello")', 'decode_jpeg(bytes)', 'render_svg(',
+      'x.roundRect(10,10,20,10,3)', 'c=on')))
+check('my page header owns the canvas map', 'canvases_' in page_header)
+
+check('my release notes come from my repo, not a template',
+      'docs/Psycho_RELEASE-NOTES.md' in (ROOT/'.github/workflows/Psycho_release.yml').read_text())
+notes=(ROOT/'docs/Psycho_RELEASE-NOTES.md').read_text()
+check('my release notes say what I added', 'What I added in this build' in notes)
+check('my release notes state what I am not claiming', 'What I am not claiming' in notes
+      and 'WebP and progressive JPEG are not decoded' in notes)
+check('my release notes carry my version marker', '{{VERSION}}' in notes)
 
 print(f'\n{passed} passed, {len(fail)} failed')
 sys.exit(1 if fail else 0)
