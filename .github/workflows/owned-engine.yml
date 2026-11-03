@@ -87,7 +87,7 @@ jobs:
             "## Build failure tail`n`n``````" | Add-Content $env:GITHUB_STEP_SUMMARY
             $tail | Add-Content $env:GITHUB_STEP_SUMMARY
             "``````" | Add-Content $env:GITHUB_STEP_SUMMARY
-            foreach ($line in $tail) { if ($line -match 'error [A-Z]+[0-9]+|fatal error|build failed:') { Write-Host "::error::$line" } }
+            foreach ($line in $tail) { if ($line -match 'error [A-Z]+[0-9]+|warning [A-Z]+[0-9]+|fatal error|build failed:') { Write-Host "::error::$line" } }
           }
       - name: Upload development build evidence
         if: always()

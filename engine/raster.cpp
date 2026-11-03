@@ -264,11 +264,11 @@ Bytes encode_png(int w, int h, const Bytes &bgra) {
   do {
     size_t n = std::min(size_t(65535), raw.size() - p);
     bool last = p + n == raw.size();
-    z.push_back(last ? 1 : 0);
-    z.push_back(n & 255);
-    z.push_back(n >> 8);
-    z.push_back(~n & 255);
-    z.push_back((~n >> 8) & 255);
+    z.push_back(uint8_t(last ? 1 : 0));
+    z.push_back(uint8_t(n & 255));
+    z.push_back(uint8_t(n >> 8));
+    z.push_back(uint8_t(~n & 255));
+    z.push_back(uint8_t((~n >> 8) & 255));
     z.insert(z.end(), raw.begin() + p, raw.begin() + p + n);
     p += n;
   } while (p < raw.size());
