@@ -6,7 +6,7 @@ I am building this in the open. This page records what my source actually does a
 
 | Area | What I wrote | Evidence |
 | --- | --- | --- |
-| Base | URL parsing/resolution, UTF-8, JSON, atomic writes with corruption backups, OS random, monotonic clock | 353 local checks |
+| Base | URL parsing/resolution, UTF-8, JSON, atomic writes with corruption backups, OS random, monotonic clock | 357 local checks |
 | HTML/DOM | Tokenizer, tree builder, entities, forms, selectors, mutation | Local checks; WPT not run |
 | CSS and layout | Syntax, cascade, inheritance, box model, block and inline flow, flexbox (direction, wrap, grow, shrink, justify, align), grid (pixels, percentages, `fr`, `repeat`, gaps, spans), positioning (relative, absolute, fixed), translate and scale transforms, media queries | Local geometry checks on nine layout cases; WPT not run |
 | JavaScript | Parser, tree-walking interpreter, closures, objects/arrays, classes with `extends`/`super`, destructuring, template literals, spread, Map/Set, getters/setters, optional chaining, mark-sweep GC, timers, DOM events, promises, `async`/`await`, my own pattern engine, iterators, `Symbol` keys, `fetch` | Local checks incl. operator-classification regressions; Test262 not run |

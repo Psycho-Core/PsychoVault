@@ -198,6 +198,26 @@ int main() {
     CHECK(near(a.y, 40));
   }
   {
+    // A flex row in normal flow starts below what came before it and takes the
+    // height of its items, which is where a page with a heading and a row goes
+    // wrong if the main and cross axes are mixed up.
+    Page page;
+    page.load(*parse_url("https://layout.test/"),
+              "<!doctype html><style>body{margin:0;font-size:20px;line-height:1}"
+              "#f{display:flex;gap:10px}"
+              "#a{width:100px;height:30px}#b{width:100px;height:50px}"
+              "#after{height:20px}"
+              "</style><p id=first>heading</p>"
+              "<div id=f><div id=a>a</div><div id=b>b</div></div>"
+              "<div id=after>after</div>");
+    Rect first = node_box(page, "first"), a = node_box(page, "a"), b = node_box(page, "b");
+    Rect f = node_box(page, "f"), after = node_box(page, "after");
+    CHECK(near(first.y, 20) && near(first.h, 20));
+    CHECK(near(a.y, 60) && near(b.y, 60));
+    CHECK(near(f.y, 60) && near(f.h, 50));
+    CHECK(near(after.y, 110));
+  }
+  {
     Page page;
     page.load(*parse_url("https://layout.test/"),
               "<!doctype html><style>body{margin:0}"

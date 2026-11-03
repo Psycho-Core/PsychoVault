@@ -241,7 +241,11 @@ struct Layout {
         all.push_back(i);
       lines.push_back(all);
     }
+    // A row advances along x while it grows along y, so I keep the two axes in
+    // separate cursors. Adding the main cursor to the wrong axis used to place
+    // every flex row at the top of its parent.
     double main = row ? inner_x : inner_y;
+    double cross_y = inner_y;
     for (auto &line : lines) {
       double used = s.gap * double(line.size() - (line.empty() ? 0 : 1));
       for (size_t i : line)
@@ -299,30 +303,33 @@ struct Layout {
       for (size_t k = 0; k < line.size(); ++k) {
         int c = entries[line[k]].id;
         const auto &cs = styles[c];
-        size_t from = out.paint.size();
         if (row) {
           double forced = -1;
-          if (s.align_items == "stretch" && cs.height < 0)
+          if (s.align_items == "stretch" && cs.height < 0) {
             forced = std::max(0.0, line_cross - cs.margin[0] - cs.margin[2]);
-          block(c, pos, main, sizes[k], depth + 1, cb, forced);
-          if (cross[k] < line_cross) {
-            double dy = 0;
-            if (s.align_items == "center")
-              dy = (line_cross - cross[k]) / 2;
-            else if (s.align_items == "flex-end" || s.align_items == "end")
-              dy = line_cross - cross[k];
-            shift_range(from, 0, dy);
-            shift_boxes(c, 0, dy);
+            cross[k] = forced + cs.margin[0] + cs.margin[2];
           }
+          // I work the cross-axis offset out before laying the item out, so the
+          // item and everything inside it land in one place.
+          double dy = 0;
+          if (s.align_items == "center")
+            dy = std::max(0.0, (line_cross - cross[k]) / 2);
+          else if (s.align_items == "flex-end" || s.align_items == "end")
+            dy = std::max(0.0, line_cross - cross[k]);
+          block(c, pos, cross_y + dy, sizes[k], depth + 1, cb, forced);
         } else {
           double forced = std::max(0.0, sizes[k] - cs.margin[0] - cs.margin[2]);
-          block(c, inner_x, pos, inner_w, depth + 1, cb, forced);
+          block(c, inner_x + cross_offset(s, cs, inner_w), pos, inner_w, depth + 1, cb,
+                forced);
         }
         pos += sizes[k] + s.gap + extra_gap;
       }
-      main += (row ? line_cross : span) + s.gap;
+      if (row)
+        cross_y += line_cross + s.gap;
+      else
+        main += span + s.gap;
     }
-    cursor = std::max(cursor, main);
+    cursor = lines.empty() ? cursor : (row ? cross_y - s.gap : std::max(cursor, main - s.gap));
   }
   // ---- grid -------------------------------------------------------------
   void grid_children(int id, const Style &s, double inner_x, double inner_y, double inner_w,
@@ -453,6 +460,17 @@ struct Layout {
     }
   }
 
+  // In a column the cross axis is horizontal, so align-items only moves the box
+  // when it has a width of its own.
+  double cross_offset(const Style &s, const Style &cs, double inner_w) {
+    if (cs.width < 0 || inner_w <= 0)
+      return 0;
+    if (s.align_items == "center")
+      return std::max(0.0, (inner_w - cs.width) / 2);
+    if (s.align_items == "flex-end" || s.align_items == "end")
+      return std::max(0.0, inner_w - cs.width);
+    return 0;
+  }
   double block(int id, double x, double y, double available, int depth = 0,
                const Rect *cb = nullptr, double forced_h = -1) {
     (void)cb;
