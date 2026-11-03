@@ -56,7 +56,7 @@ jobs:
         run: .\build\pv-tests.exe | Tee-Object build/engine-tests.txt
       - name: Run AppContainer sandbox test
         shell: pwsh
-        run: .\build\pv-sandbox-test.exe | Tee-Object build/sandbox-test.txt
+        run: .\build\pv-sandbox-test.exe 2>&1 | Tee-Object build/sandbox-test.txt
       - name: Render headless engine fixture
         shell: pwsh
         run: |

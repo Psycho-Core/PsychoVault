@@ -7,6 +7,17 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 int main(int argc, char **argv) {
+  HANDLE token = nullptr;
+  DWORD is_appcontainer = 0;
+  DWORD token_error = 0;
+  if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+    DWORD returned = 0;
+    if (!GetTokenInformation(token, TokenIsAppContainer, &is_appcontainer, sizeof(is_appcontainer),
+                             &returned))
+      token_error = GetLastError();
+    CloseHandle(token);
+  } else
+    token_error = GetLastError();
   std::string target = argc > 1 ? argv[1] : "C:\\Windows\\win.ini";
   HANDLE file = CreateFileA(target.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
                             FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -20,7 +31,8 @@ int main(int argc, char **argv) {
   if (sock != INVALID_SOCKET)
     closesocket(sock);
   WSACleanup();
-  std::cout << "{\"fileDenied\":"
+  std::cout << "{\"appContainer\":" << is_appcontainer << ",\"tokenError\":" << token_error
+            << ",\"fileDenied\":"
             << (file == INVALID_HANDLE_VALUE &&
                 (file_error == ERROR_ACCESS_DENIED || file_error == ERROR_SHARING_VIOLATION))
             << ",\"fileError\":" << file_error
