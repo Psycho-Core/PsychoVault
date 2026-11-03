@@ -63,7 +63,7 @@ def main():
     target("pv-renderer",ENGINE+["platform/process.cpp","tools/renderer_main.cpp"],winlibs if windows else [])
     if windows:
         target("PsychoVault",ENGINE+PLATFORM+["shell/win_main.cpp"],winlibs,"WINDOWS")
-        target("pv-sandbox-probe",["tools/sandbox_probe.cpp"],["ws2_32","kernel32"])
+        target("pv-sandbox-probe",["tools/sandbox_probe.cpp"],["ws2_32","advapi32","kernel32"])
         target("pv-sandbox-test",ENGINE+["platform/process.cpp","tools/sandbox_test.cpp"],winlibs)
     print("Built",out)
 if __name__=="__main__":
