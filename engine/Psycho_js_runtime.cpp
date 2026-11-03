@@ -277,6 +277,35 @@ static Value binary(const std::string &op, const Value &a, const Value &b) {
     return Value(int32(int32(x) >> (uint32(y) & 31)));
   if (op == ">>>")
     return Value(double(uint32(x) >> (uint32(y) & 31)));
+  if (op == "in") {
+    if (b.type != Value::Type::Object || !b.object)
+      throw JsError{Value("TypeError: right side of in is not an object")};
+    return Value(b.object->properties.count(a.to_string()) != 0);
+  }
+  if (op == "instanceof") {
+    if (b.type != Value::Type::Object || !b.object)
+      throw JsError{Value("TypeError: right side of instanceof is not an object")};
+    if (a.type != Value::Type::Object || !a.object) return Value(false);
+    // I walk the prototype chain I build with new and class extends.
+    Value ctor = b;
+    auto proto = ctor.object->properties.find("prototype");
+    if (proto == ctor.object->properties.end()) return Value(false);
+    auto chain = a.object->properties.find("__proto__");
+    int guard = 0;
+    while (chain != a.object->properties.end() && guard++ < 64) {
+      if (chain->second.type == Value::Type::Object && chain->second.object &&
+          proto->second.type == Value::Type::Object &&
+          chain->second.object == proto->second.object)
+        return Value(true);
+      if (chain->second.type != Value::Type::Object || !chain->second.object) break;
+      auto next = chain->second.object->properties.find("__proto__");
+      if (next == chain->second.object->properties.end()) break;
+      chain = next;
+    }
+    // Built-in array/string wrappers have no chain I can walk.
+    if (ctor.object->kind == Object::Kind::Native) return Value(false);
+    return Value(false);
+  }
   throw std::runtime_error("unsupported JavaScript operator " + op);
 }
 static Value from_json(const Json &j, Runtime &r) {
@@ -446,16 +475,57 @@ Value Runtime::assign_identifier(Env &env, const std::string &name, const Value 
     global_->properties[name] = value;
   return value;
 }
+// I expand a spread operand into individual values. A string spreads by code
+// point, an array by index, and anything else is a TypeError like the spec says.
+static void append_spread(Values &out, const Value &source) {
+  if (source.type == Value::Type::String) {
+    for (auto cp : utf8_decode(source.string)) {
+      out.push_back(Value(utf8_encode(cp)));
+      if (out.size() > 100000)
+        throw JsError{Value("RangeError: spread size limit")};
+    }
+    return;
+  }
+  if (source.type == Value::Type::Object && source.object &&
+      source.object->kind == Object::Kind::Array) {
+    size_t n = size_t(std::max(0.0, source.object->properties["length"].to_number()));
+    for (size_t i = 0; i < n; ++i) {
+      auto it = source.object->properties.find(std::to_string(i));
+      out.push_back(it == source.object->properties.end() ? Value() : it->second);
+      if (out.size() > 100000)
+        throw JsError{Value("RangeError: spread size limit")};
+    }
+    return;
+  }
+  throw JsError{Value("TypeError: value is not iterable")};
+}
 Value Runtime::get_member(const Value &base, const std::string &key) {
   if (base.type == Value::Type::Undefined || base.type == Value::Type::Null)
     throw JsError{Value("TypeError: cannot read property " + key)};
+  if (base.type == Value::Type::Object && base.object) {
+    auto accessor = base.object->properties.find("get:" + key);
+    if (accessor != base.object->properties.end()) {
+      Values none;
+      Value self = base;
+      return call(accessor->second, none, self);
+    }
+    if (key == "hasOwnProperty") {
+      auto props = base.object->properties;
+      return make_native([props](Values &a) {
+        auto name = a.empty() ? std::string() : a[0].to_string();
+        if (name == "length" && props.count("length")) return Value(true);
+        return Value(props.count(name) != 0 && name.compare(0, 4, "get:") != 0 &&
+                     name.compare(0, 4, "set:") != 0);
+      });
+    }
+  }
   if (base.type == Value::Type::String) {
     if (key == "length")
       return Value(double(utf8_decode(base.string).size()));
     Runtime &r = *this;
     std::string s = base.string;
     if (key == "toUpperCase" || key == "toLowerCase")
-      return make_native([&r, s, key](Values &) {
+      return make_native([s, key](Values &) {
         std::string out = s;
         for (char &c : out)
           if (c >= 'A' && c <= 'Z' && key == "toLowerCase")
@@ -639,7 +709,7 @@ Value Runtime::get_member(const Value &base, const std::string &key) {
     Runtime &r = *this;
     Value arr = base;
     if (key == "push")
-      return make_native([&r, arr](Values &a) {
+      return make_native([arr](Values &a) {
         auto *o = arr.object;
         size_t n = size_t(o->properties["length"].to_number());
         for (auto &v : a)
@@ -717,7 +787,7 @@ Value Runtime::get_member(const Value &base, const std::string &key) {
         return arr;
       });
     if (key == "shift" || key == "unshift")
-      return make_native([&r, arr, key](Values &a) {
+      return make_native([arr, key](Values &a) {
         auto &p = arr.object->properties;
         size_t n = size_t(p["length"].to_number());
         if (key == "shift") {
@@ -852,11 +922,20 @@ Value Runtime::call(Value fn, const Values &args, Value this_value) {
       env->parent = o->closure ? o->closure : global_;
       env_stack_.push_back(env);
       Function *f = o->function;
-      for (size_t i = 0; i < f->params.size(); ++i)
-        env->properties[f->params[i]] = i < args.size() ? args[i] : Value();
+      for (size_t i = 0; i < f->params.size(); ++i) {
+        const auto &param = f->params[i];
+        if (param.size() > 3 && param.compare(0, 3, "...") == 0) {
+          Values rest;
+          for (size_t j = i; j < args.size(); ++j) rest.push_back(args[j]);
+          env->properties[param.substr(3)] = make_array(rest);
+          break;
+        }
+        env->properties[param] = i < args.size() ? args[i] : Value();
+      }
       env->properties["arguments"] = make_array(args);
       Value saved = this_;
-      this_ = this_value;
+      // An arrow keeps the this it captured, ignoring how it was called.
+      this_ = o->has_lexical_this ? o->lexical_this : this_value;
       Flow flow;
       if (f->expression)
         result = evaluate(*f->expression, *env, this_);
@@ -989,7 +1068,11 @@ Runtime::Flow Runtime::execute(const Stmt &s, Env &env, Value this_value) {
   case Stmt::Kind::ForIn: {
     Value iterable = evaluate(*s.condition, env, this_value);
     Values keys;
-    if (iterable.type == Value::Type::Object && iterable.object) {
+    if (s.text == "of" && iterable.type == Value::Type::String) {
+      // I iterate a string by code point, not by byte.
+      for (auto cp : utf8_decode(iterable.string))
+        keys.push_back(Value(utf8_encode(cp)));
+    } else if (iterable.type == Value::Type::Object && iterable.object) {
       if (iterable.object->kind == Object::Kind::Array) {
         size_t n = size_t(iterable.object->properties["length"].to_number());
         for (size_t i = 0; i < n; ++i)
@@ -1060,28 +1143,64 @@ Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
   }
   case Expr::Kind::Array: {
     Values vs;
-    for (auto &item : e.items)
-      vs.push_back(evaluate(*item, env, this_value));
+    for (auto &item : e.items) {
+      if (item->kind == Expr::Kind::Unary && item->text == "spread") {
+        Value source = evaluate(*item->left, env, this_value);
+        append_spread(vs, source);
+      } else
+        vs.push_back(evaluate(*item, env, this_value));
+    }
     return make_array(vs);
   }
   case Expr::Kind::Object: {
     Value o = make_object();
     for (auto &p : e.properties)
       o.object->properties[p.first] = evaluate(*p.second, env, this_value);
+    for (auto &p : e.computed_properties)
+      o.object->properties[evaluate(*p.first, env, this_value).to_string()] =
+          evaluate(*p.second, env, this_value);
     return o;
   }
   case Expr::Kind::Function: {
     Value fn = make_object(Object::Kind::Function);
     fn.object->function = e.function;
     fn.object->closure = &env;
+    if (e.function && e.function->arrow) {
+      fn.object->has_lexical_this = true;
+      fn.object->lexical_this = this_value.type != Value::Type::Undefined ? this_value : this_;
+    }
     return fn;
   }
   case Expr::Kind::Member: {
     Value base = evaluate(*e.left, env, this_value);
+    if (e.optional && (base.type == Value::Type::Null || base.type == Value::Type::Undefined))
+      return Value();
     std::string key = e.computed ? evaluate(*e.right, env, this_value).to_string() : e.text;
     return get_member(base, key);
   }
   case Expr::Kind::Unary: {
+    if (e.text == "delete") {
+      if (e.left->kind == Expr::Kind::Member) {
+        Value base = evaluate(*e.left->left, env, this_value);
+        auto key = e.left->computed
+                       ? evaluate(*e.left->right, env, this_value).to_string()
+                       : e.left->text;
+        if (base.type == Value::Type::Object && base.object) {
+          auto &props = base.object->properties;
+          bool existed = props.erase(key) != 0;
+          if (existed && base.object->kind == Object::Kind::Array && key != "length") {
+            // I keep my array length consistent after deleting an index.
+            size_t n = size_t(std::max(0.0, props["length"].to_number()));
+            size_t live = 0;
+            for (size_t i = 0; i < n; ++i)
+              if (props.count(std::to_string(i))) ++live;
+            (void)live;
+          }
+          return Value(existed);
+        }
+      }
+      return Value(true);
+    }
     if (e.text == "typeof" && e.left->kind == Expr::Kind::Identifier &&
         !find_env(env, e.left->text))
       return Value("undefined");
@@ -1099,6 +1218,15 @@ Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
     if (e.text == "void")
       return Value();
     break;
+  }
+  case Expr::Kind::Template: {
+    std::string out;
+    for (const auto &part : e.items) {
+      out += evaluate(*part, env, this_value).to_string();
+      if (out.size() > kMaxDocument)
+        throw std::runtime_error("template literal size limit");
+    }
+    return Value(out);
   }
   case Expr::Kind::Binary: {
     Value a = evaluate(*e.left, env, this_value), b = evaluate(*e.right, env, this_value);
@@ -1170,8 +1298,13 @@ Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
       this_value_call = base;
     } else
       fn = evaluate(*e.left, env, this_value);
-    for (auto &a : e.items)
-      args.push_back(evaluate(*a, env, this_value));
+    for (auto &a : e.items) {
+      if (a->kind == Expr::Kind::Unary && a->text == "spread") {
+        Value source = evaluate(*a->left, env, this_value);
+        append_spread(args, source);
+      } else
+        args.push_back(evaluate(*a, env, this_value));
+    }
     return call(fn, args, this_value_call);
   }
   case Expr::Kind::New: {
@@ -1322,7 +1455,7 @@ void Runtime::install_builtins() {
     return Value(
         std::isnan(a.empty() ? std::numeric_limits<double>::quiet_NaN() : a[0].to_number()));
   });
-  g.properties["Array"] = make_native([this](Values &a) {
+  Value array = make_native([this](Values &a) {
     if (a.size() == 1 && a[0].type == Value::Type::Number) {
       size_t n = size_t(a[0].to_number());
       if (n > 100000)
@@ -1330,6 +1463,195 @@ void Runtime::install_builtins() {
       return make_array(Values(n));
     }
     return make_array(a);
+  });
+  array.object->properties["from"] = make_native([this](Values &a) {
+    Values out;
+    if (!a.empty()) append_spread(out, a[0]);
+    if (a.size() > 1 && a[1].type == Value::Type::Object &&
+        a[1].object->kind == Object::Kind::Function)
+      for (size_t i = 0; i < out.size(); ++i) {
+        Values one{out[i], Value(double(i))};
+        Value receiver;
+        out[i] = call(a[1], one, receiver);
+      }
+    return make_array(out);
+  });
+  array.object->properties["of"] = make_native([this](Values &a) { return make_array(a); });
+  g.properties["Array"] = array;
+  // Map and Set keep insertion order because my object properties are ordered.
+  g.properties["Map"] = make_native([this](Values &a) {
+    Value self = make_object();
+    Value store = make_object();
+    Value order = make_array({});
+    self.object->properties["__entries__"] = store;
+    self.object->properties["__order__"] = order;
+    self.object->properties["size"] = Value(0.0);
+    self.object->properties["set"] = make_native([store, order, self](Values &args) mutable {
+      auto key = args.empty() ? std::string("undefined") : args[0].to_string();
+      if (!store.object->properties.count(key)) {
+        size_t n = size_t(order.object->properties["length"].to_number());
+        order.object->properties[std::to_string(n)] = Value(key);
+        order.object->properties["length"] = Value(double(n + 1));
+        self.object->properties["size"] = Value(double(n + 1));
+      }
+      store.object->properties[key] = args.size() > 1 ? args[1] : Value();
+      return self;
+    });
+    self.object->properties["get"] = make_native([store](Values &args) {
+      auto key = args.empty() ? std::string("undefined") : args[0].to_string();
+      auto it = store.object->properties.find(key);
+      return it == store.object->properties.end() ? Value() : it->second;
+    });
+    self.object->properties["has"] = make_native([store](Values &args) {
+      auto key = args.empty() ? std::string("undefined") : args[0].to_string();
+      return Value(store.object->properties.count(key) != 0);
+    });
+    self.object->properties["delete"] = make_native([store, order, self](Values &args) mutable {
+      auto key = args.empty() ? std::string("undefined") : args[0].to_string();
+      bool had = store.object->properties.erase(key) != 0;
+      if (had) {
+        Values kept;
+        size_t n = size_t(order.object->properties["length"].to_number());
+        for (size_t i = 0; i < n; ++i) {
+          Value k = order.object->properties[std::to_string(i)];
+          if (k.to_string() != key) kept.push_back(k);
+        }
+        order.object->properties.clear();
+        for (size_t i = 0; i < kept.size(); ++i)
+          order.object->properties[std::to_string(i)] = kept[i];
+        order.object->properties["length"] = Value(double(kept.size()));
+        self.object->properties["size"] = Value(double(kept.size()));
+      }
+      return Value(had);
+    });
+    self.object->properties["clear"] = make_native([store, order, self](Values &) mutable {
+      store.object->properties.clear();
+      order.object->properties.clear();
+      order.object->properties["length"] = Value(0.0);
+      self.object->properties["size"] = Value(0.0);
+      return Value();
+    });
+    for (std::string which : {std::string("keys"), std::string("values"), std::string("entries")})
+      self.object->properties[which] = make_native([this, store, order, which](Values &) {
+        Values out;
+        size_t n = size_t(order.object->properties["length"].to_number());
+        for (size_t i = 0; i < n; ++i) {
+          Value k = order.object->properties[std::to_string(i)];
+          auto found = store.object->properties.find(k.to_string());
+          if (found == store.object->properties.end()) continue;
+          if (which == "keys")
+            out.push_back(k);
+          else if (which == "values")
+            out.push_back(found->second);
+          else
+            out.push_back(make_array({k, found->second}));
+        }
+        return make_array(out);
+      });
+    self.object->properties["forEach"] = make_native([this, self](Values &args) {
+      if (args.empty()) return Value();
+      Value entries_fn = get_member(self, "entries");
+      Values none;
+      Value entries = call(entries_fn, none, self);
+      size_t n = size_t(entries.object->properties["length"].to_number());
+      for (size_t i = 0; i < n; ++i) {
+        Value pair = entries.object->properties[std::to_string(i)];
+        Values call_args{pair.object->properties["1"], pair.object->properties["0"], self};
+        Value receiver = args.size() > 1 ? args[1] : Value();
+        call(args[0], call_args, receiver);
+      }
+      return Value();
+    });
+    if (!a.empty()) {
+      Values init;
+      append_spread(init, a[0]);
+      for (auto &pair : init) {
+        Values kv;
+        append_spread(kv, pair);
+        Values setargs{kv.empty() ? Value() : kv[0], kv.size() > 1 ? kv[1] : Value()};
+        call(self.object->properties["set"], setargs, self);
+      }
+    }
+    return self;
+  });
+  g.properties["Set"] = make_native([this](Values &a) {
+    Value self = make_object();
+    Values init;
+    if (!a.empty()) append_spread(init, a[0]);
+    Values unique;
+    for (auto &v : init) {
+      bool found = false;
+      for (auto &u : unique)
+        if (strict_equals(u, v)) { found = true; break; }
+      if (!found) unique.push_back(v);
+    }
+    self.object->properties["__values__"] = make_array(unique);
+    self.object->properties["size"] = Value(double(unique.size()));
+    self.object->properties["add"] = make_native([self](Values &args) mutable {
+      Value list = self.object->properties["__values__"];
+      size_t n = size_t(list.object->properties["length"].to_number());
+      Value v = args.empty() ? Value() : args[0];
+      bool found = false;
+      for (size_t i = 0; i < n; ++i)
+        if (strict_equals(list.object->properties[std::to_string(i)], v)) { found = true; break; }
+      if (!found) {
+        list.object->properties[std::to_string(n)] = v;
+        list.object->properties["length"] = Value(double(n + 1));
+        self.object->properties["size"] = Value(double(n + 1));
+      }
+      return self;
+    });
+    self.object->properties["has"] = make_native([self](Values &args) {
+      Value list = self.object->properties["__values__"];
+      size_t n = size_t(list.object->properties["length"].to_number());
+      Value v = args.empty() ? Value() : args[0];
+      for (size_t i = 0; i < n; ++i)
+        if (strict_equals(list.object->properties[std::to_string(i)], v)) return Value(true);
+      return Value(false);
+    });
+    self.object->properties["delete"] = make_native([this, self](Values &args) mutable {
+      Value list = self.object->properties["__values__"];
+      size_t n = size_t(list.object->properties["length"].to_number());
+      Value v = args.empty() ? Value() : args[0];
+      Values kept;
+      for (size_t i = 0; i < n; ++i) {
+        Value item = list.object->properties[std::to_string(i)];
+        if (!strict_equals(item, v)) kept.push_back(item);
+      }
+      bool removed = kept.size() != n;
+      self.object->properties["__values__"] = make_array(kept);
+      self.object->properties["size"] = Value(double(kept.size()));
+      return Value(removed);
+    });
+    self.object->properties["clear"] = make_native([this, self](Values &) mutable {
+      self.object->properties["__values__"] = make_array({});
+      self.object->properties["size"] = Value(0.0);
+      return Value();
+    });
+    for (std::string which : {std::string("keys"), std::string("values"), std::string("entries")})
+      self.object->properties[which] = make_native([this, self, which](Values &) {
+        Value list = self.object->properties["__values__"];
+        Values out;
+        size_t n = size_t(list.object->properties["length"].to_number());
+        for (size_t i = 0; i < n; ++i) {
+          Value v = list.object->properties[std::to_string(i)];
+          out.push_back(which == "entries" ? make_array({v, v}) : v);
+        }
+        return make_array(out);
+      });
+    self.object->properties["forEach"] = make_native([this, self](Values &args) {
+      if (args.empty()) return Value();
+      Value list = self.object->properties["__values__"];
+      size_t n = size_t(list.object->properties["length"].to_number());
+      for (size_t i = 0; i < n; ++i) {
+        Value v = list.object->properties[std::to_string(i)];
+        Values call_args{v, v, self};
+        Value receiver = args.size() > 1 ? args[1] : Value();
+        call(args[0], call_args, receiver);
+      }
+      return Value();
+    });
+    return self;
   });
   Value object = make_native([this](Values &) { return make_object(); });
   // keys/values/entries need the runtime for allocation, so bind this

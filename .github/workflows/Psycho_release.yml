@@ -137,10 +137,13 @@ jobs:
           $sandbox = 1
           try {
             Start-Sleep -Seconds 2
-            $p = Start-Process -FilePath "$solo/PsychoVault.exe" -ArgumentList '--smoke','--expect-image','--url','http://127.0.0.1:8766/Psycho_browser-smoke.html','--capture','build/captures/standalone.png','--profile','build/solo-profile' -PassThru -Wait
-            $render = $p.ExitCode
-            $q = Start-Process -FilePath "$solo/PsychoVault.exe" -ArgumentList '--sandbox-test','--sandbox-report','build/solo-sandbox.json','--profile','build/solo-profile' -PassThru -Wait
-            $sandbox = $q.ExitCode
+            # Start-Process -Wait waits for my whole process tree, and a contained
+            # renderer can outlive the window. I bound the wait and read the exit
+            # code of the browser itself.
+            $p = Start-Process -FilePath "$solo/PsychoVault.exe" -ArgumentList '--smoke','--expect-image','--url','http://127.0.0.1:8766/Psycho_browser-smoke.html','--capture','build/captures/standalone.png','--profile','build/solo-profile' -PassThru
+            if ($p.WaitForExit(60000)) { $render = $p.ExitCode } else { $render = 99; try { $p.Kill($true) } catch {} }
+            $q = Start-Process -FilePath "$solo/PsychoVault.exe" -ArgumentList '--sandbox-test','--sandbox-report','build/solo-sandbox.json','--profile','build/solo-profile' -PassThru
+            if ($q.WaitForExit(60000)) { $sandbox = $q.ExitCode } else { $sandbox = 99; try { $q.Kill($true) } catch {} }
           } finally {
             Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
           }

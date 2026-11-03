@@ -40,6 +40,12 @@ struct Object {
   std::function<Value(Values &)> native;
   int host = -2;
   std::string host_type;
+  // An arrow function keeps the this value from where it was created.
+  bool has_lexical_this = false;
+  Value lexical_this;
+  // Accessors run instead of returning a stored value.
+  Object *getter = nullptr;
+  Object *setter = nullptr;
   bool marked = false;
 };
 struct Env : Object {
@@ -69,15 +75,18 @@ struct Expr {
     Call,
     Member,
     New,
-    Function
+    Function,
+    Template
   };
   Kind kind;
   Value literal;
   std::string text;
-  bool computed = false, prefix = false;
+  bool computed = false, prefix = false, optional = false;
   std::unique_ptr<Expr> left, right, third;
   std::vector<std::unique_ptr<Expr>> items;
   std::vector<std::pair<std::string, std::unique_ptr<Expr>>> properties;
+  // Computed keys are evaluated when the object is created.
+  std::vector<std::pair<std::unique_ptr<Expr>, std::unique_ptr<Expr>>> computed_properties;
   Function *function = nullptr;
   int line = 1;
   explicit Expr(Kind k) : kind(k) {}
@@ -110,7 +119,9 @@ struct Stmt {
   explicit Stmt(Kind k) : kind(k) {}
 };
 struct Function {
+  bool arrow = false;
   std::vector<std::string> params;
+  std::vector<std::unique_ptr<Stmt>> defaults;
   std::vector<std::unique_ptr<Stmt>> body;
   std::unique_ptr<Expr> expression;
   std::string name;

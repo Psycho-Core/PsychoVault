@@ -624,6 +624,49 @@ int main() {
     CHECK(js_eval("var o={c:'configure'};var n=0;"
                   "if(o.c==='configure'){n++;}if(o.c==='configure'){n++;}n") == "2");
   }
+  // Modern JavaScript my extension host and real pages rely on.
+  {
+    CHECK(js_eval("var n='world';`hi ${n} ${1+2}`") == "hi world 3");
+    CHECK(js_eval("var a=2;`x${`y${a}`}z`") == "xy2z");
+    CHECK(js_eval("Math.max(...[1,5,3])") == "5");
+    CHECK(js_eval("[...[1,2],3].join(',')") == "1,2,3");
+    CHECK(js_eval("Array.from('ab').join(',')") == "a,b");
+    CHECK(js_eval("Array.of(1,2).length") == "2");
+    CHECK(js_eval("function f(a=5){return a}f()") == "5");
+    CHECK(js_eval("function f(a=5){return a}f(9)") == "9");
+    CHECK(js_eval("function f(...a){return a.length}f(1,2,3)") == "3");
+    CHECK(js_eval("var o={n:7,f:function(){return (()=>this.n)()}};o.f()") == "7");
+    CHECK(js_eval("var f=x=>x*2;f(4)") == "8");
+    CHECK(js_eval("var s='';for(var c of 'abc')s+=c;s") == "abc");
+    CHECK(js_eval("var s=0;for(var x of [1,2,3])s+=x;s") == "6");
+    CHECK(js_eval("var o={get x(){return 5}};o.x") == "5");
+    CHECK(js_eval("var k='a';var o={[k]:5};o.a") == "5");
+    CHECK(js_eval("var o={f(){return 6}};o.f()") == "6");
+    CHECK(js_eval("var o=null;String(o?.x)") == "undefined");
+    CHECK(js_eval("var o={a:{b:4}};o?.a?.b") == "4");
+    CHECK(js_eval("'a' in {a:1}") == "true");
+    CHECK(js_eval("({a:1}).hasOwnProperty('a')") == "true");
+    CHECK(js_eval("({a:1}).hasOwnProperty('b')") == "false");
+    CHECK(js_eval("var o={a:1};delete o.a;Object.keys(o).length") == "0");
+    CHECK(js_eval("var m=new Map();m.set('a',1);m.set('b',2);m.get('b')") == "2");
+    CHECK(js_eval("var m=new Map([['a',1],['b',2]]);m.size") == "2");
+    CHECK(js_eval("var m=new Map();m.set('a',1);m.has('a')") == "true");
+    CHECK(js_eval("var m=new Map();m.set('a',1);m.delete('a');m.size") == "0");
+    CHECK(js_eval("var m=new Map();m.set('a',1);m.set('b',2);m.keys().join(',')") == "a,b");
+    CHECK(js_eval("var t=0;var m=new Map([['a',1],['b',2]]);m.forEach(function(v){t+=v});t") == "3");
+    CHECK(js_eval("var s=new Set([1,1,2]);s.size") == "2");
+    CHECK(js_eval("var s=new Set();s.add(1);s.add(1);s.size") == "1");
+    CHECK(js_eval("var s=new Set([1,2]);s.has(2)") == "true");
+    CHECK(js_eval("var s=new Set([1,2]);s.delete(1);s.size") == "1");
+    CHECK(js_eval("Array.from([1,2],x=>x*3).join(',')") == "3,6");
+    bool threw = false;
+    try {
+      js_eval("[...5]");
+    } catch (const js::JsError &) {
+      threw = true;
+    }
+    CHECK(threw);
+  }
   std::cout << passed << " engine checks passed\n";
   return 0;
 }
