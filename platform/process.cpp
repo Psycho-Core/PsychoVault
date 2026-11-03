@@ -5,6 +5,7 @@
 #endif
 #include <windows.h>
 #include <aclapi.h>
+#include <sddl.h>
 #include <userenv.h>
 #ifndef DESKTOP_ALL_ACCESS
 #define DESKTOP_ALL_ACCESS (STANDARD_RIGHTS_REQUIRED | 0x01FF)
@@ -173,6 +174,27 @@ bool grant_object(HANDLE object, PSID sid, ACCESS_MASK access, std::string &erro
     LocalFree(sd);
   if (set != ERROR_SUCCESS) {
     error = os_error("SetSecurityInfo window object", set);
+    return false;
+  }
+  return true;
+}
+bool set_private_object_low_label(HANDLE object, std::string &error) {
+  PSECURITY_DESCRIPTOR sd = nullptr;
+  ULONG size = 0;
+  if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(L"S:(ML;;NW;;;LW)", SDDL_REVISION_1,
+                                                            &sd, &size)) {
+    error = os_error("ConvertStringSecurityDescriptorToSecurityDescriptor");
+    return false;
+  }
+  BOOL present = FALSE, defaulted = FALSE;
+  PACL label = nullptr;
+  BOOL got = GetSecurityDescriptorSacl(sd, &present, &label, &defaulted);
+  DWORD rc = got && present ? SetSecurityInfo(object, SE_WINDOW_OBJECT, LABEL_SECURITY_INFORMATION,
+                                              nullptr, nullptr, nullptr, label)
+                            : ERROR_INVALID_SECURITY_DESCR;
+  LocalFree(sd);
+  if (rc != ERROR_SUCCESS) {
+    error = os_error("SetSecurityInfo low mandatory label", rc);
     return false;
   }
   return true;
@@ -481,6 +503,10 @@ bool Process::start(const std::string &exe, const std::string &args, bool sandbo
       return fail("cannot grant private window-station access: " + error);
     if (!grant_private_object_principals(desktop_, app_sid, desktop_access, error))
       return fail("cannot grant private desktop access: " + error);
+    if (!set_private_object_low_label(station_, error))
+      return fail("cannot label private window station: " + error);
+    if (!set_private_object_low_label(desktop_, error))
+      return fail("cannot label private desktop: " + error);
     desktop_name = station_name + L"\\Renderer";
     restricted = true;
   }
@@ -541,12 +567,6 @@ bool Process::start(const std::string &exe, const std::string &args, bool sandbo
   limits.ProcessMemoryLimit = SIZE_T(512) * 1024 * 1024;
   if (!SetInformationJobObject(job_, JobObjectExtendedLimitInformation, &limits, sizeof(limits)))
     return fail(os_error("SetInformationJobObject"));
-  JOBOBJECT_BASIC_UI_RESTRICTIONS ui{};
-  ui.UIRestrictionsClass = JOB_OBJECT_UILIMIT_HANDLES | JOB_OBJECT_UILIMIT_READCLIPBOARD |
-                           JOB_OBJECT_UILIMIT_WRITECLIPBOARD | JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS |
-                           JOB_OBJECT_UILIMIT_DISPLAYSETTINGS | JOB_OBJECT_UILIMIT_EXITWINDOWS;
-  if (!SetInformationJobObject(job_, JobObjectBasicUIRestrictions, &ui, sizeof(ui)))
-    return fail(os_error("SetInformationJobObject UI restrictions"));
   if (!AssignProcessToJobObject(job_, process_))
     return fail(os_error("AssignProcessToJobObject"));
   if (ResumeThread(thread_) == DWORD(-1))
