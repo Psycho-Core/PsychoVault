@@ -827,7 +827,10 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (b && b->smoke && GetTickCount() - b->start_tick > 4000) {
       if (!b->capture_path.empty())
         capture(hwnd, b->capture_path);
-      PostMessageW(hwnd, WM_CLOSE, 0, 0);
+      bool web = starts(b->current().url, "http://") || starts(b->current().url, "https://");
+      bool failed =
+          web && (b->current().frame.type != Json::Type::Object || !b->current().error.empty());
+      PostQuitMessage(failed ? 1 : 0);
     }
     return 0;
   }
