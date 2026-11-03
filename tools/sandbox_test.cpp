@@ -17,6 +17,19 @@ int main() {
       std::cerr << "sandbox fixture failed: " << error << "\n";
       return 1;
     }
+    Process plain;
+    if (plain.start(executable_dir() + "\\pv-sandbox-minimal.exe",
+                    "--sandbox-probe \"" + sentinel.string() + "\"", false, error)) {
+      auto report = plain.receive(5000);
+      if (report)
+        std::cout << "Unsandboxed minimal probe reached main: AppContainer="
+                  << report->flag("appContainer") << "\n";
+      else
+        std::cout << "Unsandboxed minimal probe produced no report; I/O=" << plain.io_error()
+                  << "\n";
+      plain.terminate();
+    } else
+      std::cout << "Unsandboxed minimal start failed: " << error << "\n";
     Process minimal;
     if (!minimal.start(executable_dir() + "\\pv-sandbox-minimal.exe",
                        "--sandbox-probe \"" + sentinel.string() + "\"", true, error)) {

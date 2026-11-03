@@ -60,12 +60,6 @@ jobs:
         run: |
           .\build\pv-tests.exe | Tee-Object build/engine-tests.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Run required AppContainer token, file and network sandbox test
-        id: sandbox
-        shell: pwsh
-        run: |
-          .\build\pv-sandbox-test.exe 2>&1 | Tee-Object build/sandbox-test.txt
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Render headless engine fixture
         shell: pwsh
         run: |
@@ -90,6 +84,12 @@ jobs:
           } finally {
             Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
           }
+      - name: Run required AppContainer token, file and network sandbox test
+        id: sandbox
+        shell: pwsh
+        run: |
+          .\build\pv-sandbox-test.exe 2>&1 | Tee-Object build/sandbox-test.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Package Windows preview ZIP
         shell: pwsh
         run: |
