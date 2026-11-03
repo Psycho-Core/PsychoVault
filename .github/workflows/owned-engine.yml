@@ -54,9 +54,8 @@ jobs:
       - name: Run engine tests
         shell: pwsh
         run: .\build\pv-tests.exe | Tee-Object build/engine-tests.txt
-      - name: Run AppContainer sandbox test (open gate)
+      - name: Run AppContainer file-isolation sandbox test
         id: sandbox
-        continue-on-error: true
         shell: pwsh
         run: .\build\pv-sandbox-test.exe 2>&1 | Tee-Object build/sandbox-test.txt
       - name: Render headless engine fixture

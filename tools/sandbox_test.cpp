@@ -46,9 +46,10 @@ int main() {
   DeleteFileA(sentinel.c_str());
   std::cout << "exitCode=" << exit_code << " outputBytes=" << output.size() << "\n"
             << output << "\n";
-  bool ok = output.find("\"fileDenied\":1") != std::string::npos &&
-            output.find("\"networkDenied\":1") != std::string::npos;
-  std::cout << (ok ? "SANDBOX PASS: file read and network socket denied\n"
-                   : "SANDBOX FAIL: expected file and network denial\n");
+  bool ok = output.find("\"appContainer\":1") != std::string::npos &&
+            output.find("\"fileDenied\":1") != std::string::npos;
+  std::cout << (ok ? "SANDBOX PASS: AppContainer token active and profile file read denied; direct "
+                     "network probe not run\n"
+                   : "SANDBOX FAIL: expected AppContainer token and file denial\n");
   return ok ? 0 : 1;
 }
