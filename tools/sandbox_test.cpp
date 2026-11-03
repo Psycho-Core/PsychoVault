@@ -3,8 +3,19 @@
 #include <fstream>
 #include <iostream>
 #include <windows.h>
+static LRESULT CALLBACK sandbox_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
+  return DefWindowProcW(h, m, w, l);
+}
 int main() {
   using namespace pv;
+  WNDCLASSEXW wc{};
+  wc.cbSize = sizeof(wc);
+  wc.lpfnWndProc = sandbox_wndproc;
+  wc.hInstance = GetModuleHandleW(nullptr);
+  wc.lpszClassName = L"PsychoVaultSandboxTest";
+  RegisterClassExW(&wc);
+  HWND hidden = CreateWindowExW(0, wc.lpszClassName, L"", WS_OVERLAPPEDWINDOW, 0, 0, 100, 100,
+                                nullptr, nullptr, wc.hInstance, nullptr);
   wchar_t temp[MAX_PATH];
   GetTempPathW(MAX_PATH, temp);
   std::string dir;
@@ -16,6 +27,10 @@ int main() {
   {
     std::ofstream f(sentinel);
     f << "private profile sentinel\n";
+  }
+  if (hidden) {
+    ShowWindow(hidden, SW_HIDE);
+    UpdateWindow(hidden);
   }
   Process p;
   std::string error;
@@ -45,6 +60,8 @@ int main() {
   }
   p.terminate();
   DeleteFileA(sentinel.c_str());
+  if (hidden)
+    DestroyWindow(hidden);
   std::cout << "exitCode=" << exit_code << " outputBytes=" << output.size() << "\n"
             << output << "\n";
   bool ok = output.find("\"appContainer\":1") != std::string::npos &&
