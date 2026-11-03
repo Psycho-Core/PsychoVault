@@ -1521,7 +1521,11 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       if (b->downloads.active_count() && (GetTickCount() % 8) < 2)
         InvalidateRect(hwnd, nullptr, FALSE);
     }
-    if (b && b->smoke && GetTickCount() - b->start_tick > 4000) {
+    // I finish as soon as my page is actually rendered, but I allow a slow
+    // unpack and sandbox start enough time before I call it a failure.
+    DWORD elapsed = b ? GetTickCount() - b->start_tick : 0;
+    bool settled = b && b->current().frame.type == Json::Type::Object && !b->current().loading;
+    if (b && b->smoke && (elapsed > 20000 || (settled && elapsed > 1500))) {
       if (!b->capture_path.empty())
         capture(hwnd, b->capture_path);
       bool web = starts(b->current().url, "http://") || starts(b->current().url, "https://");
@@ -1551,6 +1555,10 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                       : std::string());
         why.set("loading", b->current().loading);
         why.set("elapsedMs", double(GetTickCount() - b->start_tick));
+        if (b->current().session) {
+          auto code = b->current().session->process.exit_code();
+          why.set("rendererExitCode", code ? double(*code) : -1.0);
+        }
         auto report = b->capture_path.empty() ? std::string("smoke-failure.json")
                                              : b->capture_path + ".failure.json";
         std::string write_error;

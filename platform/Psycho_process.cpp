@@ -479,6 +479,18 @@ bool Process::start(const std::string &exe, const std::string &args, bool sandbo
     sid_ = app_sid;
     if (!grant_path(wide(exe), app_sid, FILE_GENERIC_READ | FILE_GENERIC_EXECUTE))
       return fail("cannot grant read/execute on renderer executable");
+    // The Windows loader searches the application directory for DLLs, which
+    // needs read and list on that directory, not just traverse. My sibling
+    // build folder already allowed this, but my unpacked renderer lives in a
+    // private hash-named folder I create, so I grant read on exactly that one
+    // folder. It holds only my own verified renderer, and I grant no write.
+    {
+      auto cut = exe.find_last_of("/\\");
+      if (cut != std::string::npos && cut > 2 &&
+          !grant_path(wide(exe.substr(0, cut)), app_sid,
+                      FILE_GENERIC_READ | FILE_GENERIC_EXECUTE))
+        return fail("cannot grant read on my renderer folder");
+    }
     // Traverse grants on ancestors are best-effort. An AppContainer token keeps
     // SeChangeNotifyPrivilege, so the kernel already bypasses traverse checks;
     // and when my renderer unpacks under LocalAppData the ancestors include
