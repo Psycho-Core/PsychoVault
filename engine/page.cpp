@@ -492,6 +492,7 @@ void Page::load(const Url &url, const std::string &html, const std::string &mime
   doc.content_type = mime;
   doc.parse(html);
   resources_.clear();
+  images_.clear();
   requested_.clear();
   executed_.clear();
   listeners_.clear();
@@ -527,7 +528,24 @@ void Page::request(std::string input) {
   requests.push_back(href);
 }
 void Page::resource(const Resource &res) {
-  resources_[res.url] = res;
+  Resource stored = res;
+  static constexpr uint8_t png_signature[8] = {137, 80, 78, 71, 13, 10, 26, 10};
+  bool png = lower(stored.mime).find("image/png") != std::string::npos ||
+             (stored.bytes.size() >= 8 &&
+              std::equal(png_signature, png_signature + 8, stored.bytes.begin()));
+  if (stored.ok && png) {
+    try {
+      Image image = decode_png(stored.bytes);
+      stored.image_width = image.width;
+      stored.image_height = image.height;
+      images_[stored.url] = std::move(image);
+    } catch (const std::exception &e) {
+      stored.ok = false;
+      stored.error = std::string("PNG decode failed: ") + e.what();
+      diagnostics.push_back({"image", stored.error});
+    }
+  }
+  resources_[stored.url] = std::move(stored);
   dirty_ = true;
   run_scripts();
 }
@@ -626,6 +644,7 @@ Json Page::render(double width, double height, double scroll) {
   Json frame = Json::make_object();
   frame.set("tag", "frame");
   frame.set("title", title());
+  frame.set("url", doc.url.href());
   frame.set("height", content_height_);
   frame.set("scroll", scroll_);
   Json paint = Json::make_array();

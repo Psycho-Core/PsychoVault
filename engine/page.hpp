@@ -1,6 +1,7 @@
 #pragma once
 #include "js.hpp"
 #include "layout.hpp"
+#include "image.hpp"
 namespace pv {
 class Page {
 public:
@@ -17,6 +18,9 @@ public:
   double next_timer_delay() const;
   void tick();
   std::string title() const;
+  const std::map<std::string, Image> &images() const {
+    return images_;
+  }
   double content_height() const {
     return content_height_;
   }
@@ -30,6 +34,7 @@ private:
   std::unique_ptr<js::Runtime> js_;
   std::vector<Listener> listeners_;
   std::map<std::string, Resource> resources_;
+  std::map<std::string, Image> images_;
   std::set<int> executed_;
   std::set<std::string> requested_;
   LayoutResult layout_;

@@ -1,3 +1,4 @@
+#include "image.hpp"
 #include "layout.hpp"
 namespace pv {
 struct Run {
@@ -202,17 +203,49 @@ struct Layout {
         }
         if (child.name == "img") {
           flush();
-          double iw = cs.width >= 0 ? cs.width : 120, ih = cs.height >= 0 ? cs.height : 80;
+          std::string source = child.attribute("src");
+          auto resolved = resolve_url(doc.url, source);
+          std::string key = resolved ? resolved->href() : source;
+          auto found = resources.find(key);
+          double natural_w = 0, natural_h = 0;
+          if (found != resources.end() && found->second.ok && found->second.image_width > 0) {
+            natural_w = found->second.image_width;
+            natural_h = found->second.image_height;
+          }
+          auto attr_length = [&](const char *name) -> double {
+            auto value = trim(child.attribute(name));
+            if (value.empty())
+              return -1;
+            try {
+              size_t used = 0;
+              double n = std::stod(value, &used);
+              if (used == value.size() && n >= 0 && n <= 16384)
+                return n;
+            } catch (...) {
+            }
+            return -1;
+          };
+          double aw = attr_length("width"), ah = attr_length("height");
+          double iw = cs.width >= 0 ? cs.width : aw >= 0 ? aw : natural_w > 0 ? natural_w : 120;
+          double ih = cs.height >= 0                   ? cs.height
+                      : ah >= 0                        ? ah
+                      : natural_w > 0 && natural_h > 0 ? iw * natural_h / natural_w
+                      : aw >= 0 && natural_w > 0       ? aw * natural_h / natural_w
+                                                       : 80;
+          if (cs.width < 0 && cs.height >= 0 && natural_w > 0 && natural_h > 0)
+            iw = ih * natural_w / natural_h;
+          iw = std::clamp(iw, 0.0, 16384.0);
+          ih = std::clamp(ih, 0.0, 16384.0);
           out.paint.push_back({PaintCommand::Kind::Image,
-                               {inner_x, cursor, iw, ih},
+                               {inner_x + cs.margin[3], cursor + cs.margin[0], iw, ih},
                                0,
                                child.attribute("alt"),
                                cs.font_size,
                                0,
                                false,
                                c,
-                               child.attribute("src")});
-          out.boxes[c] = {inner_x, cursor, iw, ih};
+                               key});
+          out.boxes[c] = {inner_x + cs.margin[3], cursor + cs.margin[0], iw, ih};
           cursor += ih + cs.margin[0] + cs.margin[2];
           return;
         }
@@ -346,8 +379,7 @@ LayoutResult layout_document(const Document &doc, const std::vector<Style> &styl
   return l.out;
 }
 void paint_commands(Canvas &canvas, const std::vector<PaintCommand> &commands, double scroll_y,
-                    const std::map<std::string, Resource> &resources) {
-  (void)resources;
+                    const std::map<std::string, Image> &images) {
   for (auto &c : commands) {
     Rect r = c.rect;
     r.y -= scroll_y;
@@ -366,11 +398,18 @@ void paint_commands(Canvas &canvas, const std::vector<PaintCommand> &commands, d
     case PaintCommand::Kind::Text:
       canvas.text(r.x, r.y, c.text, c.size, c.color, c.bold);
       break;
-    case PaintCommand::Kind::Image:
-      canvas.fill(r, 0xff202833);
-      canvas.stroke(r, 0xff506070);
-      canvas.text(r.x + 4, r.y + 4, c.text.empty() ? "[image]" : c.text, 12, 0xffb8c4d0);
+    case PaintCommand::Kind::Image: {
+      auto found = images.find(c.url);
+      if (found != images.end() && found->second.valid()) {
+        canvas.image(found->second, r);
+      } else {
+        canvas.fill(r, 0xff202833);
+        canvas.stroke(r, 0xff506070);
+        canvas.text(r.x + 4, r.y + 4, c.text.empty() ? "[image unavailable]" : c.text, 12,
+                    0xffb8c4d0);
+      }
       break;
+    }
     }
   }
 }

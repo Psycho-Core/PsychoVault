@@ -1,3 +1,4 @@
+#include "image.hpp"
 #include "raster.hpp"
 #include "font5x7.hpp"
 #include <cstring>
@@ -205,23 +206,6 @@ void Canvas::text(double x, double y, std::string_view text, double size, uint32
   }
 #endif
 }
-static uint32_t crc32(const uint8_t *data, size_t n) {
-  uint32_t c = 0xffffffff;
-  for (size_t i = 0; i < n; ++i) {
-    c ^= data[i];
-    for (int k = 0; k < 8; ++k)
-      c = (c >> 1) ^ (0xedb88320 & uint32_t(-(int(c) & 1)));
-  }
-  return ~c;
-}
-static uint32_t adler32(const uint8_t *data, size_t n) {
-  uint32_t a = 1, b = 0;
-  for (size_t i = 0; i < n; ++i) {
-    a = (a + data[i]) % 65521;
-    b = (b + a) % 65521;
-  }
-  return (b << 16) | a;
-}
 static void be32(Bytes &out, uint32_t n) {
   out.push_back(n >> 24);
   out.push_back(n >> 16);
@@ -234,6 +218,30 @@ static void chunk(Bytes &out, const char *type, const Bytes &data) {
   out.insert(out.end(), type, type + 4);
   out.insert(out.end(), data.begin(), data.end());
   be32(out, crc32(out.data() + start, out.size() - start));
+}
+void Canvas::image(const Image &source, Rect destination) {
+  if (!source.valid() || destination.w <= 0 || destination.h <= 0)
+    return;
+  double left = std::max(destination.x, clip.x), top = std::max(destination.y, clip.y);
+  double right = std::min(destination.x + destination.w, clip.x + clip.w);
+  double bottom = std::min(destination.y + destination.h, clip.y + clip.h);
+  if (right <= left || bottom <= top)
+    return;
+  int x0 = std::max(0, int(std::ceil(left))), y0 = std::max(0, int(std::ceil(top)));
+  int x1 = std::min(width, int(std::floor(right))), y1 = std::min(height, int(std::floor(bottom)));
+  for (int y = y0; y < y1; ++y) {
+    int sy = std::clamp(int((y + 0.5 - destination.y) * source.height / destination.h), 0,
+                        source.height - 1);
+    for (int x = x0; x < x1; ++x) {
+      int sx = std::clamp(int((x + 0.5 - destination.x) * source.width / destination.w), 0,
+                          source.width - 1);
+      size_t from = (size_t(sy) * size_t(source.width) + size_t(sx)) * 4;
+      uint32_t color = uint32_t(source.pixels[from]) | uint32_t(source.pixels[from + 1]) << 8 |
+                       uint32_t(source.pixels[from + 2]) << 16 |
+                       uint32_t(source.pixels[from + 3]) << 24;
+      pixel(x, y, color);
+    }
+  }
 }
 Bytes encode_png(int w, int h, const Bytes &bgra) {
   if (w <= 0 || h <= 0 || w > 8192 || h > 16384 || bgra.size() != size_t(w) * h * 4)

@@ -1,6 +1,7 @@
 #pragma once
 #include "base.hpp"
 namespace pv {
+struct Image;
 struct Rect {
   double x = 0, y = 0, w = 0, h = 0;
   bool contains(double px, double py) const {
@@ -20,6 +21,7 @@ struct Canvas {
   double text_width(std::string_view text, double size, bool bold = false,
                     std::string_view family = "Segoe UI") const;
   void pixel(int x, int y, uint32_t color);
+  void image(const Image &source, Rect destination);
 };
 Bytes encode_png(int width, int height, const Bytes &bgra);
 uint32_t blend(uint32_t dst, uint32_t src);

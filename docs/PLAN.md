@@ -2,7 +2,7 @@
 
 This is my plan for rebuilding PsychoVault as my own browser. I am writing it before implementation so I do not repeat the mistake of calling a wrapper, a popup, or a compile success a finished browser.
 
-Status: planning complete, implementation not started. This document is a contract and a sequence of gates. It is not evidence that the engine, Proton, the installer, or Android already works.
+Status: the owned engine and native shell foundation is merged. I am now building the next testable Windows preview. This document is a contract and a sequence of gates. It is not evidence that the engine, Proton, the installer, or Android already works.
 
 ## 1. My definition of done
 

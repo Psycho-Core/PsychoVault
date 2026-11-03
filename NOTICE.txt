@@ -1,0 +1,7 @@
+PsychoVault development preview
+
+I write the PsychoVault browser, shell and engine code for this project. I use operating-system APIs and my own tests. I do not bundle Chromium, Electron, Gecko, WebView or another third-party browser engine in this preview.
+
+Proton VPN is not bundled or verified in this preview. When I add extensions, the extension code is the explicit third-party exception and will keep its own notices.
+
+I provide this preview as-is, without warranty. It is not a signed release.

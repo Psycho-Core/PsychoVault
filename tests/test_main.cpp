@@ -1,4 +1,7 @@
 #include "../engine/page.hpp"
+#include "../platform/profile.hpp"
+#include "image_fixtures.hpp"
+#include <filesystem>
 #include <cassert>
 #include <iostream>
 using namespace pv;
@@ -103,6 +106,115 @@ int main() {
   auto png = encode_png(64, 64, c.pixels);
   CHECK(png.size() > 50);
   CHECK(png[0] == 137 && png[1] == 80);
+  {
+    auto decoded = decode_png(Bytes(fixtures::rgba_filters.begin(), fixtures::rgba_filters.end()));
+    CHECK(decoded.width == 3 && decoded.height == 5);
+    CHECK(decoded.pixels[0] == 0 && decoded.pixels[1] == 0 && decoded.pixels[2] == 255 &&
+          decoded.pixels[3] == 255);
+    CHECK(decoded.pixels[4] == 0 && decoded.pixels[5] == 255 && decoded.pixels[6] == 0 &&
+          decoded.pixels[7] == 128);
+    CHECK(decoded.pixels[11] == 0);
+    auto palette =
+        decode_png(Bytes(fixtures::palette_alpha.begin(), fixtures::palette_alpha.end()));
+    CHECK(palette.width == 2 && palette.pixels[2] == 255 && palette.pixels[3] == 255 &&
+          palette.pixels[7] == 0);
+    auto gray = decode_png(Bytes(fixtures::gray16.begin(), fixtures::gray16.end()));
+    CHECK(gray.width == 2 && gray.pixels[0] == 0x12 && gray.pixels[4] == 0xab);
+    auto rgb = decode_png(Bytes(fixtures::rgb_fixed.begin(), fixtures::rgb_fixed.end()));
+    CHECK(rgb.width == 2 && rgb.pixels[2] == 255 && rgb.pixels[4] == 255);
+    bool threw = false;
+    try {
+      auto bad = Bytes(fixtures::rgba_filters.begin(), fixtures::rgba_filters.end());
+      bad.pop_back();
+      decode_png(bad);
+    } catch (const std::exception &) {
+      threw = true;
+    }
+    CHECK(threw);
+    threw = false;
+    try {
+      auto bad = Bytes(fixtures::rgba_filters.begin(), fixtures::rgba_filters.end());
+      bad[20] ^= 0xff;
+      decode_png(bad);
+    } catch (const std::exception &) {
+      threw = true;
+    }
+    CHECK(threw);
+  }
+  {
+    Bytes bytes = {0, 1, 2, 250, 255, 65, 66};
+    auto encoded = base64_encode(bytes);
+    CHECK(base64_decode(encoded) == bytes);
+    CHECK(base64_encode({}) == "" && base64_decode("").empty());
+    bool threw = false;
+    try {
+      base64_decode("A===");
+    } catch (const std::exception &) {
+      threw = true;
+    }
+    CHECK(threw);
+    threw = false;
+    try {
+      base64_decode("AAAA", 2);
+    } catch (const std::exception &) {
+      threw = true;
+    }
+    CHECK(threw);
+  }
+  {
+    Page image_page;
+    image_page.load(
+        *parse_url("https://local.test/"),
+        "<!doctype html><body style='margin:0'><img src='pixel.png' width='6' height='10'></body>");
+    Resource image;
+    image.url = "https://local.test/pixel.png";
+    image.mime = "image/png";
+    image.bytes.assign(fixtures::rgba_filters.begin(), fixtures::rgba_filters.end());
+    image_page.resource(image);
+    auto image_frame = image_page.render(100, 100, 0);
+    bool painted = false;
+    for (auto &command : image_frame.at("paint").array)
+      if (command.num("kind") == double(PaintCommand::Kind::Image) && command.num("w") == 6 &&
+          command.num("h") == 10)
+        painted = true;
+    CHECK(painted);
+    CHECK(image_page.images().count("https://local.test/pixel.png") == 1);
+    Canvas surface(20, 20, 0xff000000);
+    surface.image(image_page.images().begin()->second, {0, 0, 6, 10});
+    CHECK(surface.pixels[2] == 255);
+  }
+  {
+    auto suffix = base64_encode(random_bytes(8));
+    for (char &c : suffix)
+      if (c == '+' || c == '/')
+        c = 'x';
+    auto directory = std::filesystem::temp_directory_path() / ("psychovault-test-" + suffix);
+    auto path = directory.string();
+    Profile profile = Profile::open(path, false);
+    CHECK(profile.error.empty());
+    CHECK(profile.set_search_engine("wikipedia"));
+    CHECK(profile.set_home_page("https://example.com/"));
+    CHECK(profile.set_custom_search("https://example.com/search?q=%s"));
+    profile.bookmark("Example", "https://example.com/");
+    profile.visit("Example", "https://example.com/");
+    profile.session_tabs = {"https://example.com/", "psychovault://newtab"};
+    profile.session_active = 1;
+    CHECK(profile.save());
+    Profile restored = Profile::open(path, false);
+    CHECK(restored.search_engine == "wikipedia");
+    CHECK(restored.home_page == "https://example.com/");
+    CHECK(restored.custom_search == "https://example.com/search?q=%s");
+    CHECK(restored.bookmarks.size() == 1 && restored.history.size() == 1);
+    CHECK(restored.session_tabs.size() == 2 && restored.session_active == 1);
+    Profile private_profile = Profile::open(path, true);
+    private_profile.visit("Private", "https://private.example/");
+    private_profile.session_tabs = {"https://private.example/"};
+    CHECK(private_profile.save());
+    Profile after_private = Profile::open(path, false);
+    CHECK(after_private.history.size() == 1 && after_private.session_tabs.size() == 2);
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);
+  }
   std::cout << passed << " engine checks passed\n";
   return 0;
 }

@@ -3,7 +3,7 @@
 from __future__ import annotations
 import argparse, os, pathlib, shutil, subprocess, sys
 ROOT=pathlib.Path(__file__).resolve().parents[1]
-ENGINE=["engine/base.cpp","engine/dom.cpp","engine/css.cpp","engine/js_parser.cpp","engine/js_runtime.cpp","engine/raster.cpp","engine/layout.cpp","engine/page.cpp"]
+ENGINE=["engine/base.cpp","engine/dom.cpp","engine/css.cpp","engine/js_parser.cpp","engine/js_runtime.cpp","engine/raster.cpp","engine/image.cpp","engine/layout.cpp","engine/page.cpp"]
 PLATFORM=["platform/process.cpp","platform/network.cpp","platform/profile.cpp"]
 def run(cmd,env=None):
     print("+",subprocess.list2cmdline([str(x) for x in cmd]),flush=True)
@@ -41,13 +41,14 @@ def main():
     if compiler=="auto":compiler="msvc" if windows else "gcc"
     env=msvc_env() if compiler=="msvc" else os.environ.copy()
     cxx="cl" if compiler=="msvc" else os.environ.get("CXX","g++")
-    def target(name,sources,libs=(),subsystem=None):
+    def target(name,sources,libs=(),subsystem=None,entry=None):
         obj=out/"obj"/name;obj.parent.mkdir(parents=True,exist_ok=True);obj.mkdir(exist_ok=True)
         if compiler=="msvc":
             cmd=[cxx,"/nologo","/std:c++20","/EHsc","/O2","/MT","/W3","/WX","/permissive-","/DUNICODE","/D_UNICODE","/D_CRT_SECURE_NO_WARNINGS","/sdl","/GS","/guard:cf","/I"+str(ROOT),"/Fo"+str(obj)+os.sep]
             cmd+= [str(ROOT/s) for s in sources]
             cmd+=["/link","/DYNAMICBASE","/NXCOMPAT","/HIGHENTROPYVA","/INCREMENTAL:NO"]
             if subsystem:cmd+=["/SUBSYSTEM:"+subsystem]
+            if entry:cmd+=["/ENTRY:"+entry]
             cmd+= [l+".lib" for l in libs]
             cmd+=["/OUT:"+str(out/(name+".exe"))]
         else:
@@ -59,11 +60,12 @@ def main():
         run(cmd,env)
     winlibs=["kernel32","user32","gdi32","advapi32","userenv","bcrypt","winhttp","shell32","ole32","dwmapi"]
     target("pv-engine",ENGINE+["tools/engine_cli.cpp"],winlibs if windows else [])
-    target("pv-tests",ENGINE+["tests/test_main.cpp"],winlibs if windows else [])
-    target("pv-renderer",ENGINE+["platform/process.cpp","tools/renderer_main.cpp"],winlibs if windows else [])
+    target("pv-tests",ENGINE+PLATFORM+["tests/test_main.cpp"],winlibs if windows else [])
+    target("pv-renderer",ENGINE+["platform/process.cpp","tools/renderer_main.cpp"],winlibs + ["ws2_32"] if windows else [],"WINDOWS" if windows else None,"mainCRTStartup" if windows else None)
     if windows:
         target("PsychoVault",ENGINE+PLATFORM+["shell/win_main.cpp"],winlibs,"WINDOWS")
         target("pv-sandbox-test",ENGINE+["platform/process.cpp","tools/sandbox_test.cpp"],winlibs)
+        target("pv-sandbox-minimal",["tools/sandbox_minimal.cpp"],["kernel32","advapi32","ws2_32"],"WINDOWS","mainCRTStartup")
     print("Built",out)
 if __name__=="__main__":
     try:main()

@@ -10,6 +10,8 @@ on:
       - 'shell/**'
       - 'tools/**'
       - 'tests/**'
+      - 'docs/TEST-BUILD.md'
+      - 'NOTICE.txt'
       - '.github/workflows/owned-engine.yml'
   push:
     branches: [Master]
@@ -19,6 +21,8 @@ on:
       - 'shell/**'
       - 'tools/**'
       - 'tests/**'
+      - 'docs/TEST-BUILD.md'
+      - 'NOTICE.txt'
       - '.github/workflows/owned-engine.yml'
 
 permissions:
@@ -53,20 +57,20 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run engine tests
         shell: pwsh
-        run: .\build\pv-tests.exe | Tee-Object build/engine-tests.txt
-      - name: Run AppContainer file-isolation sandbox test (open gate)
-        id: sandbox
-        continue-on-error: true
-        shell: pwsh
-        run: .\build\pv-sandbox-test.exe 2>&1 | Tee-Object build/sandbox-test.txt
+        run: |
+          .\build\pv-tests.exe | Tee-Object build/engine-tests.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Render headless engine fixture
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force build/captures | Out-Null
           .\build\pv-engine.exe --input tests/fixtures/engine-smoke.html --out build/captures/headless-engine.png > build/headless-frame.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Capture native home window
         shell: pwsh
-        run: .\build\PsychoVault.exe --smoke --capture build/captures/native-home.png --profile build/test-profile
+        run: |
+          .\build\PsychoVault.exe --smoke --capture build/captures/native-home.png --profile build/test-profile
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Capture native window rendering a fetched page
         shell: pwsh
         run: |
@@ -74,17 +78,36 @@ jobs:
           try {
             Start-Sleep -Seconds 1
             .\build\PsychoVault.exe --smoke --url http://127.0.0.1:8765/engine-smoke.html --capture build/captures/native-engine.png --profile build/test-profile
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            .\build\PsychoVault.exe --smoke --expect-image --url http://127.0.0.1:8765/browser-smoke.html --capture build/captures/native-browser.png --profile build/test-profile
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } finally {
             Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
           }
+      - name: Run required AppContainer token, file and network sandbox test
+        id: sandbox
+        shell: pwsh
+        run: |
+          .\build\PsychoVault.exe --sandbox-test --sandbox-report build/sandbox-test.json --profile build/test-profile
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -c "import json; d=json.load(open('build/sandbox-test.json', encoding='utf-8')); print(json.dumps(d, indent=2)); assert d.get('ok') is True"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "## Required sandbox gate`n`n``````json" | Add-Content $env:GITHUB_STEP_SUMMARY
+          Get-Content build/sandbox-test.json | Add-Content $env:GITHUB_STEP_SUMMARY
+          "``````" | Add-Content $env:GITHUB_STEP_SUMMARY
+      - name: Package Windows preview ZIP
+        shell: pwsh
+        run: |
+          python tools/package.py --outdir build --commit $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Write failure note
         if: failure()
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force build | Out-Null
           "I did not publish a release. This build failed for commit $env:GITHUB_SHA. Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID" | Set-Content build/FAILURE.txt
-          if (Test-Path build/sandbox-test.txt) {
-            $sandbox = Get-Content build/sandbox-test.txt -Tail 40
+          if (Test-Path build/sandbox-test.json) {
+            $sandbox = Get-Content build/sandbox-test.json -Tail 40
             "## Sandbox test output`n`n``````" | Add-Content $env:GITHUB_STEP_SUMMARY
             $sandbox | Add-Content $env:GITHUB_STEP_SUMMARY
             "``````" | Add-Content $env:GITHUB_STEP_SUMMARY
@@ -105,6 +128,7 @@ jobs:
           name: psychovault-development-${{ github.sha }}
           path: |
             build/*.exe
+            build/*.zip
             build/*.txt
             build/*.json
             build/*.log

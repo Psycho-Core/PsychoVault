@@ -1,25 +1,32 @@
 #include "profile.hpp"
 #include <chrono>
+#include <filesystem>
 #ifdef _WIN32
+#ifndef NOMINMAX
 #define NOMINMAX
-#include <shlobj.h>
+#endif
 #include <windows.h>
+#include <shlobj.h>
 #else
 #include <cstdlib>
-#include <sys/stat.h>
 #endif
 namespace pv {
-#ifdef _WIN32
-static std::wstring wide(const std::string &s) {
-  int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), int(s.size()), nullptr, 0);
-  std::wstring w(n, 0);
-  MultiByteToWideChar(CP_UTF8, 0, s.c_str(), int(s.size()), w.data(), n);
-  return w;
+namespace fs = std::filesystem;
+static fs::path utf8_path(const std::string &text) {
+  auto data = reinterpret_cast<const char8_t *>(text.data());
+  return fs::path(data, data + text.size());
 }
+static std::string utf8_string(const fs::path &path) {
+  auto text = path.u8string();
+  return std::string(reinterpret_cast<const char *>(text.data()), text.size());
+}
+#ifdef _WIN32
 static std::string narrow(const std::wstring &w) {
-  int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), int(w.size()), nullptr, 0, nullptr, nullptr);
-  std::string s(n, 0);
-  WideCharToMultiByte(CP_UTF8, 0, w.c_str(), int(w.size()), s.data(), n, nullptr, nullptr);
+  if (w.empty())
+    return {};
+  int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), int(w.size()), nullptr, 0, nullptr, nullptr);
+  std::string s(size_t(n), 0);
+  WideCharToMultiByte(CP_UTF8, 0, w.data(), int(w.size()), s.data(), n, nullptr, nullptr);
   return s;
 }
 #endif
@@ -36,24 +43,24 @@ std::string default_profile_directory() {
   return std::string(home ? home : ".") + "/.local/share/PsychoVault/Owned";
 #endif
 }
-static bool make_directory(const std::string &path) {
-#ifdef _WIN32
-  std::wstring w = wide(path);
-  size_t pos = 0;
-  while ((pos = w.find_first_of(L"\\/", pos + 1)) != std::wstring::npos) {
-    std::wstring part = w.substr(0, pos);
-    CreateDirectoryW(part.c_str(), nullptr);
-  }
-  return CreateDirectoryW(w.c_str(), nullptr) || GetLastError() == ERROR_ALREADY_EXISTS;
-#else
-  return mkdir(path.c_str(), 0700) == 0 || errno == EEXIST;
-#endif
-}
 static double now_seconds() {
   return double(std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::system_clock::now().time_since_epoch())
                     .count()) /
          1000.0;
+}
+static bool valid_browser_url(const std::string &value) {
+  if (value.empty() || value.size() > 8192)
+    return false;
+  if (value == "about:blank" || starts(value, "psychovault://"))
+    return true;
+  auto url = parse_url(value);
+  return url && url->network();
+}
+static std::string bounded(std::string value, size_t limit) {
+  if (value.size() > limit)
+    value.resize(limit);
+  return value;
 }
 Profile Profile::open(const std::string &directory, bool private_mode) {
   Profile p;
@@ -61,45 +68,90 @@ Profile Profile::open(const std::string &directory, bool private_mode) {
   p.private_mode = private_mode;
   if (private_mode)
     return p;
-  if (!make_directory(directory)) {
+  std::error_code ec;
+  fs::create_directories(utf8_path(directory), ec);
+  if (ec) {
     p.error = "cannot create profile directory";
     return p;
   }
-  auto load = [&](const char *name) -> Json {
+  auto load = [&](const char *name, Json &out) {
+    fs::path path = utf8_path(directory) / name;
+    if (!fs::exists(path, ec))
+      return;
     try {
-      auto text = read_text_file(directory + "/" + name);
-      auto j = Json::parse(text);
-      return j ? *j : Json();
-    } catch (...) {
-      return Json();
+      auto text = read_text_file(utf8_string(path));
+      auto parsed = Json::parse(text);
+      if (!parsed)
+        throw std::runtime_error("invalid JSON");
+      out = std::move(*parsed);
+    } catch (const std::exception &) {
+      // I keep the damaged file instead of silently replacing the user's data.
+      auto stamp = std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
+      fs::path backup = path;
+      backup += ".corrupt-" + stamp;
+      std::error_code ignored;
+      fs::rename(path, backup, ignored);
+      p.error = std::string("recovered after damaged ") + name + "; backup kept beside profile";
     }
   };
-  auto settings = load("owned-settings.json");
-  p.search_engine = settings.str("searchEngine", p.search_engine);
-  p.home_page = settings.str("homePage", p.home_page);
-  p.restore_tabs = settings.flag("restoreTabs", true);
-  p.workspaces = settings.flag("workspaces", true);
-  p.custom_search = settings.str("customSearch");
-  auto bookmarks = load("owned-bookmarks.json");
+  Json settings;
+  load("owned-settings.json", settings);
+  if (settings.type == Json::Type::Object) {
+    p.set_custom_search(settings.str("customSearch"));
+    p.set_search_engine(settings.str("searchEngine", p.search_engine));
+    p.set_home_page(settings.str("homePage", p.home_page));
+    p.restore_tabs = settings.flag("restoreTabs", true);
+    p.workspaces = settings.flag("workspaces", true);
+  }
+  Json bookmarks;
+  load("owned-bookmarks.json", bookmarks);
   if (bookmarks.type == Json::Type::Array)
-    for (auto &b : bookmarks.array)
-      p.bookmarks.push_back({b.str("title"), b.str("url")});
-  auto history = load("owned-history.json");
+    for (auto &b : bookmarks.array) {
+      if (p.bookmarks.size() >= 10000)
+        break;
+      auto url = b.str("url");
+      if (b.type == Json::Type::Object && valid_browser_url(url))
+        p.bookmarks.push_back({bounded(b.str("title", url), 512), url});
+    }
+  Json history;
+  load("owned-history.json", history);
   if (history.type == Json::Type::Array)
-    for (auto &h : history.array)
-      p.history.push_back({h.str("title"), h.str("url"), h.num("visited")});
-  auto session = load("owned-session.json");
+    for (auto &h : history.array) {
+      if (p.history.size() >= 5000)
+        break;
+      auto url = h.str("url");
+      double visited = h.num("visited", 0);
+      if (h.type == Json::Type::Object && valid_browser_url(url) && std::isfinite(visited) &&
+          visited >= 0)
+        p.history.push_back({bounded(h.str("title", url), 512), url, visited});
+    }
+  Json session;
+  load("owned-session.json", session);
   if (session.type == Json::Type::Array)
-    for (auto &t : session.array)
-      if (t.type == Json::Type::String)
+    for (auto &t : session.array) {
+      if (p.session_tabs.size() >= 64)
+        break;
+      if (t.type == Json::Type::String && valid_browser_url(t.string))
         p.session_tabs.push_back(t.string);
+    }
+  Json state;
+  load("owned-session-state.json", state);
+  p.session_active = int(state.num("active", 0));
+  if (!p.session_tabs.empty())
+    p.session_active = std::clamp(p.session_active, 0, int(p.session_tabs.size()) - 1);
+  else
+    p.session_active = 0;
   return p;
 }
 bool Profile::save() {
   if (private_mode)
     return true;
-  if (!make_directory(directory))
+  std::error_code ec;
+  fs::create_directories(utf8_path(directory), ec);
+  if (ec) {
+    error = "cannot create profile directory";
     return false;
+  }
   Json settings = Json::make_object();
   settings.set("schema", 1);
   settings.set("searchEngine", search_engine);
@@ -108,51 +160,124 @@ bool Profile::save() {
   settings.set("workspaces", workspaces);
   settings.set("customSearch", custom_search);
   Json bookmarks_json = Json::make_array();
-  for (auto &b : this->bookmarks) {
+  for (auto &b : bookmarks) {
     Json j = Json::make_object();
     j.set("title", b.title);
     j.set("url", b.url);
-    bookmarks_json.array.push_back(j);
+    bookmarks_json.array.push_back(std::move(j));
   }
   Json history_json = Json::make_array();
-  for (auto &h : this->history) {
+  for (auto &h : history) {
     Json j = Json::make_object();
     j.set("title", h.title);
     j.set("url", h.url);
     j.set("visited", h.visited);
-    history_json.array.push_back(j);
+    history_json.array.push_back(std::move(j));
+  }
+  bool ok = write_file_atomic(directory + "/owned-settings.json", settings.dump() + "\n", error);
+  ok =
+      write_file_atomic(directory + "/owned-bookmarks.json", bookmarks_json.dump() + "\n", error) &&
+      ok;
+  ok =
+      write_file_atomic(directory + "/owned-history.json", history_json.dump() + "\n", error) && ok;
+  ok = save_session() && ok;
+  return ok;
+}
+bool Profile::save_session() {
+  if (private_mode)
+    return true;
+  std::error_code ec;
+  fs::create_directories(utf8_path(directory), ec);
+  if (ec) {
+    error = "cannot create profile directory";
+    return false;
   }
   Json session = Json::make_array();
-  for (auto &t : session_tabs)
-    session.array.push_back(Json(t));
-  return write_file_atomic(directory + "/owned-settings.json", settings.dump() + "\n", error) &&
-         write_file_atomic(directory + "/owned-bookmarks.json", bookmarks_json.dump() + "\n",
-                           error) &&
-         write_file_atomic(directory + "/owned-history.json", history_json.dump() + "\n", error) &&
-         write_file_atomic(directory + "/owned-session.json", session.dump() + "\n", error);
+  for (size_t i = 0; i < session_tabs.size() && i < 64; ++i)
+    session.array.push_back(Json(session_tabs[i]));
+  Json state = Json::make_object();
+  state.set("schema", 1);
+  state.set("active",
+            session_tabs.empty() ? 0 : std::clamp(session_active, 0, int(session_tabs.size()) - 1));
+  bool ok = write_file_atomic(directory + "/owned-session.json", session.dump() + "\n", error);
+  ok = write_file_atomic(directory + "/owned-session-state.json", state.dump() + "\n", error) && ok;
+  return ok;
 }
 void Profile::visit(const std::string &title, const std::string &url) {
-  if (private_mode || !starts(url, "http"))
+  if (private_mode || !valid_browser_url(url) || !starts(url, "http"))
     return;
-  history.insert(history.begin(), {title, url, now_seconds()});
+  if (!history.empty() && history.front().url == url) {
+    history.front().title = bounded(title.empty() ? url : title, 512);
+    history.front().visited = now_seconds();
+    return;
+  }
+  history.insert(history.begin(), {bounded(title.empty() ? url : title, 512), url, now_seconds()});
   if (history.size() > 5000)
     history.resize(5000);
 }
 void Profile::bookmark(const std::string &title, const std::string &url) {
+  if (!valid_browser_url(url))
+    return;
   for (auto &b : bookmarks)
-    if (b.url == url)
+    if (b.url == url) {
+      b.title = bounded(title.empty() ? url : title, 512);
       return;
-  bookmarks.push_back({title, url});
-  if (bookmarks.size() > 10000)
-    bookmarks.pop_back();
+    }
+  if (bookmarks.size() >= 10000)
+    return;
+  bookmarks.push_back({bounded(title.empty() ? url : title, 512), url});
+}
+bool Profile::remove_bookmark(const std::string &url) {
+  auto it = std::remove_if(bookmarks.begin(), bookmarks.end(),
+                           [&](const Bookmark &b) { return b.url == url; });
+  bool removed = it != bookmarks.end();
+  bookmarks.erase(it, bookmarks.end());
+  return removed;
+}
+void Profile::clear_history() {
+  history.clear();
 }
 std::string Profile::search_template() const {
+  if (search_engine == "custom" && !custom_search.empty())
+    return custom_search;
   if (search_engine == "brave")
     return "https://search.brave.com/search?q=%s";
   if (search_engine == "startpage")
     return "https://www.startpage.com/sp/search?query=%s";
   if (search_engine == "wikipedia")
     return "https://en.wikipedia.org/w/index.php?search=%s";
+  if (search_engine == "google")
+    return "https://www.google.com/search?q=%s";
+  if (search_engine == "bing")
+    return "https://www.bing.com/search?q=%s";
   return "https://duckduckgo.com/?q=%s";
+}
+bool Profile::set_search_engine(const std::string &engine) {
+  static const std::set<std::string> allowed = {"duckduckgo", "google",    "bing",  "brave",
+                                                "startpage",  "wikipedia", "custom"};
+  if (!allowed.count(engine))
+    return false;
+  if (engine == "custom" && custom_search.empty())
+    return false;
+  search_engine = engine;
+  return true;
+}
+bool Profile::set_home_page(const std::string &url) {
+  if (!valid_browser_url(url))
+    return false;
+  home_page = url;
+  return true;
+}
+bool Profile::set_custom_search(const std::string &template_url) {
+  if (template_url.empty()) {
+    custom_search.clear();
+    return true;
+  }
+  auto url = parse_url(template_url);
+  if (!url || !url->network() || template_url.find("%s") == std::string::npos ||
+      template_url.size() > 8192)
+    return false;
+  custom_search = template_url;
+  return true;
 }
 } // namespace pv
