@@ -10,6 +10,7 @@ struct Rect {
 struct Canvas {
   int width = 0, height = 0;
   Bytes pixels;
+  Rect clip;
   Canvas(int w, int h, uint32_t color = 0xff000000);
   void fill(Rect r, uint32_t color);
   void stroke(Rect r, uint32_t color, double thickness = 1);

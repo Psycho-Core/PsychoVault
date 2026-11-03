@@ -473,7 +473,7 @@ struct Browser {
       }
     }
     if (y == size_t(content.y) + 80)
-      c.text(content.x + 40, y, "Nothing saved yet.", 13, MUTED);
+      c.text(content.x + 40, double(y), "Nothing saved yet.", 13, MUTED);
   }
   void draw_content(Canvas &c) {
     Tab &t = current();

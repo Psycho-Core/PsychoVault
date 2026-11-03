@@ -20,7 +20,7 @@ uint32_t blend(uint32_t d, uint32_t s) {
 }
 Canvas::Canvas(int w, int h, uint32_t color)
     : width(std::clamp(w, 1, 8192)), height(std::clamp(h, 1, 16384)),
-      pixels(size_t(width) * height * 4) {
+      pixels(size_t(width) * height * 4), clip{0, 0, double(width), double(height)} {
   for (size_t i = 0; i < pixels.size(); i += 4) {
     pixels[i] = color;
     pixels[i + 1] = color >> 8;
@@ -29,7 +29,7 @@ Canvas::Canvas(int w, int h, uint32_t color)
   }
 }
 void Canvas::pixel(int x, int y, uint32_t c) {
-  if (x < 0 || y < 0 || x >= width || y >= height)
+  if (x < 0 || y < 0 || x >= width || y >= height || !clip.contains(x + 0.5, y + 0.5))
     return;
   size_t i = (size_t(y) * width + x) * 4;
   uint32_t d =
@@ -41,10 +41,10 @@ void Canvas::pixel(int x, int y, uint32_t c) {
   pixels[i + 3] = o >> 24;
 }
 void Canvas::fill(Rect r, uint32_t c) {
-  int x0 = std::clamp(int(std::floor(r.x)), 0, width),
-      y0 = std::clamp(int(std::floor(r.y)), 0, height),
-      x1 = std::clamp(int(std::ceil(r.x + r.w)), 0, width),
-      y1 = std::clamp(int(std::ceil(r.y + r.h)), 0, height);
+  int x0 = std::clamp(int(std::floor(std::max(r.x, clip.x))), 0, width),
+      y0 = std::clamp(int(std::floor(std::max(r.y, clip.y))), 0, height),
+      x1 = std::clamp(int(std::ceil(std::min(r.x + r.w, clip.x + clip.w))), 0, width),
+      y1 = std::clamp(int(std::ceil(std::min(r.y + r.h, clip.y + clip.h))), 0, height);
   if ((c >> 24) == 255) {
     for (int y = y0; y < y1; ++y) {
       uint8_t *row = pixels.data() + (size_t(y) * width + x0) * 4;
