@@ -245,12 +245,12 @@ bool Process::start(const std::string &exe, const std::string &args, bool sandbo
         break;
     }
     if (!grant_object(GetProcessWindowStation(), app_sid,
-                      GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE)) {
+                      WINSTA_ALL_ACCESS)) {
       error = "cannot grant renderer window station access";
       return false;
     }
     if (!grant_object(GetThreadDesktop(GetCurrentThreadId()), app_sid,
-                      GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE)) {
+                      DESKTOP_ALL_ACCESS)) {
       error = "cannot grant renderer desktop access";
       return false;
     }
