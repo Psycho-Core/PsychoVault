@@ -23,6 +23,9 @@ int main() {
     std::cerr << "sandbox start failed: " << error << "\n";
     return 1;
   }
+  WaitForSingleObject(p.process, 3000);
+  DWORD exit_code = 0;
+  GetExitCodeProcess(p.process, &exit_code);
   std::string output;
   for (int i = 0; i < 100 && !output.empty() == false; ++i) {
     DWORD available = 0;
@@ -41,7 +44,8 @@ int main() {
   }
   p.terminate();
   DeleteFileA(sentinel.c_str());
-  std::cout << output << "\n";
+  std::cout << "exitCode=" << exit_code << " outputBytes=" << output.size() << "\n"
+            << output << "\n";
   bool ok = output.find("\"fileDenied\":1") != std::string::npos &&
             output.find("\"networkDenied\":1") != std::string::npos;
   std::cout << (ok ? "SANDBOX PASS: file read and network socket denied\n"
