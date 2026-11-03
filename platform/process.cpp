@@ -226,10 +226,11 @@ bool Process::start(const std::string &exe, const std::string &args, bool sandbo
   si.StartupInfo.hStdOutput = out_write;
   si.StartupInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);
   SIZE_T size = 0;
-  InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
+  DWORD attribute_count = sandbox ? 2 : 1;
+  InitializeProcThreadAttributeList(nullptr, attribute_count, 0, &size);
   std::vector<uint8_t> buffer(size);
   auto attrs = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(buffer.data());
-  InitializeProcThreadAttributeList(attrs, 1, 0, &size);
+  InitializeProcThreadAttributeList(attrs, attribute_count, 0, &size);
   HANDLE inherit[2] = {in_read, out_write};
   UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit, sizeof(inherit),
                             nullptr, nullptr);
@@ -237,9 +238,11 @@ bool Process::start(const std::string &exe, const std::string &args, bool sandbo
   caps.AppContainerSid = app_sid;
   caps.CapabilityCount = 0;
   caps.Capabilities = nullptr;
-  if (sandbox)
-    UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, &caps,
-                              sizeof(caps), nullptr, nullptr);
+  if (sandbox && !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
+                                            &caps, sizeof(caps), nullptr, nullptr)) {
+    error = "cannot set AppContainer security capabilities";
+    return false;
+  }
   si.lpAttributeList = attrs;
   std::wstring command = L"\"" + wide(exe) + L"\" " + wide(args);
   std::vector<wchar_t> cmd(command.begin(), command.end());
