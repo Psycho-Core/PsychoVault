@@ -88,8 +88,15 @@ jobs:
         id: sandbox
         shell: pwsh
         run: |
+          # I delete any stale report first. A gate that reads an old file proves
+          # nothing, and an ignored flag must never look like a pass.
+          Remove-Item build/sandbox-test.json -ErrorAction SilentlyContinue
           .\build\PsychoVault.exe --sandbox-test --sandbox-report build/sandbox-test.json --profile build/test-profile
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (!(Test-Path build/sandbox-test.json)) {
+            Write-Host "::error::My browser wrote no sandbox report, so the gate proved nothing."
+            exit 1
+          }
           python -c "import json; d=json.load(open('build/sandbox-test.json', encoding='utf-8')); print(json.dumps(d, indent=2)); assert d.get('ok') is True"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "## Required sandbox gate`n`n``````json" | Add-Content $env:GITHUB_STEP_SUMMARY
@@ -117,6 +124,7 @@ jobs:
             # code of the browser itself.
             $p = Start-Process -FilePath "$solo/PsychoVault.exe" -ArgumentList '--smoke','--expect-image','--url','http://127.0.0.1:8766/Psycho_browser-smoke.html','--capture','build/captures/standalone.png','--profile','build/solo-profile' -PassThru
             if ($p.WaitForExit(60000)) { $render = $p.ExitCode } else { $render = 99; try { $p.Kill($true) } catch {} }
+            Remove-Item build/solo-sandbox.json -ErrorAction SilentlyContinue
             $q = Start-Process -FilePath "$solo/PsychoVault.exe" -ArgumentList '--sandbox-test','--sandbox-report','build/solo-sandbox.json','--profile','build/solo-profile' -PassThru
             if ($q.WaitForExit(60000)) { $sandbox = $q.ExitCode } else { $sandbox = 99; try { $q.Kill($true) } catch {} }
           } finally {
@@ -161,6 +169,10 @@ jobs:
           }
           if ($render -ne 0) { Write-Host "::error::My standalone exe failed to render a fetched page (exit $render)"; exit 1 }
           if ($sandbox -ne 0) { Write-Host "::error::My standalone exe failed its sandbox gate (exit $sandbox)"; exit 1 }
+          if (!(Test-Path build/solo-sandbox.json)) {
+            Write-Host "::error::My lone exe wrote no sandbox report, so the gate proved nothing."
+            exit 1
+          }
           python -c "import json; d=json.load(open('build/solo-sandbox.json', encoding='utf-8')); assert d.get('ok') is True, d; print('My lone exe unpacked its renderer and passed containment.')"
           if ($LASTEXITCODE -ne 0) { exit 1 }
           "## My single-file exe rendered on its own" | Add-Content $env:GITHUB_STEP_SUMMARY

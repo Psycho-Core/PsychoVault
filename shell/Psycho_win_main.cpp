@@ -66,6 +66,7 @@ struct Session {
   int tab = 0;
   uint64_t generation = 0;
   std::string url;
+  std::string start_error;
   NetworkPolicy policy;
   double width = 1000, height = 700;
   std::mutex mutex;
@@ -117,6 +118,7 @@ static void post_update(HWND hwnd, UINT message, Update *update) {
 }
 void Session::run() {
   auto fail = [&](const std::string &error) {
+    start_error = error;
     post_update(hwnd, WM_FRAME, new Update{tab, generation, Json(), error, {}, {}});
     post_update(hwnd, WM_DONE, new Update{tab, generation, Json(), {}, {}, {}});
   };
@@ -1542,6 +1544,13 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         std::string renderer_error;
         why.set("rendererPath", renderer_executable(renderer_error));
         why.set("rendererError", renderer_error);
+        why.set("sessionStartError",
+                b->current().session ? b->current().session->start_error : std::string());
+        why.set("processIoError", b->current().session
+                                      ? b->current().session->process.io_error()
+                                      : std::string());
+        why.set("loading", b->current().loading);
+        why.set("elapsedMs", double(GetTickCount() - b->start_tick));
         auto report = b->capture_path.empty() ? std::string("smoke-failure.json")
                                              : b->capture_path + ".failure.json";
         std::string write_error;
@@ -1656,6 +1665,22 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
       url = args[++i];
     else if (args[i] == "--profile" && i + 1 < args.size())
       profile_dir = args[++i];
+    else if (args[i] == "--expect-image")
+      expect_image = true;
+    else if (args[i] == "--sandbox-test")
+      sandbox_test = true;
+    else if (args[i] == "--sandbox-report" && i + 1 < args.size())
+      sandbox_report = args[++i];
+    else if (starts(args[i], "--")) {
+      // I refuse an option I do not understand. A silently ignored flag turns a
+      // required gate into a pass that proves nothing.
+      // I must not show a modal dialog here: a blocked runner would hang the
+      // gate instead of failing it. My exit code is the signal.
+      std::string message = "I do not understand the option " + args[i] + "\n";
+      fwrite(message.data(), 1, message.size(), stderr);
+      fflush(stderr);
+      return 2;
+    }
   }
   if (sandbox_test)
     return run_sandbox_test(sandbox_report);

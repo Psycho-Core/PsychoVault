@@ -85,5 +85,16 @@ instructions=(ROOT/'docs/Psycho_TEST-BUILD.md').read_text()
 check('my test instructions need no shell commands','```powershell' not in instructions.lower())
 check('my test instructions start with a double-click','double-click' in instructions.lower())
 
+# My required gates are only real if my browser actually parses their flags.
+shell_flags=(ROOT/'shell/Psycho_win_main.cpp').read_text()
+for flag in ('--expect-image','--sandbox-test','--sandbox-report'):
+    check('my shell parses '+flag, 'args[i] == "'+flag+'"' in shell_flags)
+check('my shell refuses an option it does not understand',
+      'I do not understand the option' in shell_flags)
+for wf in ('.github/workflows/Psycho_owned-engine.yml','.github/workflows/Psycho_release.yml'):
+    body=(ROOT/wf).read_text()
+    check('my gate refuses a missing sandbox report: '+wf,'wrote no sandbox report' in body)
+    check('my gate deletes a stale sandbox report: '+wf,'Remove-Item build/sandbox-test.json' in body)
+
 print(f'\n{passed} passed, {len(fail)} failed')
 sys.exit(1 if fail else 0)

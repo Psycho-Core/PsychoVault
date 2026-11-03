@@ -479,13 +479,16 @@ bool Process::start(const std::string &exe, const std::string &args, bool sandbo
     sid_ = app_sid;
     if (!grant_path(wide(exe), app_sid, FILE_GENERIC_READ | FILE_GENERIC_EXECUTE))
       return fail("cannot grant read/execute on renderer executable");
-    // Only traverse ancestors. Do not grant directory listing or write access.
+    // Traverse grants on ancestors are best-effort. An AppContainer token keeps
+    // SeChangeNotifyPrivilege, so the kernel already bypasses traverse checks;
+    // and when my renderer unpacks under LocalAppData the ancestors include
+    // folders such as C:\Users whose DACL I have no right to rewrite. Failing
+    // here would block my own single-file exe. I still fail closed on the
+    // executable itself, and an unreachable path fails at CreateProcess.
     for (size_t cut = exe.find_last_of("/\\"); cut != std::string::npos && cut > 2;
-         cut = exe.find_last_of("/\\", cut - 1)) {
-      if (!grant_path(wide(exe.substr(0, cut)), app_sid,
-                      FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE))
-        return fail("cannot grant renderer ancestor traversal");
-    }
+         cut = exe.find_last_of("/\\", cut - 1))
+      grant_path(wide(exe.substr(0, cut)), app_sid,
+                 FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE);
     std::wstring station_name = L"PsychoVault." + wide(unique);
     station_ = CreateWindowStationW(station_name.c_str(), 0,
                                     WINSTA_ALL_ACCESS | STANDARD_RIGHTS_REQUIRED, nullptr);
