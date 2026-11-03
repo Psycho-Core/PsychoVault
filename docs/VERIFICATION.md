@@ -5,7 +5,7 @@ I am separating what passed from what failed, what is blocked, and what I have n
 ## Passed
 
 - Local GCC engine tests: 61 checks passed on the current preview branch (previous merged baseline: 33).
-- Local GCC address/undefined-behaviour sanitizer run: 33 checks passed on the merged baseline. I am rerunning sanitizers for the current preview before I call it verified.
+- Local GCC address/undefined-behaviour sanitizer run: 61 checks passed on the current preview, no sanitizer report.
 - Local source-boundary audit: 68 passed, 0 failed.
 - Local plan audit: 377 passed, 0 failed.
 - Windows hosted MSVC build: browser, renderer, headless CLI, tests and sandbox probe compiled.
@@ -20,11 +20,11 @@ I fixed actual hosted failures instead of hiding them: MSVC environment discover
 
 ## Open or not run
 
-- Current preview hosted Windows build: not run yet at the time I wrote this note. I made the AppContainer token/file/TCP/UDP test a required step and added a browser fixture that requires a decoded PNG image.
-- Current preview tab-session, Unicode-input and private-profile behaviour: local code and unit checks exist, but I still need the hosted GUI evidence for the complete interaction path.
+- Hosted Windows preview build run 41574713466: passed. It built with MSVC, ran 61 engine checks, rendered the headless fixture, captured the native home window, fetched a local page with CSS/JS/PNG through the sandboxed renderer, and passed the required AppContainer token/file/TCP/UDP gate from the browser GUI process. I restored conservative job UI restrictions and passed the final preview check in run 41575214798.
+- Tab-session, Unicode-input and private-profile behaviour: local code and unit checks exist, and the hosted GUI fetched-page/image smoke passed. I still need a dedicated hosted interaction test for tab switching, Unicode input and private-profile writes before I call those fully verified.
 
-- Previous AppContainer file-isolation harness: blocked on the hosted console runner. The child process exited with STATUS_DLL_INIT_FAILED before it could report token/file state. I changed the launcher to use a private window station/desktop, valid inherited standard handles, overlapped broker I/O and a framed renderer probe. I am not counting the fix as proven until the required hosted test passes.
-- Direct TCP/UDP socket denial probe: implemented in the renderer probe, but hosted evidence is pending. I am not claiming direct network denial until the required test passes.
+- The old console AppContainer harness was blocked by STATUS_DLL_INIT_FAILED. I fixed the launcher with a private low-labelled window station/desktop, valid inherited standard handles, overlapped broker I/O and a framed renderer probe. The required gate now runs from the browser GUI process, which is the same context that renders pages, and it passed in run 41574713466.
+- Direct TCP/UDP socket denial probe: passed in the required hosted GUI sandbox gate in run 41574713466. This proves the probe child could not create TCP or UDP sockets; it is not a full Proton or WebRTC leak test.
 - Proton VPN sign-in, proxy routing/auth, fail-closed behaviour, DNS and WebRTC policy: not run.
 - Full reference UI parity: not run.
 - Pinned WPT/Test262 subsets: not run.
@@ -34,3 +34,5 @@ I fixed actual hosted failures instead of hiding them: MSVC environment discover
 
 - PR #63: https://github.com/Psycho-Core/PsychoVault/pull/63
 - Development workflow: https://github.com/Psycho-Core/PsychoVault/actions/workflows/owned-engine.yml
+
+- Preview build links: https://github.com/Psycho-Core/PsychoVault/actions/runs/41574713466 and https://github.com/Psycho-Core/PsychoVault/actions/runs/41575214798

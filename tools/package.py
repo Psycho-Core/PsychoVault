@@ -3,7 +3,7 @@
 from __future__ import annotations
 import argparse, hashlib, pathlib, zipfile
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-BINARIES = ["PsychoVault.exe", "pv-renderer.exe", "pv-engine.exe", "pv-tests.exe", "pv-sandbox-test.exe"]
+BINARIES = ["PsychoVault.exe", "pv-renderer.exe", "pv-engine.exe", "pv-tests.exe"]
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--outdir", default="build")

@@ -8,7 +8,7 @@ This is a development preview of my own browser. I am giving it to myself and ot
 - I can load HTTP and HTTPS pages through my broker process while the page renderer runs in a Windows AppContainer.
 - I can run my JavaScript, CSS, layout and PNG image code on simple pages.
 - I can save bookmarks, history, search settings and my last tabs in my local profile.
-- I can run `pv-tests.exe` and `pv-sandbox-test.exe` from the extracted folder.
+- I can run `pv-tests.exe` and the browser's built-in sandbox gate from the extracted folder.
 
 ## How I run it
 
@@ -23,7 +23,8 @@ I open PowerShell in the extracted folder and run:
 
 ```powershell
 .\pv-tests.exe
-.\pv-sandbox-test.exe
+.\PsychoVault.exe --sandbox-test --sandbox-report sandbox-test.json
+Get-Content .\sandbox-test.json
 Get-FileHash .\PsychoVault.exe -Algorithm SHA256
 ```
 

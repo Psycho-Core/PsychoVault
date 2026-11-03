@@ -13,7 +13,7 @@ I am building the browser in the open, but I am not calling this finished. This 
 | Painting | Display list, software raster, owned PNG decoder/encoder, image blitting, Windows OS text rendering | Visual regression and performance tests |
 | Shell | Native Windows window, per-tab renderer sessions, omnibox, Unicode input/paste, stop/reload, home, bookmarks/history, General settings | Full reference UI parity and hosted interaction tests |
 | Networking | Broker-owned WinHTTP GET, TLS validation, redirects, size limits | Proxy, cookies, cache, POST, streaming and leak tests |
-| Process model | Renderer executable, framed binary-resource IPC, private-desktop AppContainer launcher, job object, required token/file/TCP/UDP probe | Hosted sandbox proof, escape tests and crash recovery |
+| Process model | Renderer executable, framed binary-resource IPC, private low-labelled desktop AppContainer launcher, job object, required token/file/TCP/UDP probe | Hosted sandbox proof passed; escape tests and crash recovery still open |
 | Profile | Validated owned-profile JSON files, corruption backups, atomic replacement, private mode, active-tab session restore | Migration fixtures and rollback |
 | Builds | GitHub-hosted Windows build, engine tests, sandbox probe, GUI captures | Repeated green runs and signed release gates |
 
