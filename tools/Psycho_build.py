@@ -80,7 +80,7 @@ def main():
         if rc is None:raise RuntimeError("rc.exe not found; I need the Windows SDK to embed my renderer")
         run([rc,"/nologo","/fo",str(payload_res),str(payload_rc)],env)
         target("PsychoVault",ENGINE+PLATFORM+["shell/Psycho_win_main.cpp"],winlibs,"WINDOWS",None,payload_res)
-        target("pv-sandbox-test",ENGINE+["platform/Psycho_process.cpp","tools/Psycho_sandbox_test.cpp"],winlibs)
+        target("pv-sandbox-test",ENGINE+["platform/Psycho_process.cpp","platform/Psycho_ipc.cpp","tools/Psycho_sandbox_test.cpp"],winlibs)
         target("pv-sandbox-minimal",["tools/Psycho_sandbox_minimal.cpp"],["kernel32","advapi32","ws2_32"],"WINDOWS","mainCRTStartup")
     print("Built",out)
 if __name__=="__main__":
