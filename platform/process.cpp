@@ -1,9 +1,9 @@
 #include "process.hpp"
 #ifdef _WIN32
 #define NOMINMAX
-#include <sddl.h>
-#include <userenv.h>
 #include <windows.h>
+#include <aclapi.h>
+#include <userenv.h>
 #else
 #include <cerrno>
 #include <cstring>
