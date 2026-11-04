@@ -134,6 +134,64 @@ std::string default_download_directory() {
   return (std::filesystem::path(base) / "Downloads").string();
 }
 
+
+// My own transport is not a Windows feature. The routing decision and the policy it
+// reads belong to both builds, so they sit outside the WinHTTP section and the
+// headless build reaches the same tunnel the windowed one does.
+namespace {
+// Credentials for the proxy that was actually routed to. My own VPN panel records
+// them on the server they belong to, and an extension hands them over for the proxy it
+// named, so a login is never sent to a proxy it was not entered for.
+bool proxy_credentials(const NetworkPolicy &policy, const ProxyServer &routed,
+                       std::string &user, std::string &password) {
+  if (routed.empty())
+    return false;
+  if (policy.proxy.has_auth() && lower(policy.proxy.single.host) == lower(routed.host)) {
+    user = policy.proxy.user;
+    password = policy.proxy.password;
+    return true;
+  }
+  if (policy.has_proxy_auth && !policy.proxy_user.empty()) {
+    user = policy.proxy_user;
+    password = policy.proxy_pass;
+    return true;
+  }
+  return false;
+}
+
+// True when this request has to go through my own transport. A false answer with an
+// empty server means the policy asked for a direct request; a false answer when the
+// proxy is active but unusable comes back as a fail-closed error instead.
+bool tunnel_route(const Url &url, const NetworkPolicy &policy, ProxyServer &server,
+                  std::string &reason) {
+  if (!policy.proxy.active())
+    return false;
+  if (!policy.proxy.route(url, server, reason))
+    return true; // fail-closed: the caller reads the reason and sends nothing
+  if (server.empty())
+    return false; // bypassed, so a direct request is what policy asked for
+  return server.scheme == "socks5" || server.scheme == "https";
+}
+
+TunnelConfig tunnel_config(const NetworkPolicy &policy, const ProxyServer &server, const Url &url) {
+  TunnelConfig config;
+  config.proxy = server;
+  config.has_auth = proxy_credentials(policy, server, config.user, config.pass);
+  config.user_agent = policy.user_agent;
+  config.accept_language = policy.accept_language;
+  config.send_dnt = policy.send_dnt;
+  config.strip_referrer = policy.strip_referrer;
+  config.fail_closed = true;
+  if (policy.cookies) {
+    bool cross_site =
+        !policy.top_level_host.empty() && lower(policy.top_level_host) != lower(url.host);
+    config.cookie_header = policy.cookies->header_for(url, double(now_ms()) / 1000.0, cross_site,
+                                                      policy.block_third_party_cookies);
+  }
+  return config;
+}
+} // namespace
+
 #ifdef _WIN32
 namespace {
 std::wstring wide(const std::string &text) {
@@ -202,26 +260,6 @@ ProxyAttempt apply_proxy(HINTERNET session, const Url &url, const NetworkPolicy 
 double now_seconds() {
   return double(now_ms()) / 1000.0;
 }
-// Credentials for the proxy that was actually routed to. My own VPN panel records
-// them on the server they belong to, and an extension hands them over for the proxy it
-// named, so a login is never sent to a proxy it was not entered for.
-bool proxy_credentials(const NetworkPolicy &policy, const ProxyServer &routed,
-                       std::string &user, std::string &password) {
-  if (routed.empty())
-    return false;
-  if (policy.proxy.has_auth() && lower(policy.proxy.single.host) == lower(routed.host)) {
-    user = policy.proxy.user;
-    password = policy.proxy.password;
-    return true;
-  }
-  if (policy.has_proxy_auth && !policy.proxy_user.empty()) {
-    user = policy.proxy_user;
-    password = policy.proxy_pass;
-    return true;
-  }
-  return false;
-}
-
 std::wstring request_headers(const Url &url, const NetworkPolicy &policy,
                             const RequestOptions &request, const ProxyServer &routed) {
   std::wstring headers = L"Accept: */*\r\nAccept-Encoding: identity\r\n";
@@ -258,38 +296,13 @@ std::wstring request_headers(const Url &url, const NetworkPolicy &policy,
 }
 } // namespace
 
-namespace {
-// When the resolved route is a proxy WinHTTP cannot tunnel through, I hand the
-// request to my own transport. That covers a SOCKS5 proxy and an HTTPS proxy, which
-// is what Proton's 4443 endpoint is, and it never falls back to a direct socket.
-bool tunnel_route(const Url &url, const NetworkPolicy &policy, ProxyServer &server,
-                  std::string &reason) {
-  if (!policy.proxy.active())
-    return false;
-  if (!policy.proxy.route(url, server, reason))
-    return true; // fail-closed: the caller reads the reason and sends nothing
-  if (server.empty())
-    return false; // bypassed, so a direct request is what policy asked for
+
+// A scheme WinHTTP cannot tunnel through has to be handed to my own transport. This
+// question only exists for the Windows path, because the headless build has no
+// WinHTTP at all and my tunnel carries every proxy scheme it accepts.
+bool routed_scheme_needs_tunnel(const ProxyServer &server) {
   return server.scheme == "socks5" || server.scheme == "https";
 }
-TunnelConfig tunnel_config(const NetworkPolicy &policy, const ProxyServer &server, const Url &url) {
-  TunnelConfig config;
-  config.proxy = server;
-  config.has_auth = proxy_credentials(policy, server, config.user, config.pass);
-  config.user_agent = policy.user_agent;
-  config.accept_language = policy.accept_language;
-  config.send_dnt = policy.send_dnt;
-  config.strip_referrer = policy.strip_referrer;
-  config.fail_closed = true;
-  if (policy.cookies) {
-    bool cross_site =
-        !policy.top_level_host.empty() && lower(policy.top_level_host) != lower(url.host);
-    config.cookie_header = policy.cookies->header_for(url, double(now_ms()) / 1000.0, cross_site,
-                                                     policy.block_third_party_cookies);
-  }
-  return config;
-}
-} // namespace
 
 Resource fetch_url(const Url &initial, const NetworkPolicy &policy, int timeout_ms,
                    size_t max_bytes) {
@@ -349,6 +362,24 @@ Resource fetch_url(const Url &initial, const NetworkPolicy &policy, const Reques
       out.ok = false;
       out.error = blocked;
       break;
+    }
+    // The route is decided once, here. A refusal is final, and a scheme my own
+    // transport carries is handed straight to it, redirects included, rather than
+    // letting WinHTTP take a second, differently behaving swing at it.
+    ProxyServer routed_server;
+    std::string routed_reason;
+    if (policy.proxy.active()) {
+      if (!policy.proxy.route(url, routed_server, routed_reason)) {
+        out.ok = false;
+        out.error = routed_reason.empty() ? "fail-closed: no proxy is configured for that URL"
+                                          : routed_reason;
+        break;
+      }
+      if (routed_scheme_needs_tunnel(routed_server)) {
+        out = tunneled_fetch(url, tunnel_config(policy, routed_server, initial), options.method,
+                             options.body, options.content_type, timeout_ms, max_bytes);
+        return out;
+      }
     }
     auto proxy = apply_proxy(session, url, policy);
     if (!proxy.ok) {
@@ -508,6 +539,54 @@ DownloadOutcome download_to_file(const Url &initial, const std::string &destinat
   std::ofstream file(partial, std::ios::binary | std::ios::trunc);
   if (!file) {
     outcome.error = "I cannot create the download file";
+    return outcome;
+  }
+  // A download is a request like any other, so it goes through the tunnel when the
+  // policy names one. Without this it was the one path that ignored my VPN.
+  ProxyServer routed;
+  std::string routed_reason;
+  if (tunnel_route(initial, policy, routed, routed_reason)) {
+    Resource fetched = routed.empty()
+                           ? Resource{}
+                           : tunneled_fetch(initial, tunnel_config(policy, routed, initial), "GET",
+                                            "", "", timeout_ms, uint64_t(1) << 30);
+    if (routed.empty()) {
+      fetched.ok = false;
+      fetched.error = routed_reason.empty() ? "fail-closed: no proxy is configured for that URL"
+                                            : routed_reason;
+    }
+    file.close();
+    if (!fetched.ok) {
+      outcome.error = fetched.error;
+      std::error_code ignored;
+      fs::remove(partial, ignored);
+      return outcome;
+    }
+    file.open(partial, std::ios::binary | std::ios::trunc);
+    file.write(fetched.text.data(), std::streamsize(fetched.text.size()));
+    file.close();
+    if (!file) {
+      outcome.error = "I could not finish writing the download";
+      std::error_code ignored;
+      fs::remove(partial, ignored);
+      return outcome;
+    }
+    std::error_code rename_error;
+    fs::rename(partial, destination, rename_error);
+    if (rename_error) {
+      outcome.error = "I could not put the download in place";
+      std::error_code ignored;
+      fs::remove(partial, ignored);
+      return outcome;
+    }
+    outcome.ok = true;
+    outcome.status = fetched.status;
+    outcome.final_url = fetched.url;
+    outcome.mime = fetched.mime;
+    outcome.received = fetched.bytes.size();
+    outcome.total = fetched.bytes.size();
+    if (progress)
+      progress(DownloadProgress{outcome.received, outcome.total});
     return outcome;
   }
   Url url = initial;
@@ -686,8 +765,11 @@ DownloadOutcome download_to_file(const Url &initial, const std::string &destinat
 Resource fetch_url(const Url &url, const NetworkPolicy &policy, int, size_t) {
   return fetch_url(url, policy, RequestOptions{}, 0, 0);
 }
-Resource fetch_url(const Url &url, const NetworkPolicy &policy, const RequestOptions &, int,
-                   size_t) {
+// This build has no WinHTTP, but it does have my own socket, SOCKS5, CONNECT and TLS
+// path, so a proxied request is a real request here rather than a refusal. A direct
+// request still has no transport, and I say that instead of pretending.
+Resource fetch_url(const Url &url, const NetworkPolicy &policy, const RequestOptions &options,
+                   int timeout_ms, size_t max_bytes) {
   Resource r;
   r.url = url.href();
   r.status = 0;
@@ -697,15 +779,18 @@ Resource fetch_url(const Url &url, const NetworkPolicy &policy, const RequestOpt
     r.error = reason;
     return r;
   }
-  ProxyServer server;
-  if (!policy.proxy.route(url, server, reason)) {
-    r.ok = false;
-    r.error = reason;
-    return r;
+  ProxyServer routed;
+  if (tunnel_route(url, policy, routed, reason)) {
+    if (routed.empty()) {
+      r.ok = false;
+      r.error = reason.empty() ? "fail-closed: no proxy is configured for that URL" : reason;
+      return r;
+    }
+    return tunneled_fetch(url, tunnel_config(policy, routed, url), options.method, options.body,
+                          options.content_type, timeout_ms, max_bytes);
   }
   r.ok = false;
-  r.status = 0;
-  r.error = "broker networking is implemented on Windows; headless CLI uses supplied resources";
+  r.error = "this build has no direct network transport; point me at a proxy and I will tunnel";
   return r;
 }
 

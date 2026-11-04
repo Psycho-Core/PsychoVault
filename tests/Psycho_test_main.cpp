@@ -285,6 +285,13 @@ struct LoopbackProxy {
   int port = 0;
   std::string seen_host, failure;
   std::vector<std::string> requests;
+  // When this is set the proxy answers with exactly these bytes and nothing is
+  // generated for it, which is how I test the framing edge cases.
+  std::string raw_reply;
+  // Where a redirect points. A relative one stays on the same host; an absolute one
+  // lets me make the next hop a different host, which is what the cookie and referer
+  // rules are about.
+  std::string location = "/moved";
   std::thread worker;
   // Each entry is the body of one reply, and `statuses` holds the matching status
   // lines, so I can serve a redirect and then the page behind it.
@@ -386,12 +393,37 @@ struct LoopbackProxy {
             break;
           request.append(chunk, size_t(n));
         }
+        // A request with a body is not finished at the blank line, so I read the
+        // body too before I answer it.
+        auto head_end = request.find("\r\n\r\n");
+        auto lower_request = request.substr(0, head_end);
+        for (auto &ch : lower_request)
+          ch = char(std::tolower(static_cast<unsigned char>(ch)));
+        auto length_at = lower_request.find("content-length:");
+        if (length_at != std::string::npos) {
+          size_t want = size_t(std::strtoull(lower_request.c_str() + length_at + 15, nullptr, 10));
+          size_t body_have = request.size() - (head_end + 4);
+          while (body_have < want) {
+            char more[1024];
+            int n = int(recv(client, more, sizeof more, 0));
+            if (n <= 0)
+              break;
+            request.append(more, size_t(n));
+            body_have += size_t(n);
+          }
+        }
         requests.push_back(request);
         const auto &status = reply.first;
         const auto &body = reply.second;
         std::string text = "HTTP/1.1 " + status + "\r\nContent-Type: text/html\r\n";
+        if (!raw_reply.empty()) {
+          write_all(raw_reply.data(), raw_reply.size());
+          shutdown(client, 2);
+          PSYCHO_CLOSESOCKET(client);
+          continue;
+        }
         if (status.rfind("30", 0) == 0)
-          text += "Location: /moved\r\nContent-Length: 0\r\n";
+          text += "Location: " + location + "\r\nContent-Length: 0\r\n";
         else
           text += "Content-Length: " + std::to_string(body.size()) + "\r\n";
         text += "Connection: close\r\n\r\n" + body;
@@ -1437,6 +1469,182 @@ int main() {
     CHECK(out.text == "tunnelled page");
     // The name reached the proxy, so nothing resolved it on this machine.
     CHECK(proxy.seen_host == "example.test");
+  }
+  {
+    // A redirect to another host must not carry the first host's cookies, and my
+    // Referer has to name the page that sent me rather than the page I am fetching.
+    LoopbackProxy proxy(std::vector<std::pair<std::string, std::string>>{
+        {"302 Found", ""}, {"200 OK", "other host"}});
+    proxy.location = "http://second.test/moved";
+    TunnelConfig config;
+    config.proxy.scheme = "socks5";
+    config.proxy.host = "127.0.0.1";
+    config.proxy.port = proxy.port;
+    config.cookie_header = "session=secret";
+    Resource out = tunneled_fetch(*parse_url("http://first.test/start"), config, "GET", "", "",
+                                  5000, kMaxResourceBytes);
+    CHECK(out.ok);
+    CHECK(proxy.requests.size() == 2);
+    if (proxy.requests.size() == 2) {
+      CHECK(proxy.requests[0].find("Cookie: session=secret") != std::string::npos);
+      // The redirect went to another host, so the first host's cookie stays behind
+      // and my referer names the page that sent me.
+      CHECK(proxy.requests[1].rfind("GET /moved HTTP/1.1", 0) == 0);
+      CHECK(proxy.requests[1].find("Host: second.test") != std::string::npos);
+      CHECK(proxy.requests[1].find("Cookie:") == std::string::npos);
+      CHECK(proxy.requests[1].find("Referer: http://first.test/") != std::string::npos);
+    }
+  }
+  {
+    // A 303 means fetch the new place with a GET and no body, whatever I sent
+    // before. A 307 means keep both.
+    LoopbackProxy proxy(std::vector<std::pair<std::string, std::string>>{
+        {"303 See Other", ""}, {"200 OK", "after see other"}});
+    TunnelConfig config;
+    config.proxy.scheme = "socks5";
+    config.proxy.host = "127.0.0.1";
+    config.proxy.port = proxy.port;
+    Resource out = tunneled_fetch(*parse_url("http://post.test/form"), config, "POST", "a=1&b=2",
+                                  "application/x-www-form-urlencoded", 5000, kMaxResourceBytes);
+    CHECK(out.ok);
+    CHECK(proxy.requests.size() == 2);
+    if (proxy.requests.size() == 2) {
+      CHECK(proxy.requests[0].rfind("POST /form HTTP/1.1", 0) == 0);
+      CHECK(proxy.requests[0].find("a=1&b=2") != std::string::npos);
+      CHECK(proxy.requests[1].rfind("GET /moved HTTP/1.1", 0) == 0);
+      CHECK(proxy.requests[1].find("a=1&b=2") == std::string::npos);
+      CHECK(proxy.requests[1].find("Content-Type:") == std::string::npos);
+    }
+  }
+  {
+    LoopbackProxy proxy(std::vector<std::pair<std::string, std::string>>{
+        {"307 Temporary Redirect", ""}, {"200 OK", "after temporary"}});
+    TunnelConfig config;
+    config.proxy.scheme = "socks5";
+    config.proxy.host = "127.0.0.1";
+    config.proxy.port = proxy.port;
+    Resource out = tunneled_fetch(*parse_url("http://post.test/form"), config, "POST", "a=1",
+                                  "text/plain", 5000, kMaxResourceBytes);
+    CHECK(out.ok);
+    if (proxy.requests.size() == 2) {
+      CHECK(proxy.requests[1].rfind("POST /moved HTTP/1.1", 0) == 0);
+      CHECK(proxy.requests[1].find("a=1") != std::string::npos);
+    }
+  }
+  {
+    // Four ways a response can lie about where its body ends. Each one has to be an
+    // error, because rendering half a page as if it were whole is worse.
+    struct Case {
+      const char *what;
+      std::string reply;
+      const char *expected;
+    };
+    std::vector<Case> cases{
+        {"chunk size", "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nabc\r\n0\r\n\r\n",
+         "chunk size"},
+        {"chunk break", "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabcXX0\r\n\r\n",
+         "line break"},
+        {"two lengths", "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 9\r\n\r\nhello",
+         "two different Content-Length"},
+        {"short body", "HTTP/1.1 200 OK\r\nContent-Length: 40\r\n\r\nshort", "before the end"},
+        {"not a number", "HTTP/1.1 200 OK\r\nContent-Length: lots\r\n\r\nhello", "not a number"},
+    };
+    for (const auto &test_case : cases) {
+      LoopbackProxy proxy(std::vector<std::pair<std::string, std::string>>{{"200 OK", ""}});
+      proxy.raw_reply = test_case.reply;
+      TunnelConfig config;
+      config.proxy.scheme = "socks5";
+      config.proxy.host = "127.0.0.1";
+      config.proxy.port = proxy.port;
+      Resource out =
+          tunneled_fetch(*parse_url("http://broken.test/"), config, "GET", "", "", 5000,
+                         kMaxResourceBytes);
+      if (out.ok || out.error.find(test_case.expected) == std::string::npos)
+        std::cerr << "framing case " << test_case.what << " gave: ok=" << out.ok
+                  << " error=" << out.error << "\n";
+      CHECK(!out.ok);
+      CHECK(out.error.find(test_case.expected) != std::string::npos);
+    }
+  }
+  {
+    // A HEAD reply carries a length and no body, so asking for one must not sit
+    // waiting for bytes that are never coming.
+    LoopbackProxy proxy(std::vector<std::pair<std::string, std::string>>{{"200 OK", ""}});
+    proxy.raw_reply = "HTTP/1.1 200 OK\r\nContent-Length: 9000\r\n\r\n";
+    TunnelConfig config;
+    config.proxy.scheme = "socks5";
+    config.proxy.host = "127.0.0.1";
+    config.proxy.port = proxy.port;
+    Resource out = tunneled_fetch(*parse_url("http://head.test/"), config, "HEAD", "", "", 5000,
+                                  kMaxResourceBytes);
+    CHECK(out.ok);
+    CHECK(out.status == 200);
+    CHECK(out.text.empty());
+  }
+  {
+    // My tunnel only counts as a VPN with a protected scheme. A plain HTTP proxy is
+    // still routed, because the ordinary web has always supported one, but the code
+    // that decides is the same one, and this check pins the distinction.
+    ProxyServer plain{"http", "127.0.0.1", 3128};
+    ProxyServer secure{"https", "127.0.0.1", 4443};
+    ProxyServer socks{"socks5", "127.0.0.1", 1080};
+    CHECK(plain.valid() && secure.valid() && socks.valid());
+    CHECK(socks.scheme == "socks5");
+  }
+  {
+    // A scheme I never wrote must be refused before a socket is opened, not treated
+    // as an HTTP proxy because the code fell through to it.
+    TunnelConfig config;
+    config.proxy.scheme = "quic-ish";
+    config.proxy.host = "127.0.0.1";
+    config.proxy.port = 1;
+    Resource out = tunneled_fetch(*parse_url("http://example.test/"), config, "GET", "", "", 500,
+                                  kMaxResourceBytes);
+    CHECK(!out.ok);
+    CHECK(out.error.find("fail-closed") != std::string::npos);
+    CHECK(out.error.find("quic-ish") != std::string::npos);
+  }
+  {
+    // An IPv6 literal has to be bracketed in a CONNECT target or the proxy reads the
+    // address's own colons as the port separator.
+    ScriptStream stream;
+    stream.script = Bytes{};
+    std::string connect_error;
+    TunnelTarget target{"2001:db8::1", 443};
+    http_connect(stream, target, "", "", false, connect_error);
+    auto text = stream.text();
+    CHECK(text.rfind("CONNECT [2001:db8::1]:443 HTTP/1.1", 0) == 0);
+  }
+  {
+    // A stream that reports a successful read of zero bytes used to leave my framing
+    // loops waiting forever. A reader that is handed nothing now gets an error.
+    class EmptyStream : public Stream {
+    public:
+      bool write_all(const uint8_t *, size_t, std::string &) override { return true; }
+      bool read_some(uint8_t *, size_t, size_t &got, std::string &) override {
+        got = 0;
+        return true;
+      }
+      bool alive() const override { return true; }
+    };
+    EmptyStream stream;
+    HttpRequest request;
+    request.host = "empty.test";
+    HttpResponse response;
+    std::string error;
+    CHECK(!http_exchange(stream, request, response, error));
+    CHECK(error.find("stopped sending") != std::string::npos);
+  }
+  {
+    // Strictly a transport check: peer_subject must be empty before a handshake, and
+    // a build with no TLS provider must refuse rather than fall back to plaintext.
+#ifndef _WIN32
+    SocketStream plain{Socket()};
+    std::string error;
+    auto tls = TlsStream::open(plain, "example.com", error);
+    CHECK(!tls);
+    CHECK(error.find("refuse") != std::string::npos);
+#endif
   }
   Canvas c(64, 64, 0xff000000);
   c.fill({0, 0, 64, 64}, 0xff112233);

@@ -51,6 +51,21 @@ I am working through my browser one step at a time, in the order that gets me so
   `width` and `height` and aspect ratio, decode through my own code and are
   painted by my own raster.
 
+## What my audit of step 7 changed
+
+I went back through the transport after shipping it and found fifteen defects. The
+worst was a download opening its own session with no reference to my proxy, which
+is a direct connection from a browser whose panel said it was tunnelling. The
+rest are in my audit page: a cookie and a referer that followed a redirect to
+another host, a 303 that kept its POST body, a chunk header I could not read
+being treated as the end of the body, a short body returned as complete, two
+disagreeing Content-Length values, a HEAD reply read as if it had a body, an
+unknown scheme falling through to the HTTP path, an unbracketed IPv6 target, a
+blocking connect that ignored my timeout, a zero-byte successful read that could
+spin my framing forever, revocation requested but never checked, a subject
+accessor that returned the wrong value, a routing decision made twice, and a
+panel that accepted a plaintext scheme. Each one has a check now.
+
 ## What this build adds over 0.9.0
 
 - **A media pipeline I wrote.** My own WAV reader, my own AVI reader for MJPEG
@@ -143,7 +158,7 @@ I want to be straight about one difference: my engine runs one statement at a ti
 
 ## Evidence required before I hand over a preview
 
-- The engine and page-host tests pass locally and on Windows. They now stand at 608 checks, including pattern matching, promise ordering, async/await, a `fetch` round trip through my page host, my media readers, and a tunnel driven over a real loopback socket.
+- The engine and page-host tests pass locally and on Windows. They now stand at 648 checks, including pattern matching, promise ordering, async/await, a `fetch` round trip through my page host, my media readers, and a tunnel driven over a real loopback socket.
 - The single-file gate passes on hosted Windows for the exact commit I publish.
 - A local HTTP test proves main-document, stylesheet, script and PNG loading through my page host.
 - The Windows artifact contains only my executables, notices and build metadata - no profile, credential or source-control directory.

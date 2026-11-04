@@ -1036,6 +1036,9 @@ struct Browser {
                 "setting-vpn-server");
       value_row("Scheme", profile.proxy.active() ? profile.proxy.single.scheme : "none",
                 "setting-vpn-scheme");
+      if (profile.proxy.active() && profile.proxy.single.scheme == "http")
+        note("This is a plain HTTP proxy, so my traffic to it is not encrypted. I only "
+             "count socks5 and https as a tunnel.");
       value_row("Username", profile.proxy.has_auth() ? profile.proxy.user : "none",
                 "setting-vpn-user");
       value_row("Password", profile.proxy.has_auth() ? std::string(8, '*') : "none",
@@ -1152,7 +1155,8 @@ struct Browser {
           profile.proxy.mode = ProxyConfig::Mode::FixedServers;
           profile.proxy.single.host = host;
           profile.proxy.single.port = port;
-          if (profile.proxy.single.scheme.empty())
+          if (profile.proxy.single.scheme != "socks5" &&
+              profile.proxy.single.scheme != "https")
             profile.proxy.single.scheme = "socks5";
           profile.proxy.fail_closed = true;
           status = "Tunnel set to " + profile.proxy.single.scheme + " " + host + ":" +
@@ -1160,17 +1164,17 @@ struct Browser {
         }
       }
     } else if (key == "vpnScheme") {
+      // Only the two schemes that protect the connection are offered here. A plain
+      // HTTP proxy would put my CONNECT target and my login on the network in clear
+      // text, and that is not a VPN whatever the panel calls it.
       const std::string wanted = lower(value);
-      for (auto candidate : {"socks5", "https", "http"}) {
-        if (wanted != candidate)
-          continue;
-        profile.proxy.single.scheme = candidate;
-        status = std::string("Tunnel scheme ") + candidate;
-        if (wanted == "socks5" || wanted == "https")
-          profile.proxy.fail_closed = true;
+      if (wanted == "socks5" || wanted == "https") {
+        profile.proxy.single.scheme = wanted;
+        profile.proxy.fail_closed = true;
+        status = "Tunnel scheme " + wanted;
+      } else {
+        status = "My VPN takes socks5 or https, not " + (wanted.empty() ? "nothing" : wanted);
       }
-      if (lower(value) != "socks5" && lower(value) != "https" && lower(value) != "http")
-        status = "My tunnel takes socks5, https or http";
     } else if (key == "vpnUser") {
       profile.proxy.user = value;
       status = "Tunnel username saved";
