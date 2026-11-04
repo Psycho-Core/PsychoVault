@@ -78,7 +78,7 @@ def main():
     # the tool that walks a Test262 tree, so a measurement never needs the shell.
     target("pv-conformance",["engine/Psycho_base.cpp","engine/Psycho_js_parser.cpp",
                              "engine/Psycho_js_runtime.cpp","engine/Psycho_regex.cpp",
-                             "tools/Psycho_conformance.cpp"])
+                             "tools/Psycho_conformance.cpp"],winlibs if windows else [])
     if windows:
         # My browser is one file because my page host and my engine are linked
         # straight into it. Nothing is unpacked and nothing sits beside it.
