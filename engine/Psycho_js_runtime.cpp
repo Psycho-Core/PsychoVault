@@ -356,6 +356,8 @@ static Value from_json(const Json &j, Runtime &r) {
 }
 
 Runtime::Runtime(Host *host) : host_(host) {
+  char base = 0;
+  stack_base_ = &base;
   global_ = static_cast<Env *>(allocate(Object::Kind::Environment));
   extra_roots_.push_back(global_);
   install_builtins();
@@ -1217,9 +1219,21 @@ Value Runtime::error_object(const Value &thrown) {
   error.object->properties["__error__"] = Value(name);
   return error;
 }
+// 192 KiB of stack is what a runtime may use for nested script calls. It is well
+// under the 1 MiB a Windows exe thread starts with and far above what a normal
+// page needs.
+namespace {
+constexpr size_t kStackBudget = 192u * 1024u;
+} // namespace
 Value Runtime::call_sync(Value fn, const Values &args, Value this_value) {
   tick();
-  if (++depth_ > 128) {
+  // A recursive script can catch a RangeError and try again, so I check both the
+  // number of frames and how much of my own stack they have taken. The second check
+  // is what keeps a 1 MiB Windows thread safe when the compiler makes frames big.
+  char here = 0;
+  size_t used = stack_base_ ? size_t(stack_base_ > &here ? stack_base_ - &here : &here - stack_base_)
+                            : 0;
+  if (++depth_ > 128 || used > kStackBudget) {
     --depth_;
     throw JsError{Value("RangeError: Maximum call stack size exceeded")};
   }

@@ -245,6 +245,10 @@ private:
     Value value;
   };
   Value call_sync(Value fn, const Values &args, Value this_value);
+  // Where my C++ stack was when this runtime started. A recursive script cannot be
+  // allowed to run my own stack out, and counting JavaScript frames is not enough
+  // when the compiler chooses how much stack a frame takes.
+  const char *stack_base_ = nullptr;
   // Turns a thrown message into the error object a page catches.
   Value error_object(const Value &thrown);
   Host *host_;
