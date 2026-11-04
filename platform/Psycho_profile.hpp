@@ -24,6 +24,13 @@ public:
   // Privacy and security
   bool block_ads = true, block_third_party_cookies = true, send_dnt = true;
   bool strip_referrer = false, clear_on_exit = false;
+  // My HTTPS policy: upgrade everything, and the hosts that told me to keep using
+  // HTTPS, persisted so a restart cannot be talked back down to plain HTTP.
+  bool https_only = false;
+  std::string hsts;
+  // A filter list file on disk, if the user points me at one. I never download a
+  // list on my own.
+  std::string filter_list_path;
   std::string web_rtc_policy = "default";
   std::vector<std::string> blocked_hosts, block_allow_sites;
   // A VPN extension owns this; I persist it so a restart does not silently
@@ -34,7 +41,7 @@ public:
   bool high_contrast = false, reduce_motion = false, show_tab_close_buttons = true;
   bool hide_sidebar = false;
   // Performance
-  int cpu_limit = 0, sleep_tabs_minutes = 0;
+  int cpu_limit = 0, sleep_tabs_minutes = 0, memory_limit_mb = 0;
   bool battery_saver = false;
   // Spelling
   bool spell_check = true;

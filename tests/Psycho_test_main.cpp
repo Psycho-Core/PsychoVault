@@ -5,6 +5,7 @@
 #include "../platform/Psycho_download.hpp"
 #include "../platform/Psycho_host.hpp"
 #include "../platform/Psycho_transport.hpp"
+#include "../platform/Psycho_sandbox.hpp"
 #include "Psycho_image_fixtures.hpp"
 #include "Psycho_media_fixtures.hpp"
 #include <cassert>
@@ -710,7 +711,7 @@ int main() {
   {
     std::vector<HostEvent> events;
     Host host(
-        [](const std::string &url) {
+        [](const std::string &url, ResourceType) {
           Resource r;
           r.url = url;
           if (url == "https://local.test/") {
@@ -1157,7 +1158,7 @@ int main() {
     Bytes avi = make_avi();
     std::vector<HostEvent> events;
     Host host(
-        [&](const std::string &url) {
+        [&](const std::string &url, ResourceType) {
           Resource r;
           r.url = url;
           if (url == "https://media.test/") {
@@ -1232,7 +1233,7 @@ int main() {
     Bytes wav = make_wav(8000, 2000, 9000);
     std::vector<HostEvent> events;
     Host host(
-        [&](const std::string &url) {
+        [&](const std::string &url, ResourceType) {
           Resource r;
           r.url = url;
           if (url == "https://mse.test/segment.wav") {
@@ -2259,7 +2260,7 @@ int main() {
   {
     std::map<std::string, int> fetches;
     std::vector<HostEvent> events;
-    Host::Fetcher fetcher = [&](const std::string &url) {
+    Host::Fetcher fetcher = [&](const std::string &url, ResourceType) {
       ++fetches[url];
       Resource r;
       r.url = url;
@@ -2327,7 +2328,7 @@ int main() {
   {
     std::vector<HostEvent> events;
     Host host(
-        [](const std::string &url) {
+        [](const std::string &url, ResourceType) {
           Resource r;
           r.url = url;
           r.mime = "text/html";
@@ -2361,7 +2362,7 @@ int main() {
   {
     std::vector<HostEvent> events;
     Host host(
-        [](const std::string &url) {
+        [](const std::string &url, ResourceType) {
           Resource r;
           r.url = url;
           r.mime = "text/html";
@@ -2385,7 +2386,7 @@ int main() {
   {
     std::vector<HostEvent> events;
     Host host(
-        [](const std::string &url) {
+        [](const std::string &url, ResourceType) {
           Resource r;
           r.url = url;
           r.mime = "text/html";
@@ -2408,7 +2409,7 @@ int main() {
   {
     bool reported = false;
     Host host(
-        [](const std::string &url) {
+        [](const std::string &url, ResourceType) {
           Resource r;
           r.url = url;
           r.ok = false;
@@ -2427,7 +2428,7 @@ int main() {
   {
     std::vector<HostEvent> events;
     Host host(
-        [](const std::string &url) -> Resource {
+        [](const std::string &url, ResourceType) -> Resource {
           if (url == "https://example.test/") {
             Resource r;
             r.url = url;
@@ -2768,6 +2769,186 @@ int main() {
     // The tall green child is clipped at the bottom of its 20px box.
     CHECK(((pixel(100, 30) >> 8) & 255) == 255);
     CHECK(pixel(100, 60) == 0xffffffff);
+  }
+  {
+    // My HTTPS policy. A header from an HTTPS answer is a promise I keep, the same
+    // header read from a plain HTTP answer is not, and a year is as long as any
+    // promise lasts.
+    HttpsPolicy rules;
+    CHECK(!rules.requires_https("shop.test"));
+    CHECK(rules.record_header("shop.test", true, "max-age=3600; includeSubDomains", 1000));
+    CHECK(rules.requires_https("shop.test"));
+    CHECK(rules.requires_https("cdn.shop.test"));
+    CHECK(!rules.requires_https("other.test"));
+    // Anyone on the path could write that header into a plain answer, so I ignore it.
+    CHECK(!rules.record_header("plain.test", false, "max-age=3600", 1000));
+    CHECK(!rules.requires_https("plain.test"));
+    // A million years from now is still one year from now.
+    CHECK(rules.record_header("long.test", true, "max-age=999999999", 1000));
+    bool capped = false;
+    for (const auto &entry : rules.entries)
+      if (entry.host == "long.test") capped = entry.expires_at == 1000 + kMaxHstsMillis;
+    CHECK(capped);
+    // max-age=0 is a site taking the promise back.
+    CHECK(rules.record_header("shop.test", true, "max-age=0", 2000));
+    CHECK(!rules.requires_https("shop.test"));
+    // An expired entry stops applying once I prune it.
+    CHECK(rules.record_header("short.test", true, "max-age=60", 1000));
+    rules.prune(70000);
+    CHECK(!rules.requires_https("short.test"));
+    // The store survives a restart through my own JSON.
+    CHECK(rules.record_header("keep.test", true, "max-age=600", 100000));
+    HttpsPolicy restored;
+    restored.from_json(rules.to_json());
+    CHECK(restored.requires_https("keep.test"));
+    // An upgrade changes the scheme before a socket opens, and only for the hosts
+    // that asked.
+    Url plain{"http", "keep.test", "/login", "", "", "", true};
+    Url secure{"https", "keep.test", "/login", "", "", "", true};
+    CHECK(restored.should_upgrade(plain));
+    CHECK(!restored.should_upgrade(secure));
+    CHECK(!restored.should_upgrade(Url{"http", "stranger.test", "/", "", "", "", true}));
+    // The always-HTTPS setting upgrades everything except loopback.
+    CHECK(restored.should_upgrade(Url{"http", "stranger.test", "/", "", "", "", true}, true));
+    CHECK(!restored.should_upgrade(Url{"http", "localhost", "/", "", "", "", true}, true));
+    CHECK(!restored.should_upgrade(Url{"http", "127.0.0.1", "/", "", "", "", true}, true));
+    // Mixed content: an HTTPS page does not pull plain HTTP behind my back, but my
+    // own loopback development server is not on the network.
+    CHECK(restored.blocks_mixed_content(secure, Url{"http", "cdn.test", "/a.js", "", "", "", true}));
+    CHECK(!restored.blocks_mixed_content(secure, Url{"https", "cdn.test", "/a.js", "", "", "", true}));
+    CHECK(!restored.blocks_mixed_content(secure, Url{"http", "127.0.0.1", "/a.js", "", "", "", true}));
+    CHECK(restored.blocks_insecure_submit(secure, Url{"http", "forms.test", "/send", "", "", "", true}));
+    CHECK(!restored.blocks_insecure_submit(secure, Url{"https", "forms.test", "/send", "", "", "", true}));
+    CHECK(!restored.blocks_insecure_submit(Url{"http", "blog.test", "/", "", "", "", true},
+                                           Url{"http", "forms.test", "/send", "", "", "", true}));
+    CHECK(resource_type_name(ResourceType::Script) == "script");
+    CHECK(resource_type_name(ResourceType::XmlHttpRequest) == "xmlhttprequest");
+  }
+  {
+    // My confinement layer says what it did and what it did not do. On Windows the
+    // job object is real and the cap is reported; on this build there is no job
+    // object, so the answer is that nothing was limited. Either way the sentence
+    // refuses to call a resource cap isolation.
+    std::string error;
+    bool applied = confine_process(4096ull * 1024ull * 1024ull, 50, error);
+    ConfinementStatus status = confinement_status();
+    CHECK(status.isolated == false);
+    CHECK(applied == status.limited);
+    if (applied) CHECK(status.memory_bytes == 4096ull * 1024ull * 1024ull);
+    else CHECK(!error.empty());
+    std::string summary = confinement_summary(status);
+    CHECK(summary.find("not isolated") != std::string::npos);
+    CHECK(applied ? summary.find("4096 MiB") != std::string::npos
+                  : summary.find("No memory cap") != std::string::npos);
+  }
+  {
+    // My filter list. Comments are ignored, cosmetic rules are refused rather than
+    // half-run, and an exception beats a block however the list is ordered.
+    FilterList list;
+    std::string error;
+    const std::string text =
+        "! my own list\n"
+        "[Adblock Plus 2.0]\n"
+        "||doubleclick.net^\n"
+        "||ads.example.com^$script,third-party\n"
+        "||ads.example.com^$image\n"
+        "@@||ads.example.com/keep.js$script\n"
+        "example.com##.banner\n"
+        "||pick.test^$sitekey=abc\n";
+    CHECK(list.parse(text, error));
+    CHECK(error.empty());
+    CHECK(list.size() == 4);
+    CHECK(list.exceptions() == 1);
+    CHECK(list.skipped.size() == 2);
+    CHECK(list.skipped[0].find("cosmetic") != std::string::npos);
+    CHECK(list.skipped[1].find("8:") == 0);
+    // A host anchor covers the host and its subdomains, and cannot be talked into
+    // matching a query string that merely mentions the name.
+    CHECK(list.match(*parse_url("https://doubleclick.net/ad.js"), ResourceType::Script,
+                     "shop.test") != nullptr);
+    CHECK(list.match(*parse_url("https://sub.doubleclick.net/ad.js"), ResourceType::Script,
+                     "shop.test") != nullptr);
+    CHECK(list.match(*parse_url("https://example.test/?u=doubleclick.net"), ResourceType::Script,
+                     "shop.test") == nullptr);
+    // The type and the party both have to agree with the rule.
+    CHECK(list.match(*parse_url("https://ads.example.com/a.js"), ResourceType::Script,
+                     "shop.test") != nullptr);
+    // The image rule names images, so a stylesheet from the same host is not it.
+    CHECK(list.match(*parse_url("https://ads.example.com/a.css"), ResourceType::Stylesheet,
+                     "shop.test") == nullptr);
+    CHECK(list.match(*parse_url("https://ads.example.com/a.png"), ResourceType::Image,
+                     "shop.test") != nullptr);
+    CHECK(list.match(*parse_url("https://ads.example.com/a.js"), ResourceType::Script,
+                     "example.com") == nullptr);
+    // The exception wins for the one script the site needs.
+    const FilterRule *keep = list.match(*parse_url("https://ads.example.com/keep.js"),
+                                        ResourceType::Script, "shop.test");
+    CHECK(keep != nullptr);
+    CHECK(keep && keep->exception);
+    // A rule that names one site and not another is honoured both ways.
+    FilterList scoped;
+    CHECK(scoped.parse("||track.test^$domain=shop.test|~quiet.test", error));
+    CHECK(scoped.match(*parse_url("https://track.test/x"), ResourceType::Script, "shop.test") !=
+          nullptr);
+    CHECK(scoped.match(*parse_url("https://track.test/x"), ResourceType::Script, "quiet.test") ==
+          nullptr);
+    CHECK(scoped.match(*parse_url("https://track.test/x"), ResourceType::Script, "other.test") ==
+          nullptr);
+    // An empty list is an error I can report instead of a silent nothing.
+    FilterList empty;
+    CHECK(!empty.parse("! only a comment\n", error));
+    CHECK(!error.empty());
+  }
+  {
+    // The same decisions, taken through the request path a tab actually uses.
+    FilterList list;
+    std::string error;
+    list.parse("||ads.test^$script\n", error);
+    FilterCounters counts;
+    HttpsPolicy store;
+    store.record_header("bank.test", true, "max-age=3600", 0);
+    NetworkPolicy net;
+    net.block_ads = true;
+    net.filters = &list;
+    net.filter_counts = &counts;
+    net.https = &store;
+    net.top_level_host = "shop.test";
+    net.top_level_scheme = "https";
+    net.type = ResourceType::Script;
+    auto ad = parse_url("https://ads.test/banner.js");
+    CHECK(ad.has_value());
+    Resource blocked = fetch_url(*ad, net, 5000, 1u << 20);
+    CHECK(!blocked.ok);
+    CHECK(blocked.refused);
+    CHECK(blocked.error.find("my filter") != std::string::npos);
+    CHECK(counts.blocked == 1);
+    // The per-site exception turns the blocker off for that site alone.
+    net.allowed_hosts = {"shop.test"};
+    CHECK(!fetch_url(*ad, net, 5000, 1u << 20).refused);
+    net.allowed_hosts.clear();
+    // Mixed content is refused even with the blocker off.
+    NetworkPolicy mixed = net;
+    mixed.block_ads = false;
+    mixed.type = ResourceType::Image;
+    auto cleartext = parse_url("http://cdn.test/x.png");
+    Resource refused_cleartext = fetch_url(*cleartext, mixed, 5000, 1u << 20);
+    CHECK(refused_cleartext.refused);
+    CHECK(refused_cleartext.error.find("plain HTTP") != std::string::npos);
+    CHECK(store.blocked_mixed.load() == 1);
+    // An always-HTTPS rule upgrades the address before anything is dialled. This
+    // build has no direct transport, so the upgraded attempt fails to connect and
+    // is retried once in the clear - which is the fallback, and I count it.
+    mixed.https_only = true;
+    uint64_t fallbacks = store.fallbacks.load();
+    Resource upgraded = fetch_url(*cleartext, mixed, 5000, 1u << 20);
+    CHECK(!upgraded.refused);
+    CHECK(store.fallbacks.load() == fallbacks + 1);
+    // A host with a promise on record is upgraded and never falls back, because a
+    // site that asked for HTTPS does not get a plain second chance.
+    Resource bank = fetch_url(*parse_url("http://bank.test/login"), mixed, 5000, 1u << 20);
+    CHECK(!bank.refused);
+    CHECK(bank.url.rfind("https://bank.test/login", 0) == 0);
+    CHECK(store.fallbacks.load() == fallbacks + 1);
   }
   {
     // Script pieces I fixed while auditing step two.

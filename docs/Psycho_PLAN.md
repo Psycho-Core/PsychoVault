@@ -241,6 +241,17 @@ My privacy gates:
 - The ad blocker is local and does not make remote calls.
 - Extension network behaviour is disclosed separately.
 
+What this section has in my build now, in my own code: a
+Strict-Transport-Security store filled only from HTTPS answers and capped at a
+year, mixed content and insecure form refusals in the one function every request
+passes through, an always-HTTPS setting with one counted fallback, a filter list
+parser and matcher with exceptions ahead of blocks that refuses rules it cannot
+honour, per-tab blocked counts with the deciding rule, per-site exceptions keyed
+on the page, and a job object with a memory and CPU-time cap that reports itself
+as a limit and not as isolation. Still open from the list above: AppContainer for
+page code, strict CSP on internal pages, enforcement of extension permissions at
+the dispatcher, a signed update manifest, redacted crash reports and fuzzing.
+
 ## 10. Migration plan
 
 I will migrate data before I ask anyone to replace the old browser.

@@ -79,7 +79,10 @@ check('my shell never assumes a sibling renderer file','pv-renderer' not in shel
 host_hpp=(ROOT/'platform/Psycho_host.hpp').read_text()
 host_cpp=(ROOT/'platform/Psycho_host.cpp').read_text()
 check('my page host owns one engine page','std::unique_ptr<Page> page_;' in host_hpp)
-check('my page host fetches only through a callback','using Fetcher = std::function<Resource(const std::string &url)>;' in host_hpp)
+check('my page host fetches only through a callback',
+      'using Fetcher = std::function<Resource(const std::string &url, ResourceType type)>;'
+      in host_hpp)
+check('my page host asks for the kind of resource it needs','ResourceType type' in host_hpp)
 check('my page host never opens the network itself',
       not re.search(r'winhttp|socket\s*\(|connect\s*\(',host_cpp,re.I))
 check('my page host hands images over without base64','base64' not in host_cpp)
@@ -208,6 +211,38 @@ check('my tests cover the step 3 to 5 audit', all(k in tests_text for k in (
       'find_in_paint(paint, "hello")', 'decode_jpeg(bytes)', 'render_svg(',
       'x.roundRect(10,10,20,10,3)', 'c=on')))
 check('my page header owns the canvas map', 'canvases_' in page_header)
+
+# Step 8: my own security policy and filter engine, and no borrowed rule list.
+security_cpp=(ROOT/'engine/Psycho_security.cpp').read_text()
+security_hpp=(ROOT/'engine/Psycho_security.hpp').read_text()
+network_cpp=(ROOT/'platform/Psycho_network.cpp').read_text()
+sandbox_cpp=(ROOT/'platform/Psycho_sandbox.cpp').read_text()
+check('my HTTPS store is my own code',
+      'bool HttpsPolicy::record_header' in security_cpp and 'bool HttpsPolicy::requires_https' in security_cpp)
+check('a plain HTTP answer cannot pin a host', 'if (!over_https || host.empty())' in security_cpp)
+check('my HTTPS promises are capped', 'kMaxHstsMillis' in security_cpp and 'kMaxHstsMillis' in security_hpp)
+check('my filter engine is my own code',
+      'bool FilterList::parse' in security_cpp and 'const FilterRule *FilterList::match' in security_cpp)
+check('an exception in my list beats a block',
+      'stable_sort' in security_cpp and 'a.exception && !b.exception' in security_cpp)
+check('I refuse rules I cannot honour instead of weakening them',
+      'an option I do not implement' in security_cpp)
+check('I do not pretend to run cosmetic rules', 'cosmetic rule, not a request rule' in security_cpp)
+check('my starter list is mine and short',
+      'written by me' in security_cpp and security_cpp.count('||') >= 20 and security_cpp.count('||') < 80)
+check('I bundle no third-party list', not re.search(r'easylist|fanboy|adblock\s*plus\s*list', security_cpp, re.I))
+check('every request goes through one shared check',
+      network_cpp.count('prepare_request(') >= 3 and 'should_upgrade(target, policy.https_only)' in network_cpp)
+check('a refusal is tagged so it is never retried in the clear', 'out.refused = true' in network_cpp)
+check('an HTTPS promise never falls back to plain HTTP', 'requires_https(initial.host)' in network_cpp)
+check('my job object says it is not isolation',
+      'Page code is not isolated from my process' in sandbox_cpp and 'status.isolated = false' in sandbox_cpp)
+check('my panel prints that same sentence', 'confinement_summary(confinement)' in shell_text)
+check('my shell offers only the two tunnel schemes that protect traffic',
+      'wanted == "socks5" || wanted == "https"' in shell_text)
+check('my tests cover the step 8 decisions', all(k in tests_text for k in (
+      'record_header("shop.test"', 'max-age=0', 'blocks_mixed_content', 'blocks_insecure_submit',
+      'list.skipped', 'keep->exception', 'net.allowed_hosts', 'store.fallbacks')))
 
 check('my release notes come from my repo, not a template',
       'docs/Psycho_RELEASE-NOTES.md' in (ROOT/'.github/workflows/Psycho_release.yml').read_text())

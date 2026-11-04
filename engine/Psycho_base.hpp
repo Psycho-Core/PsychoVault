@@ -95,6 +95,9 @@ struct Resource {
   int status = 200;
   int image_width = 0, image_height = 0;
   bool ok = true;
+  // Set when my policy stopped the request before a socket opened, so nothing can
+  // mistake a refusal for a connection that failed and quietly retry it.
+  bool refused = false;
   std::string error;
 };
 struct Diagnostic {

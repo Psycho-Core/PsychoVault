@@ -7,6 +7,7 @@
 #pragma once
 #include "../engine/Psycho_base.hpp"
 #include "Psycho_proxy.hpp"
+#include "../engine/Psycho_security.hpp"
 #include <cstdint>
 
 namespace pv {
@@ -31,6 +32,9 @@ struct TunnelConfig {
   // When this is true a failed tunnel is the end of the request. Nothing falls
   // back to a direct socket, because that would be the leak I am avoiding.
   bool fail_closed = true;
+  // Where a Strict-Transport-Security header from an HTTPS hop is recorded, so the
+  // same policy applies whether a request went through the tunnel or WinHTTP.
+  HttpsPolicy *https = nullptr;
 };
 
 // A raw TCP connection. Windows and my test builds both go through this, so the

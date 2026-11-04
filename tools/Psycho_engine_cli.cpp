@@ -54,13 +54,13 @@ int main(int argc, char **argv) {
     for (int pass = 0; pass < 4; ++pass) {
       auto pending = page.requests;
       page.requests.clear();
-      for (auto &u : pending) {
-        auto it = resources.find(u);
+      for (auto &pending_request : pending) {
+        auto it = resources.find(pending_request.url);
         if (it != resources.end())
           page.resource(it->second);
         else {
           Resource r;
-          r.url = u;
+          r.url = pending_request.url;
           r.ok = false;
           r.error = "resource not supplied to headless renderer";
           page.resource(r);

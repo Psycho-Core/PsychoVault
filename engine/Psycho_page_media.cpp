@@ -110,7 +110,7 @@ void Page::update_media(int node) {
     return;
   auto found = resources_.find(resolved->href());
   if (found == resources_.end()) {
-    request(src);
+    request(src, ResourceType::Media);
     return;
   }
   if (media_src_[node] == resolved->href())

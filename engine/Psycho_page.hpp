@@ -7,12 +7,21 @@
 #include "Psycho_image.hpp"
 #include "Psycho_media.hpp"
 #include "Psycho_mse.hpp"
+#include "Psycho_security.hpp"
 namespace pv {
 class Page {
 public:
   Document doc;
   std::vector<Diagnostic> diagnostics;
-  std::vector<std::string> requests, navigations, dialogs;
+  // One thing my page wants from the network, with the kind of thing it is. A filter
+  // rule can name a type, so the type is recorded where the request is made rather
+  // than guessed from a file extension later.
+  struct PageRequest {
+    std::string url;
+    ResourceType type = ResourceType::Other;
+  };
+  std::vector<PageRequest> requests;
+  std::vector<std::string> navigations, dialogs;
   // My host sets this so scripts can fetch with my own network stack.
   std::function<Resource(const std::string &)> fetcher;
   // I keep the cookies and local storage for the page I have loaded. My host
@@ -156,7 +165,7 @@ private:
   void seek_media(int node, double fraction);
   bool pump_for_await();
   void execute_script(int node);
-  void request(std::string url);
+  void request(std::string url, ResourceType type = ResourceType::Other);
   void rebuild();
   void dispatch(int target, const std::string &type, js::Value event);
   int hit(double x, double y) const;

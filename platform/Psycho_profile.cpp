@@ -120,6 +120,10 @@ Profile Profile::open(const std::string &directory, bool private_mode) {
     p.send_dnt = settings.flag("sendDNT", true);
     p.strip_referrer = settings.flag("stripReferrer", false);
     p.clear_on_exit = settings.flag("clearOnExit", false);
+    p.https_only = settings.flag("httpsOnly", false);
+    p.memory_limit_mb = int(std::clamp(settings.num("memoryLimitMb", 0), 0.0, 65536.0));
+    p.hsts = settings.str("hsts");
+    p.filter_list_path = settings.str("filterListPath");
     p.web_rtc_policy = settings.str("webRtc", "default");
     read_list("blockedHosts", p.blocked_hosts);
     read_list("blockAllowSites", p.block_allow_sites);
@@ -214,6 +218,10 @@ bool Profile::save() {
   settings.set("sendDNT", send_dnt);
   settings.set("stripReferrer", strip_referrer);
   settings.set("clearOnExit", clear_on_exit);
+  settings.set("httpsOnly", https_only);
+  settings.set("memoryLimitMb", memory_limit_mb);
+  settings.set("hsts", hsts);
+  settings.set("filterListPath", filter_list_path);
   settings.set("webRtc", web_rtc_policy);
   write_list("blockedHosts", blocked_hosts);
   write_list("blockAllowSites", block_allow_sites);

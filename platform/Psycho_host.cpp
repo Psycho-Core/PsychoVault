@@ -14,7 +14,10 @@ Host::Host(Fetcher fetcher, Reporter reporter)
     : page_(std::make_unique<Page>()), fetch_(std::move(fetcher)), report_(std::move(reporter)) {
   // I give my engine the same fetcher I use myself, so a script that calls
   // fetch() reaches the network through my own stack.
-  page_->fetcher = [this](const std::string &url) { return fetch(url); };
+  // A script's fetch is a cross-origin request as far as policy is concerned.
+  page_->fetcher = [this](const std::string &url) {
+    return fetch(url, ResourceType::XmlHttpRequest);
+  };
 }
 Host::~Host() = default;
 
@@ -28,7 +31,7 @@ void Host::set_poster(Poster poster) {
   poster_ = std::move(poster);
 }
 
-Resource Host::fetch(const std::string &url) const {
+Resource Host::fetch(const std::string &url, ResourceType type) const {
   Resource failure;
   failure.url = url;
   failure.status = 0;
@@ -38,7 +41,7 @@ Resource Host::fetch(const std::string &url) const {
     return failure;
   }
   try {
-    Resource resource = fetch_(url);
+    Resource resource = fetch_(url, type);
     if (resource.url.empty())
       resource.url = url;
     return resource;
@@ -60,7 +63,7 @@ bool Host::load(const std::string &input, std::string &error) {
     error = "Invalid URL";
     return false;
   }
-  Resource main = fetch(url->href());
+  Resource main = fetch(url->href(), ResourceType::Document);
   if (!main.ok) {
     error = main.error.empty() ? "Navigation failed" : main.error;
     return false;
@@ -142,10 +145,10 @@ void Host::settle() {
     }
     if (page_->requests.empty())
       break;
-    std::vector<std::string> requests = std::move(page_->requests);
+    std::vector<Page::PageRequest> requests = std::move(page_->requests);
     page_->requests.clear();
-    for (const auto &url : requests)
-      page_->resource(fetch(url));
+    for (const auto &request_item : requests)
+      page_->resource(fetch(request_item.url, request_item.type));
   }
   page_->requests.clear();
   emit();
