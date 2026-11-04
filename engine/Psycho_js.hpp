@@ -253,7 +253,10 @@ private:
   Value error_object(const Value &thrown);
   Host *host_;
   std::function<bool()> pump_;
-  std::vector<std::unique_ptr<Program>> programs_;
+  // A deque, not a vector: the Function constructor runs a program while another one
+  // is being executed, and a reallocation would move the program the caller is
+  // walking. MSVC found that; my Linux build had spare capacity and did not.
+  std::deque<std::unique_ptr<Program>> programs_;
   size_t program_bytes_ = 0;
   std::vector<std::unique_ptr<Object>> objects_;
   std::vector<Object *> free_;
