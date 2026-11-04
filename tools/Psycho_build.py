@@ -69,7 +69,11 @@ def main():
             cmd+=["/STACK:8388608"]
             cmd+=[f"/OUT:"+str(out/(name+".exe"))]
         else:
-            cmd=[cxx,"-std=c++20","-O2","-g","-Wall","-Wextra","-Werror","-I"+str(ROOT)]
+            # gcc 15 reports an array-bounds error inside libstdc++'s own string move
+            # when it inlines a vector of strings. It is a known false positive in the
+            # header, so I keep the warning visible and stop it being fatal.
+            cmd=[cxx,"-std=c++20","-O2","-g","-Wall","-Wextra","-Werror",
+                 "-Wno-error=array-bounds","-I"+str(ROOT)]
             if args.sanitizers:cmd+=["-fsanitize=address,undefined","-fno-omit-frame-pointer"]
             cmd+= [str(ROOT/s) for s in sources]
             cmd+=["-pthread","-o",str(out/name)]
