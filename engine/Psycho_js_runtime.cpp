@@ -6,6 +6,10 @@
 #include <cstdlib>
 #include <iomanip>
 #ifdef _WIN32
+// windows.h defines min and max as macros, and my interpreter calls std::max. I ask
+// for the narrow header and for those two macros to stay out of my code.
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include <windows.h>
 #else
 #include <pthread.h>
