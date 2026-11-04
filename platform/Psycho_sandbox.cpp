@@ -46,7 +46,7 @@ bool confine_process(uint64_t memory_bytes, uint32_t cpu_percent, std::string &e
     // do not set up, so I cap the user time per process instead: a runaway page is
     // stopped once it has burned that share of an hour rather than pinned at 100%.
     limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_TIME;
-    limits.PerProcessUserTimeLimit.QuadPart = LONGLONG(cpu_percent) * 360000000LL;
+    limits.BasicLimitInformation.PerProcessUserTimeLimit.QuadPart = LONGLONG(cpu_percent) * 360000000LL;
   }
   if (!SetInformationJobObject(g_job, JobObjectExtendedLimitInformation, &limits,
                                sizeof(limits))) {
