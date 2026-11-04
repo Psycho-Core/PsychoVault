@@ -712,6 +712,9 @@ struct Browser {
     if (profile.clear_on_exit && !private_mode) {
       profile.clear_history();
       save_profile();
+    } else if (!private_mode && profile.history_dirty) {
+      profile.history_dirty = false;
+      save_profile();
     }
     for (auto &tab : tabs)
       if (tab.session)
@@ -815,6 +818,19 @@ struct Browser {
           tab.history.erase(tab.history.begin(), tab.history.begin() + (tab.history.size() - 512));
           tab.index = tab.history.size() - 1;
         }
+        if (!private_mode &&
+            (starts(target, "http://") || starts(target, "https://"))) {
+          // Both my per-tab stack and the persisted history see the visit;
+          // the flush to disk rides my timer so a long session does not lose it.
+          if (profile.history.empty() || profile.history.back().url != target) {
+            profile.history.push_back({target, target,
+                                       double(now_ms() % 4000000000000000LL)});
+            if (profile.history.size() > 5000)
+              profile.history.erase(profile.history.begin(),
+                                    profile.history.begin() + (profile.history.size() - 5000));
+            profile.history_dirty = true;
+          }
+        }
       }
     }
     tab.url = target;
@@ -880,6 +896,14 @@ struct Browser {
     status = "Stopped";
     InvalidateRect(hwnd, nullptr, FALSE);
   }
+  void flush_history() {
+    if (private_mode || !profile.history_dirty) return;
+    if (history_flush_tick && GetTickCount() - history_flush_tick < 10000) return;
+    history_flush_tick = GetTickCount();
+    profile.history_dirty = false;
+    save_profile();
+  }
+  DWORD history_flush_tick = 0;
   void save_session() {
     if (private_mode)
       return;
@@ -2213,6 +2237,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     auto b = browser(hwnd);
     if (b && !b->smoke) {
       b->extensions.tick();
+      b->flush_history();
       if (b->downloads.active_count() && (GetTickCount() % 8) < 2)
         InvalidateRect(hwnd, nullptr, FALSE);
     }

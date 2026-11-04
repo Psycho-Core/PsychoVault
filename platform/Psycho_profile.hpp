@@ -43,6 +43,7 @@ public:
   // Performance
   int cpu_limit = 0, sleep_tabs_minutes = 0, memory_limit_mb = 0;
   bool battery_saver = false;
+  bool history_dirty = false; // visited pages pending flush to disk
   // Spelling
   bool spell_check = true;
   std::vector<std::string> user_words;
