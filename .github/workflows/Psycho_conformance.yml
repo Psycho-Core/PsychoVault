@@ -10,6 +10,7 @@ on:
       - 'engine/Psycho_js_*.cpp'
       - 'engine/Psycho_js.hpp'
       - 'tools/Psycho_conformance.cpp'
+      - 'tools/Psycho_build.py'
       - '.github/workflows/Psycho_conformance.yml'
 concurrency:
   group: psychovault-conformance
