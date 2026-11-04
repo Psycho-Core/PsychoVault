@@ -208,13 +208,13 @@ capital letters matches, and that a query that is not there returns nothing.
 - The hosted MSVC build and full gate set for this exact commit. I run these before I publish, and the single-file gate now measures the one-executable promise directly.
 - Address/undefined-behaviour sanitizers over my proxy, extension and download code.
 - A real download over the network on Windows, and a real proxy connection to a live proxy server.
-- A full updater install-and-rollback cycle.
+- A full updater install-and-rollback cycle. While writing this record I checked the one half that is built, and it has its own gap: my shell asks GitHub for `releases/latest`, and that answer is empty because every build I have published is a prerelease. So today the updater checks and reports rather than discovers, and it never downloads or installs anything. The discovery fix is mine and is next.
 
 ## Blocked or not implemented, and I do not claim otherwise
 
 - **Operating-system containment.** My pages render inside my browser process. I removed the separate contained renderer because it never started reliably, so this is a real security gap I have to close again later.
 - **YouTube and Netflix.** I have my own media pipeline and my own Media Source Extensions. What I do not have is a decoder for the codecs those sites send: no H.264, no AAC, no VP8, VP9 or Opus, and no WebM. A page that offers an MP4 gets the codec name back. Netflix additionally needs a licensed Widevine module, which can only ever be a separate extension.
-- **Proton VPN.** Not bundled and not verified. My own VPN bridge is bundled instead and is clearly labelled as mine.
+- **Proton VPN.** Not bundled and not verified, so no live session exists here. I earlier recorded their extension source as unreachable, answering 404; that was the wrong repository name. The real source is `ProtonVPN/proton-vpn-browser-extension` (GPL-3.0), and from its manifest and config I can say what it needs: an HTTPS proxy on port 4443, Secure Core on 443, and its service worker asking for `proxy`, `webRequest` and `webRequestAuthProvider`, with `account.proton.me` as the only page allowed to talk to it. My own VPN bridge is bundled instead and is clearly labelled as mine.
 - **TLS-to-proxy and SOCKS5.** I refuse these rather than leak a direct connection. Proton uses TLS-to-proxy, so this is a real gap.
 - Modern JavaScript beyond my step 2 work: no modules, no generators, no typed arrays, no object spread inside a literal, no `Symbol` identity beyond a string key, and no lookbehind or `\u{...}` in patterns.
 - Vault, passwords, translation, WebRTC, media, workers, IndexedDB.

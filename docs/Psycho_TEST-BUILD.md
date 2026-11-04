@@ -23,9 +23,9 @@ I do not need administrator rights and I do not install a service.
 
 - **Pages render inside my browser process.** I dropped the separate contained process so one file renders on its own without fighting the loader. That means a hostile page is not yet fenced off by the operating system. Restoring that boundary is a later step, and until it is done I should not treat this build as hardened.
 - **YouTube and Netflix do not play.** I have no video pipeline and no DRM. Netflix needs a licensed Widevine module, which can only ever be a separate extension - never part of my engine.
-- **Proton VPN is not bundled.** The VPN bridge included here is my own code and needs a proxy I point it at. I have not verified Proton sign-in or routing.
-- **My VPN only tunnels HTTP proxies so far.** I refuse TLS-to-proxy and SOCKS5 rather than quietly connecting directly.
-- **Most big modern sites will not work yet.** My JavaScript engine now has classes, destructuring, template literals, spread, Map and Set, but no modules, promises, async/await or regular expressions, and my CSS and layout coverage is still small.
+- **Proton VPN is not bundled.** The VPN bridge included here is my own code and needs a proxy I point it at. I have not verified Proton sign-in or routing. I earlier said their extension source was unreachable; it is not - it is at `ProtonVPN/proton-vpn-browser-extension` under GPL-3.0, and it drives an HTTPS proxy on port 4443, which is the scheme my VPN panel accepts.
+- **My VPN panel keys the tunnel.** My transport speaks SOCKS5 and HTTPS proxies, with TLS to the proxy stacked on the same TLS it uses for the origin. It refuses rather than connecting direct when the proxy is unusable.
+- **Most big modern sites will not work yet.** My JavaScript engine has classes, destructuring, template literals, spread, Map and Set, promises, async/await, iterators and my own regular-expression engine, plus the pieces my Test262 run added in step 9 - but no modules, typed arrays or generators, and my CSS and layout coverage is still small. Panels that talk about my vault are not finished either.
 - **My vault and password manager are not built.** I show an honest status rather than a password box that saves nothing.
 - No WebRTC, canvas, translation or spell-check dictionary yet.
 
