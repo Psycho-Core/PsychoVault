@@ -149,6 +149,24 @@ Profile Profile::open(const std::string &directory, bool private_mode) {
     read_list("extensionDirectories", p.extension_directories);
     read_list("disabledExtensions", p.disabled_extensions);
   }
+  if (const Json *dial = settings.find("speedDial")) {
+    if (dial->type == Json::Type::Array)
+      for (auto &d : dial->array) {
+        if (p.speed_dial.size() >= 24)
+          break;
+        auto url = d.str("url");
+        if (d.type == Json::Type::Object && valid_browser_url(url))
+          p.speed_dial.push_back({bounded(d.str("title", url), 120), url});
+      }
+  } else {
+    // The factory row, now living in data so the owner can change it.
+    p.speed_dial = {{"GitHub", "https://github.com/"},
+                    {"YouTube", "https://www.youtube.com/"},
+                    {"Reddit", "https://www.reddit.com/"},
+                    {"Wikipedia", "https://www.wikipedia.org/"},
+                    {"Mail", "https://mail.proton.me/"},
+                    {"News", "https://news.ycombinator.com/"}};
+  }
   Json bookmarks;
   load("owned-bookmarks.json", bookmarks);
   if (bookmarks.type == Json::Type::Array)
@@ -183,6 +201,8 @@ Profile Profile::open(const std::string &directory, bool private_mode) {
   Json state;
   load("owned-session-state.json", state);
   p.session_active = int(state.num("active", 0));
+  p.session_pinned = bounded(state.str("pinned"), 64);
+  p.session_muted = bounded(state.str("muted"), 64);
   if (!p.session_tabs.empty())
     p.session_active = std::clamp(p.session_active, 0, int(p.session_tabs.size()) - 1);
   else
@@ -236,6 +256,16 @@ bool Profile::save() {
   settings.set("sleepTabsMin", sleep_tabs_minutes);
   settings.set("batterySaver", battery_saver);
   settings.set("spellCheck", spell_check);
+  {
+    Json dial = Json::make_array();
+    for (auto &d : speed_dial) {
+      Json j = Json::make_object();
+      j.set("title", d.title);
+      j.set("url", d.url);
+      dial.array.push_back(std::move(j));
+    }
+    settings.set("speedDial", dial);
+  }
   write_list("spellUserWords", user_words);
   write_list("extensionDirectories", extension_directories);
   write_list("disabledExtensions", disabled_extensions);
@@ -282,6 +312,8 @@ bool Profile::save_session() {
   state.set("schema", 1);
   state.set("active",
             session_tabs.empty() ? 0 : std::clamp(session_active, 0, int(session_tabs.size()) - 1));
+  state.set("pinned", bounded(session_pinned, 64));
+  state.set("muted", bounded(session_muted, 64));
   bool ok = write_file_atomic(directory + "/owned-session.json", session.dump() + "\n", error);
   ok = write_file_atomic(directory + "/owned-session-state.json", state.dump() + "\n", error) && ok;
   return ok;

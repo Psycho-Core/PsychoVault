@@ -51,6 +51,7 @@ struct Tab {
   std::vector<std::string> history;
   size_t index = 0;
   bool loading = false, started = false, recorded = false;
+  bool pinned = false, muted = false;
   double scroll = 0, zoom = 1.0;
   uint64_t generation = 0;
   Json frame;
@@ -65,6 +66,17 @@ struct Hit {
   int index = 0;
   std::string value;
 };
+struct MenuLine {
+  std::string label, action;
+};
+static std::wstring utf16_of(const std::string &text) {
+  int n = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()),
+                              nullptr, 0);
+  std::wstring out(size_t(n > 0 ? n : 0), 0);
+  if (n > 0)
+    MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()), out.data(), n);
+  return out;
+}
 // The result of my tunnel test. A worker fills it and the painting code reads it,
 // so neither has to trust the other's lifetime.
 struct TunnelTest {
@@ -249,6 +261,7 @@ struct Session {
   std::deque<Json> outgoing;
   std::atomic<bool> stopping{false};
   std::atomic<bool> ready{false};
+  std::atomic<bool> muted{false};
   std::vector<std::string> diagnostics;
   AudioOut audio;
   ~Session() {
@@ -459,13 +472,16 @@ void Session::run() {
     lock.unlock();
     bool worked = !stopping && host.pump();
     // The device is opened the first time a page actually plays something, and from
-    // then on it is topped up on this same thread.
-    if (host.media_playing() && !audio.ready()) {
-      std::string why;
-      if (!audio.open(why) && !why.empty())
-        note("media", why);
+    // then on it is topped up on this same thread. A muted tab simply skips the
+    // feed, so the page keeps playing in silence until I unmute it.
+    if (!muted.load()) {
+      if (host.media_playing() && !audio.ready()) {
+        std::string why;
+        if (!audio.open(why) && !why.empty())
+          note("media", why);
+      }
+      audio.pump(host);
     }
-    audio.pump(host);
     lock.lock();
     if (worked)
       continue;
@@ -502,6 +518,10 @@ struct Browser {
   // Find in page
   bool find_open = false;
   std::string find_text;
+  // The bookmarks and history panels share one filter box.
+  bool panel_focus = false;
+  std::string panel_search;
+  size_t panel_search_caret = 0;
   std::vector<Rect> find_marks;
   int find_at = 0;
   std::string extension_error, download_error;
@@ -754,12 +774,29 @@ struct Browser {
   void close_tab(int index) {
     if (index < 0 || index >= int(tabs.size()))
       return;
+    if (tabs[size_t(index)].pinned) {
+      status = "Unpin the tab before closing it";
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
     if (tabs.size() <= 1) {
       stop_session(current());
       tabs.clear();
       new_tab();
       save_session();
       return;
+    }
+    if (!tabs[size_t(index)].url.empty()) {
+      ClosedTab closed;
+      closed.url = tabs[size_t(index)].url;
+      closed.title = tabs[size_t(index)].title;
+      closed.history = tabs[size_t(index)].history;
+      closed.index = tabs[size_t(index)].index;
+      closed.pinned = tabs[size_t(index)].pinned;
+      closed.muted = tabs[size_t(index)].muted;
+      closed_tabs.push_back(std::move(closed));
+      if (closed_tabs.size() > 20)
+        closed_tabs.erase(closed_tabs.begin());
     }
     stop_session(tabs[size_t(index)]);
     tabs.erase(tabs.begin() + index);
@@ -875,6 +912,7 @@ struct Browser {
     session->report = report;
     session->jar = &cookies;
     session->storage = &local_storage;
+    session->muted.store(tab.muted);
     if (auto host_url = parse_url(target)) {
       session->policy.top_level_host = host_url->host;
       session->policy.top_level_scheme = host_url->scheme;
@@ -908,8 +946,13 @@ struct Browser {
     if (private_mode)
       return;
     profile.session_tabs.clear();
-    for (auto &tab : tabs)
+    profile.session_pinned.clear();
+    profile.session_muted.clear();
+    for (auto &tab : tabs) {
       profile.session_tabs.push_back(tab.url);
+      profile.session_pinned.push_back(tab.pinned);
+      profile.session_muted.push_back(tab.muted);
+    }
     profile.session_active = active;
     if (!profile.save_session() && profile_error.empty())
       profile_error = profile.error;
@@ -953,17 +996,26 @@ struct Browser {
     double x = 52;
     for (size_t i = 0; i < tabs.size() && x < width - 180; ++i) {
       bool sel = int(i) == active;
-      Rect r{x, 6, 180, 32};
+      Rect r{x, 6, tabs[i].pinned ? 96 : 180, 32};
       c.fill(r, sel ? PANEL : CHROME);
       if (sel) {
         c.line(r.x, r.y, r.x + r.w, r.y, ACCENT, 2);
       }
-      c.text(r.x + 12, r.y + 8, tabs[i].title.substr(0, 22), 13, sel ? TEXT : MUTED, sel);
+      // A pinned tab is one letter of its title, and pinning blocks closing so
+      // the close control goes away. A muted tab carries a small dot.
+      c.text(r.x + 12, r.y + 8,
+             tabs[i].pinned ? tabs[i].title.substr(0, 1)
+                            : tabs[i].title.substr(0, 22),
+             13, sel ? TEXT : MUTED, sel);
+      if (tabs[i].muted)
+        c.text(r.x + r.w - (tabs[i].pinned ? 22 : 42), r.y + 12, "o", 10, ACCENT);
       hits.push_back({r, "tab", int(i), {}});
-      Rect close{r.x + r.w - 24, r.y + 6, 18, 18};
-      c.text(close.x + 4, close.y + 1, "x", 12, MUTED);
-      hits.push_back({close, "close-tab", int(i), {}});
-      x += 184;
+      if (!tabs[i].pinned && profile.show_tab_close_buttons) {
+        Rect close{r.x + r.w - 24, r.y + 6, 18, 18};
+        c.text(close.x + 4, close.y + 1, "x", 12, MUTED);
+        hits.push_back({close, "close-tab", int(i), {}});
+      }
+      x += r.w + 4;
     }
     c.text(x + 4, 12, "+", 18, MUTED);
     hits.push_back({{x, 4, 28, 32}, "new-tab", 0, {}});
@@ -988,6 +1040,38 @@ struct Browser {
     if (address_focus) {
       double cx = addr.x + 12 + c.text_width(address.substr(0, address_caret), 13);
       c.line(cx, addr.y + 5, cx, addr.y + 24, ACCENT);
+    }
+    if (address_focus && !address.empty()) {
+      // My suggestions come from my own bookmarks and history - a dropdown of
+      // things I actually saved, filtered by the text I am typing.
+      std::string needle = ascii_lower(address);
+      std::vector<std::pair<std::string, std::string>> found;
+      auto consider = [&](const std::string &title, const std::string &url) {
+        if (found.size() >= 6)
+          return;
+        if (ascii_lower(title + "  " + url).find(needle) == std::string::npos)
+          return;
+        for (auto &f : found)
+          if (f.second == url)
+            return;
+        found.push_back({title, url});
+      };
+      for (auto &b : profile.bookmarks)
+        consider(b.title, b.url);
+      for (auto &hh : profile.history)
+        consider(hh.title, hh.url);
+      if (!found.empty()) {
+        Rect box{addr.x, addr.y + addr.h + 4, addr.w, double(found.size()) * 28 + 8};
+        c.fill(box, PANEL);
+        c.stroke(box, BORDER);
+        double ry = box.y + 4;
+        for (auto &f : found) {
+          c.text(box.x + 12, ry + 6, (f.first + "  -  " + f.second).substr(0, 100),
+                 12, TEXT);
+          hits.push_back({{box.x, ry, box.w, 28}, "suggest", 0, f.second});
+          ry += 28;
+        }
+      }
     }
     c.text(width - 52, 52, "*", 18, MUTED);
     hits.push_back({{double(width - 60), 44, 32, 36}, "bookmark", 0, {}});
@@ -1018,6 +1102,17 @@ struct Browser {
       draw_home(c);
     else
       draw_content(c);
+    if (menu_open) {
+      const int w = 220, h = int(menu_items.size()) * 30 + 10;
+      Rect box{double(menu_x), double(menu_y), double(w), double(h)};
+      c.fill(box, PANEL);
+      c.stroke(box, BORDER);
+      double my = box.y + 5;
+      for (auto &item : menu_items) {
+        c.text(box.x + 12, my + 7, item.label, 13, TEXT);
+        my += 30;
+      }
+    }
     if (find_open) {
       Rect bar{content.x + content.w - 330, content.y + 10, 310, 34};
       c.fill(bar, PANEL);
@@ -1066,17 +1161,32 @@ struct Browser {
            home_search.empty() ? "Search DuckDuckGo or enter an address" : home_search, 14,
            home_search.empty() ? MUTED : TEXT);
     hits.push_back({search, "home-search", 0, {}});
-    const char *labels[] = {"GitHub", "YouTube", "Reddit", "Wikipedia", "Mail", "News"};
-    const char *urls[] = {"https://github.com/",     "https://www.youtube.com/",
-                          "https://www.reddit.com/", "https://www.wikipedia.org/",
-                          "https://mail.proton.me/", "https://news.ycombinator.com/"};
-    for (int i = 0; i < 6; ++i) {
-      Rect tile{cx - 324 + i * 108, cy + 130, 96, 84};
+    // My speed dial lives in the profile now, so the tiles below are whatever
+    // I saved - not a hardcoded row. A right click menu on any page adds it
+    // here, and each tile's corner removes it.
+    for (size_t i = 0; i < profile.speed_dial.size() && i < 24; ++i) {
+      int col = int(i) % 6, rowi = int(i) / 6;
+      Rect tile{cx - 324 + col * 108, cy + 130 + rowi * 100, 96, 84};
       c.fill(tile, 0xff0d1420);
       c.stroke(tile, BORDER);
-      c.text(tile.x + 38, tile.y + 16, std::string(1, labels[i][0]), 18, ACCENT, true);
-      c.text(tile.x + 12, tile.y + 52, labels[i], 12, MUTED);
-      hits.push_back({tile, "tile", 0, urls[i]});
+      const std::string &label = profile.speed_dial[i].title;
+      c.text(tile.x + 38, tile.y + 16,
+             label.empty() ? "?" : label.substr(0, 1), 18, ACCENT, true);
+      c.text(tile.x + 10, tile.y + 52, label.substr(0, 12), 12, MUTED);
+      hits.push_back({tile, "tile", int(i), profile.speed_dial[i].url});
+      Rect remove{tile.x + tile.w - 20, tile.y + 4, 16, 16};
+      c.text(remove.x + 4, remove.y, "x", 10, MUTED);
+      hits.push_back({remove, "dial-remove", int(i), {}});
+    }
+    if (profile.speed_dial.size() < 24) {
+      size_t i = profile.speed_dial.size();
+      int col = int(i) % 6, rowi = int(i) / 6;
+      Rect tile{cx - 324 + col * 108, cy + 130 + rowi * 100, 96, 84};
+      c.fill(tile, 0xff0d1420);
+      c.stroke(tile, BORDER);
+      c.text(tile.x + 34, tile.y + 14, "+", 20, MUTED, true);
+      c.text(tile.x + 10, tile.y + 52, "Add from box", 11, MUTED);
+      hits.push_back({tile, "dial-add", 0, {}});
     }
     c.text(cx - 170, content.y + content.h - 50, "Development engine - not a finished browser", 12,
            MUTED);
@@ -1089,6 +1199,16 @@ struct Browser {
     c.stroke(clear, BORDER);
     c.text(clear.x + 12, clear.y + 7, "Clear finished", 12, TEXT);
     hits.push_back({clear, "downloads-clear", 0, {}});
+    Rect folder{content.x + content.w - 200, content.y + 60, 150, 30};
+    c.fill(folder, PANEL);
+    c.stroke(folder, BORDER);
+    c.text(folder.x + 12, folder.y + 7, "Open folder", 12, TEXT);
+    hits.push_back({folder, "downloads-folder", 0, {}});
+    Rect pick{content.x + content.w - 380, content.y + 24, 160, 30};
+    c.fill(pick, PANEL);
+    c.stroke(pick, BORDER);
+    c.text(pick.x + 12, pick.y + 7, "Change folder...", 12, TEXT);
+    hits.push_back({pick, "downloads-pickdir", 0, {}});
     auto items = downloads.snapshot();
     double y = content.y + 100;
     if (items.empty())
@@ -1120,6 +1240,10 @@ struct Browser {
         c.stroke(open, BORDER);
         c.text(open.x + 20, open.y + 6, "Open", 12, TEXT);
         hits.push_back({open, "download-open", item.id, item.path});
+        Rect reveal{row.x + row.w - 180, row.y + 12, 76, 28};
+        c.stroke(reveal, BORDER);
+        c.text(reveal.x + 14, reveal.y + 6, "Reveal", 12, TEXT);
+        hits.push_back({reveal, "download-reveal", item.id, item.path});
       }
       y += 64;
     }
@@ -1325,6 +1449,22 @@ struct Browser {
   }
   std::string update_status;
   std::string editing_setting;
+  // A right click opens one of my own menus. menu_click() maps a row back to
+  // its action string and apply_menu() dispatches it, so a menu entry is read
+  // and run in exactly one place.
+  bool menu_open = false;
+  int menu_tab = -1;
+  int menu_x = 0, menu_y = 0;
+  std::vector<MenuLine> menu_items;
+  // Recently closed tabs keep their whole back stack so Ctrl+Shift+T puts the
+  // tab back exactly as it was, not just the address it ended on.
+  struct ClosedTab {
+    std::string url, title;
+    std::vector<std::string> history;
+    size_t index = 0;
+    bool pinned = false, muted = false;
+  };
+  std::vector<ClosedTab> closed_tabs;
   void begin_setting_edit(const std::string &key, const std::string &current_value) {
     editing_setting = key;
     address = current_value;
@@ -1444,26 +1584,78 @@ struct Browser {
   void draw_panel(Canvas &c) {
     bool bm = panel_bookmarks;
     c.text(content.x + 40, content.y + 30, bm ? "Bookmarks" : "History", 24, TEXT, true);
-    size_t y = size_t(content.y) + 80;
+    Rect box{content.x + 40, content.y + 62, 420, 30};
+    c.fill(box, 0xff0a111c);
+    c.stroke(box, panel_focus ? ACCENT : BORDER);
+    c.text(box.x + 12, box.y + 7,
+           (panel_search.empty() ? "Type to filter" : panel_search).substr(0, 48), 12,
+           panel_search.empty() ? MUTED : TEXT);
+    hits.push_back({box, "panel-search", 0, {}});
+    if (panel_focus) {
+      double cx2 = box.x + 12 + c.text_width(panel_search.substr(0, panel_search_caret), 12);
+      c.line(cx2, box.y + 6, cx2, box.y + 24, ACCENT);
+    }
+    std::string needle = ascii_lower(panel_search);
+    auto matches = [&](const std::string &title, const std::string &url) {
+      return needle.empty() ||
+             ascii_lower(title + "  " + url).find(needle) != std::string::npos;
+    };
+    double y = content.y + 106;
+    size_t shown = 0;
+    double max_y = content.y + content.h - 30;
     if (bm) {
-      for (size_t i = 0; i < profile.bookmarks.size() && i < 30; ++i) {
+      for (size_t i = 0; i < profile.bookmarks.size() && shown < 40 &&
+                            y < max_y;
+           ++i) {
         auto &b = profile.bookmarks[i];
-        Rect r{content.x + 40, double(y), content.w - 80, 36};
+        if (!matches(b.title, b.url))
+          continue;
+        Rect r{content.x + 40, y, content.w - 80, 36};
         c.text(r.x, r.y + 8, b.title + "  " + b.url, 13, TEXT);
         hits.push_back({r, "open-bookmark", int(i), b.url});
         y += 40;
+        ++shown;
       }
     } else {
-      for (size_t i = 0; i < profile.history.size() && i < 30; ++i) {
+      // History is grouped by day so the list reads like a diary, newest day
+      // on top. Boundary maths is on purpose local-time like mine.
+      int64_t last_day = -1;
+      std::time_t now = std::time(nullptr);
+      std::tm tm_now{};
+      localtime_s(&tm_now, &now);
+      int64_t today = int64_t(tm_now.tm_year) * 1000 + tm_now.tm_yday;
+      for (size_t i = 0; i < profile.history.size() && shown < 40 &&
+                            y < max_y;
+           ++i) {
         auto &h = profile.history[i];
-        Rect r{content.x + 40, double(y), content.w - 80, 36};
-        c.text(r.x, r.y + 8, h.title + "  " + h.url, 13, TEXT);
+        if (!matches(h.title, h.url))
+          continue;
+        std::time_t when = std::time_t(h.visited);
+        std::tm tm_v{};
+        localtime_s(&tm_v, &when);
+        int64_t day = int64_t(tm_v.tm_year) * 1000 + tm_v.tm_yday;
+        if (day != last_day) {
+          last_day = day;
+          std::string label = day == today     ? "Today"
+                              : day == today - 1 ? "Yesterday"
+                                                 : std::to_string(tm_v.tm_mday) + "/" +
+                                                       std::to_string(tm_v.tm_mon + 1) + "/" +
+                                                       std::to_string(tm_v.tm_year + 1900);
+          c.text(content.x + 40, y + 6, label, 12, ACCENT, true);
+          y += 26;
+          if (y >= max_y)
+            break;
+        }
+        Rect r{content.x + 40, y, content.w - 80, 36};
+        c.text(r.x + 10, r.y + 8, h.title + "  " + h.url, 13, TEXT);
         hits.push_back({r, "open-history", int(i), h.url});
         y += 40;
+        ++shown;
       }
     }
-    if (y == size_t(content.y) + 80)
-      c.text(content.x + 40, double(y), "Nothing saved yet.", 13, MUTED);
+    if (!shown)
+      c.text(content.x + 40, y, needle.empty() ? "Nothing saved yet."
+                                               : "Nothing matches.", 13, MUTED);
   }
   // I turn a frame into the paint list my raster reads, in window coordinates.
   std::vector<PaintCommand> frame_commands(const Tab &t, double origin_x, double origin_y) const {
@@ -1584,11 +1776,18 @@ struct Browser {
     c.clip = old;
   }
   void click(int x, int y) {
+    if (menu_click(x, y)) {
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
     for (auto it = hits.rbegin(); it != hits.rend(); ++it)
       if (it->rect.contains(x, y)) {
         auto h = *it;
         address_focus = h.action == "address";
         home_focus = h.action == "home-search";
+        panel_focus = h.action == "panel-search";
+        if (panel_focus)
+          panel_search_caret = panel_search.size();
         if (h.action == "tab")
           select_tab(h.index);
         else if (h.action == "close-tab")
@@ -1615,9 +1814,13 @@ struct Browser {
         } else if (h.action == "bookmarks") {
           panel_bookmarks = !panel_bookmarks;
           panel_history = false;
+          panel_search.clear();
+          panel_search_caret = 0;
         } else if (h.action == "history") {
           panel_history = !panel_history;
           panel_bookmarks = false;
+          panel_search.clear();
+          panel_search_caret = 0;
         } else if (h.action == "settings")
           navigate("psychovault://settings");
         else if (h.action == "tile")
@@ -1791,6 +1994,48 @@ struct Browser {
           address_focus = home_focus = false;
         else if (h.action == "find-close")
           close_find();
+        else if (h.action == "suggest") {
+          navigate(h.value);
+        } else if (h.action == "dial-remove") {
+          if (h.index >= 0 && size_t(h.index) < profile.speed_dial.size()) {
+            profile.speed_dial.erase(profile.speed_dial.begin() + h.index);
+            save_profile();
+          }
+        } else if (h.action == "dial-add") {
+          // The + tile takes whatever is in my home search box as the address,
+          // so typing a site and clicking + is all it takes to pin it.
+          auto target = navigate_input(home_search, profile.search_template());
+          if (target && target->network()) {
+            bool exists = false;
+            for (auto &d : profile.speed_dial)
+              exists = exists || d.url == target->href();
+            if (!exists) {
+              profile.speed_dial.push_back({target->host, target->href()});
+              save_profile();
+              status = "I added it to my speed dial";
+            } else
+              status = "That site is already on my speed dial";
+          } else
+            status = "Type an address in my search box first";
+        } else if (h.action == "download-reveal") {
+          if (!h.value.empty())
+            ShellExecuteW(hwnd, L"open", L"explorer.exe",
+                          (L"/select,"" + utf16_of(h.value) + L""").c_str(),
+                          nullptr, SW_SHOWNORMAL);
+        } else if (h.action == "downloads-folder") {
+          ShellExecuteW(hwnd, L"open", utf16_of(downloads.directory()).c_str(),
+                        nullptr, nullptr, SW_SHOWNORMAL);
+        } else if (h.action == "downloads-pickdir") {
+          auto chosen = pick_folder(hwnd);
+          if (!chosen.empty()) {
+            if (profile.set_download_directory(chosen)) {
+              downloads.set_directory(profile.download_directory);
+              save_profile();
+              status = "Downloads will save to " + profile.download_directory;
+            } else
+              status = "I cannot write to that folder";
+          }
+        }
         InvalidateRect(hwnd, nullptr, FALSE);
         return;
       }
@@ -1807,6 +2052,30 @@ struct Browser {
   void key(UINT, WPARAM wp, LPARAM) {
     bool ctrl = GetKeyState(VK_CONTROL) < 0;
     bool shift = GetKeyState(VK_SHIFT) < 0;
+    if (menu_open && wp == VK_ESCAPE) {
+      close_menu();
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
+    if (ctrl && shift && wp == 'T') {
+      reopen_tab();
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
+    if (ctrl && wp == VK_TAB && tabs.size() > 1) {
+      int step = shift ? -1 : 1;
+      select_tab((active + step + int(tabs.size())) % int(tabs.size()));
+      return;
+    }
+    if (ctrl && shift && (wp == VK_LEFT || wp == VK_RIGHT)) {
+      move_tab(active, wp == VK_LEFT ? -1 : 1);
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
+    if (ctrl && wp == 'M') {
+      tab_set_muted(active, !current().muted);
+      return;
+    }
     if (ctrl && wp == 'F') {
       open_find();
       return;
@@ -1888,6 +2157,47 @@ struct Browser {
       InvalidateRect(hwnd, nullptr, FALSE);
       return;
     }
+    if (panel_focus) {
+      if (wp == VK_ESCAPE) {
+        panel_focus = false;
+      } else if (wp == VK_RETURN) {
+        // Enter opens the first match - bookmarks first on the bookmark panel.
+        std::string needle = ascii_lower(panel_search);
+        auto matches = [&](const std::string &title, const std::string &url) {
+          return needle.empty() || ascii_lower(title + "  " + url).find(needle) !=
+                                       std::string::npos;
+        };
+        std::string open_url;
+        if (panel_bookmarks) {
+          for (auto &b : profile.bookmarks)
+            if (matches(b.title, b.url)) { open_url = b.url; break; }
+        } else {
+          for (auto &hh : profile.history)
+            if (matches(hh.title, hh.url)) { open_url = hh.url; break; }
+        }
+        if (!open_url.empty()) {
+          panel_bookmarks = panel_history = false;
+          panel_focus = false;
+          navigate(open_url);
+        }
+      } else if (wp == VK_BACK) {
+        size_t previous = previous_cp(panel_search, panel_search_caret);
+        panel_search.erase(previous, panel_search_caret - previous);
+        panel_search_caret = previous;
+      } else if (wp == VK_DELETE) {
+        panel_search.erase(panel_search_caret,
+                           next_cp(panel_search, panel_search_caret) - panel_search_caret);
+      } else if (wp == VK_LEFT) {
+        panel_search_caret = previous_cp(panel_search, panel_search_caret);
+      } else if (wp == VK_RIGHT) {
+        panel_search_caret = next_cp(panel_search, panel_search_caret);
+      } else if (wp == VK_HOME)
+        panel_search_caret = 0;
+      else if (wp == VK_END)
+        panel_search_caret = panel_search.size();
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
     if (address_focus || home_focus) {
       std::string &text = address_focus ? address : home_search;
       size_t &caret = address_focus ? address_caret : home_search_caret;
@@ -1950,6 +2260,14 @@ struct Browser {
   void insert_text(const std::string &text) {
     if (text.empty())
       return;
+    if (panel_focus) {
+      if (panel_search.size() + text.size() <= 200) {
+        panel_search.insert(panel_search_caret, text);
+        panel_search_caret += text.size();
+      }
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
     if (find_open && !address_focus && !home_focus) {
       if (find_text.size() + text.size() <= 512) {
         find_text += text;
@@ -1991,6 +2309,189 @@ struct Browser {
     if (cp < 32 || (cp >= 0xd800 && cp <= 0xdfff))
       return;
     insert_text(utf8_encode(cp));
+  }
+  void write_clipboard(const std::string &text) {
+    int n = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()),
+                                nullptr, 0);
+    if (n <= 0 || !OpenClipboard(hwnd))
+      return;
+    EmptyClipboard();
+    HGLOBAL handle = GlobalAlloc(GMEM_MOVEABLE, (n + 1) * sizeof(wchar_t));
+    if (handle) {
+      auto *data = static_cast<wchar_t *>(GlobalLock(handle));
+      MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()), data, n);
+      data[n] = 0;
+      GlobalUnlock(handle);
+      SetClipboardData(CF_UNICODETEXT, handle);
+    }
+    CloseClipboard();
+  }
+  void open_menu(int tab, int x, int y, std::vector<MenuLine> items) {
+    menu_open = true;
+    menu_tab = tab;
+    menu_x = std::clamp(x, 44, width - 230);
+    menu_y = std::clamp(y, 40, height - int(items.size()) * 30 - 40);
+    menu_items = std::move(items);
+    InvalidateRect(hwnd, nullptr, FALSE);
+  }
+  void close_menu() {
+    menu_open = false;
+    menu_tab = -1;
+    menu_items.clear();
+  }
+  // True when the click was consumed by the menu - either running a row or
+  // closing it. The menu owns its own geometry so it never needs hits.
+  bool menu_click(int x, int y) {
+    if (!menu_open)
+      return false;
+    const int w = 220, h = int(menu_items.size()) * 30 + 10;
+    if (x < menu_x || x > menu_x + w || y < menu_y || y > menu_y + h ||
+        y < menu_y + 5) {
+      close_menu();
+      return false;
+    }
+    int index = (y - menu_y - 5) / 30;
+    if (index >= 0 && index < int(menu_items.size()))
+      apply_menu(menu_items[size_t(index)].action);
+    close_menu();
+    return true;
+  }
+  void apply_menu(const std::string &id) {
+    if (id == "menu-pin" && menu_tab >= 0 && menu_tab < int(tabs.size()))
+      tab_set_pinned(menu_tab, !tabs[size_t(menu_tab)].pinned);
+    else if (id == "menu-mute" && menu_tab >= 0 && menu_tab < int(tabs.size()))
+      tab_set_muted(menu_tab, !tabs[size_t(menu_tab)].muted);
+    else if (id == "menu-move-left")
+      move_tab(menu_tab, -1);
+    else if (id == "menu-move-right")
+      move_tab(menu_tab, 1);
+    else if (id == "menu-duplicate" && menu_tab >= 0 &&
+             menu_tab < int(tabs.size())) {
+      Tab t;
+      t.id = next_id++;
+      t.url = tabs[size_t(menu_tab)].url;
+      t.title = tabs[size_t(menu_tab)].title;
+      t.history.push_back(t.url);
+      t.index = 0;
+      t.started = false;
+      tabs.insert(tabs.begin() + menu_tab + 1, std::move(t));
+      active = menu_tab + 1;
+      select_tab(active);
+    } else if (id == "menu-close-others") {
+      for (int i = int(tabs.size()) - 1; i >= 0; --i)
+        if (i != menu_tab && !tabs[size_t(i)].pinned)
+          close_tab(i);
+    } else if (id == "menu-create") {
+      new_tab();
+    } else if (id == "menu-reopen") {
+      reopen_tab();
+    } else if (id == "menu-close") {
+      close_tab(menu_tab);
+    } else if (id == "menu-back" && tabs[size_t(active)].index > 0) {
+      back();
+    } else if (id == "menu-forward" &&
+               tabs[size_t(active)].index + 1 < tabs[size_t(active)].history.size()) {
+      forward();
+    } else if (id == "menu-reload") {
+      navigate(current().url, false);
+    } else if (id == "menu-copy-url") {
+      write_clipboard(current().url);
+    } else if (id == "menu-view-source") {
+      navigate("view-source:" + current().url);
+    } else if (id == "menu-dial-add") {
+      // Only a real address becomes a tile - internal pages stay off the dial.
+      if (starts(current().url, "http://") || starts(current().url, "https://")) {
+        bool exists = false;
+        for (auto &d : profile.speed_dial)
+          exists = exists || d.url == current().url;
+        if (!exists) {
+          profile.speed_dial.push_back({current().title, current().url});
+          save_profile();
+          status = "I added this page to my speed dial";
+        } else
+          status = "This page is already on my speed dial";
+      }
+    }
+  }
+  void swap_tabs(int a, int b) {
+    if (a == b || a < 0 || b < 0 || a >= int(tabs.size()) || b >= int(tabs.size()))
+      return;
+    std::swap(tabs[size_t(a)], tabs[size_t(b)]);
+    if (active == a)
+      active = b;
+    else if (active == b)
+      active = a;
+    save_session();
+  }
+  void move_tab(int index, int delta) {
+    if (index < 0 || index >= int(tabs.size()))
+      return;
+    swap_tabs(index, int(std::clamp(index + delta, 0, int(tabs.size()) - 1)));
+  }
+  // Ctrl+Shift+T undoes the most recent close, back stack and all.
+  void reopen_tab() {
+    if (closed_tabs.empty()) {
+      status = "No closed tab to bring back";
+      return;
+    }
+    ClosedTab restore = std::move(closed_tabs.back());
+    closed_tabs.pop_back();
+    Tab t;
+    t.id = next_id++;
+    t.url = restore.url;
+    t.title = restore.title;
+    t.history = restore.history.empty() ? std::vector<std::string>{restore.url}
+                                        : restore.history;
+    t.index = std::min(restore.index, t.history.size() - 1);
+    t.pinned = restore.pinned;
+    t.muted = restore.muted;
+    t.started = false;
+    tabs.push_back(std::move(t));
+    active = int(tabs.size()) - 1;
+    select_tab(active);
+  }
+  void tab_set_pinned(int index, bool pinned) {
+    tabs[size_t(index)].pinned = pinned;
+    save_session();
+    InvalidateRect(hwnd, nullptr, FALSE);
+  }
+  void tab_set_muted(int index, bool muted) {
+    tabs[size_t(index)].muted = muted;
+    if (tabs[size_t(index)].session)
+      tabs[size_t(index)].session->muted.store(muted);
+    save_session();
+    InvalidateRect(hwnd, nullptr, FALSE);
+  }
+  void right_click(int x, int y) {
+    for (auto it = hits.rbegin(); it != hits.rend(); ++it)
+      if (it->rect.contains(x, y) &&
+          (it->action == "tab" || it->action == "close-tab")) {
+        int index = it->index;
+        Tab &t = tabs[size_t(index)];
+        std::vector<MenuLine> items;
+        items.push_back({t.pinned ? "Unpin tab" : "Pin tab", "menu-pin"});
+        items.push_back({t.muted ? "Unmute tab" : "Mute tab", "menu-mute"});
+        items.push_back({"Duplicate tab", "menu-duplicate"});
+        items.push_back({"Move tab left", "menu-move-left"});
+        items.push_back({"Move tab right", "menu-move-right"});
+        items.push_back({"Close other tabs", "menu-close-others"});
+        items.push_back({"New tab", "menu-create"});
+        items.push_back({"Reopen closed tab", "menu-reopen"});
+        items.push_back({"Close tab", "menu-close"});
+        open_menu(index, x, y, std::move(items));
+        return;
+      }
+    if (content.contains(x, y) && !menu_open && !panel_bookmarks &&
+        !panel_history && !panel_downloads && !settings) {
+      std::vector<MenuLine> items;
+      items.push_back({"Back", "menu-back"});
+      items.push_back({"Forward", "menu-forward"});
+      items.push_back({"Reload", "menu-reload"});
+      items.push_back({"Copy page URL", "menu-copy-url"});
+      items.push_back({"Add page to speed dial", "menu-dial-add"});
+      items.push_back({"View page source", "menu-view-source"});
+      open_menu(active, x, y, std::move(items));
+    }
   }
   void paste() {
     if (!OpenClipboard(hwnd))
@@ -2099,6 +2600,11 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (auto b = browser(hwnd))
       b->click(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
     SetFocus(hwnd);
+    return 0;
+  }
+  case WM_RBUTTONDOWN: {
+    if (auto b = browser(hwnd))
+      b->right_click(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
     return 0;
   }
   case WM_MOUSEWHEEL: {
@@ -2372,6 +2878,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     b.tabs.clear();
     for (auto &u : b.profile.session_tabs)
       b.new_tab(u, false);
+    for (size_t i = 0; i < b.tabs.size(); ++i) {
+      if (i < b.profile.session_pinned.size())
+        b.tabs[i].pinned = b.profile.session_pinned[i] == '1';
+      if (i < b.profile.session_muted.size())
+        b.tabs[i].muted = b.profile.session_muted[i] == '1';
+    }
     b.active = std::clamp(b.profile.session_active, 0, int(b.tabs.size()) - 1);
     b.sync_address();
     b.settings = starts(b.current().url, "psychovault://settings");

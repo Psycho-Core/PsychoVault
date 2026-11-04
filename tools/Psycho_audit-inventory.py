@@ -122,7 +122,7 @@ DEFAULT_KEYS = {
     "containers": ("DEFERRED", "containers are not rebuilt"),
     "modCss": ("DEFERRED", "custom mod CSS is not implemented; my settings page says so"),
     "batteryAuto": ("DEFERRED", "automatic battery saving on unplug is not wired"),
-    "speedDial": ("DEFERRED", "speed dial tiles are not rebuilt"),
+    "speedDial": ("DONE", r'settings\.set\("speedDial"'),
 }
 
 # Legacy preload namespace -> my owned surface (or reason it has none).
@@ -151,15 +151,15 @@ NAMESPACES = {
 }
 
 FEATURE_BULLETS = {
-    "tabs: new/close/activate/reopen/pin/mute/move/drag": ("PARTIAL", "new/close/activate exist; reopen/pin/mute/move/drag are not restored"),
+    "tabs: new/close/activate/reopen/pin/mute/move/drag": ("PARTIAL", "new/close/activate/reopen/pin/mute/move all exist (buttons, chords and the tab context menu); drag-reorder with the mouse is the remaining piece"),
     "workspaces: list/switch/new/close/rename/menu": ("PARTIAL", "a persisted flag only; the workspace tray is not built"),
     "private windows": ("DONE", r'"--private"'),
     "split view": ("DEFERRED", "split view is not rebuilt"),
     "command palette": ("DEFERRED", "the command palette is not rebuilt"),
-    "omnibox suggestions and custom search shortcuts": ("PARTIAL", "custom search exists; live suggestions do not"),
+    "omnibox suggestions and custom search shortcuts": ("DONE", r'"suggest"'),
     "bookmarks": ("DONE", r'"open-bookmark"'),
     "history": ("DONE", r'"open-history"'),
-    "downloads: list/control/clear/open/reveal/dir/pickdir": ("PARTIAL", "list/cancel/clear/open/dir settings exist; reveal and interactive pickdir are not wired"),
+    "downloads: list/control/clear/open/reveal/dir/pickdir": ("DONE", r'"download-reveal"'),
     "find in page": ("DONE", r'"find-bar"'),
     "zoom in/out/reset": ("DONE", r'VK_OEM_MINUS'),
     "page translation": ("DEFERRED", "translation is not implemented; the UI says so"),
@@ -172,7 +172,7 @@ FEATURE_BULLETS = {
     "update banner/check/install/later/dismiss/token state": ("PARTIAL", "the check talks to GitHub and reports honestly; banner/install/later/dismiss/token are not built"),
     "error log and diagnostics": ("PARTIAL", "extension diagnostics and per-tab errors exist; a unified error log view is not"),
     "session recovery": ("PARTIAL", "session restore on launch exists; crash-recovery prompts do not"),
-    "keyboard shortcuts and context menus": ("PARTIAL", "Ctrl+F/T/W/R/L/J/D/V and zoom chords exist; right-click context menus do not"),
+    "keyboard shortcuts and context menus": ("DONE", r'"menu-reopen"'),
 }
 
 STORES = {
@@ -226,11 +226,11 @@ NS_PREFIX = {
     "catalogue": ("DEFERRED", "service catalogue"),
     "clipboard": ("DONE", ""),
     "data": ("PARTIAL", "history/download clears exist; cookies/storage/cache clears and the error log do not"),
-    "downloads": ("PARTIAL", "reveal and pickdir dialogs are not wired"),
+    "downloads": ("DONE", '"downloads-pickdir"'),
     "ext": ("PARTIAL", "addfolder/list/toggle exist; addcrx/openpage/remove/restorebuiltin/status are not"),
     "find": ("DONE", "open_find()"),
-    "history": ("PARTIAL", "list and clear exist; a search box does not"),
-    "nav": ("PARTIAL", "go/home/reload exist; back/forward/stop buttons are not exposed"),
+    "history": ("DONE", '"panel-search"'),
+    "nav": ("DONE", '"nav-0"'),
     "open": ("DEFERRED", "open:external is not rebuilt"),
     "perf": ("PARTIAL", "partial"),
     "proton": ("PARTIAL", "extension toggle path"),
@@ -239,7 +239,7 @@ NS_PREFIX = {
     "recovery": ("DEFERRED", "crash recovery"),
     "settings": ("DONE", "commit_setting_edit"),
     "spell": ("PARTIAL", ""),
-    "tab": ("PARTIAL", "activate/close/new/open exist; menu/move/mute/pin/reopen do not"),
+    "tab": ("DONE", "tab_set_pinned"),
     "translate": ("DEFERRED", "translation"),
     "ui": ("PARTIAL", "layout happens live; no menu"),
     "update": ("PARTIAL", "check only"),

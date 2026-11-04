@@ -16,7 +16,12 @@ public:
   std::string search_engine = "duckduckgo", home_page = "psychovault://newtab", custom_search;
   std::vector<Bookmark> bookmarks;
   std::vector<HistoryEntry> history;
+  // The new-tab speed dial. Empty in a fresh profile means the factory row,
+  // not "dial disabled" - defaults are filled in on load.
+  std::vector<Bookmark> speed_dial;
   std::vector<std::string> session_tabs;
+  // Pin and mute ride along with the session as one '1'/'0' flag per tab.
+  std::string session_pinned, session_muted;
   int session_active = 0;
   // Downloads
   std::string download_directory;
