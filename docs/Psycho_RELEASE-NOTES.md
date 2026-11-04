@@ -21,10 +21,12 @@ I would rather show a number than a claim, so this is what I ran.
 - My engine test suite passed: 608 checks. That includes the media readers, the source buffer path, my own HTTP framing and the whole tunnel.
 - My tunnel was tested over a real loopback socket, not a script. A small SOCKS5 proxy runs inside my test, my client speaks to it, the name `example.test` arrives at the proxy rather than being resolved on this machine, and a page comes back through my framing.
 - A redirect through that tunnel was tested the same way. The first request got a 302, the second went to the new path inside a fresh tunnel with the right `Host` line, and the page behind it came back.
-- My source audit passed: 219 checks. My naming audit passed: 20 checks. My plan audit passed: 377 checks.
+- My source audit passed: 225 checks. My naming audit passed: 21 checks. My plan audit passed: 377 checks.
 - The whole browser, including the new transport and the Windows TLS file, cross-compiled for x64 Windows before I tagged anything, so a missing header or a wrong library name was found here rather than on the runner.
 
 One thing I want to be straight about: while writing the SOCKS5 tests I had three failures in a row that turned out to be my test's byte indices, not my client. I wrote a standalone probe, printed what my client actually put on the wire, and compared it byte for byte. The client was right; my arithmetic in the test was wrong. I fixed the test and left the probe result in the test comments.
+
+Two more things went wrong in ways worth writing down. I had a check that passed on Linux and failed on the Windows runner with numbers that contradicted the failure line, so I printed the real values and the frame itself into the log. The cause was my own test helper being called `near`, which a Windows header defines as an empty macro, so every check whose expectation was zero quietly became a comma expression. It is renamed, and my naming audit now refuses that class of name in my tests. Then I built with address and undefined behaviour sanitizers and they caught a real bug in my JavaScript runtime: when a script threw, I collected garbage while the thrown value was still in the caller's hands, so the error message could read freed memory. I no longer collect on the way out of a throw.
 
 ## What I am not claiming
 

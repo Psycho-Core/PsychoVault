@@ -122,6 +122,16 @@ def main() -> int:
         for ref in re.findall(r"tools/[\w./-]+\.py", body):
             check("workflow tool reference exists: " + ref, (ROOT / ref).exists())
 
+    # `near` cost me a hosted build: Windows headers define it as an empty macro, so
+    # every check whose expectation was zero turned into a comma expression and
+    # failed. I keep my test helpers clear of names the platform owns.
+    tests_body = (ROOT / "tests/Psycho_test_main.cpp").read_text(encoding="utf-8")
+    platform_macros = ["near", "far", "small", "interface", "min", "max", "IN", "OUT"]
+    clashes = [m for m in platform_macros
+               if re.search(r"\b(?:bool|static)[^;\n]*\b" + m + r"\s*\(", tests_body)]
+    check("my test helpers avoid names the Windows headers own", not clashes,
+          ", ".join(clashes) if clashes else "near/far/min/max checked")
+
     launcher = (ROOT / "PsychoVault_easy_build.bat").read_text(encoding="utf-8", errors="replace")
     check("double-click launcher still points at my prefixed script",
           "Psycho_start-build.ps1" in launcher)

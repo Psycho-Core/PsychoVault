@@ -7,8 +7,8 @@ I separate what passed from what failed, what is blocked and what I have not run
 - My GCC build of the engine, my page host and my test suite, and a full Clang/MinGW cross-build of the Windows browser executable.
 - My engine test suite: **608 checks passed**. This covers URL/JSON/UTF-8, DOM, CSS, my JavaScript interpreter, PNG and JPEG decode, layout, proxy routing, PAC evaluation, extension permissions, download naming, profile persistence, my bundled VPN bridge, my page host loading a page, fetching its subresources, decoding an image and reporting frames, my cookie jar, my web storage quota, a real form post, my WAV and AVI readers, my source buffers and the tunnel below.
 - My socket-level tunnel checks. A SOCKS5 proxy runs inside my own test on a loopback port. My client greets it, offers authentication, asks for a hostname that no one here can resolve, and the proxy is the side that receives that name. A page comes back through my own HTTP framing. A second run answers 302 on the first tunnel and opens a new tunnel for the redirected path, with `Host: redirect.test` on the second request. A third run with no proxy configured refuses with a `fail-closed` error instead of connecting.
-- My source-ownership and boundary audit: **219 passed, 0 failed**. This now includes the single-executable promise: no second executable, no resource compiler, no helper process.
-- My file-naming audit: **20 passed, 0 failed**.
+- My source-ownership and boundary audit: **225 passed, 0 failed**. This now includes the single-executable promise: no second executable, no resource compiler, no helper process.
+- My file-naming audit: **21 passed, 0 failed**.
 - My plan audit: **377 passed, 0 failed**.
 - Windows cross-compilation of every module with Clang/MinGW targeting `x86_64-windows-gnu`, including a full link of `PsychoVault.exe`, which catches MSVC-class errors before I spend a hosted build.
 

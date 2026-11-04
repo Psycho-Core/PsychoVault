@@ -54,7 +54,10 @@ static Rect node_box(Page &page, const char *id, bool *fixed = nullptr) {
                 painted_box->num("h")};
   return Rect{0, 0, -1, -1};
 }
-static bool near(double a, double b) {
+// Not `near`: Windows headers define that as an empty macro, which turns
+// near(x, 0) into the comma expression (x, 0) and fails only when the
+// expectation is zero. That cost me a hosted build to find.
+static bool close_to(double a, double b) {
   return std::abs(a - b) < 1.0;
 }
 static std::string js_eval(const std::string &s) {
@@ -512,7 +515,7 @@ int main() {
               "#a{position:absolute;top:10px;left:20px;width:50px;height:30px}"
               "</style><div id=p><div id=a>x</div></div>");
     Rect a = node_box(page, "a");
-    CHECK(near(a.x, 30) && near(a.y, 20) && near(a.w, 50) && near(a.h, 30));
+    CHECK(close_to(a.x, 30) && close_to(a.y, 20) && close_to(a.w, 50) && close_to(a.h, 30));
   }
   {
     Page page;
@@ -521,7 +524,7 @@ int main() {
               "#r{position:relative;top:5px;left:7px;width:100px;height:20px}"
               "</style><div id=r>rel</div>");
     Rect r = node_box(page, "r");
-    CHECK(near(r.x, 7) && near(r.y, 5));
+    CHECK(close_to(r.x, 7) && close_to(r.y, 5));
   }
   {
     Page page;
@@ -531,14 +534,14 @@ int main() {
               "</style><div id=f>fixed</div>");
     bool fixed = false;
     Rect f = node_box(page, "f", &fixed);
-    if (!(near(f.x, 0) && near(f.y, 0) && fixed)) {
+    if (!(close_to(f.x, 0) && close_to(f.y, 0) && fixed)) {
       // When this fails I want the frame itself in the log, not just a false.
       std::cerr << "fixed-diag node=" << page.doc.by_id("f") << " x=" << f.x << " y=" << f.y
                 << " w=" << f.w << " h=" << f.h << " fixed=" << fixed << "\n";
       auto again = page.render(800, 600, 0);
       std::cerr << "fixed-frame " << again.dump().substr(0, 4000) << "\n";
     }
-    CHECK(near(f.x, 0) && near(f.y, 0) && fixed);
+    CHECK(close_to(f.x, 0) && close_to(f.y, 0) && fixed);
   }
   {
     Page page;
@@ -548,7 +551,7 @@ int main() {
               "#a,#b{width:50px;height:20px}"
               "</style><div id=f><div id=a>a</div><div id=b>b</div></div>");
     Rect a = node_box(page, "a"), b = node_box(page, "b");
-    CHECK(near(a.x, 100) && near(b.x, 150));
+    CHECK(close_to(a.x, 100) && close_to(b.x, 150));
   }
   {
     Page page;
@@ -558,7 +561,7 @@ int main() {
               "#a{flex:1;height:20px}#b{flex:2;height:20px}"
               "</style><div id=f><div id=a>a</div><div id=b>b</div></div>");
     Rect a = node_box(page, "a"), b = node_box(page, "b");
-    CHECK(near(a.w, 100) && near(b.w, 200));
+    CHECK(close_to(a.w, 100) && close_to(b.w, 200));
   }
   {
     Page page;
@@ -568,7 +571,7 @@ int main() {
               "#a{width:40px;height:20px}"
               "</style><div id=f><div id=a>a</div></div>");
     Rect a = node_box(page, "a");
-    CHECK(near(a.y, 40));
+    CHECK(close_to(a.y, 40));
   }
   {
     // A flex row in normal flow starts below what came before it and takes the
@@ -585,10 +588,10 @@ int main() {
               "<div id=after>after</div>");
     Rect first = node_box(page, "first"), a = node_box(page, "a"), b = node_box(page, "b");
     Rect f = node_box(page, "f"), after = node_box(page, "after");
-    CHECK(near(first.y, 20) && near(first.h, 20));
-    CHECK(near(a.y, 60) && near(b.y, 60));
-    CHECK(near(f.y, 60) && near(f.h, 50));
-    CHECK(near(after.y, 110));
+    CHECK(close_to(first.y, 20) && close_to(first.h, 20));
+    CHECK(close_to(a.y, 60) && close_to(b.y, 60));
+    CHECK(close_to(f.y, 60) && close_to(f.h, 50));
+    CHECK(close_to(after.y, 110));
   }
   {
     Page page;
@@ -598,7 +601,7 @@ int main() {
               "#a{height:20px}#b{height:30px}"
               "</style><div id=f><div id=a>a</div><div id=b>b</div></div>");
     Rect a = node_box(page, "a"), b = node_box(page, "b");
-    CHECK(near(a.y, 0) && near(b.y, 30));
+    CHECK(close_to(a.y, 0) && close_to(b.y, 30));
   }
   {
     Page page;
@@ -608,7 +611,7 @@ int main() {
               "#a,#b{height:20px}"
               "</style><div id=g><div id=a>a</div><div id=b>b</div></div>");
     Rect a = node_box(page, "a"), b = node_box(page, "b");
-    CHECK(near(a.w, 100) && near(b.x, 110) && near(b.w, 200));
+    CHECK(close_to(a.w, 100) && close_to(b.x, 110) && close_to(b.w, 200));
   }
   {
     Page page;
@@ -617,7 +620,7 @@ int main() {
               "#t{transform:translate(15px,25px);width:100px;height:20px}"
               "</style><div id=t>t</div>");
     Rect t = node_box(page, "t");
-    CHECK(near(t.x, 15) && near(t.y, 25));
+    CHECK(close_to(t.x, 15) && close_to(t.y, 25));
   }
   // fetch() goes through my own network hook and resolves through promises.
   {
@@ -846,7 +849,7 @@ int main() {
               "#abs{position:absolute;top:0;left:0;width:40px;height:30px}"
               "</style><div id=rel><div id=abs></div></div>");
     Rect abs = node_box(page, "abs");
-    CHECK(near(abs.x, 15) && near(abs.y, 15));
+    CHECK(close_to(abs.x, 15) && close_to(abs.y, 15));
   }
   {
     // Max-Age wins over Expires whatever order a server writes them in.
@@ -896,9 +899,9 @@ int main() {
     if (hits.size() == 2) {
       // "hello" starts in the first run and ends two characters into the second,
       // so the highlight covers 20px plus two ninths of the 60px run.
-      CHECK(near(hits[0].x, 0) && near(hits[0].y, 0));
+      CHECK(close_to(hits[0].x, 0) && close_to(hits[0].y, 0));
       CHECK(hits[0].w > 30 && hits[0].w < 40);
-      CHECK(near(hits[1].y, 20) && hits[1].x > 50 && hits[1].x < 60);
+      CHECK(close_to(hits[1].y, 20) && hits[1].x > 50 && hits[1].x < 60);
     }
     CHECK(find_in_paint(paint, "HELLO").size() == 2);
     CHECK(find_in_paint(paint, "nothing").empty());
@@ -979,8 +982,8 @@ int main() {
     CHECK(probe_media(wav, info, error));
     CHECK(info.container == "WAV");
     CHECK(info.has_audio && !info.has_video);
-    CHECK(near(info.duration * 100, 25.0));
-    CHECK(near(info.sample_rate, 8000));
+    CHECK(close_to(info.duration * 100, 25.0));
+    CHECK(close_to(info.sample_rate, 8000));
     CHECK(media_type_supported("audio/wav"));
     CHECK(media_type_supported("video/x-msvideo"));
     CHECK(!media_type_supported("video/webm"));
@@ -988,11 +991,11 @@ int main() {
     MediaPlayer player;
     CHECK(player.load(wav, "audio/wav", error));
     CHECK(player.ready() && player.paused());
-    CHECK(near(player.duration() * 100, 25.0));
+    CHECK(close_to(player.duration() * 100, 25.0));
     player.play(100.0);
     player.advance(100.1);
     CHECK(!player.paused());
-    CHECK(near(player.current_time() * 10, 1.0));
+    CHECK(close_to(player.current_time() * 10, 1.0));
     // I ask for a device rate that is not the file rate, so the resampler runs.
     std::vector<int16_t> mixed(480 * 2, 0);
     CHECK(player.pull_audio(mixed.data(), 480, 48000) == 480);
@@ -1002,7 +1005,7 @@ int main() {
         any = true;
     CHECK(any);
     player.seek(0.2, 102.0);
-    CHECK(near(player.current_time() * 10, 2.0));
+    CHECK(close_to(player.current_time() * 10, 2.0));
     // Loop wraps at the end instead of stopping.
     player.set_loop(true);
     player.play(103.0);
@@ -1023,10 +1026,10 @@ int main() {
     CHECK(info.has_video && !info.has_audio);
     CHECK(info.video_codec == "MJPEG");
     CHECK(info.width == 32 && info.height == 16);
-    CHECK(near(info.frame_rate, 4.0));
+    CHECK(close_to(info.frame_rate, 4.0));
     MediaPlayer video;
     CHECK(video.load(avi, "video/x-msvideo", error));
-    CHECK(near(video.duration() * 100, 50.0));
+    CHECK(close_to(video.duration() * 100, 50.0));
     auto colour = [](const Image *image) {
       const uint8_t *p = &image->pixels[(size_t(4) * size_t(image->width) + 4) * 4];
       return std::make_tuple(int(p[2]), int(p[1]), int(p[0]));
@@ -1048,7 +1051,7 @@ int main() {
     std::string error;
     auto h264 = make_mp4("vide", "avc1");
     CHECK(!probe_media(h264, info, error));
-    CHECK(info.duration > 0 && near(info.duration * 10, 25.0));
+    CHECK(info.duration > 0 && close_to(info.duration * 10, 25.0));
     CHECK(info.video_codec == "avc1");
     CHECK(info.width == 32 && info.height == 16);
     CHECK(error.find("H.264") != std::string::npos);
@@ -1100,13 +1103,13 @@ int main() {
     CHECK(first_buffer->append(wav.data() + half, wav.size() - half, error));
     ranges = first_buffer->buffered();
     CHECK(ranges.size() == 1);
-    CHECK(near(ranges.front().second * 100, 25.0));
-    CHECK(near(source.duration() * 100, 25.0));
+    CHECK(close_to(ranges.front().second * 100, 25.0));
+    CHECK(close_to(source.duration() * 100, 25.0));
     auto newest = source.newest(error);
     CHECK(newest != nullptr);
     MediaPlayer from_source;
     CHECK(from_source.load_shared(newest, error));
-    CHECK(near(from_source.duration() * 100, 25.0));
+    CHECK(close_to(from_source.duration() * 100, 25.0));
     // A source buffer cannot cut a decoded segment in half, and it says so.
     CHECK(!first_buffer->remove(0.0, 0.1, error));
     CHECK(error.find("cannot remove") != std::string::npos);
@@ -2442,8 +2445,8 @@ int main() {
     auto media_frame = media.render(400, 300, 0);
     bool sized = false;
     for (const auto &command : media_frame.at("paint").array)
-      if (int(command.num("kind")) == int(PaintCommand::Kind::Image) && near(command.num("w"), 32) &&
-          near(command.num("h"), 32))
+      if (int(command.num("kind")) == int(PaintCommand::Kind::Image) && close_to(command.num("w"), 32) &&
+          close_to(command.num("h"), 32))
         sized = true;
     CHECK(sized);
   }
@@ -2463,8 +2466,8 @@ int main() {
                  "<!doctype html><style>body{margin:0}#a{border-bottom:2px solid #000;height:20px}"
                  "#b{border:1px solid red;height:10px}</style><div id=a></div><div id=b></div>");
     Rect border_a = node_box(borders, "a"), border_b = node_box(borders, "b");
-    CHECK(near(border_a.h, 22) && near(border_a.y, 0));
-    CHECK(near(border_b.y, 22) && near(border_b.h, 12));
+    CHECK(close_to(border_a.h, 22) && close_to(border_a.y, 0));
+    CHECK(close_to(border_b.y, 22) && close_to(border_b.h, 12));
   }
   {
     // Two stacked margins collapse to the larger one, so the second box starts
@@ -2473,7 +2476,7 @@ int main() {
     collapse.load(*parse_url("https://collapse.test/"),
                   "<!doctype html><style>body{margin:0}#a{margin-bottom:20px;height:10px}"
                   "#b{margin-top:30px;height:10px}</style><div id=a></div><div id=b></div>");
-    CHECK(near(node_box(collapse, "b").y, 40));
+    CHECK(close_to(node_box(collapse, "b").y, 40));
   }
   {
     // A percentage height resolves against the parent's height, never its width.
@@ -2481,7 +2484,7 @@ int main() {
     percent.load(*parse_url("https://percent.test/"),
                  "<!doctype html><style>body{margin:0}#p{height:100px}#a{height:50%}</style>"
                  "<div id=p><div id=a></div></div>");
-    CHECK(near(node_box(percent, "a").h, 50));
+    CHECK(close_to(node_box(percent, "a").h, 50));
   }
   {
     // grid-template-rows fixes the track heights.
@@ -2491,7 +2494,7 @@ int main() {
               "grid-template-columns:50px 50px;grid-template-rows:40px 20px}#c{height:10px}</style>"
               "<div id=g><div></div><div></div><div id=c></div></div>");
     Rect c = node_box(grid, "c");
-    CHECK(near(c.y, 40) && near(c.x, 0) && near(c.w, 50));
+    CHECK(close_to(c.y, 40) && close_to(c.x, 0) && close_to(c.w, 50));
   }
   {
     // flex order and align-self move one item without touching the rest.
@@ -2501,8 +2504,8 @@ int main() {
               "#a{width:50px;height:10px;order:2}#b{width:50px;height:10px;order:1;"
               "align-self:flex-end}</style><div id=f><div id=a></div><div id=b></div></div>");
     Rect flex_a = node_box(flex, "a"), flex_b = node_box(flex, "b");
-    CHECK(near(flex_a.x, 50) && near(flex_a.y, 0));
-    CHECK(near(flex_b.x, 0) && near(flex_b.y, 50));
+    CHECK(close_to(flex_a.x, 50) && close_to(flex_a.y, 0));
+    CHECK(close_to(flex_b.x, 0) && close_to(flex_b.y, 50));
   }
   {
     // Sticky stays where the flow puts it until a scroll asks for it.
@@ -2510,7 +2513,7 @@ int main() {
     sticky.load(*parse_url("https://sticky.test/"),
                 "<!doctype html><style>body{margin:0}#a{position:sticky;top:5px;height:20px}</style>"
                 "<div id=a></div>");
-    CHECK(near(node_box(sticky, "a").y, 0));
+    CHECK(close_to(node_box(sticky, "a").y, 0));
   }
   {
     // A gradient background, an overflow clip and the paint pass that applies
