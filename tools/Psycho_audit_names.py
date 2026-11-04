@@ -46,6 +46,10 @@ def exempt(path: str) -> str | None:
         return "captured legacy evidence keeps its capture identity"
     if name == "manifest.json" and path.startswith("extensions/"):
         return "the extension format requires this exact filename"
+    if path.startswith("extensions/Psycho-VPN-") or path.startswith("extensions/PsychoVault-VPN-Bridge"):
+        # Vendored third-party payloads keep their own names, licenses and
+        # provenance; renaming their files would hide what they really are.
+        return "vendored extension payload authored upstream"
     if pathlib.PurePosixPath(path).suffix not in CODE_SUFFIXES:
         return "not authored source"
     return None
@@ -97,8 +101,11 @@ def main() -> int:
                 stale.append(f"{path}: {old}")
         if target.suffix in {".cpp", ".hpp", ".h", ".cc"}:
             for inc in re.findall(r'#\s*include\s*"([^"]+)"', text):
-                resolved = (target.parent / inc).resolve()
-                if not resolved.exists():
+                # The real compiler searches the including file's directory
+                # first, then the repository root, which is exactly how my
+                # build script invokes it.
+                if not (target.parent / inc).resolve().exists() and \
+                   not (ROOT / inc).resolve().exists():
                     include_missing.append(f"{path}: {inc}")
 
     check("no stale reference to a pre-rename filename", not stale,
