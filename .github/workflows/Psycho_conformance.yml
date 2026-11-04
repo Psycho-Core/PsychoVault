@@ -28,7 +28,14 @@ jobs:
           python3 --version
       - name: Build my conformance runner
         run: |
-          python3 tools/Psycho_build.py --compiler gcc --outdir build-conformance
+          set -o pipefail
+          # Only the runner, not the shell: a measurement job has no reason to
+          # compile my window code. On a failure the compiler's own words go into
+          # the annotation, because the log download from here comes back empty.
+          python3 tools/Psycho_build.py --compiler gcc --outdir build-conformance --target conformance 2>&1 | tee build.log || {
+            tail -n 40 build.log | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          }
           test -x build-conformance/pv-conformance
       - name: Fetch the Test262 tree I pin
         env:
