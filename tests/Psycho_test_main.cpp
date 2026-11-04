@@ -13,12 +13,22 @@
 #include <cmath>
 #include <filesystem>
 #include <iostream>
+#include <cstdlib>
 #include <cstring>
 #include <thread>
 using namespace pv;
 static int passed = 0;
+// One line per check that has started, when the runner asks for it. A stack overflow
+// on a hosted Windows runner ends the process before a failure message can be
+// written, so the last line of the log has to be the check that was running.
+static bool progress_wanted() {
+  static const bool wanted = std::getenv("PV_PROGRESS") != nullptr;
+  return wanted;
+}
 #define CHECK(x)                                                                                   \
   do {                                                                                             \
+    if (progress_wanted())                                                                         \
+      std::cerr << "check " << __LINE__ << "\n";                                                   \
     if (!(x)) {                                                                                    \
       std::cerr << "FAIL " << __FILE__ << ":" << __LINE__ << " " << #x << "\n";                    \
       return 1;                                                                                    \
