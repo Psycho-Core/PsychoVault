@@ -5,7 +5,41 @@
 #include <thread>
 #include <cstdlib>
 #include <iomanip>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <pthread.h>
+#endif
 namespace pv::js {
+namespace {
+// How much stack this thread actually has. I ask the platform instead of guessing,
+// because a Windows exe thread starts with 1 MiB, my test thread gets 8 MiB, and a
+// sanitizer build makes every frame several times larger. A quarter of the stack is
+// left as headroom for the code between two script frames.
+size_t thread_stack_limit() {
+#ifdef _WIN32
+  ULONG_PTR low = 0, high = 0;
+  GetCurrentThreadStackLimits(&low, &high);
+  if (high > low) {
+    size_t size = static_cast<size_t>(high - low);
+    if (size > 0)
+      return size - size / 4;
+  }
+#else
+  pthread_attr_t attr;
+  if (pthread_getattr_np(pthread_self(), &attr) == 0) {
+    void *addr = nullptr;
+    size_t size = 0;
+    if (pthread_attr_getstack(&attr, &addr, &size) == 0 && size > 0) {
+      pthread_attr_destroy(&attr);
+      return size - size / 4;
+    }
+    pthread_attr_destroy(&attr);
+  }
+#endif
+  return 192u * 1024u;
+}
+} // namespace
 namespace {
 bool callable(const Value &value) {
   return value.type == Value::Type::Object && value.object &&
@@ -358,6 +392,7 @@ static Value from_json(const Json &j, Runtime &r) {
 Runtime::Runtime(Host *host) : host_(host) {
   char base = 0;
   stack_base_ = &base;
+  stack_limit_ = thread_stack_limit();
   global_ = static_cast<Env *>(allocate(Object::Kind::Environment));
   extra_roots_.push_back(global_);
   install_builtins();
@@ -1219,12 +1254,6 @@ Value Runtime::error_object(const Value &thrown) {
   error.object->properties["__error__"] = Value(name);
   return error;
 }
-// 192 KiB of stack is what a runtime may use for nested script calls. It is well
-// under the 1 MiB a Windows exe thread starts with and far above what a normal
-// page needs.
-namespace {
-constexpr size_t kStackBudget = 192u * 1024u;
-} // namespace
 Value Runtime::call_sync(Value fn, const Values &args, Value this_value) {
   tick();
   // A recursive script can catch a RangeError and try again, so I check both the
@@ -1233,7 +1262,7 @@ Value Runtime::call_sync(Value fn, const Values &args, Value this_value) {
   char here = 0;
   size_t used = stack_base_ ? size_t(stack_base_ > &here ? stack_base_ - &here : &here - stack_base_)
                             : 0;
-  if (++depth_ > 128 || used > kStackBudget) {
+  if (++depth_ > 128 || used > stack_limit_) {
     --depth_;
     throw JsError{Value("RangeError: Maximum call stack size exceeded")};
   }

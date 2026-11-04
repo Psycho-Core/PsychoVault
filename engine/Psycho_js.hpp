@@ -245,10 +245,13 @@ private:
     Value value;
   };
   Value call_sync(Value fn, const Values &args, Value this_value);
-  // Where my C++ stack was when this runtime started. A recursive script cannot be
-  // allowed to run my own stack out, and counting JavaScript frames is not enough
-  // when the compiler chooses how much stack a frame takes.
+  // Where my C++ stack was when this runtime started, and how much of it this
+  // runtime may take. A recursive script cannot be allowed to run my own stack out,
+  // and counting JavaScript frames is not enough when the compiler chooses how much
+  // stack a frame takes. The budget comes from the thread's real stack, so it is
+  // right on a 1 MiB Windows thread and on a sanitizer build with fat frames.
   const char *stack_base_ = nullptr;
+  size_t stack_limit_ = 192u * 1024u;
   // Turns a thrown message into the error object a page catches.
   Value error_object(const Value &thrown);
   Host *host_;
