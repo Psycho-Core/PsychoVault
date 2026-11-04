@@ -108,7 +108,7 @@ struct Expr {
   Kind kind;
   Value literal;
   std::string text;
-  bool computed = false, prefix = false, optional = false;
+  bool computed = false, prefix = false, optional = false, template_chunk = false;
   std::unique_ptr<Expr> left, right, third;
   std::vector<std::unique_ptr<Expr>> items;
   std::vector<std::pair<std::string, std::unique_ptr<Expr>>> properties;

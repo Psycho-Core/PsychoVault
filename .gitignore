@@ -30,3 +30,4 @@ crash-recovery.json
 running.marker
 .env
 .env.*
+.scratch/

@@ -45,6 +45,9 @@ Bytes random_bytes(size_t count);
 int64_t now_ms();
 std::string base64_encode(const Bytes &bytes);
 Bytes base64_decode(std::string_view text, size_t max_bytes = kMaxResourceBytes);
+// SHA-256 per FIPS 180-4. I verify extension identities with it, and my updater
+// checks assets against a digest, so the transform lives in my base library.
+Bytes sha256(const Bytes &input);
 
 struct Url {
   std::string scheme, host, path, query, fragment, port;

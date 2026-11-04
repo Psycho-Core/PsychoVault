@@ -43,6 +43,27 @@ size_t thread_stack_limit() {
 #endif
   return 192u * 1024u;
 }
+
+// Percent-encoding shared by the URI helpers and URLSearchParams: form data
+// escapes, and the URI forms that login handshakes build by hand.
+inline std::string percent_encode(const std::string &text, bool full_uri) {
+  static const std::string unreserved =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'()";
+  static const std::string reserved = ":/?#[]@!$&'()*+,;=";
+  std::string out;
+  for (char c : text) {
+    unsigned char byte = static_cast<unsigned char>(c);
+    if (unreserved.find(static_cast<char>(byte)) != std::string::npos ||
+        (full_uri && reserved.find(static_cast<char>(byte)) != std::string::npos))
+      out += c;
+    else {
+      char hex[4];
+      std::snprintf(hex, sizeof hex, "%%%02X", byte);
+      out += hex;
+    }
+  }
+  return out;
+}
 } // namespace
 namespace {
 bool callable(const Value &value) {
@@ -1280,7 +1301,7 @@ Value Runtime::call_sync(Value fn, const Values &args, Value this_value) {
   Value result;
   try {
     if (fn.type != Value::Type::Object || !fn.object)
-      throw JsError{Value("TypeError: value is not callable")};
+      throw JsError{Value("TypeError: value is not callable: " + fn.to_string().substr(0, 120))};
     Object *o = fn.object;
     if (o->kind == Object::Kind::Native) {
       result = o->native(const_cast<Values &>(args));
@@ -1315,7 +1336,7 @@ Value Runtime::call_sync(Value fn, const Values &args, Value this_value) {
       this_ = saved;
       env_stack_.pop_back();
     } else
-      throw JsError{Value("TypeError: value is not callable")};
+      throw JsError{Value("TypeError: value is not callable: " + fn.to_string().substr(0, 120))};
   } catch (...) {
     --depth_;
     throw;
@@ -1600,8 +1621,20 @@ Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
   }
   case Expr::Kind::Object: {
     Value o = make_object();
-    for (auto &p : e.properties)
+    for (auto &p : e.properties) {
+      if (p.first.size() == 10 && p.first.compare(1, 9, "pv-spread") == 0) {
+        // An object spread: the source's own enumerable keys join the literal
+        // in place, and a later entry still overwrites them.
+        Value source = evaluate(*p.second, env, this_value);
+        if (source.type == Value::Type::Object && source.object)
+          for (auto &entry : source.object->properties)
+            if (!entry.first.empty() && entry.first[0] != '\0' &&
+                entry.first.rfind("__", 0) != 0)
+              o.object->properties[entry.first] = entry.second;
+        continue;
+      }
       o.object->properties[p.first] = evaluate(*p.second, env, this_value);
+    }
     for (auto &p : e.computed_properties)
       o.object->properties[evaluate(*p.first, env, this_value).to_string()] =
           evaluate(*p.second, env, this_value);
@@ -1649,7 +1682,15 @@ Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
     if (e.optional && (base.type == Value::Type::Null || base.type == Value::Type::Undefined))
       return Value();
     std::string key = e.computed ? evaluate(*e.right, env, this_value).to_string() : e.text;
-    return get_member(base, key);
+    // Tag the throw with my source line so a null read in a minified bundle is
+    // still findable.
+    try {
+      return get_member(base, key);
+    } catch (JsError &err) {
+      if (err.value.type == Value::Type::String && err.value.string.find(" line ") == std::string::npos)
+        err.value.string += " (line " + std::to_string(e.line) + ")";
+      throw;
+    }
   }
   case Expr::Kind::Unary: {
     if (e.text == "delete") {
@@ -1791,6 +1832,12 @@ Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
   case Expr::Kind::Call: {
     Value fn, this_value_call;
     Values args;
+    if (e.optional) {
+      // fn?.() does not run at all when the callee is nullish.
+      Value callee = evaluate(*e.left, env, this_value);
+      if (callee.type == Value::Type::Null || callee.type == Value::Type::Undefined)
+        return Value();
+    }
     if (e.left->kind == Expr::Kind::Identifier && e.left->text == "super") {
       // super(...) runs the base constructor against the instance I am building.
       Value cls = get_member(this_, "__class__");
@@ -1822,7 +1869,16 @@ Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
       } else
         args.push_back(evaluate(*a, env, this_value));
     }
-    return call(fn, args, this_value_call);
+    // Minified bundles are one long line; the expression's own line still beats
+    // nothing when I ship diagnostics to myself.
+    try {
+      return call(fn, args, this_value_call);
+    } catch (JsError &err) {
+      if (err.value.type == Value::Type::String &&
+          err.value.string.find(" line ") == std::string::npos)
+        err.value.string += " (line " + std::to_string(e.line) + ")";
+      throw;
+    }
   }
   case Expr::Kind::New: {
     Value fn = evaluate(*e.left, env, this_value);
@@ -2773,6 +2829,143 @@ void Runtime::install_builtins() {
     }
     return a[0];
   });
+  // WeakMap and WeakSet, keyed by object identity. My collector has no weak
+  // handles, so I hold entries strongly - observable behavior matches; only the
+  // reclamation guarantee differs, which no correct program may rely on.
+  auto same_key = [](const Value &a, const Value &b) {
+    if (a.type == Value::Type::Object || b.type == Value::Type::Object)
+      return a.type == b.type && a.object == b.object && a.object != nullptr;
+    return strict_equals(a, b);
+  };
+  auto weak_entries = [](const Value &self) -> Value {
+    auto it = self.object->properties.find("__entries__");
+    return it == self.object->properties.end() ? Value() : it->second;
+  };
+  auto weak_find = [same_key, weak_entries](const Value &self, const Value &key) -> int {
+    Value list = weak_entries(self);
+    if (list.type != Value::Type::Object) return -1;
+    size_t n = size_t(list.object->properties["length"].to_number());
+    for (size_t i = 0; i < n; ++i) {
+      auto found = list.object->properties.find(std::to_string(i));
+      if (found == list.object->properties.end()) continue;
+      if (same_key(found->second.object->properties.at("0"), key)) return int(i);
+    }
+    return -1;
+  };
+  g.properties["WeakMap"] = make_native([this, same_key, weak_find, weak_entries](Values &a) {
+    Value self = make_object();
+    self.object->properties["__entries__"] = make_array({});
+    if (!a.empty()) {
+      Values init;
+      append_spread(*this, init, a[0]);
+      for (auto &v : init) {
+        if (v.type != Value::Type::Object) continue;
+        const auto &pair = v.object->properties;
+        Value key = pair.count("0") ? pair.at("0") : Value();
+        Value value = pair.count("1") ? pair.at("1") : Value();
+        Value list = weak_entries(self);
+        size_t n = size_t(list.object->properties["length"].to_number());
+        Value entry = make_array({});
+        entry.object->properties["0"] = key;
+        entry.object->properties["1"] = value;
+        entry.object->properties["length"] = Value(2.0);
+        if (weak_find(self, key) < 0) {
+          list.object->properties[std::to_string(n)] = entry;
+          list.object->properties["length"] = Value(double(n + 1));
+        }
+      }
+    }
+    self.object->properties["set"] = make_native([this, self, weak_find, weak_entries](Values &args) mutable {
+      Value key = args.empty() ? Value() : args[0];
+      if (key.type != Value::Type::Object)
+        throw JsError{Value("TypeError: Invalid value used as weak map key")};
+      Value value = args.size() > 1 ? args[1] : Value();
+      Value list = weak_entries(self);
+      int found = weak_find(self, key);
+      if (found < 0) {
+        size_t n = size_t(list.object->properties["length"].to_number());
+        Value entry = make_array({});
+        entry.object->properties["0"] = key;
+        entry.object->properties["1"] = value;
+        entry.object->properties["length"] = Value(2.0);
+        list.object->properties[std::to_string(n)] = entry;
+        list.object->properties["length"] = Value(double(n + 1));
+      } else
+        list.object->properties[std::to_string(found)].object->properties["1"] = value;
+      return self;
+    });
+    self.object->properties["get"] = make_native([this, self, weak_find, weak_entries](Values &args) {
+      int found = weak_find(self, args.empty() ? Value() : args[0]);
+      if (found < 0) return Value();
+      Value list = weak_entries(self);
+      return list.object->properties[std::to_string(found)].object->properties["1"];
+    });
+    self.object->properties["has"] = make_native([this, self, weak_find](Values &args) {
+      return Value(weak_find(self, args.empty() ? Value() : args[0]) >= 0);
+    });
+    self.object->properties["delete"] = make_native([this, self, weak_find, weak_entries](Values &args) {
+      int found = weak_find(self, args.empty() ? Value() : args[0]);
+      if (found < 0) return Value(false);
+      Value list = weak_entries(self);
+      size_t n = size_t(list.object->properties["length"].to_number());
+      for (size_t i = size_t(found); i + 1 < n; ++i)
+        list.object->properties[std::to_string(i)] = list.object->properties[std::to_string(i + 1)];
+      list.object->properties.erase(std::to_string(n - 1));
+      list.object->properties["length"] = Value(double(n - 1));
+      return Value(true);
+    });
+    return self;
+  });
+  g.properties["WeakSet"] = make_native([this, same_key, weak_find, weak_entries](Values &a) {
+    Value self = make_object();
+    self.object->properties["__entries__"] = make_array({});
+    if (!a.empty()) {
+      Values init;
+      append_spread(*this, init, a[0]);
+      Value list = weak_entries(self);
+      for (auto &v : init) {
+        if (v.type != Value::Type::Object) continue;
+        Value entry = make_array({});
+        entry.object->properties["0"] = v;
+        entry.object->properties["length"] = Value(1.0);
+        size_t n = size_t(list.object->properties["length"].to_number());
+        if (weak_find(self, v) < 0) {
+          list.object->properties[std::to_string(n)] = entry;
+          list.object->properties["length"] = Value(double(n + 1));
+        }
+      }
+    }
+    self.object->properties["add"] = make_native([this, self, weak_find, weak_entries](Values &args) mutable {
+      Value key = args.empty() ? Value() : args[0];
+      if (key.type != Value::Type::Object)
+        throw JsError{Value("TypeError: Invalid value used in weak set")};
+      Value list = weak_entries(self);
+      if (weak_find(self, key) < 0) {
+        size_t n = size_t(list.object->properties["length"].to_number());
+        Value entry = make_array({});
+        entry.object->properties["0"] = key;
+        entry.object->properties["length"] = Value(1.0);
+        list.object->properties[std::to_string(n)] = entry;
+        list.object->properties["length"] = Value(double(n + 1));
+      }
+      return self;
+    });
+    self.object->properties["has"] = make_native([this, self, weak_find](Values &args) {
+      return Value(weak_find(self, args.empty() ? Value() : args[0]) >= 0);
+    });
+    self.object->properties["delete"] = make_native([this, self, weak_find, weak_entries](Values &args) {
+      int found = weak_find(self, args.empty() ? Value() : args[0]);
+      if (found < 0) return Value(false);
+      Value list = weak_entries(self);
+      size_t n = size_t(list.object->properties["length"].to_number());
+      for (size_t i = size_t(found); i + 1 < n; ++i)
+        list.object->properties[std::to_string(i)] = list.object->properties[std::to_string(i + 1)];
+      list.object->properties.erase(std::to_string(n - 1));
+      list.object->properties["length"] = Value(double(n - 1));
+      return Value(true);
+    });
+    return self;
+  });
   // I write the typed arrays Media Source Extensions needs, backed by real bytes
   // rather than a list of numbers, so a video segment costs what it is.
   g.properties["ArrayBuffer"] = make_native([this](Values &a) {
@@ -2905,7 +3098,154 @@ void Runtime::install_builtins() {
     });
     return self;
   });
-  g.properties["Object"] = object;
+    // Object.prototype gives the polyfill-era idioms a real home:
+  // Function.call.bind(Object.prototype.hasOwnProperty) lands args as
+  // [target, name], and obj.hasOwnProperty(name) lands [name] with the object
+  // lost to the caller - so I also answer truthfully from my get_member
+  // intercept for the direct form, and from args here for the bound form.
+  {
+    Value object_proto = make_object();
+    object_proto.object->properties["hasOwnProperty"] = make_native([](Values &a) {
+      if (a.size() >= 2 && a[0].type == Value::Type::Object && a[0].object) {
+        const auto name = a[1].to_string();
+        return Value(a[0].object->properties.count(name) != 0);
+      }
+      return Value(false);
+    });
+    // Sentry classifies values with Object.prototype.toString.call(value).
+    object_proto.object->properties["toString"] = make_native([](Values &a) {
+      if (a.empty()) return Value(std::string("[object Object]"));
+      const Value &v = a[0];
+      std::string tag = "Object";
+      switch (v.type) {
+      case Value::Type::Null: tag = "Null"; break;
+      case Value::Type::Undefined: tag = "Undefined"; break;
+      case Value::Type::Boolean: tag = "Boolean"; break;
+      case Value::Type::Number: tag = "Number"; break;
+      case Value::Type::String: tag = "String"; break;
+      case Value::Type::Object:
+        if (v.object) {
+          if (!v.object->host_type.empty()) tag = v.object->host_type;
+          else if (v.object->kind == Object::Kind::Array) tag = "Array";
+          else if (v.object->kind == Object::Kind::Function ||
+                   v.object->kind == Object::Kind::Native) tag = "Function";
+          else if (v.object->properties.count("__error__")) tag = "Error";
+          else if (v.object->bytes) tag = "Uint8Array";
+        }
+        break;
+      }
+      return Value(std::string("[object ") + tag + "]");
+    });
+    object_proto.object->properties["valueOf"] = make_native([](Values &a) {
+      if (!a.empty()) return a[0];
+      return Value();
+    });
+    object.object->properties["prototype"] = object_proto;
+  }
+  {
+    // Reflection surface babel/post-2019 bundles lean on: the polyfill
+    // subclasses WeakMap through Object.create / Object.setPrototypeOf, webpack
+    // stamps module objects with Object.defineProperty, and Sentry classifies
+    // values through Object.getOwnPropertyDescriptor.
+    object.object->properties["getPrototypeOf"] = make_native([](Values &a) {
+      if (a.empty() || a[0].type != Value::Type::Object || !a[0].object) return Value();
+      if (a[0].object->prototype) return Value(a[0].object->prototype);
+      auto it = a[0].object->properties.find("__proto__");
+      if (it != a[0].object->properties.end() && it->second.type == Value::Type::Object &&
+          it->second.object)
+        return it->second;
+      return Value::null();
+    });
+    object.object->properties["setPrototypeOf"] = make_native([this](Values &a) {
+      if (a.size() < 2 || a[0].type != Value::Type::Object || !a[0].object)
+        return a.empty() ? Value() : a[0];
+      Value target = a[0];
+      if (a[1].type == Value::Type::Object && a[1].object) {
+        target.object->prototype = a[1].object;
+        target.object->properties["__proto__"] = a[1];
+      } else {
+        target.object->prototype = nullptr;
+        target.object->properties.erase("__proto__");
+      }
+      return target;
+    });
+    object.object->properties["create"] = make_native([this](Values &a) {
+      Value fresh = make_object();
+      if (!a.empty() && a[0].type == Value::Type::Object && a[0].object) {
+        fresh.object->prototype = a[0].object;
+        fresh.object->properties["__proto__"] = a[0];
+      }
+      if (a.size() > 1 && a[1].type == Value::Type::Object && a[1].object) {
+        // defineProperties shape: {name: {value, get, set...}}
+        for (auto &entry : a[1].object->properties) {
+          if (entry.second.type != Value::Type::Object || !entry.second.object) continue;
+          auto &desc = entry.second.object->properties;
+          if (auto it = desc.find("value"); it != desc.end())
+            fresh.object->properties[entry.first] = it->second;
+          if (auto g = desc.find("get"); g != desc.end())
+            fresh.object->properties["get:" + entry.first] = g->second;
+        }
+      }
+      return fresh;
+    });
+    object.object->properties["defineProperty"] = make_native([](Values &a) {
+      if (a.size() < 3 || a[0].type != Value::Type::Object || !a[0].object ||
+          a[2].type != Value::Type::Object || !a[2].object)
+        return a.empty() ? Value() : a[0];
+      std::string key = a[1].to_string();
+      auto &desc = a[2].object->properties;
+      if (auto it = desc.find("value"); it != desc.end())
+        a[0].object->properties[key] = it->second;
+      if (auto g = desc.find("get"); g != desc.end())
+        a[0].object->properties["get:" + key] = g->second;
+      if (auto t = desc.find("set"); t != desc.end())
+        a[0].object->properties["set:" + key] = t->second;
+      return a[0];
+    });
+    object.object->properties["defineProperties"] = make_native([](Values &a) {
+      if (a.size() < 2 || a[0].type != Value::Type::Object || !a[0].object ||
+          a[1].type != Value::Type::Object || !a[1].object)
+        return a.empty() ? Value() : a[0];
+      for (auto &entry : a[1].object->properties) {
+        if (entry.second.type != Value::Type::Object || !entry.second.object) continue;
+        auto &desc = entry.second.object->properties;
+        if (auto it = desc.find("value"); it != desc.end())
+          a[0].object->properties[entry.first] = it->second;
+        if (auto g = desc.find("get"); g != desc.end())
+          a[0].object->properties["get:" + entry.first] = g->second;
+        if (auto t = desc.find("set"); t != desc.end())
+          a[0].object->properties["set:" + entry.first] = t->second;
+      }
+      return a[0];
+    });
+    object.object->properties["getOwnPropertyDescriptor"] =
+        make_native([this](Values &a) {
+      if (a.size() < 2 || a[0].type != Value::Type::Object || !a[0].object) return Value();
+      std::string key = a[1].to_string();
+      auto &props = a[0].object->properties;
+      auto it = props.find(key);
+      bool has = it != props.end() && key.compare(0, 4, "get:") != 0 &&
+                 key.compare(0, 4, "set:") != 0;
+      if (!has) return Value();
+      Value desc = make_object();
+      desc.object->properties["value"] = it->second;
+      desc.object->properties["writable"] = Value(true);
+      desc.object->properties["enumerable"] = Value(true);
+      desc.object->properties["configurable"] = Value(true);
+      return desc;
+    });
+    object.object->properties["getOwnPropertyNames"] = make_native([this](Values &a) {
+      Values names;
+      if (!a.empty() && a[0].type == Value::Type::Object && a[0].object)
+        for (auto &entry : a[0].object->properties)
+          if (entry.first.compare(0, 4, "get:") != 0 &&
+              entry.first.compare(0, 4, "set:") != 0 && entry.first != "__proto__" &&
+              entry.first != "__class__")
+            names.push_back(Value(entry.first));
+      return make_array(names);
+    });
+  }
+g.properties["Object"] = object;
   Value json = make_object();
   json.object->properties["stringify"] =
       make_native([](Values &a) { return a.empty() ? Value() : Value(a[0].to_json().dump()); });
@@ -2916,13 +3256,100 @@ void Runtime::install_builtins() {
     return from_json(*parsed, *this);
   });
   g.properties["JSON"] = json;
-  Value date = make_object();
-  date.object->properties["now"] = make_native([](Values &) {
-    return Value(double(std::chrono::duration_cast<std::chrono::milliseconds>(
-                            std::chrono::system_clock::now().time_since_epoch())
-                            .count()));
-  });
-  g.properties["Date"] = date;
+  {
+    // Date is a constructor now: Sentry and Proton both stamp walls of real
+    // time with new Date().toISOString(), and login code compares getTime().
+    auto date_now = [](Values &) {
+      return Value(double(std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::system_clock::now().time_since_epoch())
+                              .count()));
+    };
+    auto utc_fields = [](double ms) {
+      std::time_t secs_t = std::time_t(ms / 1000.0);
+      std::tm broken{};
+#if defined(_WIN32)
+      gmtime_s(&broken, &secs_t);
+#else
+      gmtime_r(&secs_t, &broken);
+#endif
+      int whole = int(ms) % 1000;
+      if (whole < 0) whole += 1000;
+      return std::make_tuple(broken, whole);
+    };
+    auto iso_format = [utc_fields](double ms) {
+      auto [broken, whole] = utc_fields(ms);
+      // A real year is four digits; clamp it so a pathological timestamp does
+      // not overflow the buffer and trip any format check.
+      int year = broken.tm_year + 1900;
+      if (year < 0) year = 0;
+      if (year > 9999) year = 9999;
+      char out[40];
+      std::snprintf(out, sizeof(out), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ",
+                    year, broken.tm_mon + 1, broken.tm_mday,
+                    broken.tm_hour, broken.tm_min, broken.tm_sec, whole);
+      return std::string(out);
+    };
+    // A Date instance carries its epoch millis in one shared cell so every
+    // method made below sees setTime() updates.
+    auto make_date = [this, iso_format](double ms) {
+      auto cell = std::make_shared<double>(ms);
+      Value self = make_object();
+      self.object->host_type = "Date";
+      self.object->properties["getTime"] = make_native([cell](Values &) {
+        return Value(*cell);
+      });
+      self.object->properties["valueOf"] = make_native([cell](Values &) {
+        return Value(*cell);
+      });
+      self.object->properties["toISOString"] = make_native([iso_format, cell](Values &) {
+        return Value(iso_format(*cell));
+      });
+      self.object->properties["toString"] = make_native([cell](Values &) {
+        std::time_t secs_t = std::time_t(*cell / 1000.0);
+        std::string text = std::asctime(std::gmtime(&secs_t));
+        if (!text.empty() && text.back() == '\n') text.pop_back();
+        return Value(text);
+      });
+      self.object->properties["setTime"] = make_native([cell](Values &args) {
+        if (!args.empty()) *cell = args[0].to_number();
+        return Value(*cell);
+      });
+      return self;
+    };
+    Value date = make_native([this, date_now, make_date](Values &args) {
+      Values none;
+      double ms = date_now(none).number;
+      if (!args.empty() && args[0].type == Value::Type::Number) ms = args[0].number;
+      else if (!args.empty() && args[0].type == Value::Type::String) {
+        // ISO 8601 down to the second: "2026-11-05T10:20:30Z". I accept the
+        // trailing fraction and the numeric offset forms by ignoring them, so a
+        // server timestamp survives a round trip.
+        const std::string text = args[0].to_string();
+        std::tm broken{};
+        int whole = 0;
+        int matched = std::sscanf(text.c_str(), "%d-%d-%dT%d:%d:%d.%dZ",
+                                  &broken.tm_year, &broken.tm_mon, &broken.tm_mday,
+                                  &broken.tm_hour, &broken.tm_min, &broken.tm_sec, &whole);
+        if (matched >= 6) {
+          broken.tm_year -= 1900;
+          broken.tm_mon -= 1;
+          broken.tm_isdst = -1;
+#if defined(_WIN32)
+          _putenv_s("TZ", "UTC");
+          _tzset();
+          ms = double(_mkgmtime(&broken)) * 1000.0;
+#else
+          ms = double(timegm(&broken)) * 1000.0;
+#endif
+          ms += whole;
+        }
+      }
+      return make_date(ms);
+    });
+    date.object->properties["now"] = make_native([date_now](Values &a) { return date_now(a); });
+    date.object->properties["parse"] = make_native([](Values &) { return Value(); });
+    g.properties["Date"] = date;
+  }
   for (std::string name : {"Error", "TypeError", "RangeError", "SyntaxError",
                           "ReferenceError", "URIError", "EvalError", "AggregateError"}) {
     Value ctor = make_native([this, name](Values &a) {
@@ -2950,7 +3377,42 @@ void Runtime::install_builtins() {
       throw JsError{Value("SyntaxError: function body did not compile")};
     }
   });
-  g.properties["setTimeout"] = make_native([this](Values &a) {
+    // URI quoting used by login handshakes and OAuth flows in the extension.
+  auto percent_decode = [](const std::string &text) {
+    std::string out;
+    auto unhex = [](char c) -> int {
+      if (c >= '0' && c <= '9') return c - '0';
+      if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+      if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+      return -1;
+    };
+    for (size_t i = 0; i < text.size();) {
+      if (text[i] == '%' && i + 2 < text.size()) {
+        int high = unhex(text[i + 1]), low = unhex(text[i + 2]);
+        if (high < 0 || low < 0)
+          throw JsError{Value("URIError: malformed percent-encoding")};
+        out += char(high * 16 + low);
+        i += 3;
+      } else {
+        out += text[i];
+        ++i;
+      }
+    }
+    return out;
+  };
+  g.properties["encodeURIComponent"] = make_native([](Values &a) {
+    return Value(percent_encode(a.empty() ? "" : a[0].to_string(), false));
+  });
+  g.properties["decodeURIComponent"] = make_native([percent_decode](Values &a) {
+    return Value(percent_decode(a.empty() ? "" : a[0].to_string()));
+  });
+  g.properties["encodeURI"] = make_native([](Values &a) {
+    return Value(percent_encode(a.empty() ? "" : a[0].to_string(), true));
+  });
+  g.properties["decodeURI"] = make_native([percent_decode](Values &a) {
+    return Value(percent_decode(a.empty() ? "" : a[0].to_string()));
+  });
+g.properties["setTimeout"] = make_native([this](Values &a) {
     if (a.empty() || a[0].type_of() != "function")
       throw JsError{Value("TypeError: timer callback required")};
     double delay = std::clamp(a.size() > 1 ? a[1].to_number() : 0, 0.0, 86400000.0);
@@ -2988,6 +3450,314 @@ void Runtime::install_builtins() {
     std::erase_if(timers, [id](const Timer &t) { return t.id == id; });
     return Value();
   });
+
+  // ---- web platform: URL, URLSearchParams, base64, crypto, TextEncoder ------
+  // Sentry's reporter and Proton's worker build DSNs, OAuth URLs and token
+  // payloads with these, and my own pages get them too. They all stand on my
+  // own Url parser and byte helpers; nothing is borrowed from anywhere.
+  using ParamList = std::shared_ptr<std::vector<std::pair<std::string, std::string>>>;
+  auto render_query = [](const std::vector<std::pair<std::string, std::string>> &entries) {
+    std::string out;
+    for (auto &kv : entries) {
+      if (!out.empty()) out += '&';
+      out += percent_encode(kv.first, true);
+      out += '=';
+      out += percent_encode(kv.second, true);
+    }
+    return out;
+  };
+  auto make_search_params = [this, render_query](ParamList entries) {
+    Value self = make_object();
+    self.object->host_type = "URLSearchParams";
+    self.object->properties["size"] = Value(double(entries->size()));
+    auto refresh_size = [self, entries]() {
+      self.object->properties["size"] = Value(double(entries->size()));
+    };
+    auto get_all = [entries](const std::string &key) {
+      Values found;
+      for (auto &kv : *entries)
+        if (kv.first == key) found.push_back(Value(kv.second));
+      return found;
+    };
+    self.object->properties["append"] = make_native([entries, self, refresh_size](Values &a) {
+      if (a.size() >= 2) entries->emplace_back(a[0].to_string(), a[1].to_string());
+      refresh_size();
+      return Value();
+    });
+    self.object->properties["delete"] = make_native([entries, refresh_size](Values &a) {
+      if (!a.empty())
+        std::erase_if(*entries, [&](const auto &kv) { return kv.first == a[0].to_string(); });
+      refresh_size();
+      return Value();
+    });
+    self.object->properties["set"] = make_native([entries, get_all, refresh_size](Values &a) {
+      if (a.size() >= 2) {
+        auto key = a[0].to_string();
+        bool seen = false;
+        std::vector<std::pair<std::string, std::string>> next;
+        for (auto &kv : *entries) {
+          if (kv.first != key) next.push_back(kv);
+          else if (!seen) { next.emplace_back(key, a[1].to_string()); seen = true; }
+        }
+        *entries = std::move(next);
+      }
+      refresh_size();
+      return Value();
+    });
+    self.object->properties["get"] = make_native([get_all](Values &a) {
+      auto found = a.empty() ? Values{} : get_all(a[0].to_string());
+      return found.empty() ? Value::null() : found.front();
+    });
+    self.object->properties["getAll"] = make_native([this, get_all](Values &a) {
+      return make_array(a.empty() ? Values{} : get_all(a[0].to_string()));
+    });
+    self.object->properties["has"] = make_native([entries](Values &a) {
+      if (a.empty()) return Value(false);
+      auto key = a[0].to_string();
+      for (auto &kv : *entries)
+        if (kv.first == key) return Value(true);
+      return Value(false);
+    });
+    self.object->properties["toString"] = make_native([render_query, entries](Values &) {
+      return Value(render_query(*entries));
+    });
+    self.object->properties["sort"] = make_native([entries](Values &) {
+      std::stable_sort(entries->begin(), entries->end(),
+                       [](const auto &a, const auto &b) { return a.first < b.first; });
+      return Value();
+    });
+    self.object->properties["forEach"] = make_native([this, entries](Values &a) {
+      if (a.empty()) return Value();
+      for (auto &kv : *entries) call(a[0], {Value(kv.second), Value(kv.first)});
+      return Value();
+    });
+    auto entries_iterator = [this, entries](Values &) {
+      Values pairs;
+      for (auto &kv : *entries) pairs.push_back(make_array({Value(kv.first), Value(kv.second)}));
+      auto snapshot = std::make_shared<Values>(std::move(pairs));
+      auto index = std::make_shared<size_t>(0);
+      Value iterator = make_object();
+      iterator.object->properties["next"] = make_native([this, snapshot, index](Values &) {
+        Value step = make_object();
+        bool done = *index >= snapshot->size();
+        step.object->properties["done"] = Value(done);
+        step.object->properties["value"] = done ? Value() : (*snapshot)[(*index)++];
+        return step;
+      });
+      return iterator;
+    };
+    self.object->properties["entries"] = make_native(entries_iterator);
+    self.object->properties["@@iterator"] = make_native(entries_iterator);
+    self.object->properties["keys"] = make_native([this, entries](Values &) {
+      auto snapshot = std::make_shared<Values>();
+      for (auto &kv : *entries) snapshot->push_back(Value(kv.first));
+      auto index = std::make_shared<size_t>(0);
+      Value iterator = make_object();
+      iterator.object->properties["next"] = make_native([this, snapshot, index](Values &) {
+        Value step = make_object();
+        bool done = *index >= snapshot->size();
+        step.object->properties["done"] = Value(done);
+        step.object->properties["value"] = done ? Value() : (*snapshot)[(*index)++];
+        return step;
+      });
+      return iterator;
+    });
+    self.object->properties["values"] = make_native([this, entries](Values &) {
+      auto snapshot = std::make_shared<Values>();
+      for (auto &kv : *entries) snapshot->push_back(Value(kv.second));
+      auto index = std::make_shared<size_t>(0);
+      Value iterator = make_object();
+      iterator.object->properties["next"] = make_native([this, snapshot, index](Values &) {
+        Value step = make_object();
+        bool done = *index >= snapshot->size();
+        step.object->properties["done"] = Value(done);
+        step.object->properties["value"] = done ? Value() : (*snapshot)[(*index)++];
+        return step;
+      });
+      return iterator;
+    });
+    return self;
+  };
+  auto parse_params = [](const std::string &text, ParamList entries) {
+    size_t start = (!text.empty() && text.front() == '?') ? 1 : 0;
+    while (start <= text.size()) {
+      size_t amp = text.find('&', start);
+      std::string piece = text.substr(start, amp == std::string::npos ? amp : amp - start);
+      if (!piece.empty()) {
+        size_t eq = piece.find('=');
+        auto decode = [](std::string s) {
+          std::string out;
+          for (size_t i = 0; i < s.size(); ++i) {
+            char c = s[i];
+            if (c == '+') { out += ' '; continue; }
+            if (c == '%' && i + 2 < s.size()) {
+              out += char(std::strtoul(s.substr(i + 1, 2).c_str(), nullptr, 16));
+              i += 2;
+              continue;
+            }
+            out += c;
+          }
+          return out;
+        };
+        if (eq == std::string::npos) entries->emplace_back(decode(piece), "");
+        else entries->emplace_back(decode(piece.substr(0, eq)), decode(piece.substr(eq + 1)));
+      }
+      if (amp == std::string::npos) break;
+      start = amp + 1;
+    }
+  };
+  g.properties["URLSearchParams"] = make_native([this, make_search_params, parse_params](Values &a) {
+    auto entries = std::make_shared<std::vector<std::pair<std::string, std::string>>>();
+    Value self = make_search_params(entries);
+    self.object->properties["size"] = Value(0.0);
+    if (!a.empty()) {
+      if (a[0].type == Value::Type::String)
+        parse_params(a[0].string, entries);
+      self.object->properties["size"] = Value(double(entries->size()));
+    }
+    return self;
+  });
+  auto make_url = [this, make_search_params, parse_params, render_query](
+                      const Url &parsed, const std::string &userinfo) {
+    Value self = make_object();
+    self.object->host_type = "URL";
+    auto entries = std::make_shared<std::vector<std::pair<std::string, std::string>>>();
+    parse_params(parsed.query, entries);
+    std::string scheme = parsed.scheme;
+    std::string user, pass;
+    size_t colon = userinfo.find(':');
+    if (colon == std::string::npos) user = userinfo;
+    else { user = userinfo.substr(0, colon); pass = userinfo.substr(colon + 1); }
+    auto href_string = [=]() {
+      std::string auth = user;
+      if (!pass.empty()) auth += ':' + pass;
+      if (!auth.empty()) auth += '@';
+      std::string port = parsed.port.empty() ? "" : ":" + parsed.port;
+      std::string query = render_query(*entries);
+      std::string out = scheme + "://" + auth + parsed.host + port + parsed.path;
+      if (!query.empty()) out += "?" + query;
+      if (!parsed.fragment.empty()) out += "#" + parsed.fragment;
+      return out;
+    };
+    self.object->properties["href"] = Value(href_string());
+    self.object->properties["protocol"] = Value(scheme + ":");
+    self.object->properties["username"] = Value(user);
+    self.object->properties["password"] = Value(pass);
+    self.object->properties["hostname"] = Value(parsed.host);
+    self.object->properties["host"] =
+        Value(parsed.host + (parsed.port.empty() ? "" : ":" + parsed.port));
+    self.object->properties["port"] = Value(parsed.port);
+    self.object->properties["pathname"] = Value(parsed.path.empty() ? "/" : parsed.path);
+    self.object->properties["origin"] = Value(parsed.origin());
+    auto params = make_search_params(entries);
+    self.object->properties["searchParams"] = params;
+    self.object->properties["toString"] =
+        make_native([href_string](Values &) { return Value(href_string()); });
+    self.object->properties["toJSON"] = self.object->properties["toString"];
+    return self;
+  };
+  // My Url parser refuses userinfo outright (a phishing guard), so the URL
+  // builtin strips it before parsing and hands it to make_url itself.
+  auto split_userinfo = [](std::string input, std::string &userinfo) {
+    userinfo.clear();
+    size_t scheme = input.find("://");
+    if (scheme == std::string::npos) return input;
+    size_t auth_start = scheme + 3;
+    size_t auth_end = input.find_first_of("/?#", auth_start);
+    if (auth_end == std::string::npos) auth_end = input.size();
+    std::string authority = input.substr(auth_start, auth_end - auth_start);
+    size_t at = authority.rfind('@');
+    if (at == std::string::npos) return input;
+    userinfo = authority.substr(0, at);
+    return input.substr(0, auth_start) + authority.substr(at + 1) + input.substr(auth_end);
+  };
+  g.properties["URL"] = make_native([this, make_url, split_userinfo](Values &a) {
+    if (a.empty()) throw JsError{Value("TypeError: URL requires an address")};
+    std::string userinfo;
+    std::string input = split_userinfo(a[0].to_string(), userinfo);
+    std::optional<Url> parsed;
+    if (a.size() > 1 && !a[1].to_string().empty()) {
+      auto base = parse_url(a[1].to_string());
+      if (base) parsed = resolve_url(*base, input);
+    } else
+      parsed = parse_url(input);
+    if (!parsed || parsed->host.empty())
+      throw JsError{Value("TypeError: '" + input + "' is not a valid URL")};
+    return make_url(*parsed, userinfo);
+  });
+  Value js_can_parse = make_native([this](Values &a) {
+    if (a.empty()) return Value(false);
+    auto parsed = a.size() > 1 ? std::optional<Url>()
+                               : parse_url(a[0].to_string());
+    if (a.size() > 1) {
+      auto base = parse_url(a[1].to_string());
+      parsed = base ? resolve_url(*base, a[0].to_string()) : std::optional<Url>();
+    }
+    return Value(parsed && !parsed->host.empty());
+  });
+  g.properties["URL"].object->properties["canParse"] = js_can_parse;
+  g.properties["URL"].object->properties["createObjectURL"] =
+      make_native([this](Values &) { return Value("blob:psychovault/" + std::to_string(size_t(next_timer++))); });
+
+  g.properties["atob"] = make_native([](Values &a) {
+    auto bytes = base64_decode(a.empty() ? std::string_view() : std::string_view(a[0].to_string()));
+    std::string out;
+    out.reserve(bytes.size());
+    for (auto b : bytes) out += char(b);
+    return Value(out);
+  });
+  g.properties["btoa"] = make_native([](Values &a) {
+    std::string text = a.empty() ? std::string() : a[0].to_string();
+    Bytes bytes(text.begin(), text.end());
+    return Value(base64_encode(bytes));
+  });
+
+  Value encoder_ctor = make_native([this](Values &) {
+    Value self = make_object();
+    self.object->host_type = "TextEncoder";
+    self.object->properties["encoding"] = Value("utf-8");
+    self.object->properties["encode"] = make_native([this](Values &a) {
+      std::string text = a.empty() ? std::string() : a[0].to_string();
+      Value array = make_array({});
+      for (unsigned char b : text)
+        array.object->properties[std::to_string(array.object->properties["length"].to_number())] =
+            Value(double(b));
+      array.object->properties["length"] = Value(double(text.size()));
+      Values ctor_args{array};
+      return call(global().properties["Uint8Array"], ctor_args);
+    });
+    return self;
+  });
+  g.properties["TextEncoder"] = encoder_ctor;
+
+  Value crypto_ob = make_object();
+  crypto_ob.object->host_type = "Crypto";
+  crypto_ob.object->properties["randomUUID"] = make_native([](Values &) {
+    auto bytes = random_bytes(16);
+    bytes[6] = uint8_t((bytes[6] & 0x0F) | 0x40);
+    bytes[8] = uint8_t((bytes[8] & 0x3F) | 0x80);
+    const char *hex = "0123456789abcdef";
+    std::string out;
+    for (size_t i = 0; i < 16; ++i) {
+      if (i == 4 || i == 6 || i == 8 || i == 10) out += '-';
+      out += hex[bytes[i] >> 4];
+      out += hex[bytes[i] & 15];
+    }
+    return Value(out);
+  });
+  crypto_ob.object->properties["getRandomValues"] = make_native([this](Values &a) {
+    if (a.empty() || a[0].type != Value::Type::Object || !a[0].object || !a[0].object->bytes)
+      throw JsError{Value("TypeError: getRandomValues needs a typed array")};
+    auto fill = random_bytes(a[0].object->length);
+    for (size_t i = 0; i < a[0].object->length; ++i)
+      (*a[0].object->bytes)[a[0].object->byte_offset + i] = fill[i];
+    return a[0];
+  });
+  g.properties["crypto"] = crypto_ob;
+
+  // `self` is the global object in both of my realms, exactly like the real
+  // platform; Sentry's reporter reaches for it first.
+  g.properties["self"] = Value(&g);
   // My pattern constructor and the prototype my literals share.
   Value regex_proto = make_object();
   regex_prototype_ = regex_proto.object;
@@ -3008,7 +3778,52 @@ void Runtime::install_builtins() {
     return make_regex(pattern, flags);
   });
   regexp.object->properties["prototype"] = regex_proto;
-  g.properties["RegExp"] = regexp;
+    {
+    Value reflect = make_object();
+    reflect.object->properties["defineProperty"] = make_native([this](Values &a) {
+      // Same semantics as Object.defineProperty: default (get/set/value).
+      if (a.size() < 3 || a[0].type != Value::Type::Object || !a[0].object ||
+          a[2].type != Value::Type::Object || !a[2].object)
+        return Value(false);
+      std::string key = a[1].to_string();
+      auto &desc = a[2].object->properties;
+      if (auto it = desc.find("value"); it != desc.end())
+        a[0].object->properties[key] = it->second;
+      if (auto g = desc.find("get"); g != desc.end())
+        a[0].object->properties["get:" + key] = g->second;
+      if (auto t = desc.find("set"); t != desc.end())
+        a[0].object->properties["set:" + key] = t->second;
+      return Value(true);
+    });
+    reflect.object->properties["deleteProperty"] = make_native([](Values &a) {
+      if (a.size() >= 2 && a[0].type == Value::Type::Object && a[0].object) {
+        a[0].object->properties.erase(a[1].to_string());
+        return Value(true);
+      }
+      return Value(false);
+    });
+    reflect.object->properties["construct"] = make_native([this](Values &a) {
+      if (a.empty() || a[0].type != Value::Type::Object || !a[0].object)
+        throw JsError{Value("TypeError: Reflect.construct needs a constructor")};
+      Values list;
+      if (a.size() > 1 && a[1].type == Value::Type::Object && a[1].object &&
+          a[1].object->kind == Object::Kind::Array)
+        iterate(a[1], list);
+      return construct(a[0], list);
+    });
+    reflect.object->properties["get"] = make_native([this](Values &a) {
+      if (a.empty()) return Value();
+      return get_member(a[0], a.size() > 1 ? a[1].to_string() : "");
+    });
+    reflect.object->properties["apply"] = make_native([this](Values &a) {
+      if (a.empty()) return Value();
+      Values list;
+      if (a.size() > 2 && a[2].type == Value::Type::Object && a[2].object) iterate(a[2], list);
+      return call(a[0], list, a.size() > 1 ? a[1] : Value());
+    });
+    g.properties["Reflect"] = reflect;
+  }
+g.properties["RegExp"] = regexp;
 
   // My promise constructor. The executor runs now; handlers run as microtasks.
   Value promise_proto = make_object();

@@ -523,6 +523,33 @@ int main() {
   CHECK(js_eval("Array.from('abc').join('-')") == "a-b-c");
   CHECK(js_eval("'a,b,c'.split(',',2).length") == "2");
   CHECK(js_eval("var o={f:async function(){return 1;}};typeof o.f") == "function");
+  // Real-world bundles (Sentry, webextension-polyfill, my own PAC scripts) lean
+  // on every shape below; each one came out of feeding Proton's worker bundle
+  // through my parser, and each one has a measured answer.
+  CHECK(js_eval("var d=(a=5)=>a;d()") == "5");
+  CHECK(js_eval("var d=(a=5)=>a;d(9)") == "9");
+  CHECK(js_eval("var f=function(a,b=4){return a+b};f(3)") == "7");
+  CHECK(js_eval("var o={m(k=3){return k}};o.m()") == "3");
+  CHECK(js_eval("class K{static q([v]=[41],w=1){return v+w}};K.q()") == "42");
+  CHECK(js_eval("var f=({resolve,reject},x=9)=>[resolve,reject,x];f({resolve:1,reject:2})[2]") == "9");
+  CHECK(js_eval("var g=([a,,b=4])=>a+b;g([1,2])") == "5");
+  CHECK(js_eval("var h=({x=3}={})=>x;h()") == "3");
+  CHECK(js_eval("function n({p1:{p2}={p2:8}}={}){return p2};n()") == "8");
+  CHECK(js_eval("var s='';for(const[k,v]of[['a',1],['b',2]])s+=k+v;s") == "a1b2");
+  CHECK(js_eval("var s='';for(const{x=0}of[{x:5},{}])s+=x+';';s") == "5;0;");
+  CHECK(js_eval("const[t,,,i]=[9,8,7,6];t+'-'+i") == "9-6");
+  CHECK(js_eval("var b={...{x:1,y:2},y:9,z:3};b.x+','+b.y+','+b.z") == "1,9,3");
+  CHECK(js_eval("var o={['g'+'o'](x){return x*2}};o.go(21)") == "42");
+  CHECK(js_eval("var a=[10,20];a?.[1]") == "20");
+  CHECK(js_eval("var n=null;n?.[0]===undefined") == "true");
+  CHECK(js_eval("var f=null;f?.()===undefined") == "true");
+  CHECK(js_eval("var f=function(x){return x*2};f?.(21)") == "42");
+  CHECK(js_eval("function tag(s,a,b){return s.join('|')+':'+a+','+b};tag`x${1+1}y${'z'}w`") == "x|y|w:2,z");
+  CHECK(js_eval("'hello{x}'.replace(/\\{[^}]*\\}/g,'')") == "hello");
+  CHECK(js_eval("`v=${'A{x}'.replace(/\\{[^}]*\\}/g,'!')}`") == "v=A!");
+  CHECK(js_eval("var of=41;of+1") == "42");
+  CHECK(js_eval("true?.03:99") == "0.03");
+  CHECK(js_eval("(1)?.5:.25") == "0.5");
   // Promises: handlers are queued and run when the script finishes.
   {
     js::Runtime r;
