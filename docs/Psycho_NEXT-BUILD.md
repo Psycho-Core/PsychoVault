@@ -158,7 +158,7 @@ I want to be straight about one difference: my engine runs one statement at a ti
 
 ## Evidence required before I hand over a preview
 
-- The engine and page-host tests pass locally and on Windows. They now stand at 717 checks, including pattern matching, promise ordering, async/await, a `fetch` round trip through my page host, my media readers, and a tunnel driven over a real loopback socket.
+- The engine and page-host tests pass locally and on Windows. They now stand at 718 checks, including pattern matching, promise ordering, async/await, a `fetch` round trip through my page host, my media readers, and a tunnel driven over a real loopback socket.
 - The single-file gate passes on hosted Windows for the exact commit I publish.
 - A local HTTP test proves main-document, stylesheet, script and PNG loading through my page host.
 - The Windows artifact contains only my executables, notices and build metadata - no profile, credential or source-control directory.

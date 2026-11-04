@@ -26,7 +26,7 @@ The full page is in `docs/Psycho_STEP8-AUDIT.md`, including what this environmen
 
 ## What I checked before calling this build done
 
-- My engine test suite passed: **717 checks**. That is 69 more than the last build, and they cover the HTTPS store and its cap, the mixed content and form refusals, the upgrade and its fallback, the filter parser and matcher, the exceptions, and the block decision taken through the same fetch a tab uses.
+- My engine test suite passed: **718 checks**. That is 70 more than the last build, and they cover the HTTPS store and its cap, the mixed content and form refusals, the upgrade and its fallback, the filter parser and matcher, the exceptions, and the block decision taken through the same fetch a tab uses.
 - My source audit passed: **250 checks**, including that my filter engine is mine, that I bundle no third-party list, that every request goes through one shared check, and that my panel prints the sentence about isolation instead of a tick.
 - My naming audit passed: **21 checks**. My plan audit passed: **377 checks**.
 - The Windows executable was compiled and linked by the release workflow from this exact commit, and the release was published with the executable in it. If that build had failed, there would be no release to read this in.

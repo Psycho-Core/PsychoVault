@@ -43,7 +43,7 @@ I asked the questions a person would ask of a browser, not the questions that ma
 
 ## What I checked, and how
 
-- My engine test suite: **717 checks passed**, 69 more than the previous build.
+- My engine test suite: **718 checks passed**, 70 more than the previous build.
 - The HTTPS store: a header over HTTPS, the same header over HTTP refused, a capped lifetime, `includeSubDomains`, `max-age=0`, pruning an expired entry, and a JSON round trip that survives a restart.
 - The decisions through the request path, not only through the class: a filtered script refused with the rule named, a per-site exception letting it through, mixed content refused with the blocker switched off, the upgrade visible in the returned address, and exactly one counted fallback for a host without a promise.
 - The matcher: a host anchor and a subdomain, a query string that mentions the host and does not match, a type option that excludes the wrong type, a third-party rule on the page that is not the site, an exception beating a block, and a `domain=` rule with an exclusion.

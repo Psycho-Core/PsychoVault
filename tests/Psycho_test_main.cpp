@@ -2825,17 +2825,21 @@ int main() {
     CHECK(resource_type_name(ResourceType::XmlHttpRequest) == "xmlhttprequest");
   }
   {
-    // My confinement layer says what it did and what it did not do. On this build
-    // there are no job objects, so the honest answer is that nothing was limited and
-    // page code is not isolated.
+    // My confinement layer says what it did and what it did not do. On Windows the
+    // job object is real and the cap is reported; on this build there is no job
+    // object, so the answer is that nothing was limited. Either way the sentence
+    // refuses to call a resource cap isolation.
     std::string error;
-    bool applied = confine_process(256u * 1024u * 1024u, 50, error);
+    bool applied = confine_process(4096ull * 1024ull * 1024ull, 50, error);
     ConfinementStatus status = confinement_status();
-    CHECK(!applied);
-    CHECK(!error.empty());
-    CHECK(!status.isolated);
+    CHECK(status.isolated == false);
+    CHECK(applied == status.limited);
+    if (applied) CHECK(status.memory_bytes == 4096ull * 1024ull * 1024ull);
+    else CHECK(!error.empty());
     std::string summary = confinement_summary(status);
     CHECK(summary.find("not isolated") != std::string::npos);
+    CHECK(applied ? summary.find("4096 MiB") != std::string::npos
+                  : summary.find("No memory cap") != std::string::npos);
   }
   {
     // My filter list. Comments are ignored, cosmetic rules are refused rather than
