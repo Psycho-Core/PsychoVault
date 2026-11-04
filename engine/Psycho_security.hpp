@@ -3,6 +3,8 @@
 // refuse outright. The certificate check itself belongs to the transport, because
 // only the transport can see the chain. This file is the policy around it.
 #pragma once
+#include <atomic>
+
 #include "Psycho_base.hpp"
 
 namespace pv {
@@ -29,6 +31,9 @@ public:
   bool requires_https(const std::string &host) const;
   // True when the URL is http and a host in the store requires HTTPS.
   bool should_upgrade(const Url &url) const;
+  // The same question asked on behalf of the always-HTTPS setting, where every
+  // plain HTTP URL is upgraded rather than only hosts with a header on record.
+  bool should_upgrade(const Url &url, bool https_only) const;
   // An https page loading an http subresource. Scripts and stylesheets are active
   // content, so they are always refused; images and media are refused as well,
   // because half-blocked mixed content is how a page ends up looking broken and
@@ -39,8 +44,9 @@ public:
 
   std::vector<HstsEntry> entries;
   // What this policy refused or changed since the browser started, so a person can
-  // see that the setting does something.
-  uint64_t upgraded = 0, blocked_mixed = 0, blocked_submit = 0;
+  // see that the setting does something. More than one tab's worker thread touches
+  // these, so they are atomic rather than merely shared.
+  std::atomic<uint64_t> upgraded{0}, blocked_mixed{0}, blocked_submit{0}, fallbacks{0};
 
   Json to_json() const;
   void from_json(const Json &json);
@@ -99,6 +105,12 @@ public:
 
   std::vector<FilterRule> rules;
 };
+
+// The list I ship. It is mine, written by me, and deliberately short: the
+// advertising and measurement endpoints that turn up on most pages, written as host
+// anchors with a trailing separator so no ordinary word in a path can match them. A
+// longer list belongs on disk, and the profile can name one.
+std::string builtin_filter_text();
 
 // What my blocker did, counted where it happens.
 struct FilterCounters {

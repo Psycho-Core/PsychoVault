@@ -176,9 +176,25 @@ bool HttpsPolicy::requires_https(const std::string &host) const {
   return find(host) != nullptr;
 }
 
+namespace {
+// The three spellings of loopback I accept. A development server on one of these
+// rarely has a certificate, so an always-HTTPS rule leaves them alone.
+bool loopback_name(const std::string &host) {
+  return host == "127.0.0.1" || host == "localhost" || host == "[::1]";
+}
+} // namespace
+
 bool HttpsPolicy::should_upgrade(const Url &url) const {
   if (url.scheme != "http" || url.host.empty())
     return false;
+  return requires_https(url.host);
+}
+
+bool HttpsPolicy::should_upgrade(const Url &url, bool https_only) const {
+  if (url.scheme != "http" || url.host.empty())
+    return false;
+  if (https_only && !loopback_name(url.host))
+    return true;
   return requires_https(url.host);
 }
 
@@ -350,6 +366,47 @@ bool page_allows(const FilterRule &rule, const std::string &page_host) {
   return false;
 }
 } // namespace
+
+
+std::string builtin_filter_text() {
+  // My starter list. Host anchors only, so a rule cannot bite a page that merely
+  // mentions the host in a query string, and resource types where the host does
+  // something other than advertising I do want to keep.
+  return "! PsychoVault starter list - written by me, kept short on purpose\n"
+         "||doubleclick.net^\n"
+         "||googlesyndication.com^\n"
+         "||googleadservices.com^\n"
+         "||adservice.google.com^\n"
+         "||amazon-adsystem.com^\n"
+         "||adnxs.com^\n"
+         "||adsrvr.org^\n"
+         "||criteo.com^\n"
+         "||criteo.net^\n"
+         "||taboola.com^\n"
+         "||outbrain.com^\n"
+         "||scorecardresearch.com^\n"
+         "||quantserve.com^\n"
+         "||rubiconproject.com^\n"
+         "||pubmatic.com^\n"
+         "||openx.net^\n"
+         "||casalemedia.com^\n"
+         "||smartadserver.com^\n"
+         "||serving-sys.com^\n"
+         "||adform.net^\n"
+         "||bidswitch.net^\n"
+         "||moatads.com^\n"
+         "||adsafeprotected.com^\n"
+         "||yieldmo.com^\n"
+         "||zedo.com^\n"
+         "||hotjar.com^$script\n"
+         "||google-analytics.com^$script,image\n"
+         "||googletagmanager.com^$script\n"
+         "||segment.com^$script\n"
+         "||mixpanel.com^$script\n"
+         "||sentry-cdn.com^$script\n"
+         "||facebook.net^$third-party\n"
+         "||doubleverify.com^$script\n";
+}
 
 bool FilterList::parse(const std::string &text, std::string &error) {
   std::stringstream stream(text);

@@ -16,6 +16,9 @@ struct NetworkPolicy {
   bool strip_referrer = false;
   bool block_third_party_cookies = true;
   bool block_ads = false;
+  // Upgrade every plain HTTP request, not only the hosts that asked with a header.
+  // A navigation that cannot reach the upgraded address falls back once.
+  bool https_only = false;
   std::vector<std::string> blocked_hosts;
   std::vector<std::string> allowed_hosts; // per-site shield exceptions
   // My certificate and transport policy. It upgrades a host that asked for HTTPS,

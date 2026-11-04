@@ -10,6 +10,7 @@
 #include "../platform/Psycho_profile.hpp"
 #include "../platform/Psycho_extension.hpp"
 #include "../platform/Psycho_download.hpp"
+#include "../platform/Psycho_sandbox.hpp"
 #include <audioclient.h>
 #include <atomic>
 #include <chrono>
@@ -17,6 +18,7 @@
 #include <deque>
 #include <dwmapi.h>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <mmdeviceapi.h>
 #include <fstream>
@@ -62,6 +64,12 @@ struct Hit {
   std::string action;
   int index = 0;
   std::string value;
+};
+// What my blocker and my HTTPS policy did while this window has been open. A tab's
+// worker thread adds to these and the painting code reads them, so they are atomic
+// and neither thread owns the other.
+struct BlockReport {
+  std::atomic<uint64_t> blocked{0}, allowed{0}, evaluated{0}, upgraded{0}, mixed{0}, forms{0};
 };
 static std::string pick_folder(HWND owner);
 // My extensions sit beside my executable, so I resolve that folder myself.
@@ -219,6 +227,12 @@ struct Session {
   std::string url;
   std::string start_error;
   NetworkPolicy policy;
+  // This tab's filter counters. Only this thread writes them, so the deltas below
+  // are exact rather than a snapshot of a shared number.
+  FilterCounters counts;
+  std::shared_ptr<BlockReport> report;
+  std::atomic<uint64_t> page_blocked{0};
+  std::string last_block;
   CookieJar *jar = nullptr;
   Storage *storage = nullptr;
   double width = 1000, height = 700;
@@ -274,6 +288,16 @@ struct Session {
   void deliver(HostEvent event);
   void apply(Host &host, const Json &command);
   void run();
+  // One fetch, then a note about it. The deltas are exact because only this thread
+  // writes the counters, and the total lives in a block the window can read.
+  void note(const FilterCounters &before, const Resource &result);
+  uint64_t blocked_in_page() const {
+    return page_blocked.load(std::memory_order_relaxed);
+  }
+  std::string last_block_reason() {
+    std::lock_guard lock(mutex);
+    return last_block;
+  }
 };
 // I build my updates field by field so adding a field can never leave one
 // uninitialised in a brace list.
@@ -326,6 +350,29 @@ void Session::apply(Host &host, const Json &command) {
     host.key(command.str("key"), command.str("text"));
   }
 }
+void Session::note(const FilterCounters &before, const Resource &result) {
+  uint64_t blocked = counts.blocked - before.blocked;
+  uint64_t allowed = counts.allowed_by_exception - before.allowed_by_exception;
+  uint64_t evaluated = counts.evaluated - before.evaluated;
+  if (blocked)
+    page_blocked.fetch_add(blocked, std::memory_order_relaxed);
+  if (report) {
+    report->blocked.fetch_add(blocked, std::memory_order_relaxed);
+    report->allowed.fetch_add(allowed, std::memory_order_relaxed);
+    report->evaluated.fetch_add(evaluated, std::memory_order_relaxed);
+    if (policy.https) {
+      // The HTTPS policy is shared by every tab, so its numbers are already totals
+      // and I copy them rather than adding.
+      report->upgraded.store(policy.https->upgraded.load(), std::memory_order_relaxed);
+      report->mixed.store(policy.https->blocked_mixed.load(), std::memory_order_relaxed);
+      report->forms.store(policy.https->blocked_submit.load(), std::memory_order_relaxed);
+    }
+  }
+  if (result.refused) {
+    std::lock_guard lock(mutex);
+    last_block = result.error;
+  }
+}
 void Session::run() {
   auto fail = [&](const std::string &error) {
     start_error = error;
@@ -353,7 +400,10 @@ void Session::run() {
         // The kind of resource decides which filter rules apply and whether this is
         // a mixed-content request, so it travels with the fetch.
         policy.type = type;
-        return fetch_url(*parsed, policy);
+        FilterCounters before = counts;
+        Resource result = fetch_url(*parsed, policy);
+        note(before, result);
+        return result;
       },
       [this](HostEvent event) { deliver(std::move(event)); });
   if (jar) {
@@ -376,7 +426,11 @@ void Session::run() {
     options.method = "POST";
     options.body = body;
     options.content_type = content_type;
-    return fetch_url(*parsed, policy, options, 20000, 8u * 1024u * 1024u);
+    policy.type = ResourceType::Document;
+    FilterCounters before = counts;
+    Resource result = fetch_url(*parsed, policy, options, 20000, 8u * 1024u * 1024u);
+    note(before, result);
+    return result;
   });
   std::string error;
   if (!host.load(url, error)) {
@@ -427,6 +481,15 @@ struct Browser {
   // and both survive a restart with my settings.
   CookieJar cookies;
   Storage local_storage;
+  // The HTTPS policy, the filter rules and the running totals. A tab holds a share
+  // of each, so a tab worker can never outlive what it points at.
+  std::shared_ptr<HttpsPolicy> https = std::make_shared<HttpsPolicy>();
+  std::shared_ptr<FilterList> filters = std::make_shared<FilterList>();
+  std::shared_ptr<BlockReport> report = std::make_shared<BlockReport>();
+  // What my confinement layer managed to do. It is reported in the settings page in
+  // the same words the platform function gave me, not as a tick.
+  ConfinementStatus confinement;
+  std::string confinement_error;
   // Find in page
   bool find_open = false;
   std::string find_text;
@@ -451,6 +514,15 @@ struct Browser {
     profile_error = profile.error;
     cookies.from_json(profile.cookies);
     local_storage.from_json(profile.local_storage);
+    load_security_state();
+    // A memory cap and a kill-on-unhandled-exception rule for my own process. Page
+    // code shares this process, so this limits a runaway page; it does not isolate
+    // one, and the panel says so.
+    std::string confinement_failure;
+    if (!confine_process(uint64_t(profile.memory_limit_mb) * 1024 * 1024,
+                         uint32_t(profile.cpu_limit), confinement_failure))
+      confinement_error = confinement_failure;
+    confinement = confinement_status();
     if (profile.download_directory.empty())
       profile.download_directory = default_download_directory();
     downloads.set_directory(profile.download_directory);
@@ -481,7 +553,25 @@ struct Browser {
   bool save_profile() {
     profile.cookies = cookies.to_json();
     profile.local_storage = local_storage.to_json();
+    profile.hsts = https->to_json().dump();
     return profile.save();
+  }
+  // My rules and my HTTPS store, rebuilt from the profile at startup. A saved store
+  // is pruned on the way in, because an entry that has expired is not a promise any
+  // more and honouring it would be worse than forgetting it.
+  void load_security_state() {
+    std::string error;
+    filters->clear();
+    if (!filters->parse(builtin_filter_text(), error) && profile_error.empty())
+      profile_error = "my starter filter list: " + error;
+    if (!profile.filter_list_path.empty()) {
+      std::string list_error;
+      if (filters->load_file(profile.filter_list_path, list_error) == 0 && !list_error.empty() &&
+          profile_error.empty())
+        profile_error = "filter list: " + list_error;
+    }
+    if (auto parsed = Json::parse(profile.hsts)) https->from_json(*parsed);
+    https->prune(int64_t(std::time(nullptr)) * 1000);
   }
   // I build the request policy from my persisted settings so every toggle has a
   // real effect on the next request.
@@ -495,6 +585,9 @@ struct Browser {
     out.block_ads = profile.block_ads;
     out.blocked_hosts = profile.blocked_hosts;
     out.allowed_hosts = profile.block_allow_sites;
+    out.https = https.get();
+    out.filters = filters.get();
+    out.https_only = profile.https_only;
     return out;
   }
   // I ship my VPN bridge beside the browser so a fresh profile has a real
@@ -722,10 +815,13 @@ struct Browser {
     session->generation = tab.generation;
     session->url = target;
     session->policy = policy();
+    session->policy.filter_counts = &session->counts;
+    session->report = report;
     session->jar = &cookies;
     session->storage = &local_storage;
     if (auto host_url = parse_url(target)) {
       session->policy.top_level_host = host_url->host;
+      session->policy.top_level_scheme = host_url->scheme;
       session->policy.cookies = &cookies;
     }
     session->width = content.w / tab.zoom;
@@ -874,7 +970,21 @@ struct Browser {
       hits.push_back({close, "find-close", 0, {}});
     }
     c.fill({44, double(height - 22), double(width - 44), 22}, CHROME);
-    c.text(52, height - 19, status.substr(0, 180), 11, MUTED);
+    c.text(52, height - 19, status.substr(0, 140), 11, MUTED);
+    // What my shield did on the page in front of me. The number is this tab's own
+    // count, and the reason is the rule that last refused something.
+    if (active < int(tabs.size())) {
+      Tab &shown_tab = tabs[size_t(active)];
+      if (shown_tab.session) {
+        uint64_t blocked = shown_tab.session->blocked_in_page();
+        if (blocked) {
+          std::string label = "Blocked " + std::to_string(blocked) + " here";
+          c.text(double(width) - 320, height - 19, label, 11, ACCENT);
+          hits.push_back({{double(width) - 320, double(height - 22), 260, 22}, "shield-note", 0,
+                          shown_tab.session->last_block_reason()});
+        }
+      }
+    }
   }
   void draw_home(Canvas &c) {
     double cx = content.x + content.w / 2, cy = content.y + content.h * 0.36;
@@ -1022,7 +1132,26 @@ struct Browser {
       toggle("Clear history when I close", profile.clear_on_exit, "setting-clear-exit", "");
       value_row("WebRTC policy", profile.web_rtc_policy, "");
       button("Clear browsing history now", "setting-clear-history");
+      toggle("Always use HTTPS", profile.https_only, "setting-https-only",
+             "I upgrade every request, and fall back once when a server cannot answer "
+             "over HTTPS.");
+      value_row("Filter list file",
+                profile.filter_list_path.empty() ? "my starter list only"
+                                                 : profile.filter_list_path,
+                "setting-filter-file");
+      value_row("Memory cap", profile.memory_limit_mb > 0
+                                  ? std::to_string(profile.memory_limit_mb) + " MiB"
+                                  : std::string("none"),
+                "setting-memory-cap");
+      note(confinement_summary(confinement));
+      if (!confinement_error.empty()) note("My job object said: " + confinement_error);
       note("Blocked hosts: " + std::to_string(profile.blocked_hosts.size()));
+      note("Filter rules: " + std::to_string(filters->size()) + " (" +
+           std::to_string(filters->exceptions()) + " exceptions)");
+      note("Blocked since I started: " + std::to_string(report->blocked.load()) + ", upgraded " +
+           std::to_string(report->upgraded.load()) + ", mixed refused " +
+           std::to_string(report->mixed.load()) + ", forms refused " +
+           std::to_string(report->forms.load()));
       break;
     case 2:
       value_row("Save files to", profile.download_directory, "setting-download-dir");
@@ -1184,6 +1313,33 @@ struct Browser {
     } else if (key == "vpnPass") {
       profile.proxy.password = value;
       status = "Tunnel password saved";
+    } else if (key == "memoryCap") {
+      int megabytes = std::atoi(value.c_str());
+      if (!value.empty() && (megabytes < 64 || megabytes > 65536)) {
+        status = "A memory cap has to be between 64 and 65536 MiB, or empty for none";
+      } else {
+        profile.memory_limit_mb = value.empty() ? 0 : megabytes;
+        std::string error;
+        if (confine_process(uint64_t(profile.memory_limit_mb) * 1024 * 1024,
+                            uint32_t(profile.cpu_limit), error)) {
+          status = profile.memory_limit_mb > 0
+                       ? "Memory cap set to " + std::to_string(profile.memory_limit_mb) + " MiB"
+                       : "Memory cap removed";
+        } else {
+          status = "I could not apply that cap: " + error;
+        }
+        confinement = confinement_status();
+        save_profile();
+      }
+    } else if (key == "filterFile") {
+      profile.filter_list_path = value;
+      load_security_state();
+      if (value.empty())
+        status = "I use my starter list only";
+      else if (filters->size() == 0)
+        status = "That list gave me no rules I can use";
+      else
+        status = "Filter list loaded: " + std::to_string(filters->size()) + " rules";
     } else if (key == "customSearch") {
       if (!profile.set_custom_search(value)) status = "A custom search URL must contain %s";
       else { if (!value.empty()) profile.set_search_engine("custom"); status = "Custom search saved"; }
@@ -1429,6 +1585,19 @@ struct Browser {
           begin_setting_edit("customSearch", profile.custom_search);
         } else if (h.action == "setting-block-ads") {
           profile.block_ads = !profile.block_ads; save_profile();
+        } else if (h.action == "setting-https-only") {
+          profile.https_only = !profile.https_only; save_profile();
+          status = profile.https_only ? "I upgrade every request to HTTPS"
+                                      : "I upgrade only the hosts that asked me to";
+        } else if (h.action == "setting-memory-cap") {
+          begin_setting_edit("memoryCap",
+                             profile.memory_limit_mb > 0
+                                 ? std::to_string(profile.memory_limit_mb)
+                                 : std::string());
+        } else if (h.action == "setting-filter-file") {
+          begin_setting_edit("filterFile", profile.filter_list_path);
+        } else if (h.action == "shield-note") {
+          status = h.value.empty() ? "Nothing blocked on this page yet" : h.value;
         } else if (h.action == "setting-third-party-cookies") {
           profile.block_third_party_cookies = !profile.block_third_party_cookies; save_profile();
         } else if (h.action == "setting-dnt") {

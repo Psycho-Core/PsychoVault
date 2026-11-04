@@ -55,7 +55,11 @@ bool policy_blocks(const NetworkPolicy &policy, const Url &url, std::string &rea
     }
   }
   if (!policy.block_ads) return false;
-  if (!host_matches_list(policy.allowed_hosts, url.host).empty()) return false;
+  // A shield exception names the site the person is on, not the endpoint being
+  // fetched, so the page host is what I compare. With no page host I fall back to
+  // the request host, which is the same thing for a navigation.
+  const std::string &site = policy.top_level_host.empty() ? url.host : policy.top_level_host;
+  if (!host_matches_list(policy.allowed_hosts, site).empty()) return false;
   if (policy.filters && policy.filter_counts) {
     ++policy.filter_counts->evaluated;
     if (const FilterRule *rule =
@@ -228,7 +232,7 @@ TunnelConfig tunnel_config(const NetworkPolicy &policy, const ProxyServer &serve
 bool prepare_request(const Url &initial, const NetworkPolicy &policy, const RequestOptions &options,
                      Url &target, std::string &reason) {
   target = initial;
-  if (policy.https && policy.https->should_upgrade(target)) {
+  if (policy.https && policy.https->should_upgrade(target, policy.https_only)) {
     target.scheme = "https";
     ++policy.https->upgraded;
   }
@@ -362,8 +366,8 @@ Resource fetch_url(const Url &initial, const NetworkPolicy &policy, int timeout_
                    size_t max_bytes) {
   return fetch_url(initial, policy, RequestOptions{}, timeout_ms, max_bytes);
 }
-Resource fetch_url(const Url &initial, const NetworkPolicy &policy, const RequestOptions &options,
-                   int timeout_ms, size_t max_bytes) {
+Resource fetch_url_transport(const Url &initial, const NetworkPolicy &policy,
+                             const RequestOptions &options, int timeout_ms, size_t max_bytes) {
   Resource out;
   Url url;
   std::string blocked;
@@ -371,6 +375,7 @@ Resource fetch_url(const Url &initial, const NetworkPolicy &policy, const Reques
     out.url = initial.href();
     out.ok = false;
     out.status = 0;
+    out.refused = true;
     out.error = blocked;
     return out;
   }
@@ -835,8 +840,8 @@ Resource fetch_url(const Url &url, const NetworkPolicy &policy, int, size_t) {
 // This build has no WinHTTP, but it does have my own socket, SOCKS5, CONNECT and TLS
 // path, so a proxied request is a real request here rather than a refusal. A direct
 // request still has no transport, and I say that instead of pretending.
-Resource fetch_url(const Url &url, const NetworkPolicy &policy, const RequestOptions &options,
-                   int timeout_ms, size_t max_bytes) {
+Resource fetch_url_transport(const Url &url, const NetworkPolicy &policy,
+                             const RequestOptions &options, int timeout_ms, size_t max_bytes) {
   Resource r;
   Url target;
   std::string reason;
@@ -844,6 +849,7 @@ Resource fetch_url(const Url &url, const NetworkPolicy &policy, const RequestOpt
     r.url = url.href();
     r.ok = false;
     r.status = 0;
+    r.refused = true;
     r.error = reason;
     return r;
   }
@@ -876,5 +882,28 @@ DownloadOutcome download_to_file(const Url &url, const std::string &, const Netw
 
 Resource fetch_url(const Url &url, int timeout_ms, size_t max_bytes) {
   return fetch_url(url, NetworkPolicy{}, timeout_ms, max_bytes);
+}
+
+Resource fetch_url(const Url &initial, const NetworkPolicy &policy, const RequestOptions &options,
+                   int timeout_ms, size_t max_bytes) {
+  Resource first = fetch_url_transport(initial, policy, options, timeout_ms, max_bytes);
+  if (!policy.https || initial.scheme != "http" || first.refused || first.ok || first.status != 0)
+    return first;
+  // A host that asked for HTTPS with a header never gets a plain HTTP second
+  // chance; that would defeat the whole point of the header.
+  if (policy.https->requires_https(initial.host))
+    return first;
+  // The always-HTTPS setting is mine, not the site's, so a server that only speaks
+  // plain HTTP still loads - once, and I count it.
+  if (!policy.https_only)
+    return first;
+  ++policy.https->fallbacks;
+  NetworkPolicy relaxed = policy;
+  relaxed.https_only = false;
+  relaxed.https = nullptr;
+  Resource second = fetch_url_transport(initial, relaxed, options, timeout_ms, max_bytes);
+  if (!second.ok && second.error.empty())
+    second.error = "the HTTPS address did not answer and the plain HTTP one did not either";
+  return second;
 }
 } // namespace pv
