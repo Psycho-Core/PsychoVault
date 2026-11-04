@@ -44,7 +44,7 @@ I ran the corpus and then read the failures rather than the total. Six things ca
 
 One more defect fell out of the same work: the headless build's four-argument `fetch_url` forwarded a timeout of zero and a size limit of zero, so every request made that way refused its own body with "that response was larger than I will hold in memory". I found it because my new tunnel test asked for a page through a loopback proxy and was told an eleven byte body was too big.
 
-The stack limit needed a second pass. Counting script frames was enough on the 8 MiB thread my Linux tests get and not enough on the 1 MiB thread a Windows exe starts with, so a runtime now asks the platform for the thread's stack and stops at three quarters of it - one rule for Linux, Windows and a sanitizer build whose frames are much fatter. The same hosted run found a use-after-move: a nested `Function` call reallocated the vector of compiled programs while the outer call was still walking it. Both were real, and neither was visible on my machine.
+The stack limit needed a second pass. Counting script frames was enough on the 8 MiB thread my Linux tests get and not enough on the 1 MiB thread a Windows exe starts with, so a runtime asks the platform for the thread's stack, stops at three quarters of it, and checks that budget in every expression and statement as well as every call. My exe now reserves 8 MiB, which is the same order the Linux tests have. The same hosted run found a use-after-move: a nested `Function` call reallocated the vector of compiled programs while the outer call was still walking it. Both were real, and neither was visible on my machine. After both fixes I ran the whole corpus again and the table above did not move.
 
 ## Before and after
 
