@@ -1258,6 +1258,13 @@ Value Runtime::error_object(const Value &thrown) {
   error.object->properties["__error__"] = Value(name);
   return error;
 }
+void Runtime::check_stack() {
+  char here = 0;
+  size_t used = stack_base_ ? size_t(stack_base_ > &here ? stack_base_ - &here : &here - stack_base_)
+                            : 0;
+  if (used > stack_limit_)
+    throw JsError{Value("RangeError: Maximum call stack size exceeded")};
+}
 Value Runtime::call_sync(Value fn, const Values &args, Value this_value) {
   tick();
   // A recursive script can catch a RangeError and try again, so I check both the
@@ -1393,6 +1400,7 @@ Runtime::Flow Runtime::execute_block(const std::vector<std::unique_ptr<Stmt>> &s
 }
 Runtime::Flow Runtime::execute(const Stmt &s, Env &env, Value this_value) {
   tick();
+  check_stack();
   switch (s.kind) {
   case Stmt::Kind::Empty:
     return {};
@@ -1563,6 +1571,7 @@ Runtime::Flow Runtime::execute(const Stmt &s, Env &env, Value this_value) {
 }
 Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
   tick();
+  check_stack();
   switch (e.kind) {
   case Expr::Kind::Literal:
     return e.literal;

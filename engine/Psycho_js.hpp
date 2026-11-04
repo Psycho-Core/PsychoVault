@@ -245,6 +245,10 @@ private:
     Value value;
   };
   Value call_sync(Value fn, const Values &args, Value this_value);
+  // Every expression goes through this check. Script recursion is not the only way
+  // to walk my C++ stack down: a deeply nested expression recurses in evaluate, and
+  // a page must not be able to reach the guard page that way either.
+  void check_stack();
   // Where my C++ stack was when this runtime started, and how much of it this
   // runtime may take. A recursive script cannot be allowed to run my own stack out,
   // and counting JavaScript frames is not enough when the compiler chooses how much

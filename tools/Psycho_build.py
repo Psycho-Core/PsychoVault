@@ -63,7 +63,11 @@ def main():
             if subsystem:cmd+=[f"/SUBSYSTEM:"+subsystem]
             if entry:cmd+=[f"/ENTRY:"+entry]
             cmd+= [l+".lib" for l in libs]
-            cmd+=["/OUT:"+str(out/(name+".exe"))]
+            # A page and my interpreter need the same order of stack my Linux tests get.
+            # The default 1 MiB is not enough for a recursive descent parser over real
+            # script, and my runtime still stops a page well before this runs out.
+            cmd+=["/STACK:8388608"]
+            cmd+=[f"/OUT:"+str(out/(name+".exe"))]
         else:
             cmd=[cxx,"-std=c++20","-O2","-g","-Wall","-Wextra","-Werror","-I"+str(ROOT)]
             if args.sanitizers:cmd+=["-fsanitize=address,undefined","-fno-omit-frame-pointer"]
