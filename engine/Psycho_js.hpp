@@ -94,6 +94,8 @@ struct Expr {
     Logical,
     Assign,
     Conditional,
+    // A comma expression evaluates each part and answers the last one.
+    Sequence,
     Call,
     Member,
     New,
@@ -136,6 +138,7 @@ struct Stmt {
     Throw,
     Try,
     Function,
+    Switch,
     Empty
   };
   Kind kind;
@@ -143,6 +146,12 @@ struct Stmt {
   std::unique_ptr<Expr> expression, condition, increment;
   std::vector<std::pair<std::string, std::unique_ptr<Expr>>> declarations;
   std::vector<std::unique_ptr<Stmt>> body, alternate, final;
+  // A switch case: a test, or nothing for default, and the statements under it.
+  struct Case {
+    std::unique_ptr<Expr> test;
+    std::vector<std::unique_ptr<Stmt>> body;
+  };
+  std::vector<Case> cases;
   Function *function = nullptr;
   int line = 1;
   explicit Stmt(Kind k) : kind(k) {}
@@ -236,6 +245,8 @@ private:
     Value value;
   };
   Value call_sync(Value fn, const Values &args, Value this_value);
+  // Turns a thrown message into the error object a page catches.
+  Value error_object(const Value &thrown);
   Host *host_;
   std::function<bool()> pump_;
   std::vector<std::unique_ptr<Program>> programs_;

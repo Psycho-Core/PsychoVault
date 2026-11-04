@@ -244,6 +244,28 @@ check('my tests cover the step 8 decisions', all(k in tests_text for k in (
       'record_header("shop.test"', 'max-age=0', 'blocks_mixed_content', 'blocks_insecure_submit',
       'list.skipped', 'keep->exception', 'net.allowed_hosts', 'store.fallbacks')))
 
+# Step 9: a conformance number from a run of my own code, not a borrowed engine.
+runner_cpp=(ROOT/'tools/Psycho_conformance.cpp').read_text()
+conformance=(ROOT/'docs/Psycho_CONFORMANCE.md').read_text()
+check('my conformance runner is my own tool',
+      'PsychoVault original source' in runner_cpp and 'js::Runtime' in runner_cpp)
+check('my runner reads the corpus front matter', 'negative_phase' in runner_cpp and 'includes:' in runner_cpp)
+check('my runner records a crash instead of losing the run', 'Outcome::Crash' in runner_cpp)
+check('I ship no copy of the corpus', not any(f.startswith(('test262/','corpus/')) for f in files))
+check('my conformance page states the pass rate two ways',
+      '17.4 percent' in conformance and '9.3 percent' in conformance)
+check('my conformance page does not claim WPT',
+      'did not run a WPT subset' in conformance)
+check('my switch statement is mine', 'case Stmt::Kind::Switch:' in (ROOT/'engine/Psycho_js_runtime.cpp').read_text())
+check('my comma expression is mine', 'case Expr::Kind::Sequence:' in (ROOT/'engine/Psycho_js_runtime.cpp').read_text())
+check('a thrown engine error becomes an object a page can test',
+      'Value Runtime::error_object' in (ROOT/'engine/Psycho_js_runtime.cpp').read_text())
+check('my tunnel probe exists and is tested', 'TunnelProbe probe_tunnel' in (ROOT/'platform/Psycho_network.cpp').read_text()
+      and 'probe_tunnel(net,' in tests_text)
+check('my panel prints what the tunnel test said', 'tunnel_test->text' in shell_text)
+check('my conformance job is in my workflows', (ROOT/'.github/workflows/Psycho_conformance.yml').exists()
+      and 'pv-conformance' in (ROOT/'.github/workflows/Psycho_conformance.yml').read_text())
+
 check('my release notes come from my repo, not a template',
       'docs/Psycho_RELEASE-NOTES.md' in (ROOT/'.github/workflows/Psycho_release.yml').read_text())
 notes=(ROOT/'docs/Psycho_RELEASE-NOTES.md').read_text()

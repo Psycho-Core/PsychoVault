@@ -65,6 +65,14 @@ struct Hit {
   int index = 0;
   std::string value;
 };
+// The result of my tunnel test. A worker fills it and the painting code reads it,
+// so neither has to trust the other's lifetime.
+struct TunnelTest {
+  std::mutex mutex;
+  std::atomic<bool> running{false};
+  std::string text = "Not tested yet";
+};
+
 // What my blocker and my HTTPS policy did while this window has been open. A tab's
 // worker thread adds to these and the painting code reads them, so they are atomic
 // and neither thread owns the other.
@@ -490,6 +498,7 @@ struct Browser {
   // the same words the platform function gave me, not as a tick.
   ConfinementStatus confinement;
   std::string confinement_error;
+  std::shared_ptr<TunnelTest> tunnel_test = std::make_shared<TunnelTest>();
   // Find in page
   bool find_open = false;
   std::string find_text;
@@ -658,6 +667,37 @@ struct Browser {
     extensions.set_effects(std::move(effects));
   }
   std::vector<std::string> extension_log;
+  // One real request through the server I have configured, on a worker thread, and
+  // the answer kept in words. A tunnel I never dialled is not a connection.
+  void start_tunnel_test() {
+    if (tunnel_test->running.exchange(true))
+      return;
+    {
+      std::lock_guard lock(tunnel_test->mutex);
+      tunnel_test->text = profile.proxy.active()
+                              ? "Dialling " + profile.proxy.single.authority() + " ..."
+                              : "No tunnel server is set, so there is nothing to dial";
+    }
+    NetworkPolicy probe_policy = policy();
+    auto state = tunnel_test;
+    HWND window = hwnd;
+    std::thread([probe_policy, state, window]() {
+      TunnelProbe probe = probe_tunnel(probe_policy, "https://api.github.com/zen", 20000);
+      std::string text;
+      if (probe.ok)
+        text = "Connected - " + probe.detail;
+      else
+        text = "Not connected - " + probe.detail;
+      {
+        std::lock_guard lock(state->mutex);
+        state->text = text;
+      }
+      state->running.store(false);
+      // A repaint is all the window needs to pick the new sentence up, and asking
+      // for one from another thread cannot free anything the window still owns.
+      if (window) InvalidateRect(window, nullptr, FALSE);
+    }).detach();
+  }
   std::string vpn_summary() const {
     if (!profile.proxy.active()) return "VPN off - direct connection";
     ProxyServer server;
@@ -1178,6 +1218,15 @@ struct Browser {
       toggle("Refuse requests when the tunnel fails", profile.proxy.fail_closed,
              "setting-vpn-fail-closed", "Nothing falls back to a direct socket.");
       button("Turn my tunnel off", "setting-vpn-off");
+      button("Test my tunnel", "vpn-test");
+      {
+        std::string result;
+        {
+          std::lock_guard lock(tunnel_test->mutex);
+          result = tunnel_test->text;
+        }
+        note(result);
+      }
       note("My own SOCKS5 and HTTPS proxy transport carries this, not WinHTTP.");
       auto records = extensions.list();
       if (records.empty()) {
@@ -1606,6 +1655,8 @@ struct Browser {
           profile.strip_referrer = !profile.strip_referrer; save_profile();
         } else if (h.action == "setting-clear-exit") {
           profile.clear_on_exit = !profile.clear_on_exit; save_profile();
+        } else if (h.action == "vpn-test") {
+          start_tunnel_test();
         } else if (h.action == "setting-vpn-server") {
           begin_setting_edit(
               "vpnServer",

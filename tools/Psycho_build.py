@@ -74,6 +74,11 @@ def main():
     winlibs=["kernel32","user32","gdi32","advapi32","userenv","bcrypt","winhttp","shell32","ole32","dwmapi","ws2_32","crypt32","secur32","avrt"]
     target("pv-engine",ENGINE+["tools/Psycho_engine_cli.cpp"],winlibs if windows else [])
     target("pv-tests",ENGINE+PLATFORM+["tests/Psycho_test_main.cpp"],winlibs if windows else [])
+    # The conformance runner is its own small target: my parser and interpreter plus
+    # the tool that walks a Test262 tree, so a measurement never needs the shell.
+    target("pv-conformance",["engine/Psycho_base.cpp","engine/Psycho_js_parser.cpp",
+                             "engine/Psycho_js_runtime.cpp","engine/Psycho_regex.cpp",
+                             "tools/Psycho_conformance.cpp"])
     if windows:
         # My browser is one file because my page host and my engine are linked
         # straight into it. Nothing is unpacked and nothing sits beside it.
