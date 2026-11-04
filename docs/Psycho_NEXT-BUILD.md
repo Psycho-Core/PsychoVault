@@ -15,7 +15,7 @@ I am working through my browser one step at a time, in the order that gets me so
 | 7 | VPN transport, including the TLS-to-proxy path Proton needs | Done in this build: my own sockets, SOCKS5, HTTP `CONNECT`, HTTP framing, SChannel TLS stacked over my own stream, fail-closed routing and a VPN panel |
 | 8 | Security: certificate and transport policy, ad blocking, containment | Done in this build: my own Strict-Transport-Security store, mixed content and insecure form refusals, always-HTTPS with a counted fallback, my own filter list engine with per-tab counts and per-site exceptions, and a job object that reports itself as a limit rather than isolation. AppContainer for page code, CSP enforcement and fuzzing are still to come |
 | 9 | Conformance measurement with Test262 and web-platform-tests subsets | Test262 measured: 5,009 of 54,058 pass, 17.4 percent of what my engine can attempt. WPT is not run yet because its harness needs modules and async iteration |
-| 10 | Published release and a verified updater cycle | Publishing on every build; the install and rollback half is not tested |
+| 10 | Published release and a verified updater cycle | Publishing on every build, but with two real gaps: I publish as a prerelease while my updater asks GitHub for `releases/latest`, which does not see prereleases, so its check finds nothing; and the download, install and rollback half is not implemented yet |
 
 ## What this build adds over 0.7.0
 

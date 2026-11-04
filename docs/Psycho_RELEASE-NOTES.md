@@ -30,7 +30,7 @@ What I did instead is make the thing a Proton endpoint would use testable: my ow
 ## What I am not claiming
 
 - **YouTube and Netflix do not play.** My engine has my own media pipeline and Media Source Extensions, but no H.264, AAC, VP8, VP9 or Opus decoder and no WebM. DRM can only ever arrive as a separately licensed extension, never inside my engine.
-- **Proton VPN is not bundled and no Proton session was run.** What exists is my own transport and a test that dials whatever server I configure.
+- **Proton VPN is not bundled and no Proton session was run.** What exists is my own transport and a test that dials whatever server I configure. On my earlier look I recorded their extension source as unreachable, answering 404. That was wrong: I had looked up the wrong repository names. The real source is `ProtonVPN/proton-vpn-browser-extension`, GPL-3.0, and I audited its manifest and its connection config when I came back to it: version 1.3.6, a service worker, an HTTPS proxy on port 4443 (Secure Core on 443) with the account site as the only page allowed to talk to it. It reaches the shape my transport and my VPN panel were built for. What I still do not have is a live session: a sign-in needs a real account and a reachable Proton endpoint, and this environment has neither.
 - **My conformance number is a language number, not a browser number.** Test262 does not measure my HTML, CSS or layout, and I have not run a WPT subset: their harness needs modules and async iteration, which my engine does not have yet.
 - **The sixteen crashes are real.** They are recorded per test in the report and are on my list; a crash in my interpreter is worse than a missing feature.
 - WebP and progressive JPEG are not decoded. My page says so in its diagnostics rather than showing a blank space without explanation.
@@ -48,6 +48,8 @@ My engine and my page host are compiled into that one file, so nothing is unpack
 ## How my updater reads this release
 
 I publish `PsychoVault-update.json` with the version, tag and a SHA-256 for every asset. `PsychoVault.exe` is the update payload, so an update replaces one file. I verify the hash before I offer to install anything.
+
+I owe you the honest half of that sentence. This release is published as a **prerelease**, and my updater asks GitHub for `releases/latest`, which quietly ignores prereleases. So for now my check reports nothing there at all. What I built checks and reports; it does not yet download or install, which is why the manifest matters the day those last two pieces are in. The fix is mine to make in the updater, not GitHub's, and it is on my list.
 
 ## No warranty
 
