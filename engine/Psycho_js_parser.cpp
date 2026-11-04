@@ -118,16 +118,45 @@ static std::vector<Token> lex(std::string_view s) {
           p += 2;
           int braces = 1;
           char inner = 0;
+          // lastsig is the last value-shaping character seen outside any quoted
+          // text; it decides whether a / opens a pattern or divides. /"/g with
+          // no pattern handling would swallow the next quote and never let the
+          // braces balance (Proton's popup uses exactly that shape).
+          char lastsig = ' ';
           while (p < s.size() && braces > 0) {
             char t = s[p];
             if (inner) {
               if (t == '\\' && p + 1 < s.size()) p += 2;
-              else { if (t == inner) inner = 0; ++p; }
+              else { if (t == inner) { inner = 0; lastsig = inner ? inner : 'q'; } ++p; }
+              continue;
+            }
+            if (t == '/' && (lastsig == ' ' ||
+                std::string("(,=:[!&|?{};+-*/%^~<>").find(lastsig) != std::string::npos)) {
+              size_t scan = p + 1;
+              bool in_class = false;
+              while (scan < s.size()) {
+                char r = s[scan];
+                if (r == '\\' && scan + 1 < s.size()) { scan += 2; continue; }
+                if (r == '\n') break;
+                if (r == '[') in_class = true;
+                else if (r == ']') in_class = false;
+                else if (r == '/' && !in_class) {
+                  ++scan;
+                  while (scan < s.size() && std::isalpha(static_cast<unsigned char>(s[scan])))
+                    ++scan;
+                  break;
+                }
+                ++scan;
+              }
+              lastsig = 'q';
+              p = scan;
               continue;
             }
             if (t == '\'' || t == '"' || t == '`') { inner = t; ++p; continue; }
             if (t == '{') ++braces;
             if (t == '}') --braces;
+            if (t != ' ' && t != '\t' && t != '\n')
+              lastsig = t;
             ++p;
           }
           if (braces != 0)
@@ -268,6 +297,10 @@ static std::vector<Token> lex(std::string_view s) {
       bool found = false;
       for (auto &op : ops)
         if (s.substr(p, op.size()) == op) {
+          // A ternary can start its true branch with a bare fraction: `x?.03:y`
+          // is `x ? .03 : y`, never optional chaining.
+          if (op == "?." && p + 2 < s.size() && s[p + 2] >= '0' && s[p + 2] <= '9')
+            continue;
           t.text = op;
           p += op.size();
           found = true;
@@ -333,7 +366,9 @@ public:
         "return",   "break",   "continue", "true",   "false",     "null",   "undefined", "new",
         "function", "throw",   "try",      "catch",  "finally",   "switch", "case",      "default",
         "class",    "extends", "import",   "export", "async",     "await",  "yield",     "delete",
-        "void",     "typeof",  "in",       "of",     "instanceof"};
+        "void",     "typeof",  "in",       "instanceof"};
+    // "of" is contextual: it ends a for-of header but names a plain variable
+    // everywhere else, so it stays out of the hard keyword set.
     return k.count(s);
   }
   void semicolon() {
@@ -451,15 +486,52 @@ public:
       if (raw[i] == '$' && i + 1 < raw.size() && raw[i + 1] == '{') {
         auto head = make(Expr::Kind::Literal);
         head->literal = Value(literal);
+        head->template_chunk = true;
         literal.clear();
         node->items.push_back(std::move(head));
         i += 2;
         // I balance braces and skip quoted text so a } inside a string does not
-        // end my interpolation early.
+        // end my interpolation early. A pattern literal gets the same respect: a
+        // } inside /[^}]/ is not the end of my interpolation either.
         std::string source;
         int braces = 1;
         while (i < raw.size() && braces > 0) {
           char c = raw[i];
+          if (c == '/' ) {
+            // Decide whether this slash opens a pattern the same way my lexer
+            // does: the last value-ending character I kept in the scan.
+            size_t back = source.size();
+            char prev = ' ';
+            while (back > 0) {
+              prev = source[back - 1];
+              if (prev != ' ' && prev != '\t' && prev != '\n')
+                break;
+              --back;
+            }
+            bool opens_pattern = source.empty() ||
+                std::string("(,=:[!&|?{};+-*/%^~<>").find(prev) != std::string::npos;
+            if (opens_pattern) {
+              size_t scan = i + 1;
+              bool in_class = false;
+              while (scan < raw.size()) {
+                char r = raw[scan];
+                if (r == '\\' && scan + 1 < raw.size()) { scan += 2; continue; }
+                if (r == '\n') break;
+                if (r == '[') in_class = true;
+                else if (r == ']') in_class = false;
+                else if (r == '/' && !in_class) {
+                  ++scan;
+                  while (scan < raw.size() && ('a' <= raw[scan] && raw[scan] <= 'z'))
+                    ++scan;
+                  break;
+                }
+                ++scan;
+              }
+              source += raw.substr(i, scan - i);
+              i = scan;
+              continue;
+            }
+          }
           if (c == '\\' && i + 1 < raw.size()) {
             source += c;
             source += raw[i + 1];
@@ -501,8 +573,91 @@ public:
     }
     auto tail = make(Expr::Kind::Literal);
     tail->literal = Value(literal);
+    tail->template_chunk = true;
     node->items.push_back(std::move(tail));
     return node;
+  }
+  // One shared reader for every parameter list. A default becomes a check at the
+  // top of the body: when the caller passed undefined the parameter takes the
+  // expression I record here, exactly like my function-expression parser did
+  // before arrows learned the same trick.
+  void read_params(Function &fn) {
+    if (is(")")) return;
+    do {
+      if (take("...")) { fn.params.push_back("..." + identifier()); break; }
+      if (is("[") || is("{")) {
+        // A destructuring parameter: the argument lands in a holder I name, and
+        // the bindings expand into statements before the body.
+        std::string holder = temp_name();
+        fn.params.push_back(holder);
+        auto decls = std::make_unique<Stmt>(Stmt::Kind::Variables);
+        decls->text = "let";
+        pattern(decls->declarations, identifier_expr(holder, tok().line));
+        if (take("=")) {
+          // A default for the whole pattern: apply it when the argument is
+          // undefined, by way of the same if-check my named defaults use.
+          auto check = std::make_unique<Stmt>(Stmt::Kind::If);
+          auto undef = std::make_unique<Expr>(Expr::Kind::Identifier);
+          undef->text = "undefined";
+          auto same = std::make_unique<Expr>(Expr::Kind::Binary);
+          same->text = "===";
+          same->left = identifier_expr(holder, tok().line);
+          same->right = std::move(undef);
+          check->condition = std::move(same);
+          auto assign = std::make_unique<Expr>(Expr::Kind::Assign);
+          assign->text = "=";
+          assign->left = identifier_expr(holder, tok().line);
+          assign->right = expr();
+          auto apply = std::make_unique<Stmt>(Stmt::Kind::Expression);
+          apply->expression = std::move(assign);
+          check->body.push_back(std::move(apply));
+          // The default binds the whole argument first; the bindings read the
+          // replaced value, just as JavaScript destructures after defaulting.
+          fn.defaults.push_back(std::move(check));
+          fn.defaults.push_back(std::move(decls));
+        } else {
+          fn.defaults.push_back(std::move(decls));
+        }
+        continue;
+      }
+      auto param = identifier();
+      fn.params.push_back(param);
+      if (take("=")) {
+        auto check = std::make_unique<Stmt>(Stmt::Kind::If);
+        auto ident = std::make_unique<Expr>(Expr::Kind::Identifier);
+        ident->text = param;
+        auto undef = std::make_unique<Expr>(Expr::Kind::Identifier);
+        undef->text = "undefined";
+        auto same = std::make_unique<Expr>(Expr::Kind::Binary);
+        same->text = "===";
+        same->left = std::move(ident);
+        same->right = std::move(undef);
+        check->condition = std::move(same);
+        auto assign = std::make_unique<Expr>(Expr::Kind::Assign);
+        assign->text = "=";
+        auto target = std::make_unique<Expr>(Expr::Kind::Identifier);
+        target->text = param;
+        assign->left = std::move(target);
+        assign->right = expr();
+        auto body = std::make_unique<Stmt>(Stmt::Kind::Expression);
+        body->expression = std::move(assign);
+        check->body.push_back(std::move(body));
+        fn.defaults.push_back(std::move(check));
+      }
+    } while (take(","));
+  }
+  // Defaults live in statements, so an arrow written as an expression becomes a
+  // block that applies its defaults and then returns the expression.
+  void finish_arrow(Function &fn) {
+    if (fn.defaults.empty()) return;
+    if (fn.expression) {
+      auto ret = std::make_unique<Stmt>(Stmt::Kind::Return);
+      ret->expression = std::move(fn.expression);
+      fn.body.insert(fn.body.begin(), std::move(ret));
+    }
+    for (auto it = fn.defaults.rbegin(); it != fn.defaults.rend(); ++it)
+      fn.body.insert(fn.body.begin(), std::move(*it));
+    fn.defaults.clear();
   }
   // I report whether the token after an opening bracket closes a parameter list
   // that is followed by a fat arrow, so `async(a)` stays a call.
@@ -539,14 +694,7 @@ public:
     fn->async = true;
     if (is("(") && arrow_ahead(p)) {
       expect("(");
-      if (!is(")"))
-        do {
-          if (take("...")) {
-            fn->params.push_back("..." + identifier());
-            break;
-          }
-          fn->params.push_back(identifier());
-        } while (take(","));
+      read_params(*fn);
       expect(")");
     } else {
       fn->params.push_back(identifier());
@@ -556,6 +704,7 @@ public:
       fn->body = block();
     else
       fn->expression = expr();
+    finish_arrow(*fn);
     auto e = make(Expr::Kind::Function);
     e->function = fn;
     return e;
@@ -667,17 +816,14 @@ public:
       if (arrow) {
         auto fn = function_node();
         fn->arrow = true;
-        if (!is(")"))
-          do {
-            if (take("...")) { fn->params.push_back("..." + identifier()); break; }
-            fn->params.push_back(identifier());
-          } while (take(","));
+        read_params(*fn);
         expect(")");
         expect("=>");
         if (take("{"))
           fn->body = block();
         else
           fn->expression = expr();
+        finish_arrow(*fn);
         auto e = make(Expr::Kind::Function);
         e->function = fn;
         return e;
@@ -711,6 +857,13 @@ public:
           if (is("}"))
             break;
           std::string key;
+          if (take("...")) {
+            // Object spread copies the source's own keys at this exact point,
+            // so a later literal entry can still overwrite an earlier spread. A
+            // leading NUL keeps this key out of the reach of any script.
+            e->properties.emplace_back(std::string("\x00pv-spread", 10), expr());
+            continue;
+          }
           // An async method: { async f() {} }
           bool method_async = false;
           if (is("async") && tok(1).text != ":" && tok(1).text != "," && tok(1).text != "}" &&
@@ -728,24 +881,41 @@ public:
             ++p;
             auto fn = function_node();
             expect("(");
-            if (!is(")"))
-              do { fn->params.push_back(identifier()); } while (take(","));
+            read_params(*fn);
             expect(")");
             expect("{");
             fn->body = block();
+            for (auto it = fn->defaults.rbegin(); it != fn->defaults.rend(); ++it)
+              fn->body.insert(fn->body.begin(), std::move(*it));
+            fn->defaults.clear();
             auto value = make(Expr::Kind::Function);
             value->function = fn;
             e->properties.emplace_back(accessor + ":" + name, std::move(value));
-            if (!is("}")) expect(",");
             continue;
           }
           if (take("[")) {
-            // A computed key is evaluated at object creation time.
+            // A computed key is evaluated at object creation time, and it can
+            // name a method as well as a plain value: { [name](args) {} }.
             auto key_expr = expr();
             expect("]");
+            if (is("(")) {
+              auto fn = function_node();
+              fn->async = method_async;
+              expect("(");
+              read_params(*fn);
+              expect(")");
+              expect("{");
+              fn->body = block();
+              for (auto it = fn->defaults.rbegin(); it != fn->defaults.rend(); ++it)
+                fn->body.insert(fn->body.begin(), std::move(*it));
+              fn->defaults.clear();
+              auto value = make(Expr::Kind::Function);
+              value->function = fn;
+              e->computed_properties.emplace_back(std::move(key_expr), std::move(value));
+              continue;
+            }
             expect(":");
             e->computed_properties.emplace_back(std::move(key_expr), expr());
-            if (!is("}")) expect(",");
             continue;
           }
           if (starts(tok().text, "string:")) {
@@ -763,18 +933,16 @@ public:
             auto fn = function_node();
             fn->async = method_async;
             expect("(");
-            if (!is(")"))
-              do {
-                if (take("...")) { fn->params.push_back("..." + identifier()); break; }
-                fn->params.push_back(identifier());
-              } while (take(","));
+            read_params(*fn);
             expect(")");
             expect("{");
             fn->body = block();
+            for (auto it = fn->defaults.rbegin(); it != fn->defaults.rend(); ++it)
+              fn->body.insert(fn->body.begin(), std::move(*it));
+            fn->defaults.clear();
             auto value = make(Expr::Kind::Function);
             value->function = fn;
             e->properties.emplace_back(key, std::move(value));
-            if (!is("}")) expect(",");
             continue;
           }
           if (take(":"))
@@ -825,7 +993,58 @@ public:
   }
   std::unique_ptr<Expr> postfix(std::unique_ptr<Expr> e, bool allow_call = true) {
     while (true) {
-      if (is(".") || is("?.")) {
+      if (allow_call && is("?.") && tok(1).text == "(") {
+        // An optional call: fn?.() runs only when fn is not nullish.
+        ++p;
+        expect("(");
+        auto c = make(Expr::Kind::Call);
+        c->optional = true;
+        c->left = std::move(e);
+        if (!is(")"))
+          do {
+            if (take("...")) {
+              auto spread = make(Expr::Kind::Unary);
+              spread->text = "spread";
+              spread->prefix = true;
+              spread->left = expr();
+              c->items.push_back(std::move(spread));
+            } else
+              c->items.push_back(expr());
+          } while (take(","));
+        expect(")");
+        e = postfix(std::move(c));
+        continue;
+      }
+      if (allow_call && starts(tok().text, "template:")) {
+        // A tagged template: tag(strings, ...values). The strings array keeps
+        // each cooked chunk; the raw escapes are not preserved on .raw yet.
+        auto tpl = template_literal(tok().text.substr(9));
+        ++p;
+        auto strings = make(Expr::Kind::Array);
+        auto c = make(Expr::Kind::Call);
+        c->left = std::move(e);
+        for (auto &part : tpl->items) {
+          if (part->template_chunk)
+            strings->items.push_back(std::move(part));
+          else
+            c->items.push_back(std::move(part));
+        }
+        c->items.insert(c->items.begin(), std::move(strings));
+        e = postfix(std::move(c));
+        continue;
+      }
+      if (is("?.") && tok(1).text == "[") {
+        // An optional computed access: a?.[key] reads nothing when a is nullish.
+        ++p;
+        expect("[");
+        auto m = make(Expr::Kind::Member);
+        m->optional = true;
+        m->left = std::move(e);
+        m->computed = true;
+        m->right = expr();
+        expect("]");
+        e = std::move(m);
+      } else if (is(".") || is("?.")) {
         bool optional = tok().text == "?.";
         ++p;
         auto m = make(Expr::Kind::Member);
@@ -915,7 +1134,24 @@ public:
         key->literal = Value(double(index));
         auto read = member_of(identifier_expr(holder, tok().line), std::move(key), true);
         if (is("[") || is("{")) {
+          size_t nest = out.size();
           pattern(out, std::move(read));
+          if (take("=")) {
+            auto fallback = expr();
+            auto cond = std::make_unique<Expr>(Expr::Kind::Conditional);
+            auto test = std::make_unique<Expr>(Expr::Kind::Binary);
+            test->text = "===";
+            test->left = member_of(identifier_expr(holder, tok().line),
+                                   [&] { auto k = std::make_unique<Expr>(Expr::Kind::Literal);
+                                         k->literal = Value(double(index)); return k; }(), true);
+            test->right = identifier_expr("undefined", tok().line);
+            cond->left = std::move(test);
+            cond->right = std::move(fallback);
+            cond->third = member_of(identifier_expr(holder, tok().line),
+                                   [&] { auto k = std::make_unique<Expr>(Expr::Kind::Literal);
+                                         k->literal = Value(double(index)); return k; }(), true);
+            out[nest].second = std::move(cond);
+          }
         } else {
           auto name = identifier();
           if (take("=")) {
@@ -972,7 +1208,22 @@ public:
       std::string name = key;
       if (take(":")) {
         if (is("[") || is("{")) {
+          size_t nest = out.size();
           pattern(out, member_of(identifier_expr(holder, tok().line), identifier_expr(key, tok().line), false));
+          if (take("=")) {
+            // A default on a nested pattern: my subpattern reads the fallback
+            // when the property came back undefined.
+            auto fallback = expr();
+            auto cond = std::make_unique<Expr>(Expr::Kind::Conditional);
+            auto test = std::make_unique<Expr>(Expr::Kind::Binary);
+            test->text = "===";
+            test->left = member_of(identifier_expr(holder, tok().line), identifier_expr(key, tok().line), false);
+            test->right = identifier_expr("undefined", tok().line);
+            cond->left = std::move(test);
+            cond->right = std::move(fallback);
+            cond->third = member_of(identifier_expr(holder, tok().line), identifier_expr(key, tok().line), false);
+            out[nest].second = std::move(cond);
+          }
           if (!is("}")) expect(",");
           continue;
         }
@@ -1044,34 +1295,7 @@ public:
       auto fn = function_node();
       fn->async = member_async;
       expect("(");
-      if (!is(")"))
-        do {
-          if (take("...")) { fn->params.push_back("..." + identifier()); break; }
-          auto param = identifier();
-          fn->params.push_back(param);
-          if (take("=")) {
-            auto check = std::make_unique<Stmt>(Stmt::Kind::If);
-            auto ident = std::make_unique<Expr>(Expr::Kind::Identifier);
-            ident->text = param;
-            auto undef = std::make_unique<Expr>(Expr::Kind::Identifier);
-            undef->text = "undefined";
-            auto same = std::make_unique<Expr>(Expr::Kind::Binary);
-            same->text = "===";
-            same->left = std::move(ident);
-            same->right = std::move(undef);
-            check->condition = std::move(same);
-            auto assign = std::make_unique<Expr>(Expr::Kind::Assign);
-            assign->text = "=";
-            auto target = std::make_unique<Expr>(Expr::Kind::Identifier);
-            target->text = param;
-            assign->left = std::move(target);
-            assign->right = expr();
-            auto body = std::make_unique<Stmt>(Stmt::Kind::Expression);
-            body->expression = std::move(assign);
-            check->body.push_back(std::move(body));
-            fn->defaults.push_back(std::move(check));
-          }
-        } while (take(","));
+      read_params(*fn);
       expect(")");
       expect("{");
       fn->body = block();
@@ -1098,40 +1322,7 @@ public:
     if (!is("("))
       fn->name = identifier();
     expect("(");
-    if (!is(")"))
-      do {
-        if (take("...")) {
-          // A rest parameter collects the remaining arguments into an array.
-          fn->params.push_back("..." + identifier());
-          break;
-        }
-        auto name = identifier();
-        fn->params.push_back(name);
-        if (take("=")) {
-          // I record a default as an initializer statement executed on entry
-          // when the argument was not supplied.
-          auto check = std::make_unique<Stmt>(Stmt::Kind::If);
-          auto ident = std::make_unique<Expr>(Expr::Kind::Identifier);
-          ident->text = name;
-          auto undef = std::make_unique<Expr>(Expr::Kind::Identifier);
-          undef->text = "undefined";
-          auto same = std::make_unique<Expr>(Expr::Kind::Binary);
-          same->text = "===";
-          same->left = std::move(ident);
-          same->right = std::move(undef);
-          check->condition = std::move(same);
-          auto assign = std::make_unique<Expr>(Expr::Kind::Assign);
-          assign->text = "=";
-          auto target = std::make_unique<Expr>(Expr::Kind::Identifier);
-          target->text = name;
-          assign->left = std::move(target);
-          assign->right = expr();
-          auto body = std::make_unique<Stmt>(Stmt::Kind::Expression);
-          body->expression = std::move(assign);
-          check->body.push_back(std::move(body));
-          fn->defaults.push_back(std::move(check));
-        }
-      } while (take(","));
+    read_params(*fn);
     expect(")");
     expect("{");
     fn->body = block();
@@ -1179,7 +1370,6 @@ public:
       do {
         if (is("[") || is("{")) {
           pattern(s->declarations, nullptr);
-          if (!take(",")) break;
           continue;
         }
         auto name = identifier();
@@ -1218,7 +1408,18 @@ public:
         init = statement_node(Stmt::Kind::Variables);
         init->text = tok().text;
         ++p;
-        init->declarations.emplace_back(identifier(), nullptr);
+        std::unique_ptr<Stmt> binds;
+        if (is("[") || is("{")) {
+          // for (const [a, b] of ...) - the iterator result lands in a holder,
+          // and the pattern binds its pieces before the loop body runs.
+          std::string holder = temp_name();
+          init->declarations.emplace_back(holder, nullptr);
+          binds = statement_node(Stmt::Kind::Variables);
+          binds->text = init->text;
+          pattern(binds->declarations, identifier_expr(holder, tok().line));
+        } else {
+          init->declarations.emplace_back(identifier(), nullptr);
+        }
         if (is("of") || is("in")) {
           auto kind = tok().text;
           ++p;
@@ -1227,6 +1428,8 @@ public:
           f->name = init->declarations[0].first;
           f->condition = expr();
           expect(")");
+          if (binds)
+            f->body.push_back(std::move(binds));
           f->body.push_back(statement());
           --depth;
           return f;
