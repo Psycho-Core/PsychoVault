@@ -46,6 +46,10 @@ struct Object {
   std::function<Value(Values &)> native;
   int host = -2;
   std::string host_type;
+  // A typed array and its buffer are real bytes, not a list of numbers, so a
+  // media segment costs what it is instead of sixty times that.
+  std::shared_ptr<std::vector<uint8_t>> bytes;
+  size_t byte_offset = 0, length = 0;
   // An arrow function keeps the this value from where it was created.
   bool has_lexical_this = false;
   Value lexical_this;

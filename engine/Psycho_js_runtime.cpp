@@ -534,6 +534,13 @@ bool Runtime::iterate(const Value &value, Values &out, size_t limit) {
     }
     return true;
   }
+  if (o->bytes && o->host_type != "ArrayBuffer") {
+    for (size_t i = 0; i < o->length && out.size() < limit; ++i) {
+      size_t at = o->byte_offset + i;
+      out.push_back(Value(double(at < o->bytes->size() ? (*o->bytes)[at] : 0)));
+    }
+    return true;
+  }
   auto values = o->properties.find("__values__");
   if (values != o->properties.end() && values->second.type == Value::Type::Object &&
       values->second.object) {
@@ -585,6 +592,23 @@ Value Runtime::get_member(const Value &base, const std::string &key) {
   if (base.type == Value::Type::Undefined || base.type == Value::Type::Null)
     throw JsError{Value("TypeError: cannot read property " + key)};
   if (base.type == Value::Type::Object && base.object) {
+    // A typed array answers its own indices out of the bytes behind it.
+    if (base.object->bytes && base.object->host_type != "ArrayBuffer") {
+      if (key == "length" || key == "byteLength")
+        return Value(double(base.object->length));
+      if (key == "byteOffset")
+        return Value(double(base.object->byte_offset));
+      if (!key.empty() && std::isdigit(static_cast<unsigned char>(key[0]))) {
+        char *end = nullptr;
+        unsigned long long index = std::strtoull(key.c_str(), &end, 10);
+        if (end && !*end) {
+          if (index >= base.object->length)
+            return Value();
+          size_t at = base.object->byte_offset + size_t(index);
+          return Value(double(at < base.object->bytes->size() ? (*base.object->bytes)[at] : 0));
+        }
+      }
+    }
     // Spread and for..of ask for this, so every collection I own answers it.
     if (key == "@@iterator" && !base.object->properties.count("@@iterator")) {
       Value self = base;
@@ -1102,6 +1126,20 @@ bool Runtime::set_member(const Value &base, const std::string &key, const Value 
   Object *o = base.object;
   if (o->kind == Object::Kind::Host && host_)
     return host_->set(o->host, key, value);
+  // A typed array writes through to its bytes and never grows.
+  if (o->bytes && o->host_type != "ArrayBuffer" && !key.empty() &&
+      std::isdigit(static_cast<unsigned char>(key[0]))) {
+    char *end = nullptr;
+    unsigned long long index = std::strtoull(key.c_str(), &end, 10);
+    if (end && !*end) {
+      if (index >= o->length)
+        return true;
+      size_t at = o->byte_offset + size_t(index);
+      if (at < o->bytes->size())
+        (*o->bytes)[at] = uint8_t(std::clamp(value.to_number(), 0.0, 255.0));
+      return true;
+    }
+  }
   if (o->kind == Object::Kind::Array && key == "length") {
     size_t n = size_t(std::max(0.0, value.to_number()));
     if (n > 100000)
@@ -2595,6 +2633,138 @@ void Runtime::install_builtins() {
         for (auto &p : a[i].object->properties)
           a[0].object->properties[p.first] = p.second;
     return a[0];
+  });
+  // I write the typed arrays Media Source Extensions needs, backed by real bytes
+  // rather than a list of numbers, so a video segment costs what it is.
+  g.properties["ArrayBuffer"] = make_native([this](Values &a) {
+    Value self = make_object();
+    size_t size = size_t(std::clamp(a.empty() ? 0.0 : a[0].to_number(), 0.0, 64.0 * 1024 * 1024));
+    self.object->bytes = std::make_shared<std::vector<uint8_t>>(size, 0);
+    self.object->host_type = "ArrayBuffer";
+    self.object->properties["byteLength"] = Value(double(size));
+    return self;
+  });
+  g.properties["Uint8Array"] = make_native([this](Values &a) {
+    Value self = make_object();
+    self.object->host_type = "Uint8Array";
+    std::shared_ptr<std::vector<uint8_t>> storage;
+    size_t offset = 0, length = 0;
+    if (!a.empty() && a[0].type == Value::Type::Object && a[0].object && a[0].object->bytes &&
+        a[0].object->host_type == "ArrayBuffer") {
+      storage = a[0].object->bytes;
+      length = storage->size();
+    } else if (!a.empty() && a[0].type == Value::Type::Object && a[0].object && a[0].object->bytes) {
+      // A view over another typed array shares the bytes underneath it.
+      storage = a[0].object->bytes;
+      offset = a[0].object->byte_offset;
+      length = a[0].object->length;
+    } else if (!a.empty() && a[0].type == Value::Type::Object && a[0].object &&
+               a[0].object->kind == Object::Kind::Array) {
+      Values items;
+      iterate(a[0], items, 64u * 1024u * 1024u);
+      storage = std::make_shared<std::vector<uint8_t>>();
+      storage->reserve(items.size());
+      for (auto &item : items)
+        storage->push_back(uint8_t(std::clamp(item.to_number(), 0.0, 255.0)));
+      length = storage->size();
+    } else {
+      size_t size = size_t(std::clamp(a.empty() ? 0.0 : a[0].to_number(), 0.0, 64.0 * 1024 * 1024));
+      storage = std::make_shared<std::vector<uint8_t>>(size, 0);
+      length = size;
+    }
+    self.object->bytes = storage;
+    self.object->byte_offset = offset;
+    self.object->length = length;
+    auto buffer = make_object();
+    buffer.object->bytes = storage;
+    buffer.object->host_type = "ArrayBuffer";
+    buffer.object->properties["byteLength"] = Value(double(storage->size()));
+    self.object->properties["buffer"] = buffer;
+    self.object->properties["length"] = Value(double(length));
+    self.object->properties["byteLength"] = Value(double(length));
+    self.object->properties["set"] = make_native([this, self](Values &args) {
+      if (args.empty())
+        return Value();
+      auto target = self.object;
+      size_t at = args.size() > 1 ? size_t(std::max(0.0, args[1].to_number())) : 0;
+      if (args[0].type == Value::Type::Object && args[0].object && args[0].object->bytes) {
+        auto source = args[0].object;
+        size_t from = source->host_type == "ArrayBuffer" ? 0 : source->byte_offset;
+        size_t count = source->host_type == "ArrayBuffer" ? source->bytes->size() : source->length;
+        for (size_t i = 0; i < count; ++i) {
+          size_t to = target->byte_offset + at + i;
+          if (from + i < source->bytes->size() && to < target->bytes->size())
+            (*target->bytes)[to] = (*source->bytes)[from + i];
+        }
+        return Value();
+      }
+      Values items;
+      if (iterate(args[0], items, 64u * 1024u * 1024u)) {
+        for (size_t i = 0; i < items.size(); ++i) {
+          size_t to = target->byte_offset + at + i;
+          if (to < target->bytes->size())
+            (*target->bytes)[to] = uint8_t(std::clamp(items[i].to_number(), 0.0, 255.0));
+        }
+      }
+      return Value();
+    });
+    // A subarray is a view over the same bytes, which is what makes a segment cost
+    // nothing to hand around.
+    self.object->properties["subarray"] = make_native([this, self](Values &args) {
+      size_t begin = args.empty() ? 0 : size_t(std::max(0.0, args[0].to_number()));
+      size_t end = args.size() > 1 ? size_t(std::max(0.0, args[1].to_number())) : self.object->length;
+      begin = std::min(begin, self.object->length);
+      end = std::min(std::max(end, begin), self.object->length);
+      Value view = make_object();
+      view.object->host_type = "Uint8Array";
+      view.object->bytes = self.object->bytes;
+      view.object->byte_offset = self.object->byte_offset + begin;
+      view.object->length = end - begin;
+      view.object->properties["buffer"] = self.object->properties["buffer"];
+      view.object->properties["length"] = Value(double(view.object->length));
+      view.object->properties["byteLength"] = Value(double(view.object->length));
+      for (auto &entry : self.object->properties)
+        if (entry.first == "set" || entry.first == "subarray" || entry.first == "slice" ||
+            entry.first == "join")
+          view.object->properties[entry.first] = entry.second;
+      return view;
+    });
+    // slice copies, which is the difference from subarray that a page relies on.
+    self.object->properties["slice"] = make_native([this, self](Values &args) {
+      size_t begin = args.empty() ? 0 : size_t(std::max(0.0, args[0].to_number()));
+      size_t end = args.size() > 1 ? size_t(std::max(0.0, args[1].to_number())) : self.object->length;
+      begin = std::min(begin, self.object->length);
+      end = std::min(std::max(end, begin), self.object->length);
+      auto storage = std::make_shared<std::vector<uint8_t>>();
+      for (size_t i = begin; i < end; ++i) {
+        size_t at = self.object->byte_offset + i;
+        storage->push_back(at < self.object->bytes->size() ? (*self.object->bytes)[at] : 0);
+      }
+      Value copy = make_object();
+      copy.object->host_type = "Uint8Array";
+      copy.object->bytes = storage;
+      copy.object->length = storage->size();
+      auto buffer = make_object();
+      buffer.object->bytes = storage;
+      buffer.object->host_type = "ArrayBuffer";
+      buffer.object->properties["byteLength"] = Value(double(storage->size()));
+      copy.object->properties["buffer"] = buffer;
+      copy.object->properties["length"] = Value(double(storage->size()));
+      copy.object->properties["byteLength"] = Value(double(storage->size()));
+      return copy;
+    });
+    self.object->properties["join"] = make_native([self](Values &args) {
+      std::string separator = args.empty() ? std::string(",") : args[0].to_string();
+      std::string out;
+      for (size_t i = 0; i < self.object->length; ++i) {
+        size_t at = self.object->byte_offset + i;
+        if (i)
+          out += separator;
+        out += std::to_string(at < self.object->bytes->size() ? (*self.object->bytes)[at] : 0);
+      }
+      return Value(out);
+    });
+    return self;
   });
   g.properties["Object"] = object;
   Value json = make_object();

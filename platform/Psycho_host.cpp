@@ -113,12 +113,23 @@ bool Host::pump() {
     return false;
   double delay = page_->next_timer_delay();
   bool timer_due = delay >= 0 && delay <= 0;
-  if (!timer_due && page_->requests.empty())
+  // Playing media and a freshly appended segment are work of their own: the clock
+  // has to move even when no timer is due and nothing is being fetched.
+  bool playing = page_->media_pending();
+  if (!timer_due && !playing && page_->requests.empty())
     return false;
-  if (timer_due)
+  if (timer_due || playing)
     page_->tick();
   settle();
   return true;
+}
+
+bool Host::media_playing() const {
+  return loaded_ && page_->media_playing();
+}
+
+size_t Host::pull_audio(int16_t *out, size_t frames, int device_rate) {
+  return loaded_ ? page_->pull_audio(out, frames, device_rate) : 0;
 }
 
 void Host::settle() {
@@ -203,6 +214,28 @@ void Host::emit() {
     HostEvent event;
     event.tag = "image";
     event.url = "canvas:" + std::to_string(node);
+    event.image = std::make_shared<const Image>(image);
+    report_(std::move(event));
+  }
+  // A video or an audio element sends its picture under the same key its paint
+  // command uses, so my shell needs no special case to draw it.
+  for (const auto &[node, image] : page_->media_images()) {
+    if (!image.valid())
+      continue;
+    auto revision = page_->media_revisions().find(node);
+    auto seen = sent_media_.find(node);
+    auto player = page_->player_for(node);
+    bool moving = player && player->playing();
+    if (!moving && seen != sent_media_.end() && revision != page_->media_revisions().end() &&
+        seen->second == revision->second)
+      continue;
+    if (revision != page_->media_revisions().end())
+      sent_media_[node] = revision->second;
+    if (!report_)
+      continue;
+    HostEvent event;
+    event.tag = "image";
+    event.url = "media:" + std::to_string(node);
     event.image = std::make_shared<const Image>(image);
     report_(std::move(event));
   }

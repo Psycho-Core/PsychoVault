@@ -5,9 +5,13 @@
 #include "../platform/Psycho_download.hpp"
 #include "../platform/Psycho_host.hpp"
 #include "Psycho_image_fixtures.hpp"
-#include <filesystem>
+#include "Psycho_media_fixtures.hpp"
 #include <cassert>
+#include <chrono>
+#include <cmath>
+#include <filesystem>
 #include <iostream>
+#include <thread>
 using namespace pv;
 static int passed = 0;
 #define CHECK(x)                                                                                   \
@@ -55,6 +59,161 @@ static std::string js_eval(const std::string &s) {
   js::Runtime r;
   return r.run(s).to_string();
 }
+// ---- media fixtures I build by hand, so the tests exercise real parsing ----
+static Bytes make_wav(int rate, int count, double amplitude) {
+  Bytes w;
+  auto le16 = [&](uint16_t v) {
+    w.push_back(uint8_t(v & 0xff));
+    w.push_back(uint8_t((v >> 8) & 0xff));
+  };
+  auto le32 = [&](uint32_t v) {
+    for (int i = 0; i < 4; ++i)
+      w.push_back(uint8_t((v >> (8 * i)) & 0xff));
+  };
+  auto tag = [&](const char *t) {
+    for (int i = 0; i < 4; ++i)
+      w.push_back(uint8_t(t[i]));
+  };
+  tag("RIFF");
+  le32(uint32_t(36 + count * 2));
+  tag("WAVE");
+  tag("fmt ");
+  le32(16);
+  le16(1);
+  le16(1);
+  le32(uint32_t(rate));
+  le32(uint32_t(rate * 2));
+  le16(2);
+  le16(16);
+  tag("data");
+  le32(uint32_t(count * 2));
+  for (int i = 0; i < count; ++i)
+    le16(uint16_t(int16_t(std::sin(double(i) * 0.05) * amplitude)));
+  return w;
+}
+// A two frame MJPEG AVI at four frames a second, so the second frame starts at a
+// quarter of a second and a seek to 0.3 lands on it.
+static Bytes make_avi() {
+  auto tag = [](Bytes &o, const char *t) {
+    for (int i = 0; i < 4; ++i)
+      o.push_back(uint8_t(t[i]));
+  };
+  auto le16 = [](Bytes &o, uint16_t v) {
+    o.push_back(uint8_t(v & 0xff));
+    o.push_back(uint8_t((v >> 8) & 0xff));
+  };
+  auto le32 = [](Bytes &o, uint32_t v) {
+    for (int i = 0; i < 4; ++i)
+      o.push_back(uint8_t((v >> (8 * i)) & 0xff));
+  };
+  auto put_le32 = [](Bytes &o, size_t at, uint32_t v) {
+    for (int i = 0; i < 4; ++i)
+      o[at + size_t(i)] = uint8_t((v >> (8 * i)) & 0xff);
+  };
+  auto chunk = [&](Bytes &o, const char *t, const Bytes &body) {
+    tag(o, t);
+    le32(o, uint32_t(body.size()));
+    o.insert(o.end(), body.begin(), body.end());
+    if (body.size() & 1)
+      o.push_back(0);
+  };
+  Bytes strh;
+  tag(strh, "vids");
+  strh.resize(56, 0);
+  Bytes strf;
+  le32(strf, 40);
+  le32(strf, 32);
+  le32(strf, 16);
+  le16(strf, 1);
+  le16(strf, 24);
+  tag(strf, "MJPG");
+  strf.resize(40, 0);
+  Bytes avih(56, 0);
+  put_le32(avih, 0, 250000);
+  put_le32(avih, 16, 2);
+  put_le32(avih, 32, 32);
+  put_le32(avih, 36, 16);
+  Bytes strl;
+  tag(strl, "strl");
+  chunk(strl, "strh", strh);
+  chunk(strl, "strf", strf);
+  Bytes hdrl;
+  tag(hdrl, "hdrl");
+  chunk(hdrl, "avih", avih);
+  tag(hdrl, "LIST");
+  le32(hdrl, uint32_t(strl.size()));
+  hdrl.insert(hdrl.end(), strl.begin(), strl.end());
+  Bytes red(fixtures::frame_red.begin(), fixtures::frame_red.end());
+  Bytes green(fixtures::frame_green.begin(), fixtures::frame_green.end());
+  Bytes movi;
+  tag(movi, "movi");
+  chunk(movi, "00dc", red);
+  chunk(movi, "00dc", green);
+  Bytes avi;
+  tag(avi, "RIFF");
+  le32(avi, uint32_t(4 + hdrl.size() + 8 + movi.size()));
+  tag(avi, "AVI ");
+  tag(avi, "LIST");
+  le32(avi, uint32_t(hdrl.size()));
+  avi.insert(avi.end(), hdrl.begin(), hdrl.end());
+  tag(avi, "LIST");
+  le32(avi, uint32_t(movi.size()));
+  avi.insert(avi.end(), movi.begin(), movi.end());
+  return avi;
+}
+// An MP4 with one track of the codec I ask for. Every size is big-endian, which is
+// what a real file uses.
+static Bytes make_mp4(const char *handler, const char *codec) {
+  auto tag = [](Bytes &o, const char *t) {
+    for (int i = 0; i < 4; ++i)
+      o.push_back(uint8_t(t[i]));
+  };
+  auto be32 = [](Bytes &o, uint32_t v) {
+    for (int i = 0; i < 4; ++i)
+      o.push_back(uint8_t((v >> (8 * (3 - i))) & 0xff));
+  };
+  auto be32_at = [](Bytes &o, size_t at, uint32_t v) {
+    for (int i = 0; i < 4; ++i)
+      o[at + size_t(i)] = uint8_t((v >> (8 * (3 - i))) & 0xff);
+  };
+  auto box = [&](Bytes &o, const char *t, const Bytes &payload) {
+    be32(o, uint32_t(payload.size() + 8));
+    tag(o, t);
+    o.insert(o.end(), payload.begin(), payload.end());
+  };
+  Bytes ftyp;
+  tag(ftyp, "isom");
+  be32(ftyp, 0x200);
+  tag(ftyp, "isom");
+  tag(ftyp, "mp41");
+  Bytes mvhd(100, 0);
+  be32_at(mvhd, 12, 1000);
+  be32_at(mvhd, 16, 2500);
+  Bytes tkhd(84, 0);
+  be32_at(tkhd, 76, 32u << 16);
+  be32_at(tkhd, 80, 16u << 16);
+  Bytes hdlr(24, 0);
+  for (int i = 0; i < 4; ++i)
+    hdlr[8 + size_t(i)] = uint8_t(handler[i]);
+  Bytes stsd(16, 0);
+  for (int i = 0; i < 4; ++i)
+    stsd[12 + size_t(i)] = uint8_t(codec[i]);
+  Bytes stbl, minf, mdia, trak, body, moov;
+  box(stbl, "stsd", stsd);
+  box(minf, "stbl", stbl);
+  box(mdia, "hdlr", hdlr);
+  box(mdia, "minf", minf);
+  box(trak, "mdia", mdia);
+  box(trak, "tkhd", tkhd);
+  box(body, "mvhd", mvhd);
+  box(body, "trak", trak);
+  box(moov, "moov", body);
+  Bytes file;
+  box(file, "ftyp", ftyp);
+  file.insert(file.end(), moov.begin(), moov.end());
+  return file;
+}
+
 int main() {
   CHECK(parse_url("https://example.com/a/../b?x=1#f")->href() == "https://example.com/b?x=1#f");
   CHECK(parse_url("http://example.com:80/")->href() == "http://example.com/");
@@ -611,6 +770,281 @@ int main() {
       CHECK(std::get<2>(edge) > 150);
       CHECK(std::get<3>(corner) == 0);
     }
+  }
+  // ---- audio and video: my own containers, player and media sources ----
+  {
+    Bytes wav = make_wav(8000, 2000, 8000);
+    MediaInfo info;
+    std::string error;
+    CHECK(probe_media(wav, info, error));
+    CHECK(info.container == "WAV");
+    CHECK(info.has_audio && !info.has_video);
+    CHECK(near(info.duration * 100, 25.0));
+    CHECK(near(info.sample_rate, 8000));
+    CHECK(media_type_supported("audio/wav"));
+    CHECK(media_type_supported("video/x-msvideo"));
+    CHECK(!media_type_supported("video/webm"));
+
+    MediaPlayer player;
+    CHECK(player.load(wav, "audio/wav", error));
+    CHECK(player.ready() && player.paused());
+    CHECK(near(player.duration() * 100, 25.0));
+    player.play(100.0);
+    player.advance(100.1);
+    CHECK(!player.paused());
+    CHECK(near(player.current_time() * 10, 1.0));
+    // I ask for a device rate that is not the file rate, so the resampler runs.
+    std::vector<int16_t> mixed(480 * 2, 0);
+    CHECK(player.pull_audio(mixed.data(), 480, 48000) == 480);
+    bool any = false;
+    for (int16_t sample : mixed)
+      if (sample != 0)
+        any = true;
+    CHECK(any);
+    player.seek(0.2, 102.0);
+    CHECK(near(player.current_time() * 10, 2.0));
+    // Loop wraps at the end instead of stopping.
+    player.set_loop(true);
+    player.play(103.0);
+    player.advance(200.0);
+    CHECK(!player.ended());
+    CHECK(player.current_time() < 0.05);
+    // Muting stops the samples themselves, not just a label.
+    player.set_muted(true);
+    std::vector<int16_t> silent(64 * 2, 0);
+    CHECK(player.pull_audio(silent.data(), 64, 48000) == 0);
+  }
+  {
+    Bytes avi = make_avi();
+    MediaInfo info;
+    std::string error;
+    CHECK(probe_media(avi, info, error));
+    CHECK(info.container == "AVI");
+    CHECK(info.has_video && !info.has_audio);
+    CHECK(info.video_codec == "MJPEG");
+    CHECK(info.width == 32 && info.height == 16);
+    CHECK(near(info.frame_rate, 4.0));
+    MediaPlayer video;
+    CHECK(video.load(avi, "video/x-msvideo", error));
+    CHECK(near(video.duration() * 100, 50.0));
+    auto colour = [](const Image *image) {
+      const uint8_t *p = &image->pixels[(size_t(4) * size_t(image->width) + 4) * 4];
+      return std::make_tuple(int(p[2]), int(p[1]), int(p[0]));
+    };
+    const Image *first = video.frame();
+    CHECK(first && first->width == 32 && first->height == 16);
+    auto red_pixel = colour(first);
+    CHECK(std::get<0>(red_pixel) > 200 && std::get<1>(red_pixel) < 60);
+    video.seek(0.3, 10.0);
+    const Image *second = video.frame();
+    CHECK(second != nullptr);
+    auto green_pixel = colour(second);
+    CHECK(std::get<1>(green_pixel) > 200 && std::get<0>(green_pixel) < 60);
+  }
+  {
+    // An MP4 that says what it holds: my reader walks the box tree and then names
+    // the codec I have no decoder for instead of pretending to play it.
+    MediaInfo info;
+    std::string error;
+    auto h264 = make_mp4("vide", "avc1");
+    CHECK(!probe_media(h264, info, error));
+    CHECK(info.duration > 0 && near(info.duration * 10, 25.0));
+    CHECK(info.video_codec == "avc1");
+    CHECK(info.width == 32 && info.height == 16);
+    CHECK(error.find("H.264") != std::string::npos);
+    CHECK(error.find("decoder") != std::string::npos);
+    MediaPlayer refused;
+    CHECK(!refused.load(h264, "video/mp4", error));
+    CHECK(!refused.ready());
+    auto aac = make_mp4("soun", "mp4a");
+    CHECK(!probe_media(aac, info, error));
+    CHECK(info.audio_codec == "mp4a");
+    CHECK(error.find("AAC") != std::string::npos);
+  }
+  {
+    // The typed arrays Media Source Extensions needs are real byte views: a
+    // subarray shares the bytes and set writes through them.
+    CHECK(js_eval("(new Uint8Array(5)).length") == "5");
+    CHECK(js_eval("var b=new Uint8Array(4);b[2]=7;b[2]") == "7");
+    CHECK(js_eval("var b=new Uint8Array(4);b[0]=1;b[1]=2;b[2]=3;var c=b.subarray(1);c.length")
+          == "3");
+    CHECK(js_eval("var b=new Uint8Array(4);b[0]=1;b[1]=2;b[2]=3;var c=b.subarray(1);c[0]=9;b[1]")
+          == "9");
+    CHECK(js_eval("var b=new Uint8Array(4);b.set([4,5],2);b[2]+','+b[3]") == "4,5");
+    CHECK(js_eval("var b=new Uint8Array(new ArrayBuffer(3));b.buffer.byteLength") == "3");
+    CHECK(js_eval("var s=0;var b=new Uint8Array(3);b[0]=1;b[1]=2;b[2]=3;for(var v of b)s+=v;s")
+          == "6");
+    CHECK(js_eval("var b=new Uint8Array(4);b[0]=1;b[1]=2;b.join('-')") == "1-2-0-0");
+    CHECK(js_eval("var b=new Uint8Array(4);b[0]=1;var c=b.slice(0,2);c[0]=9;b[0]") == "1");
+  }
+  {
+    // A source buffer grows its playable range as the bytes arrive, which is the
+    // whole point of appending before the file is complete.
+    std::string error;
+    SourceBuffer buffer("audio/wav");
+    CHECK(buffer.mime() == "audio/wav");
+    MediaSourceState source;
+    CHECK(source.add_source_buffer("audio/wav", error));
+    CHECK(source.buffer_count() == 1);
+    CHECK(!source.add_source_buffer("video/webm", error));
+    CHECK(error.find("NotSupportedError") != std::string::npos);
+    Bytes wav = make_wav(8000, 2000, 8000);
+    size_t half = 24 + 2000;
+    CHECK(half < wav.size());
+    SourceBuffer *first_buffer = source.buffer(0);
+    CHECK(first_buffer != nullptr);
+    CHECK(first_buffer->append(wav.data(), half, error));
+    auto ranges = first_buffer->buffered();
+    CHECK(ranges.size() == 1);
+    CHECK(ranges.front().second > 0 && ranges.front().second < 0.25);
+    CHECK(first_buffer->append(wav.data() + half, wav.size() - half, error));
+    ranges = first_buffer->buffered();
+    CHECK(ranges.size() == 1);
+    CHECK(near(ranges.front().second * 100, 25.0));
+    CHECK(near(source.duration() * 100, 25.0));
+    auto newest = source.newest(error);
+    CHECK(newest != nullptr);
+    MediaPlayer from_source;
+    CHECK(from_source.load_shared(newest, error));
+    CHECK(near(from_source.duration() * 100, 25.0));
+    // A source buffer cannot cut a decoded segment in half, and it says so.
+    CHECK(!first_buffer->remove(0.0, 0.1, error));
+    CHECK(error.find("cannot remove") != std::string::npos);
+    CHECK(source.end_of_stream(error));
+    CHECK(source.ended());
+    CHECK(!source.add_source_buffer("audio/wav", error));
+    CHECK(source.total_bytes() == wav.size());
+  }
+  {
+    // The same path through my page host: an audio element plays a WAV, a video
+    // element shows real frames, and the frame changes after a seek.
+    Bytes wav = make_wav(8000, 2000, 12000);
+    Bytes avi = make_avi();
+    std::vector<HostEvent> events;
+    Host host(
+        [&](const std::string &url) {
+          Resource r;
+          r.url = url;
+          if (url == "https://media.test/") {
+            r.mime = "text/html";
+            r.text = "<!doctype html><title>media</title><body>"
+                     "<audio id=tone src=\"/tone.wav\"></audio>"
+                     "<video id=clip src=\"/clip.avi\" width=32 height=16></video>"
+                     "<script>"
+                     "var a=document.getElementById('tone');"
+                     "a.addEventListener('play',function(){document.title='tone:'+"
+                     "Math.round(a.duration*100);});"
+                     "a.play();"
+                     "setTimeout(function(){"
+                     "var v=document.getElementById('clip');"
+                     "v.currentTime=0.3;"
+                     "v.pause();"
+                     "document.title+='|seek:'+Math.round(v.currentTime*100);"
+                     "},20);"
+                     "</script></body>";
+            return r;
+          }
+          if (url == "https://media.test/tone.wav") {
+            r.mime = "audio/wav";
+            r.bytes = wav;
+            return r;
+          }
+          if (url == "https://media.test/clip.avi") {
+            r.mime = "video/x-msvideo";
+            r.bytes = avi;
+            return r;
+          }
+          r.ok = false;
+          r.status = 404;
+          return r;
+        },
+        [&events](HostEvent event) { events.push_back(std::move(event)); });
+    std::string error;
+    CHECK(host.load("https://media.test/", error));
+    CHECK(error.empty());
+    bool saw_media_image = false, saw_red = false, saw_green = false;
+    int frame_width = 0, frame_height = 0;
+    std::string last_title;
+    for (int i = 0; i < 20; ++i) {
+      host.pump();
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    for (const auto &event : events) {
+      if (event.tag == "image" && event.url.rfind("media:", 0) == 0 && event.image) {
+        saw_media_image = true;
+        frame_width = event.image->width;
+        frame_height = event.image->height;
+        const uint8_t *p = &event.image->pixels[(size_t(2) * size_t(frame_width) + 2) * 4];
+        if (int(p[2]) > int(p[1]) + 100)
+          saw_red = true;
+        if (int(p[1]) > int(p[2]) + 100)
+          saw_green = true;
+      }
+      if (event.tag == "frame")
+        last_title = event.frame.str("title");
+    }
+    CHECK(saw_media_image);
+    CHECK(frame_width == 32 && frame_height == 16);
+    CHECK(last_title.rfind("tone:25", 0) == 0);
+    CHECK(last_title.find("seek:") != std::string::npos);
+    // The clip starts red and turns green once the page seeks to the second frame.
+    CHECK(saw_red);
+    CHECK(saw_green);
+  }
+  {
+    // A page that builds its own media source and appends a fetched segment plays
+    // it, which is the path a streaming site uses.
+    Bytes wav = make_wav(8000, 2000, 9000);
+    std::vector<HostEvent> events;
+    Host host(
+        [&](const std::string &url) {
+          Resource r;
+          r.url = url;
+          if (url == "https://mse.test/segment.wav") {
+            r.mime = "audio/wav";
+            r.bytes = wav;
+            return r;
+          }
+          if (url == "https://mse.test/") {
+            r.mime = "text/html";
+            r.text = "<!doctype html><title>mse</title><body><audio id=a></audio><script>"
+                     "var a=document.getElementById('a');"
+                     "a.addEventListener('loadedmetadata',function(){"
+                     "document.title='ms:'+Math.round(a.duration*100);});"
+                     "a.addEventListener('play',function(){document.title+='|play';});"
+                     "var ms=new MediaSource();"
+                     "a.src=URL.createObjectURL(ms);"
+                     "ms.addEventListener('sourceopen',function(){"
+                     "var sb=ms.addSourceBuffer('audio/wav');"
+                     "sb.addEventListener('updateend',function(){"
+                     "document.title+='|buffered:'+Math.round(sb.buffered.end(0)*100);"
+                     "ms.endOfStream();});"
+                     "fetch('/segment.wav').then(function(r){return r.arrayBuffer();})"
+                     ".then(function(buf){sb.appendBuffer(new Uint8Array(buf));});"
+                     "});"
+                     "a.play();"
+                     "</script></body>";
+            return r;
+          }
+          r.ok = false;
+          r.status = 404;
+          return r;
+        },
+        [&events](HostEvent event) { events.push_back(std::move(event)); });
+    std::string error;
+    CHECK(host.load("https://mse.test/", error));
+    CHECK(error.empty());
+    std::string title;
+    for (int i = 0; i < 8; ++i) {
+      host.pump();
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    for (const auto &event : events)
+      if (event.tag == "frame")
+        title = event.frame.str("title");
+    CHECK(title.rfind("ms:25", 0) == 0);
+    CHECK(title.find("|play") != std::string::npos);
+    CHECK(title.find("buffered:25") != std::string::npos);
   }
   Canvas c(64, 64, 0xff000000);
   c.fill({0, 0, 64, 64}, 0xff112233);

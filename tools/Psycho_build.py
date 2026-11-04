@@ -11,7 +11,8 @@ ROOT=pathlib.Path(__file__).resolve().parents[1]
 ENGINE=["engine/Psycho_base.cpp","engine/Psycho_dom.cpp","engine/Psycho_css.cpp","engine/Psycho_js_parser.cpp",
         "engine/Psycho_js_runtime.cpp","engine/Psycho_raster.cpp","engine/Psycho_image.cpp",
         "engine/Psycho_layout.cpp","engine/Psycho_page.cpp","engine/Psycho_regex.cpp","engine/Psycho_cookies.cpp",
-        "engine/Psycho_storage.cpp","engine/Psycho_jpeg.cpp","engine/Psycho_svg.cpp","engine/Psycho_canvas.cpp"]
+        "engine/Psycho_storage.cpp","engine/Psycho_jpeg.cpp","engine/Psycho_svg.cpp","engine/Psycho_canvas.cpp",
+        "engine/Psycho_media.cpp","engine/Psycho_mse.cpp","engine/Psycho_page_media.cpp"]
 PLATFORM=["platform/Psycho_host.cpp","platform/Psycho_network.cpp","platform/Psycho_profile.cpp",
           "platform/Psycho_proxy.cpp","platform/Psycho_extension.cpp","platform/Psycho_download.cpp"]
 def run(cmd,env=None):

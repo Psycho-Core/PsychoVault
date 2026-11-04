@@ -53,6 +53,10 @@ public:
   Storage &local_storage() { return page_->local_storage(); }
   Storage &session_storage() { return page_->session_storage(); }
   double next_timer_delay() const;
+  // Media. My shell asks whether anything is playing so it can keep its own clock
+  // running, and pulls stereo samples at whatever rate its device wants.
+  bool media_playing() const;
+  size_t pull_audio(int16_t *out, size_t frames, int device_rate);
   double width() const { return width_; }
   double height() const { return height_; }
   double scroll_position() const { return scroll_; }
@@ -72,6 +76,9 @@ private:
   // I remember which canvas revision I last handed over, so an idle canvas is
   // not copied again.
   std::map<int, uint64_t> sent_canvas_;
+  // A playing video sends a new frame every tick, so I remember the revision I
+  // last handed over rather than comparing pixels.
+  std::map<int, uint64_t> sent_media_;
   double width_ = 1000, height_ = 700, scroll_ = 0;
   bool loaded_ = false;
 };

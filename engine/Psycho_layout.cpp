@@ -731,6 +731,49 @@ struct Layout {
           flush();
           return;
         }
+        if (child.name == "video" || child.name == "audio") {
+          flush();
+          // An audio element with no controls draws nothing, which is how a page
+          // plays a sound without taking up room for it.
+          std::string controls;
+          if (child.name == "audio" && !child.get_attribute("controls", controls))
+            return;
+          auto attr_length = [&](const char *name, double fallback) -> double {
+            auto value = trim(child.attribute(name));
+            if (value.empty())
+              return fallback;
+            try {
+              size_t used = 0;
+              double n = std::stod(value, &used);
+              if (used == value.size() && n > 0 && n <= 8192)
+                return n;
+            } catch (...) {
+            }
+            return fallback;
+          };
+          // A video keeps the size a page gives it, and an audio element is a strip
+          // for its controls because that is all it draws.
+          bool moving = child.name == "video";
+          double natural_w = attr_length("width", 300);
+          double natural_h = attr_length("height", moving ? 150 : 32);
+          double vw = cs.width >= 0 ? cs.width : natural_w;
+          double vh = cs.height >= 0 ? cs.height : natural_h;
+          Rect box{inner_x + cs.margin[3], cursor + cs.margin[0], vw, std::max(1.0, vh)};
+          // The element owns a dark box before its picture arrives, which is what
+          // an unloaded video looks like, and my page paints the frame over it.
+          out.paint.push_back({PaintCommand::Kind::Rect,
+                               box,
+                               moving ? 0xff000000u : 0xff0d1420u,
+                               {},
+                               cs.font_size,
+                               0,
+                               false,
+                               c,
+                               std::string(), {}, {}});
+          out.boxes[c] = box;
+          cursor += box.h + cs.margin[0] + cs.margin[2];
+          return;
+        }
         if (child.name == "img") {
           flush();
           std::string source = child.attribute("src");

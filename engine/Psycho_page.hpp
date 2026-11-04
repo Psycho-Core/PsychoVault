@@ -5,6 +5,8 @@
 #include "Psycho_layout.hpp"
 #include "Psycho_storage.hpp"
 #include "Psycho_image.hpp"
+#include "Psycho_media.hpp"
+#include "Psycho_mse.hpp"
 namespace pv {
 class Page {
 public:
@@ -65,6 +67,28 @@ public:
   double content_height() const {
     return content_height_;
   }
+  // Media. My page owns the players, so the clock, the frame and the audio all
+  // come from one place.
+  const std::map<int, Image> &media_images() const {
+    return media_images_;
+  }
+  const std::map<int, uint64_t> &media_revisions() const {
+    return media_revisions_;
+  }
+  bool media_playing() const;
+  // Playing media and a freshly appended segment are work of their own, so my
+  // host keeps ticking while either is true.
+  bool media_pending() const {
+    return media_playing() || media_wake_ || mse_opened_.size() < mse_objects_.size();
+  }
+  // I move every player to the current moment and rebuild the frame it shows.
+  void media_tick(double now = -1);
+  size_t pull_audio(int16_t *out, size_t frames, int device_rate);
+  MediaPlayer *player_for(int node);
+  // A page can attach a media source it built itself.
+  std::string create_media_object_url(std::shared_ptr<MediaSourceState> source);
+  MediaSourceState *media_source(const std::string &url);
+  void revoke_media_object_url(const std::string &url);
 
 private:
   struct Listener {
@@ -80,6 +104,26 @@ private:
   std::map<int, Gradient> gradients_;
   std::map<int, Image> canvas_images_;
   std::map<int, uint64_t> canvas_revisions_;
+  std::map<int, MediaPlayer> media_;
+  std::map<int, Image> media_images_;
+  std::map<int, uint64_t> media_revisions_;
+  std::map<std::string, std::shared_ptr<MediaSourceState>> media_sources_;
+  std::map<int, std::string> media_src_;
+  std::map<int, std::string> media_errors_;
+  std::map<int, const MediaData *> media_data_;
+  std::map<int, std::shared_ptr<MediaSourceState>> mse_objects_;
+  // A source buffer handle points at the media source that owns it and its index.
+  std::map<int, std::pair<int, size_t>> mse_buffers_;
+  std::set<int> mse_opened_;
+  // A page can ask to play before the bytes arrive, so I remember the request and
+  // start the moment the element has something to play.
+  std::set<int> media_wants_play_;
+  // Events that belong to an object rather than an element, keyed by handle.
+  std::map<int, std::vector<Listener>> host_listeners_;
+  bool media_wake_ = false;
+  int next_media_source_ = 1, next_mse_ = 1;
+  int next_media_revision_ = 1;
+  double media_last_tick_ = 0, media_last_timeupdate_ = 0;
   int next_gradient_ = 0;
   std::set<int> executed_;
   std::set<std::string> requested_;
@@ -97,6 +141,19 @@ private:
   bool dirty_ = true;
   void run_scripts();
   void install_fetch();
+  // The media globals: MediaSource, Audio and URL.createObjectURL, plus the events
+  // an object owns rather than an element.
+  void install_media();
+  void dispatch_host(int id, const std::string &type);
+  void open_pending_media_sources();
+  // I load a media element from whatever src it points at, including a blob URL a
+  // page made with a media source.
+  void update_media(int node);
+  void load_media_nodes();
+  Image compose_media_frame(int node, const MediaPlayer &player) const;
+  void media_command(int node, Json &paint, size_t at);
+  void toggle_media(int node);
+  void seek_media(int node, double fraction);
   bool pump_for_await();
   void execute_script(int node);
   void request(std::string url);

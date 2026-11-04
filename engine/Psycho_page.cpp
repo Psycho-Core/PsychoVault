@@ -4,7 +4,8 @@
 namespace pv {
 static constexpr int kDocument = -1, kLocation = -3, kStorageLocal = -5, kStorageSession = -6,
                      kHistory = -7, kStyleBase = 1000000, kClassBase = 2000000,
-                     kCanvasBase = 3000000, kGradientBase = 4000000;
+                     kCanvasBase = 3000000, kGradientBase = 4000000,
+                     kMseBase = 5000000, kBufferBase = 6000000;
 // Cookies expire against wall-clock seconds, which is what a date header uses.
 static double cookie_now() {
   return double(now_ms()) / 1000.0;
@@ -13,12 +14,47 @@ static bool has_attr(const Node &n, const std::string &key) {
   std::string v;
   return n.get_attribute(key, v);
 }
+// A buffered range is a small object with length, start(i) and end(i), which is
+// the shape a page actually uses.
+static js::Value time_ranges(js::Runtime &r, std::vector<std::pair<double, double>> spans) {
+  js::Value out = r.make_object();
+  out.object->host_type = "TimeRanges";
+  out.object->properties["length"] = js::Value(double(spans.size()));
+  out.object->properties["start"] = r.make_native([spans](js::Values &a) {
+    size_t i = a.empty() ? 0 : size_t(std::max(0.0, a[0].to_number()));
+    return js::Value(i < spans.size() ? spans[i].first : 0.0);
+  });
+  out.object->properties["end"] = r.make_native([spans](js::Values &a) {
+    size_t i = a.empty() ? 0 : size_t(std::max(0.0, a[0].to_number()));
+    return js::Value(i < spans.size() ? spans[i].second : 0.0);
+  });
+  return out;
+}
 class PageHost : public js::Host {
 public:
   Page &page;
   explicit PageHost(Page &p) : page(p) {}
   js::Value node(int id) {
     return page.js_->host_value(id, id == kDocument ? "Document" : "HTMLElement");
+  }
+  // A media source and a source buffer carry their own listeners, and a function
+  // I hold has to be a root or my collector frees it.
+  js::Value listen(int id, const std::string &which) {
+    return page.js_->make_native([this, id, which](js::Values &a) {
+      if (a.empty())
+        return js::Value();
+      auto &registered = page.host_listeners_[id];
+      if (which == "addEventListener") {
+        if (a.size() > 1) {
+          registered.push_back({id, a[0].to_string(), a[1]});
+          if (a[1].object)
+            page.js_->root(a[1].object);
+        }
+      } else {
+        std::erase_if(registered, [&](auto &l) { return l.type == a[0].to_string(); });
+      }
+      return js::Value();
+    });
   }
   js::Value list(const std::vector<int> &ids) {
     js::Values values;
@@ -575,7 +611,7 @@ public:
         });
       return js::Value("");
     }
-    if (id >= kClassBase) {
+    if (id >= kClassBase && id < kCanvasBase) {
       int n = id - kClassBase;
       if (n < 0 || n >= int(d.nodes.size()))
         return js::Value();
@@ -639,6 +675,95 @@ public:
         });
       return js::Value();
     }
+    if (id >= kMseBase && id < kMseBase + 1000000) {
+      auto it = page.mse_objects_.find(id - kMseBase);
+      if (it == page.mse_objects_.end())
+        return js::Value();
+      auto state = it->second;
+      if (name == "addSourceBuffer")
+        return r.make_native([this, id, state](js::Values &a) {
+          std::string type = a.empty() ? std::string() : a[0].to_string();
+          std::string error;
+          if (!state->add_source_buffer(type, error))
+            throw js::JsError{js::Value(error)};
+          int handle = page.next_mse_++;
+          page.mse_buffers_[handle] = {id - kMseBase, state->buffer_count() - 1};
+          return page.js_->host_value(kBufferBase + handle, "SourceBuffer");
+        });
+      if (name == "endOfStream")
+        return r.make_native([state](js::Values &) {
+          std::string error;
+          state->end_of_stream(error);
+          return js::Value();
+        });
+      if (name == "duration")
+        return js::Value(state->duration());
+      if (name == "readyState")
+        return js::Value(state->ended() ? "ended" : "open");
+      if (name == "addEventListener" || name == "removeEventListener")
+        return listen(id, name);
+      return js::Value();
+    }
+    if (id >= kBufferBase && id < kBufferBase + 1000000) {
+      auto found = page.mse_buffers_.find(id - kBufferBase);
+      if (found == page.mse_buffers_.end())
+        return js::Value();
+      auto owner = page.mse_objects_.find(found->second.first);
+      if (owner == page.mse_objects_.end())
+        return js::Value();
+      SourceBuffer *buffer = owner->second->buffer(found->second.second);
+      if (!buffer)
+        return js::Value();
+      if (name == "appendBuffer")
+        return r.make_native([this, id, buffer](js::Values &a) {
+          if (a.empty() || a[0].type != js::Value::Type::Object || !a[0].object ||
+              !a[0].object->bytes)
+            throw js::JsError{
+                js::Value("TypeError: appendBuffer needs an ArrayBuffer or a Uint8Array")};
+          auto source = a[0].object;
+          size_t offset = source->host_type == "ArrayBuffer" ? 0 : source->byte_offset;
+          size_t length = source->host_type == "ArrayBuffer" ? source->bytes->size() : source->length;
+          if (offset > source->bytes->size())
+            offset = source->bytes->size();
+          length = std::min(length, source->bytes->size() - offset);
+          std::string error;
+          if (!buffer->append(source->bytes->data() + offset, length, error))
+            throw js::JsError{js::Value(error)};
+          // The element attached to this source can play the new bytes now, and it
+          // needs one more pass to pick them up.
+          page.load_media_nodes();
+          page.media_wake_ = true;
+          page.dispatch_host(id, "updateend");
+          page.dirty_ = true;
+          return js::Value();
+        });
+      if (name == "abort")
+        return r.make_native([buffer](js::Values &) {
+          std::string error;
+          buffer->abort(error);
+          return js::Value();
+        });
+      if (name == "remove")
+        return r.make_native([buffer](js::Values &a) {
+          std::string error;
+          double start = a.size() > 0 ? a[0].to_number() : 0;
+          double end = a.size() > 1 ? a[1].to_number() : 0;
+          if (!buffer->remove(start, end, error))
+            throw js::JsError{js::Value(error)};
+          return js::Value();
+        });
+      if (name == "buffered")
+        return time_ranges(r, buffer->buffered());
+      if (name == "mode")
+        return js::Value("segments");
+      if (name == "updating")
+        return js::Value(false);
+      if (name == "timestampOffset")
+        return js::Value(0.0);
+      if (name == "addEventListener" || name == "removeEventListener")
+        return listen(id, name);
+      return js::Value();
+    }
     if (id < 0 || id >= int(d.nodes.size()))
       return js::Value();
     auto &n = d.nodes[id];
@@ -660,6 +785,96 @@ public:
       return js::Value(n.name == "textarea" ? d.text_content(id) : n.attribute("value"));
     if (name == "checked")
       return js::Value(has_attr(n, "checked"));
+    if (n.type == Node::Type::Element && (n.name == "video" || n.name == "audio")) {
+      MediaPlayer *player = page.player_for(id);
+      if (name == "src")
+        return js::Value(n.attribute("src"));
+      if (name == "currentSrc")
+        return js::Value(page.media_src_.count(id) ? page.media_src_[id] : std::string());
+      if (name == "currentTime")
+        return js::Value(player ? player->current_time() : 0.0);
+      if (name == "duration")
+        return js::Value(player && player->ready() ? player->duration() : 0.0);
+      if (name == "paused")
+        return js::Value(player ? player->paused() : true);
+      if (name == "ended")
+        return js::Value(player ? player->ended() : false);
+      if (name == "volume")
+        return js::Value(player ? player->volume() : 1.0);
+      if (name == "muted")
+        return js::Value(player ? player->muted() : false);
+      if (name == "loop")
+        return js::Value(player ? player->loop() : false);
+      if (name == "playbackRate")
+        return js::Value(player ? player->rate() : 1.0);
+      if (name == "readyState")
+        return js::Value(double(player ? player->ready_state() : 0));
+      if (name == "videoWidth" || name == "videoHeight") {
+        const Image *frame = player ? player->frame() : nullptr;
+        return js::Value(double(frame ? (name == "videoWidth" ? frame->width : frame->height) : 0));
+      }
+      if (name == "error") {
+        auto known = page.media_errors_.find(id);
+        if (known == page.media_errors_.end())
+          return js::Value::null();
+        js::Value error = r.make_object();
+        error.object->host_type = "MediaError";
+        error.object->properties["code"] = js::Value(4.0);
+        error.object->properties["message"] = js::Value(known->second);
+        return error;
+      }
+      if (name == "buffered")
+        return time_ranges(r, player && player->ready()
+                                  ? std::vector<std::pair<double, double>>{{0.0, player->duration()}}
+                                  : std::vector<std::pair<double, double>>{});
+      if (name == "play")
+        return r.make_native([this, id](js::Values &) {
+          auto &rt = *page.js_;
+          js::Value promise = rt.make_promise();
+          MediaPlayer *player = page.player_for(id);
+          if (!player) {
+            page.update_media(id);
+            player = page.player_for(id);
+          }
+          if (!player || !player->ready()) {
+            // I resolve now and start the moment the bytes arrive, which is the
+            // order a page that calls play() early expects.
+            page.media_wants_play_.insert(id);
+            rt.settle_promise(promise.object, 1, js::Value());
+            return promise;
+          }
+          player->play(double(now_ms()) / 1000.0);
+          page.media_revisions_[id] = uint64_t(page.next_media_revision_++);
+          page.dispatch(id, "play", rt.make_object());
+          page.dispatch(id, "playing", rt.make_object());
+          rt.settle_promise(promise.object, 1, js::Value());
+          return promise;
+        });
+      if (name == "pause")
+        return r.make_native([this, id](js::Values &) {
+          MediaPlayer *player = page.player_for(id);
+          if (player && player->ready() && !player->paused()) {
+            player->pause(double(now_ms()) / 1000.0);
+            page.media_revisions_[id] = uint64_t(page.next_media_revision_++);
+            page.dispatch(id, "pause", page.js_->make_object());
+          }
+          return js::Value();
+        });
+      if (name == "load")
+        return r.make_native([this, id](js::Values &) {
+          page.media_.erase(id);
+          page.media_src_.erase(id);
+          page.media_errors_.erase(id);
+          page.update_media(id);
+          page.dirty_ = true;
+          return js::Value();
+        });
+      if (name == "canPlayType")
+        return r.make_native([](js::Values &a) {
+          std::string type = a.empty() ? std::string() : a[0].to_string();
+          return js::Value(media_type_supported(type) ? "probably" : "");
+        });
+    }
     if (name == "href" || name == "src")
       return js::Value(n.attribute(name));
     if (n.name == "canvas" && (name == "width" || name == "height")) {
@@ -768,6 +983,16 @@ public:
   }
   bool set(int id, const std::string &name, const js::Value &value) override {
     auto &d = page.doc;
+    if (id >= kMseBase && id < kMseBase + 1000000) {
+      auto it = page.mse_objects_.find(id - kMseBase);
+      if (it == page.mse_objects_.end())
+        return false;
+      if (name == "duration") {
+        it->second->set_duration(value.to_number());
+        return true;
+      }
+      return false;
+    }
     if (id >= kCanvasBase && id < kCanvasBase + 1000000) {
       auto it = page.canvases_.find(id - kCanvasBase);
       if (it == page.canvases_.end())
@@ -897,6 +1122,53 @@ public:
       n.set_attribute("class", value.to_string());
       page.dirty_ = true;
       return true;
+    }
+    if (n.type == Node::Type::Element && (n.name == "video" || n.name == "audio")) {
+      MediaPlayer *player = page.player_for(id);
+      double now = double(now_ms()) / 1000.0;
+      if (name == "currentTime") {
+        if (!player || !player->ready())
+          return false;
+        bool was_playing = !player->paused();
+        player->seek(std::max(0.0, value.to_number()), now);
+        if (was_playing)
+          player->play(now);
+        page.media_revisions_[id] = uint64_t(page.next_media_revision_++);
+        page.dispatch(id, "timeupdate", page.js_->make_object());
+        page.dirty_ = true;
+        return true;
+      }
+      if (name == "volume") {
+        if (player)
+          player->set_volume(value.to_number());
+        return true;
+      }
+      if (name == "muted") {
+        if (player)
+          player->set_muted(value.truthy());
+        return true;
+      }
+      if (name == "loop") {
+        if (player)
+          player->set_loop(value.truthy());
+        return true;
+      }
+      if (name == "playbackRate") {
+        if (player)
+          player->set_rate(value.to_number());
+        return true;
+      }
+      if (name == "src") {
+        n.set_attribute("src", value.to_string());
+        // A new source means a new player, which is what a load does.
+        page.media_.erase(id);
+        page.media_src_.erase(id);
+        page.media_errors_.erase(id);
+        page.media_wake_ = true;
+        page.update_media(id);
+        page.dirty_ = true;
+        return true;
+      }
     }
     if (name == "href" || name == "src") {
       n.set_attribute(name, value.to_string());
@@ -1029,8 +1301,21 @@ void Page::load(const Url &url, const std::string &html, const std::string &mime
   history_.push_back(HistoryEntry{url.href(), js::Value::null()});
   history_index_ = 0;
   posts.clear();
+  media_.clear();
+  media_images_.clear();
+  media_revisions_.clear();
+  media_src_.clear();
+  media_errors_.clear();
+  media_data_.clear();
+  media_sources_.clear();
+  mse_objects_.clear();
+  mse_buffers_.clear();
+  mse_opened_.clear();
+  media_wants_play_.clear();
+  host_listeners_.clear();
   js_->set_pump([this] { return pump_for_await(); });
   install_fetch();
+  install_media();
   js_->global().properties["alert"] = js_->make_native([this](js::Values &a) {
     if (dialogs.size() < 8)
       dialogs.push_back(a.empty() ? "" : a[0].to_string());
@@ -1044,6 +1329,7 @@ void Page::load(const Url &url, const std::string &html, const std::string &mime
   }
   dirty_ = true;
   run_scripts();
+  load_media_nodes();
 }
 // I turn my own JSON tree into script values so json() needs no second parser.
 static js::Value from_json(js::Runtime &r, const Json &json) {
@@ -1134,6 +1420,19 @@ void Page::install_fetch() {
     response.object->properties["headers"] = headers;
     response.object->properties["text"] =
         r.make_native([this, body](js::Values &) { return text_promise(*js_, body); });
+    // A page that wants the bytes themselves gets a real ArrayBuffer rather than a
+    // string, which is what a media append needs.
+    Bytes body_bytes = res.bytes.empty() ? Bytes(body.begin(), body.end()) : res.bytes;
+    response.object->properties["arrayBuffer"] =
+        r.make_native([this, body_bytes](js::Values &) {
+          js::Value promise = js_->make_promise();
+          js::Value buffer = js_->make_object();
+          buffer.object->host_type = "ArrayBuffer";
+          buffer.object->bytes = std::make_shared<std::vector<uint8_t>>(body_bytes);
+          buffer.object->properties["byteLength"] = js::Value(double(body_bytes.size()));
+          js_->settle_promise(promise.object, 1, buffer);
+          return promise;
+        });
     response.object->properties["json"] = r.make_native([this, body](js::Values &) {
       auto parsed = Json::parse(body);
       if (!parsed)
@@ -1145,6 +1444,81 @@ void Page::install_fetch() {
     r.settle_promise(promise.object, 1, response);
     return promise;
   });
+}
+void Page::dispatch_host(int id, const std::string &type) {
+  auto found = host_listeners_.find(id);
+  if (found == host_listeners_.end())
+    return;
+  js::Value event = js_->make_object();
+  event.object->properties["type"] = js::Value(type);
+  event.object->properties["target"] = js_->host_value(id, "EventTarget");
+  for (auto &listener : found->second) {
+    if (listener.type != type)
+      continue;
+    js_->reset_fuel();
+    try {
+      js_->call(listener.fn, {event}, js_->host_value(id, "EventTarget"));
+    } catch (js::JsError &e) {
+      diagnostics.push_back({"event", e.value.to_string()});
+    } catch (std::exception &e) {
+      diagnostics.push_back({"event", e.what()});
+    }
+  }
+  // Work a listener queued, which is how a fetch inside sourceopen reaches the
+  // source buffer in the same task, runs before I go back to the page.
+  try {
+    js_->drain_microtasks();
+  } catch (js::JsError &e) {
+    diagnostics.push_back({"microtask", e.value.to_string()});
+  } catch (std::exception &e) {
+    diagnostics.push_back({"microtask", e.what()});
+  }
+  dirty_ = true;
+}
+// A media source opens once the page has had a chance to listen for it, which is
+// the same order a real task queue gives a page.
+void Page::open_pending_media_sources() {
+  for (auto &[handle, state] : mse_objects_) {
+    (void)state;
+    if (!mse_opened_.insert(handle).second)
+      continue;
+    dispatch_host(kMseBase + handle, "sourceopen");
+  }
+}
+void Page::install_media() {
+  if (!js_)
+    return;
+  auto &r = *js_;
+  js_->global().properties["MediaSource"] = r.make_native([this](js::Values &) {
+    int handle = next_mse_++;
+    mse_objects_[handle] = std::make_shared<MediaSourceState>();
+    return js_->host_value(kMseBase + handle, "MediaSource");
+  });
+  // Audio() is the one-line way a page makes an element, so it is here too.
+  js_->global().properties["Audio"] = r.make_native([this](js::Values &a) {
+    int id = doc.create(Node::Type::Element, "audio");
+    if (!a.empty())
+      doc.nodes[id].set_attribute("src", a[0].to_string());
+    dirty_ = true;
+    return js_->host_value(id, "HTMLElement");
+  });
+  js::Value url = r.make_object();
+  url.object->host_type = "URL";
+  url.object->properties["createObjectURL"] = r.make_native([this](js::Values &a) {
+    if (a.empty() || a[0].type != js::Value::Type::Object || !a[0].object ||
+        a[0].object->host < kMseBase || a[0].object->host >= kMseBase + 1000000)
+      throw js::JsError{js::Value("TypeError: createObjectURL needs a MediaSource here")};
+    auto found = mse_objects_.find(a[0].object->host - kMseBase);
+    if (found == mse_objects_.end())
+      throw js::JsError{js::Value("TypeError: that MediaSource is gone")};
+    return js::Value(create_media_object_url(found->second));
+  });
+  url.object->properties["revokeObjectURL"] = r.make_native([this](js::Values &a) {
+    if (!a.empty())
+      revoke_media_object_url(a[0].to_string());
+    return js::Value();
+  });
+  js_->global().properties["URL"] = url;
 }
 void Page::request(std::string input) {
   auto u = resolve_url(doc.url, input);
@@ -1215,6 +1589,7 @@ void Page::resource(const Resource &res) {
   resources_[stored.url] = std::move(stored);
   dirty_ = true;
   run_scripts();
+  load_media_nodes();
 }
 void Page::execute_script(int id) {
   if (executed_.count(id))
@@ -1264,6 +1639,13 @@ void Page::run_scripts() {
       request(n.attribute("href"));
     else if (n.name == "img")
       request(n.attribute("src"));
+    else if (n.name == "video" || n.name == "audio") {
+      if (!n.attribute("src").empty())
+        request(n.attribute("src"));
+      for (int c : n.children)
+        if (doc.nodes[c].name == "source" && !doc.nodes[c].attribute("src").empty())
+          request(doc.nodes[c].attribute("src"));
+    }
   }
   // Deferred scripts run after the blocking scripts have had their resources
   // delivered.
@@ -1343,6 +1725,22 @@ Json Page::render(double width, double height, double scroll) {
     j.set("fixed", c.fixed);
     paint.array.push_back(std::move(j));
   }
+  // A video or an audio element draws its current frame and its controls over the
+  // box layout reserved for it, so a later box still paints on top of an earlier
+  // one.
+  for (const auto &[node, player] : media_) {
+    (void)player;
+    size_t at = paint.array.size();
+    for (size_t i = paint.array.size(); i > 0; --i) {
+      const Json &command = paint.array[i - 1];
+      if (command.num("node", -1) == node &&
+          command.num("kind", -1) == int(PaintCommand::Kind::Rect)) {
+        at = i;
+        break;
+      }
+    }
+    media_command(node, paint, at);
+  }
   frame.set("paint", std::move(paint));
   // The real laid-out box for each element. The paint list is not a layout
   // report: a box with no background paints nothing, so anything that needs a
@@ -1400,6 +1798,15 @@ void Page::dispatch(int target, const std::string &type, js::Value event) {
     if (stop)
       break;
   }
+  // Microtasks belonging to this event run before I return to the page, which is
+  // the order a browser gives a task and its promise callbacks.
+  try {
+    js_->drain_microtasks();
+  } catch (js::JsError &e) {
+    diagnostics.push_back({"microtask", e.value.to_string()});
+  } catch (std::exception &e) {
+    diagnostics.push_back({"microtask", e.what()});
+  }
   dirty_ = true;
 }
 void Page::activate(int target) {
@@ -1418,6 +1825,13 @@ void Page::activate(int target) {
   dispatch(target, "click", event);
   if (prevented)
     return;
+  for (int n = target; n >= 0 && n < int(doc.nodes.size()); n = doc.nodes[n].parent) {
+    const auto &node = doc.nodes[n];
+    if (node.type == Node::Type::Element && (node.name == "video" || node.name == "audio")) {
+      toggle_media(n);
+      return;
+    }
+  }
   int n = target;
   while (n >= 0) {
     const auto &node = doc.nodes[n];
@@ -1450,12 +1864,54 @@ void Page::activate(int target) {
 }
 void Page::click(double x, double y) {
   int target = hit(x, y);
+  // A media element owns everything inside its box: the strip along the bottom is
+  // the scrub bar, and the rest of the box plays or pauses it.
+  for (int n = target; n >= 0 && n < int(doc.nodes.size()); n = doc.nodes[n].parent) {
+    const auto &node = doc.nodes[n];
+    if (node.type != Node::Type::Element || (node.name != "video" && node.name != "audio"))
+      continue;
+    auto box = layout_.boxes.find(n);
+    if (box == layout_.boxes.end())
+      break;
+    const Rect &r = box->second;
+    focused_ = n;
+    double strip = std::min(30.0, r.h * 0.5);
+    bool controls = r.h >= 24 && r.w >= 48 && y - r.y >= r.h - strip;
+    if (controls && r.w >= 100) {
+      double bar_x = 30, bar_w = std::max(10.0, r.w - 30 - 78);
+      double rel_x = x - r.x;
+      if (rel_x >= bar_x && rel_x <= bar_x + bar_w) {
+        seek_media(n, (rel_x - bar_x) / bar_w);
+        return;
+      }
+    }
+    toggle_media(n);
+    return;
+  }
   if (target >= 0) {
     focused_ = target;
     activate(target);
   }
 }
 void Page::key(const std::string &key, const std::string &text) {
+  if (key == "Space") {
+    int node = focused_;
+    bool usable = node >= 0 && node < int(doc.nodes.size()) && doc.nodes[node].type == Node::Type::Element &&
+                  (doc.nodes[node].name == "video" || doc.nodes[node].name == "audio");
+    if (!usable) {
+      node = -1;
+      for (auto &n : doc.nodes)
+        if (n.type == Node::Type::Element && (n.name == "video" || n.name == "audio") &&
+            media_.count(n.id)) {
+          node = n.id;
+          break;
+        }
+    }
+    if (node >= 0 && media_.count(node)) {
+      toggle_media(node);
+      return;
+    }
+  }
   if (focused_ < 0 || focused_ >= int(doc.nodes.size()))
     return;
   auto &n = doc.nodes[focused_];
@@ -1615,6 +2071,7 @@ double Page::next_timer_delay() const {
   return best;
 }
 void Page::tick() {
+  media_tick();
   run_due_timers();
 }
 bool Page::run_due_timers() {

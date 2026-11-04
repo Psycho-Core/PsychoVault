@@ -10,12 +10,15 @@
 #include "../platform/Psycho_profile.hpp"
 #include "../platform/Psycho_extension.hpp"
 #include "../platform/Psycho_download.hpp"
+#include <audioclient.h>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <dwmapi.h>
+#include <cstring>
 #include <filesystem>
+#include <mmdeviceapi.h>
 #include <fstream>
 #include <iostream>
 #include <shellapi.h>
@@ -75,6 +78,139 @@ static std::string executable_dir() {
 }
 // I run one page per worker thread. My page host, my engine and my fetches all
 // stay on that thread; the window thread only ever reads finished frames.
+// My own audio output. WASAPI shared mode at 48 kHz stereo 16-bit, fed from my
+// engine's mixer on the thread that runs the page, so no sample crosses threads
+// and nothing needs a lock.
+static const GUID kMmDeviceEnumeratorGuid = {0xbcde0395,
+                                             0xe52f,
+                                             0x467c,
+                                             {0x8e, 0x3d, 0xc4, 0x57, 0x92, 0x91, 0x69, 0x2e}};
+static const GUID kDeviceEnumeratorGuid = {0xa95664d2,
+                                           0x9614,
+                                           0x4f35,
+                                           {0xa7, 0x46, 0xde, 0x8d, 0xb6, 0x36, 0x17, 0xe6}};
+static const GUID kAudioClientGuid = {0x1cb9ad4c, 0xdbfa, 0x4c32, {0xb1, 0x78, 0xc2, 0xf5, 0x68, 0xa7, 0x03, 0xb2}};
+static const GUID kRenderClientGuid = {0xf294acfc, 0x3146, 0x4483, {0xa7, 0xbf, 0xad, 0xdc, 0xa7, 0xc2, 0x60, 0xe2}};
+struct AudioOut {
+  IAudioClient *client = nullptr;
+  IAudioRenderClient *render = nullptr;
+  UINT32 frames = 0;
+  int rate = 48000;
+  bool started = false, tried = false, com = false;
+  ~AudioOut() {
+    close();
+  }
+  bool ready() const {
+    return client != nullptr;
+  }
+  void close() {
+    if (client)
+      client->Stop();
+    if (render) {
+      render->Release();
+      render = nullptr;
+    }
+    if (client) {
+      client->Release();
+      client = nullptr;
+    }
+    started = false;
+    if (com) {
+      CoUninitialize();
+      com = false;
+    }
+  }
+  // I open the device the first time a page plays something, and I keep it open
+  // afterwards so a second play does not pay for it again.
+  bool open(std::string &why) {
+    if (client)
+      return true;
+    if (tried)
+      return false;
+    tried = true;
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (hr == S_OK)
+      com = true;
+    else if (hr != S_FALSE) {
+      why = "COM did not start for audio";
+      return false;
+    }
+    IMMDeviceEnumerator *devices = nullptr;
+    hr = CoCreateInstance(kMmDeviceEnumeratorGuid, nullptr, CLSCTX_ALL, kDeviceEnumeratorGuid,
+                          reinterpret_cast<void **>(&devices));
+    if (FAILED(hr) || !devices) {
+      why = "no audio device enumerator on this machine";
+      return false;
+    }
+    IMMDevice *device = nullptr;
+    hr = devices->GetDefaultAudioEndpoint(eRender, eConsole, &device);
+    devices->Release();
+    if (FAILED(hr) || !device) {
+      why = "this machine has no default playback device";
+      return false;
+    }
+    hr = device->Activate(kAudioClientGuid, CLSCTX_ALL, nullptr,
+                          reinterpret_cast<void **>(&client));
+    device->Release();
+    if (FAILED(hr) || !client) {
+      why = "the audio device did not give me a client";
+      client = nullptr;
+      return false;
+    }
+    WAVEFORMATEX format{};
+    format.wFormatTag = WAVE_FORMAT_PCM;
+    format.nChannels = 2;
+    format.nSamplesPerSec = DWORD(rate);
+    format.wBitsPerSample = 16;
+    format.nBlockAlign = WORD(format.nChannels * format.wBitsPerSample / 8);
+    format.nAvgBytesPerSec = format.nSamplesPerSec * format.nBlockAlign;
+    // A shared-mode stream that converts my format for me, which is how a 48 kHz
+    // mixer reaches a 44.1 kHz device without a second clock of mine.
+    hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED,
+                            AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM |
+                                AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
+                            2000000, 0, &format, nullptr);
+    if (FAILED(hr)) {
+      why = "the audio device refused shared mode";
+      close();
+      return false;
+    }
+    hr = client->GetBufferSize(&frames);
+    if (FAILED(hr) || frames == 0) {
+      why = "the audio device reported no buffer";
+      close();
+      return false;
+    }
+    hr = client->GetService(kRenderClientGuid, reinterpret_cast<void **>(&render));
+    if (FAILED(hr) || !render) {
+      why = "the audio device gave me no render client";
+      close();
+      return false;
+    }
+    return true;
+  }
+  // I top the device up on every tick. Silence goes in when nothing plays, which
+  // keeps the stream in step instead of looping whatever was there last.
+  void pump(Host &host) {
+    if (!client || !render)
+      return;
+    UINT32 padding = 0;
+    if (FAILED(client->GetCurrentPadding(&padding)) || padding > frames)
+      return;
+    UINT32 available = frames - padding;
+    if (available < 32)
+      return;
+    BYTE *data = nullptr;
+    if (FAILED(render->GetBuffer(available, &data)) || !data)
+      return;
+    std::memset(data, 0, size_t(available) * 4);
+    if (host.media_playing())
+      host.pull_audio(reinterpret_cast<int16_t *>(data), size_t(available), rate);
+    render->ReleaseBuffer(available, 0);
+    if (!started && SUCCEEDED(client->Start()))
+      started = true;
+  }
+};
 struct Session {
   std::thread worker;
   HWND hwnd = nullptr;
@@ -92,6 +228,7 @@ struct Session {
   std::atomic<bool> stopping{false};
   std::atomic<bool> ready{false};
   std::vector<std::string> diagnostics;
+  AudioOut audio;
   ~Session() {
     request_stop();
     // The worker captures a shared_ptr to this Session, so the worker might be
@@ -256,6 +393,14 @@ void Session::run() {
     }
     lock.unlock();
     bool worked = !stopping && host.pump();
+    // The device is opened the first time a page actually plays something, and from
+    // then on it is topped up on this same thread.
+    if (host.media_playing() && !audio.ready()) {
+      std::string why;
+      if (!audio.open(why) && !why.empty())
+        note("media", why);
+    }
+    audio.pump(host);
     lock.lock();
     if (worked)
       continue;
