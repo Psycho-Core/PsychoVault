@@ -82,6 +82,14 @@ jobs:
           .\build\pv-tests.exe | Tee-Object build/engine-tests.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Keep my test log when a check fails
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: psychovault-test-log
+          path: build/engine-tests.txt
+          if-no-files-found: ignore
+
       - name: Render headless engine fixture
         shell: pwsh
         run: |

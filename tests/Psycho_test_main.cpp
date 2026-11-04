@@ -261,6 +261,19 @@ public:
 #include <unistd.h>
 #endif
 namespace {
+// Winsock needs starting before the first socket call, and my proxy opens its
+// listening socket before my client has spoken to anything.
+bool test_sockets_ready() {
+#ifdef _WIN32
+  static bool once = [] {
+    WSADATA data{};
+    return WSAStartup(MAKEWORD(2, 2), &data) == 0;
+  }();
+  return once;
+#else
+  return true;
+#endif
+}
 // A tiny SOCKS5 proxy that runs inside my own test on a loopback port. It answers
 // the handshake the way a real proxy does and then speaks HTTP over the tunnel, so
 // the whole path from my client through my own framing is exercised on a real socket.
@@ -273,6 +286,10 @@ struct LoopbackProxy {
   // Each entry is the body of one reply, and `statuses` holds the matching status
   // lines, so I can serve a redirect and then the page behind it.
   explicit LoopbackProxy(std::vector<std::pair<std::string, std::string>> replies) {
+    if (!test_sockets_ready()) {
+      failure = "winsock";
+      return;
+    }
     listener = int(socket(AF_INET, SOCK_STREAM, 0));
     if (listener < 0) {
       failure = "socket";
@@ -1347,6 +1364,8 @@ int main() {
     // name still reaches the proxy rather than being resolved here.
     LoopbackProxy proxy(std::vector<std::pair<std::string, std::string>>{
         {"302 Found", ""}, {"200 OK", "moved page"}});
+    if (!proxy.failure.empty())
+      std::cerr << "proxy would not start: " << proxy.failure << "\n";
     CHECK(proxy.failure.empty());
     TunnelConfig config;
     config.proxy.scheme = "socks5";
@@ -1391,6 +1410,8 @@ int main() {
     // back through my own HTTP framing.
     LoopbackProxy proxy(std::vector<std::pair<std::string, std::string>>{
         {"200 OK", "tunnelled page"}});
+    if (!proxy.failure.empty())
+      std::cerr << "proxy would not start: " << proxy.failure << "\n";
     CHECK(proxy.failure.empty());
     CHECK(proxy.port > 0);
     TunnelConfig config;
