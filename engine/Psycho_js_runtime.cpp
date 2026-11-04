@@ -1725,7 +1725,10 @@ Value Runtime::run(std::string_view source) {
       drain_microtasks();
     } catch (...) {
     }
-    collect();
+    // I do not collect on the way out. A thrown value can point at an object I
+    // would free, and the caller converts that value to a message after the throw
+    // has left this function. The next statement or the next call collects
+    // instead, and my sanitizer build is what found this.
     throw;
   }
   env_stack_.pop_back();

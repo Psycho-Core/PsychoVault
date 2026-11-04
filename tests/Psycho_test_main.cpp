@@ -531,6 +531,13 @@ int main() {
               "</style><div id=f>fixed</div>");
     bool fixed = false;
     Rect f = node_box(page, "f", &fixed);
+    if (!(near(f.x, 0) && near(f.y, 0) && fixed)) {
+      // When this fails I want the frame itself in the log, not just a false.
+      std::cerr << "fixed-diag node=" << page.doc.by_id("f") << " x=" << f.x << " y=" << f.y
+                << " w=" << f.w << " h=" << f.h << " fixed=" << fixed << "\n";
+      auto again = page.render(800, 600, 0);
+      std::cerr << "fixed-frame " << again.dump().substr(0, 4000) << "\n";
+    }
     CHECK(near(f.x, 0) && near(f.y, 0) && fixed);
   }
   {

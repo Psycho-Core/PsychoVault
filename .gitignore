@@ -3,6 +3,7 @@ target/
 dist/
 out/
 build/
+build-*/
 node_modules/
 .venv/
 __pycache__/
