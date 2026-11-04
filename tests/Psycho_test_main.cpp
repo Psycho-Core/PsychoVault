@@ -13,12 +13,22 @@
 #include <cmath>
 #include <filesystem>
 #include <iostream>
+#include <cstdlib>
 #include <cstring>
 #include <thread>
 using namespace pv;
 static int passed = 0;
+// One line per check that has started, when the runner asks for it. A stack overflow
+// on a hosted Windows runner ends the process before a failure message can be
+// written, so the last line of the log has to be the check that was running.
+static bool progress_wanted() {
+  static const bool wanted = std::getenv("PV_PROGRESS") != nullptr;
+  return wanted;
+}
 #define CHECK(x)                                                                                   \
   do {                                                                                             \
+    if (progress_wanted())                                                                         \
+      std::cerr << "check " << __LINE__ << "\n";                                                   \
     if (!(x)) {                                                                                    \
       std::cerr << "FAIL " << __FILE__ << ":" << __LINE__ << " " << #x << "\n";                    \
       return 1;                                                                                    \
@@ -2823,6 +2833,64 @@ int main() {
                                            Url{"http", "forms.test", "/send", "", "", "", true}));
     CHECK(resource_type_name(ResourceType::Script) == "script");
     CHECK(resource_type_name(ResourceType::XmlHttpRequest) == "xmlhttprequest");
+  }
+  {
+    // A connect button has to mean something, so my probe makes a real request
+    // through the configured tunnel and reports what came back. The loopback proxy
+    // in this test speaks SOCKS5, which is the path a Proton endpoint uses.
+    LoopbackProxy proxy(std::vector<std::pair<std::string, std::string>>{
+        {"200 OK", "probed page"}});
+    if (!proxy.failure.empty())
+      std::cerr << "proxy would not start: " << proxy.failure << "\n";
+    CHECK(proxy.failure.empty());
+    NetworkPolicy net;
+    net.proxy = ProxyConfig();
+    net.proxy.mode = ProxyConfig::Mode::FixedServers;
+    net.proxy.single.scheme = "socks5";
+    net.proxy.single.host = "127.0.0.1";
+    net.proxy.single.port = proxy.port;
+    net.proxy.fail_closed = true;
+    // Plain HTTP here because my loopback proxy speaks CONNECT and then plain
+    // bytes; an https probe takes the same tunnel and then my TLS layer.
+    TunnelProbe probe = probe_tunnel(net, "http://probe.test/health", 5000);
+    CHECK(probe.ok);
+    CHECK(probe.status == 200);
+    CHECK(probe.detail.find("socks5") != std::string::npos);
+    CHECK(!proxy.requests.empty());
+    // A proxy that is not there is a refusal with a reason, not a connected label.
+    NetworkPolicy dead = net;
+    dead.proxy.single.port = 1;
+    TunnelProbe refused = probe_tunnel(dead, "http://probe.test/health", 2000);
+    CHECK(!refused.ok);
+    CHECK(!refused.detail.empty());
+    // And with no tunnel configured there is nothing to claim.
+    NetworkPolicy direct;
+    TunnelProbe none = probe_tunnel(direct, "https://probe.test/health", 2000);
+    CHECK(!none.ok);
+    CHECK(none.detail.find("no tunnel") != std::string::npos);
+  }
+  {
+    // Language pieces this step's measurement told me were missing, now mine:
+    // switch with fallthrough and a default that is not last, the comma expression,
+    // the Function constructor, and error values a page can catch and test.
+    CHECK(js_eval("var r='';switch(2){case 1:r='a';break;case 2:r='b';break;default:r='c';}r") ==
+          "b");
+    CHECK(js_eval("var r='';switch(1){case 1:r+='a';case 2:r+='b';break;case 3:r+='c';}r") ==
+          "ab");
+    CHECK(js_eval("var r='';switch(9){default:r+='d';case 1:r+='a';}r") == "da");
+    CHECK(js_eval("var r='';switch('1'){case 1:r='num';break;default:r='str';}r") == "str");
+    CHECK(js_eval("var a=(1,2,3);a") == "3");
+    CHECK(js_eval("var i=0;var j=(i++,i++,i);i+':'+j") == "2:2");
+    CHECK(js_eval("var s=0;for(var i=0,j=3;i<j;i++,j--)s+=i*j;s") == "2");
+    CHECK(js_eval("Math.max(1,2,3)") == "3");
+    CHECK(js_eval("Function('a','return a*2')(21)") == "42");
+    CHECK(js_eval("try{(void 0).x}catch(e){e.name}") == "TypeError");
+    CHECK(js_eval("try{(void 0).x}catch(e){String(e instanceof TypeError)}") == "true");
+    CHECK(js_eval("try{(void 0).x}catch(e){String(e instanceof RangeError)}") == "false");
+    CHECK(js_eval("var e=new ReferenceError('none');e.name+':'+e.message") == "ReferenceError:none");
+    CHECK(js_eval("function r(n){return r(n+1)}try{r(0)}catch(e){String(e instanceof RangeError)}") ==
+          "true");
+    CHECK(js_eval("try{Object.assign(null,{})}catch(e){e.name}") == "TypeError");
   }
   {
     // My confinement layer says what it did and what it did not do. On Windows the

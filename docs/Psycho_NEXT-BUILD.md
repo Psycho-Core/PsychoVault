@@ -14,7 +14,7 @@ I am working through my browser one step at a time, in the order that gets me so
 | 6 | Media: audio, video and Media Source Extensions | Done in this build: my own WAV and AVI readers, a player, a mixer, source buffers and blob URLs, with the containers I cannot decode named instead of faked |
 | 7 | VPN transport, including the TLS-to-proxy path Proton needs | Done in this build: my own sockets, SOCKS5, HTTP `CONNECT`, HTTP framing, SChannel TLS stacked over my own stream, fail-closed routing and a VPN panel |
 | 8 | Security: certificate and transport policy, ad blocking, containment | Done in this build: my own Strict-Transport-Security store, mixed content and insecure form refusals, always-HTTPS with a counted fallback, my own filter list engine with per-tab counts and per-site exceptions, and a job object that reports itself as a limit rather than isolation. AppContainer for page code, CSP enforcement and fuzzing are still to come |
-| 9 | Conformance measurement with Test262 and web-platform-tests subsets | Not started |
+| 9 | Conformance measurement with Test262 and web-platform-tests subsets | Test262 measured: 5,009 of 54,058 pass, 17.4 percent of what my engine can attempt. WPT is not run yet because its harness needs modules and async iteration |
 | 10 | Published release and a verified updater cycle | Publishing on every build; the install and rollback half is not tested |
 
 ## What this build adds over 0.7.0
@@ -158,7 +158,7 @@ I want to be straight about one difference: my engine runs one statement at a ti
 
 ## Evidence required before I hand over a preview
 
-- The engine and page-host tests pass locally and on Windows. They now stand at 718 checks, including pattern matching, promise ordering, async/await, a `fetch` round trip through my page host, my media readers, and a tunnel driven over a real loopback socket.
+- The engine and page-host tests pass locally and on Windows. They now stand at 742 checks, including pattern matching, promise ordering, async/await, a `fetch` round trip through my page host, my media readers, and a tunnel driven over a real loopback socket.
 - The single-file gate passes on hosted Windows for the exact commit I publish.
 - A local HTTP test proves main-document, stylesheet, script and PNG loading through my page host.
 - The Windows artifact contains only my executables, notices and build metadata - no profile, credential or source-control directory.

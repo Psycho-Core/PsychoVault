@@ -1,0 +1,63 @@
+# PsychoVault conformance measurement. This is a number I publish, not a gate I
+# pretend to pass: the job builds my parser and interpreter, runs the Test262 tree
+# this file pins, and writes the summary where I can read it.
+name: Measure my conformance
+on:
+  workflow_dispatch:
+  push:
+    branches: [Master]
+    paths:
+      - 'engine/Psycho_js_*.cpp'
+      - 'engine/Psycho_js.hpp'
+      - 'tools/Psycho_conformance.cpp'
+      - '.github/workflows/Psycho_conformance.yml'
+concurrency:
+  group: psychovault-conformance
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  test262:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record toolchain
+        run: |
+          g++ --version | head -1
+          python3 --version
+      - name: Build my conformance runner
+        run: |
+          python3 tools/Psycho_build.py --compiler gcc --outdir build-conformance
+          test -x build-conformance/pv-conformance
+      - name: Fetch the Test262 tree I pin
+        env:
+          T262_COMMIT: 831359a4192ef83b8c50f91363d2ff739fe550f6
+        run: |
+          mkdir -p corpus
+          curl -sSL "https://codeload.github.com/tc39/test262/tar.gz/${T262_COMMIT}" -o corpus/test262.tar.gz
+          tar xzf corpus/test262.tar.gz -C corpus
+          mv "corpus/test262-${T262_COMMIT}" corpus/test262
+      - name: Run the tests through my own interpreter
+        run: |
+          ./build-conformance/pv-conformance --test262 corpus/test262 --out test262-results.tsv | tee summary.txt
+      - name: Write the summary I will quote
+        run: |
+          {
+            echo "### My Test262 measurement"
+            echo ""
+            echo '```'
+            cat summary.txt
+            echo '```'
+            echo ""
+            echo "Corpus commit: 831359a4192ef83b8c50f91363d2ff739fe550f6"
+            echo "A crash is my interpreter falling over, recorded as a crash rather than lost."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep the per-test record
+        uses: actions/upload-artifact@v4
+        with:
+          name: my-test262-results
+          path: |
+            test262-results.tsv
+            summary.txt
+          if-no-files-found: error

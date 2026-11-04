@@ -81,6 +81,20 @@ DownloadOutcome download_to_file(const Url &url, const std::string &destination,
                                  const std::function<void(const DownloadProgress &)> &progress,
                                  int timeout_ms = 30000);
 
+// What happened when I asked my tunnel to fetch something. A connected label that
+// nobody tested is not evidence, so the panel shows this instead.
+struct TunnelProbe {
+  bool ok = false;
+  int status = 0;
+  std::string url;
+  std::string detail; // what the transport said, word for word
+};
+
+// Fetches one small page through the proxy my policy names. No proxy, a refused
+// tunnel and a server that never answers each come back with their own reason.
+TunnelProbe probe_tunnel(const NetworkPolicy &policy, const std::string &url,
+                         int timeout_ms = 15000);
+
 // I turn a URL and a Content-Disposition header into a safe local filename.
 std::string safe_download_name(const Url &url, const std::string &content_disposition);
 std::string unique_download_path(const std::string &directory, const std::string &name);

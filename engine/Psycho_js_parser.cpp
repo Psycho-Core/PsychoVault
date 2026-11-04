@@ -343,6 +343,19 @@ public:
       return;
     error("semicolon expected");
   }
+  // A comma expression is only legal where the grammar wants a full Expression,
+  // so call arguments and array elements keep calling expr() and a list of them
+  // does not collapse into one node.
+  std::unique_ptr<Expr> sequence() {
+    auto first = expr();
+    if (!is(","))
+      return first;
+    auto node = make(Expr::Kind::Sequence);
+    node->items.push_back(std::move(first));
+    while (take(","))
+      node->items.push_back(expr());
+    return node;
+  }
   std::unique_ptr<Expr> expr(int min = 0) {
     if (++depth > 160)
       error("expression nesting limit");
@@ -669,7 +682,7 @@ public:
         e->function = fn;
         return e;
       }
-      auto e = expr();
+      auto e = sequence();
       expect(")");
       return postfix(std::move(e), allow_call);
     }
@@ -1179,7 +1192,7 @@ public:
     } else if (take("if")) {
       s = statement_node(Stmt::Kind::If);
       expect("(");
-      s->condition = expr();
+      s->condition = sequence();
       expect(")");
       s->body.push_back(statement());
       if (take("else"))
@@ -1187,7 +1200,7 @@ public:
     } else if (take("while")) {
       s = statement_node(Stmt::Kind::While);
       expect("(");
-      s->condition = expr();
+      s->condition = sequence();
       expect(")");
       s->body.push_back(statement());
     } else if (take("do")) {
@@ -1195,7 +1208,7 @@ public:
       s->body.push_back(statement());
       expect("while");
       expect("(");
-      s->condition = expr();
+      s->condition = sequence();
       expect(")");
       semicolon();
     } else if (take("for")) {
@@ -1233,24 +1246,43 @@ public:
       s = statement_node(Stmt::Kind::For);
       s->body.push_back(std::move(init));
       if (!is(";"))
-        s->condition = expr();
+        s->condition = sequence();
       expect(";");
       if (!is(")"))
-        s->increment = expr();
+        s->increment = sequence();
       expect(")");
       s->body.push_back(statement());
     } else if (take("return")) {
       s = statement_node(Stmt::Kind::Return);
       if (!is(";") && !is("}") && !is("<eof>") && !tok().newline)
-        s->expression = expr();
+        s->expression = sequence();
       semicolon();
     } else if (take("break") || take("continue")) {
       s = statement_node(tokens[p - 1].text == "break" ? Stmt::Kind::Break : Stmt::Kind::Continue);
       semicolon();
     } else if (take("throw")) {
       s = statement_node(Stmt::Kind::Throw);
-      s->expression = expr();
+      s->expression = sequence();
       semicolon();
+    } else if (take("switch")) {
+      s = statement_node(Stmt::Kind::Switch);
+      expect("(");
+      s->condition = sequence();
+      expect(")");
+      expect("{");
+      while (!take("}")) {
+        Stmt::Case entry;
+        if (take("case")) {
+          entry.test = sequence();
+          expect(":");
+        } else {
+          expect("default");
+          expect(":");
+        }
+        while (!is("case") && !is("default") && !is("}") && !is("<eof>"))
+          entry.body.push_back(statement());
+        s->cases.push_back(std::move(entry));
+      }
     } else if (take("try")) {
       s = statement_node(Stmt::Kind::Try);
       expect("{");
@@ -1281,7 +1313,7 @@ public:
       s->name = e->function->name;
     } else {
       s = statement_node(Stmt::Kind::Expression);
-      s->expression = expr();
+      s->expression = sequence();
       semicolon();
     }
     --depth;

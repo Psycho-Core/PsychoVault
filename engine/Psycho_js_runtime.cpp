@@ -5,7 +5,45 @@
 #include <thread>
 #include <cstdlib>
 #include <iomanip>
+#ifdef _WIN32
+// windows.h defines min and max as macros, and my interpreter calls std::max. I ask
+// for the narrow header and for those two macros to stay out of my code.
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <pthread.h>
+#endif
 namespace pv::js {
+namespace {
+// How much stack this thread actually has. I ask the platform instead of guessing,
+// because a Windows exe thread starts with 1 MiB, my test thread gets 8 MiB, and a
+// sanitizer build makes every frame several times larger. A quarter of the stack is
+// left as headroom for the code between two script frames.
+size_t thread_stack_limit() {
+#ifdef _WIN32
+  ULONG_PTR low = 0, high = 0;
+  GetCurrentThreadStackLimits(&low, &high);
+  if (high > low) {
+    size_t size = static_cast<size_t>(high - low);
+    if (size > 0)
+      return size - size / 4;
+  }
+#else
+  pthread_attr_t attr;
+  if (pthread_getattr_np(pthread_self(), &attr) == 0) {
+    void *addr = nullptr;
+    size_t size = 0;
+    if (pthread_attr_getstack(&attr, &addr, &size) == 0 && size > 0) {
+      pthread_attr_destroy(&attr);
+      return size - size / 4;
+    }
+    pthread_attr_destroy(&attr);
+  }
+#endif
+  return 192u * 1024u;
+}
+} // namespace
 namespace {
 bool callable(const Value &value) {
   return value.type == Value::Type::Object && value.object &&
@@ -302,7 +340,15 @@ static Value binary(const std::string &op, const Value &a, const Value &b) {
     // I walk the prototype chain I build with new and class extends.
     Value ctor = b;
     auto proto = ctor.object->properties.find("prototype");
-    if (proto == ctor.object->properties.end()) return Value(false);
+    if (proto == ctor.object->properties.end()) {
+      // An error raised by my engine carries its type in a marker, and the
+      // constructor that names the same type answers true.
+      auto kind = a.object->properties.find("__error__");
+      auto named = ctor.object->properties.find("name");
+      if (kind != a.object->properties.end() && named != ctor.object->properties.end())
+        return Value(kind->second.to_string() == named->second.to_string());
+      return Value(false);
+    }
     auto chain = a.object->properties.find("__proto__");
     int guard = 0;
     while (chain != a.object->properties.end() && guard++ < 64) {
@@ -348,6 +394,9 @@ static Value from_json(const Json &j, Runtime &r) {
 }
 
 Runtime::Runtime(Host *host) : host_(host) {
+  char base = 0;
+  stack_base_ = &base;
+  stack_limit_ = thread_stack_limit();
   global_ = static_cast<Env *>(allocate(Object::Kind::Environment));
   extra_roots_.push_back(global_);
   install_builtins();
@@ -1184,11 +1233,49 @@ Value Runtime::call(Value fn, const Values &args, Value this_value) {
   }
   return call_sync(fn, args, this_value);
 }
+// My interpreter throws strings like "TypeError: message" because that is cheap
+// and readable in a log. A page catches an object with a name and a message it can
+// read, and instanceof has to work on it, so the conversion happens here rather
+// than at two hundred throw sites.
+Value Runtime::error_object(const Value &thrown) {
+  if (thrown.type != Value::Type::String)
+    return thrown;
+  const std::string &text = thrown.string;
+  auto colon = text.find(": ");
+  if (colon == std::string::npos)
+    return thrown;
+  std::string name = text.substr(0, colon);
+  if (name.size() < 5 || name.compare(name.size() - 5, 5, "Error") != 0)
+    return thrown;
+  for (char c : name)
+    if (!std::isalpha(static_cast<unsigned char>(c)))
+      return thrown;
+  Value error = make_object();
+  error.object->properties["name"] = Value(name);
+  error.object->properties["message"] = Value(text.substr(colon + 2));
+  // The marker instanceof reads, because my prototype chain is the one I build with
+  // new and class extends and an error raised by the engine has no chain of its own.
+  error.object->properties["__error__"] = Value(name);
+  return error;
+}
+void Runtime::check_stack() {
+  char here = 0;
+  size_t used = stack_base_ ? size_t(stack_base_ > &here ? stack_base_ - &here : &here - stack_base_)
+                            : 0;
+  if (used > stack_limit_)
+    throw JsError{Value("RangeError: Maximum call stack size exceeded")};
+}
 Value Runtime::call_sync(Value fn, const Values &args, Value this_value) {
   tick();
-  if (++depth_ > 128) {
+  // A recursive script can catch a RangeError and try again, so I check both the
+  // number of frames and how much of my own stack they have taken. The second check
+  // is what keeps a 1 MiB Windows thread safe when the compiler makes frames big.
+  char here = 0;
+  size_t used = stack_base_ ? size_t(stack_base_ > &here ? stack_base_ - &here : &here - stack_base_)
+                            : 0;
+  if (++depth_ > 128 || used > stack_limit_) {
     --depth_;
-    throw std::runtime_error("JavaScript call stack limit");
+    throw JsError{Value("RangeError: Maximum call stack size exceeded")};
   }
   Value result;
   try {
@@ -1313,6 +1400,7 @@ Runtime::Flow Runtime::execute_block(const std::vector<std::unique_ptr<Stmt>> &s
 }
 Runtime::Flow Runtime::execute(const Stmt &s, Env &env, Value this_value) {
   tick();
+  check_stack();
   switch (s.kind) {
   case Stmt::Kind::Empty:
     return {};
@@ -1411,6 +1499,43 @@ Runtime::Flow Runtime::execute(const Stmt &s, Env &env, Value this_value) {
     }
     return {};
   }
+  case Stmt::Kind::Switch: {
+    Value subject = s.condition ? evaluate(*s.condition, env, this_value) : Value();
+    size_t start = s.cases.size(), default_at = s.cases.size();
+    for (size_t i = 0; i < s.cases.size(); ++i) {
+      if (!s.cases[i].test) {
+        default_at = i;
+        continue;
+      }
+      if (strict_equals(subject, evaluate(*s.cases[i].test, env, this_value))) {
+        start = i;
+        break;
+      }
+    }
+    if (start == s.cases.size())
+      start = default_at;
+    if (start == s.cases.size())
+      return {};
+    // One block scope covers every case, so a declaration in one case is visible in
+    // the next, which is what a switch does.
+    Env *block = static_cast<Env *>(allocate(Object::Kind::Environment));
+    block->parent = &env;
+    env_stack_.push_back(block);
+    for (auto &entry : s.cases)
+      hoist(entry.body, *block);
+    Flow flow;
+    for (size_t i = start; i < s.cases.size(); ++i) {
+      flow = execute_block(s.cases[i].body, *block, this_value);
+      if (flow.kind == Flow::Kind::Break) {
+        flow = {};
+        break;
+      }
+      if (flow.kind != Flow::Kind::None)
+        break;
+    }
+    env_stack_.pop_back();
+    return flow;
+  }
   case Stmt::Kind::Return:
     return {Flow::Kind::Return, s.expression ? evaluate(*s.expression, env, this_value) : Value()};
   case Stmt::Kind::Break:
@@ -1434,7 +1559,7 @@ Runtime::Flow Runtime::execute(const Stmt &s, Env &env, Value this_value) {
       block->parent = &env;
       env_stack_.push_back(block);
       if (!s.name.empty())
-        block->properties[s.name] = error.value;
+        block->properties[s.name] = error_object(error.value);
       f = execute_block(s.alternate, *block, this_value);
       env_stack_.pop_back();
     }
@@ -1446,6 +1571,7 @@ Runtime::Flow Runtime::execute(const Stmt &s, Env &env, Value this_value) {
 }
 Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
   tick();
+  check_stack();
   switch (e.kind) {
   case Expr::Kind::Literal:
     return e.literal;
@@ -1652,6 +1778,12 @@ Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
                                   : e.left->text,
                  next);
     return e.prefix ? next : Value(old.to_number());
+  }
+  case Expr::Kind::Sequence: {
+    Value last;
+    for (auto &item : e.items)
+      last = evaluate(*item, env, this_value);
+    return last;
   }
   case Expr::Kind::Conditional:
     return evaluate(*e.left, env, this_value).truthy() ? evaluate(*e.right, env, this_value)
@@ -2629,12 +2761,16 @@ void Runtime::install_builtins() {
     return out;
   });
   object.object->properties["assign"] = make_native([](Values &a) {
-    if (a.empty())
-      return Value();
-    for (size_t i = 1; i < a.size(); ++i)
-      if (a[i].type == Value::Type::Object)
-        for (auto &p : a[i].object->properties)
-          a[0].object->properties[p.first] = p.second;
+    if (a.empty() || a[0].type != Value::Type::Object || !a[0].object)
+      throw JsError{Value("TypeError: Object.assign target must be an object")};
+    for (size_t i = 1; i < a.size(); ++i) {
+      if (a[i].type == Value::Type::Null || a[i].type == Value::Type::Undefined)
+        continue; // the language skips a null source rather than failing
+      if (a[i].type != Value::Type::Object || !a[i].object)
+        continue;
+      for (auto &p : a[i].object->properties)
+        a[0].object->properties[p.first] = p.second;
+    }
     return a[0];
   });
   // I write the typed arrays Media Source Extensions needs, backed by real bytes
@@ -2787,13 +2923,33 @@ void Runtime::install_builtins() {
                             .count()));
   });
   g.properties["Date"] = date;
-  for (std::string name : {"Error", "TypeError", "RangeError", "SyntaxError"})
-    g.properties[name] = make_native([this, name](Values &a) {
+  for (std::string name : {"Error", "TypeError", "RangeError", "SyntaxError",
+                          "ReferenceError", "URIError", "EvalError", "AggregateError"}) {
+    Value ctor = make_native([this, name](Values &a) {
       Value e = make_object();
       e.object->properties["name"] = Value(name);
       e.object->properties["message"] = Value(a.empty() ? "" : a[0].to_string());
+      e.object->properties["__error__"] = Value(name);
       return e;
     });
+    ctor.object->properties["name"] = Value(name);
+    g.properties[name] = ctor;
+  }
+  // Function(a, b, "return a + b") compiles a body in the global scope. I build the
+  // source and run it through my own parser, so there is one parser and one way to
+  // make a function.
+  g.properties["Function"] = make_native([this](Values &a) {
+    std::string params, body;
+    for (size_t i = 0; i < a.size(); ++i) {
+      if (i + 1 == a.size()) body = a[i].to_string();
+      else params += (params.empty() ? "" : ",") + a[i].to_string();
+    }
+    try {
+      return run("(function(" + params + "){\n" + body + "\n})");
+    } catch (JsError &) {
+      throw JsError{Value("SyntaxError: function body did not compile")};
+    }
+  });
   g.properties["setTimeout"] = make_native([this](Values &a) {
     if (a.empty() || a[0].type_of() != "function")
       throw JsError{Value("TypeError: timer callback required")};

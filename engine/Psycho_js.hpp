@@ -94,6 +94,8 @@ struct Expr {
     Logical,
     Assign,
     Conditional,
+    // A comma expression evaluates each part and answers the last one.
+    Sequence,
     Call,
     Member,
     New,
@@ -136,6 +138,7 @@ struct Stmt {
     Throw,
     Try,
     Function,
+    Switch,
     Empty
   };
   Kind kind;
@@ -143,6 +146,12 @@ struct Stmt {
   std::unique_ptr<Expr> expression, condition, increment;
   std::vector<std::pair<std::string, std::unique_ptr<Expr>>> declarations;
   std::vector<std::unique_ptr<Stmt>> body, alternate, final;
+  // A switch case: a test, or nothing for default, and the statements under it.
+  struct Case {
+    std::unique_ptr<Expr> test;
+    std::vector<std::unique_ptr<Stmt>> body;
+  };
+  std::vector<Case> cases;
   Function *function = nullptr;
   int line = 1;
   explicit Stmt(Kind k) : kind(k) {}
@@ -236,9 +245,25 @@ private:
     Value value;
   };
   Value call_sync(Value fn, const Values &args, Value this_value);
+  // Every expression goes through this check. Script recursion is not the only way
+  // to walk my C++ stack down: a deeply nested expression recurses in evaluate, and
+  // a page must not be able to reach the guard page that way either.
+  void check_stack();
+  // Where my C++ stack was when this runtime started, and how much of it this
+  // runtime may take. A recursive script cannot be allowed to run my own stack out,
+  // and counting JavaScript frames is not enough when the compiler chooses how much
+  // stack a frame takes. The budget comes from the thread's real stack, so it is
+  // right on a 1 MiB Windows thread and on a sanitizer build with fat frames.
+  const char *stack_base_ = nullptr;
+  size_t stack_limit_ = 192u * 1024u;
+  // Turns a thrown message into the error object a page catches.
+  Value error_object(const Value &thrown);
   Host *host_;
   std::function<bool()> pump_;
-  std::vector<std::unique_ptr<Program>> programs_;
+  // A deque, not a vector: the Function constructor runs a program while another one
+  // is being executed, and a reallocation would move the program the caller is
+  // walking. MSVC found that; my Linux build had spare capacity and did not.
+  std::deque<std::unique_ptr<Program>> programs_;
   size_t program_bytes_ = 0;
   std::vector<std::unique_ptr<Object>> objects_;
   std::vector<Object *> free_;

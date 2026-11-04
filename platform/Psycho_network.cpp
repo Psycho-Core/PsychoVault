@@ -834,8 +834,10 @@ DownloadOutcome download_to_file(const Url &initial, const std::string &destinat
 
 #else
 
-Resource fetch_url(const Url &url, const NetworkPolicy &policy, int, size_t) {
-  return fetch_url(url, policy, RequestOptions{}, 0, 0);
+Resource fetch_url(const Url &url, const NetworkPolicy &policy, int timeout_ms, size_t max_bytes) {
+  // These two used to be dropped on the floor here, which made every headless
+  // request run with a zero byte budget and refuse its own body.
+  return fetch_url(url, policy, RequestOptions{}, timeout_ms, max_bytes);
 }
 // This build has no WinHTTP, but it does have my own socket, SOCKS5, CONNECT and TLS
 // path, so a proxied request is a real request here rather than a refusal. A direct
@@ -906,4 +908,32 @@ Resource fetch_url(const Url &initial, const NetworkPolicy &policy, const Reques
     second.error = "the HTTPS address did not answer and the plain HTTP one did not either";
   return second;
 }
+// A real request through the configured tunnel, small enough to be cheap and honest
+// about what came back.
+TunnelProbe probe_tunnel(const NetworkPolicy &policy, const std::string &url, int timeout_ms) {
+  TunnelProbe probe;
+  probe.url = url;
+  auto parsed = parse_url(url);
+  if (!parsed) {
+    probe.detail = "that is not an address I can fetch";
+    return probe;
+  }
+  if (!policy.proxy.active()) {
+    probe.detail = "no tunnel server is configured, so there is nothing to connect to";
+    return probe;
+  }
+  Resource response = fetch_url(*parsed, policy, timeout_ms, 64u * 1024u);
+  probe.status = response.status;
+  probe.ok = response.ok && response.status >= 200 && response.status < 400;
+  if (probe.ok) {
+    probe.detail = "answer " + std::to_string(response.status) + " through " +
+                   policy.proxy.single.scheme + " " + policy.proxy.single.authority();
+  } else if (!response.error.empty()) {
+    probe.detail = response.error;
+  } else {
+    probe.detail = "the tunnel answered " + std::to_string(response.status);
+  }
+  return probe;
+}
+
 } // namespace pv

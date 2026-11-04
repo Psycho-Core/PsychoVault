@@ -63,7 +63,11 @@ def main():
             if subsystem:cmd+=[f"/SUBSYSTEM:"+subsystem]
             if entry:cmd+=[f"/ENTRY:"+entry]
             cmd+= [l+".lib" for l in libs]
-            cmd+=["/OUT:"+str(out/(name+".exe"))]
+            # A page and my interpreter need the same order of stack my Linux tests get.
+            # The default 1 MiB is not enough for a recursive descent parser over real
+            # script, and my runtime still stops a page well before this runs out.
+            cmd+=["/STACK:8388608"]
+            cmd+=[f"/OUT:"+str(out/(name+".exe"))]
         else:
             cmd=[cxx,"-std=c++20","-O2","-g","-Wall","-Wextra","-Werror","-I"+str(ROOT)]
             if args.sanitizers:cmd+=["-fsanitize=address,undefined","-fno-omit-frame-pointer"]
@@ -74,6 +78,11 @@ def main():
     winlibs=["kernel32","user32","gdi32","advapi32","userenv","bcrypt","winhttp","shell32","ole32","dwmapi","ws2_32","crypt32","secur32","avrt"]
     target("pv-engine",ENGINE+["tools/Psycho_engine_cli.cpp"],winlibs if windows else [])
     target("pv-tests",ENGINE+PLATFORM+["tests/Psycho_test_main.cpp"],winlibs if windows else [])
+    # The conformance runner is its own small target: my parser and interpreter plus
+    # the tool that walks a Test262 tree, so a measurement never needs the shell.
+    target("pv-conformance",["engine/Psycho_base.cpp","engine/Psycho_js_parser.cpp",
+                             "engine/Psycho_js_runtime.cpp","engine/Psycho_regex.cpp",
+                             "tools/Psycho_conformance.cpp"],winlibs if windows else [])
     if windows:
         # My browser is one file because my page host and my engine are linked
         # straight into it. Nothing is unpacked and nothing sits beside it.

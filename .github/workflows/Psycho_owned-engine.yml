@@ -57,6 +57,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run engine tests
         shell: pwsh
+        env:
+          # My tests print the line of each check they start, so a process that dies
+          # on this runner still leaves the check it died in at the end of the log.
+          PV_PROGRESS: 1
         run: |
           # Both streams go into the file, because my checks report a failure on
           # stderr and I want that line to survive into the log and the annotation.

@@ -4,49 +4,38 @@ I build my own browser engine. This is a development preview I can test, not a f
 
 ## What I added in this build
 
-- **An HTTPS policy of my own.** I read `Strict-Transport-Security` from an answer and keep the host and its expiry in my own store. The header only counts when it arrives over HTTPS, because anyone on the path could write it into a plain answer. `max-age=0` takes a promise back, `includeSubDomains` covers the subdomains, and the longest promise I honour is one year. The store is written into my profile as JSON, pruned when I load it, and it decides the scheme of the next request before a socket opens.
-- **Mixed content refused instead of half-loaded.** An HTTPS page cannot pull a script, stylesheet, image, font, media file or frame over plain HTTP. I refuse all of them rather than the active ones only, because a page that silently loses its images looks broken and says nothing. A form on an HTTPS page that posts to an HTTP address is refused for the same reason: the body would go out in clear text.
-- **Always use HTTPS, with one honest fallback.** A new setting upgrades every request rather than only the hosts that asked. A host with a stored promise never falls back. A host without one gets exactly one retry over HTTP when the upgraded address cannot be reached at all, and I count the fallback so it is visible rather than silent. Loopback is left alone, because my own development server rarely has a certificate.
-- **My own filter engine.** I parse the subset of the usual list syntax I actually implement: host anchors with `||`, start and end anchors with `|`, `*` and `^` wildcards, the resource type options, `third-party` and `~third-party`, and `domain=` with exclusions. Exceptions sort ahead of blocks, so an exception always wins. A rule naming an option I have not implemented is refused with the line number and the reason rather than quietly weakened, and a cosmetic rule is refused the same way, because I do not rewrite page elements.
-- **A blocker I can watch working.** Every tab counts what its own filter list refused and keeps the text of the rule that did it. My status bar shows `Blocked N here` for the page in front of me, and clicking it shows the rule. My settings page shows the rule count, the exception count, and the running totals for blocked requests, upgrades, mixed content refusals and form refusals.
-- **Per-site exceptions that key off the page.** An exception names the site I am on, not the endpoint being fetched. That was wrong until a test of mine proved it: I was comparing the exception against the request's host, so a site I had excused still had its ads blocked unless the ad happened to be on the same host.
-- **A list file, if I want one.** My starter list is mine and short, 33 rules covering the advertising and measurement endpoints that turn up on most pages. My settings page takes a path to a list file on disk, loads it on top of mine, and reports how many rules it gave me. I never download a list on my own.
-- **A resource limit that says what it is.** My browser puts itself in a job object with a kill-on-unhandled-exception rule, plus a memory cap and a user-time cap when I set them. The settings page states plainly that page code runs in my process and is limited, not isolated. That is the truth of what this build does, and I would rather print it than call a resource cap a sandbox.
+- **A conformance runner of my own.** `tools/Psycho_conformance.cpp` walks a Test262 tree and runs every test through my parser and my interpreter. It reads each test's front matter for its flags, its includes and the error it expects, gives every test the harness files it asks for, and writes one line per test. Each test runs in its own child process on Linux, so a test that crashes my interpreter is recorded as a crash instead of ending the measurement.
+- **A measured number.** Test262 at `831359a4192ef83b8c50f91363d2ff739fe550f6`: 54,058 tests ran, **5,009 passed**, 1,062 failed an assertion, 22,672 threw something unexpected, 16 crashed my interpreter, and 25,299 were skipped with the reason named (modules and strictness flags for 3,454, features I do not have for 21,845). That is 17.4 percent of the tests my engine can attempt. The full page is `docs/Psycho_CONFORMANCE.md`, and the numbers came from a run, not from an estimate.
+- **Six language pieces the measurement proved were missing.** A `switch` statement (my parser did not have one at all), the comma expression, the `Function` constructor, error values that are objects with a `name` and answer `instanceof`, a `RangeError` a page can catch when recursion runs out of stack, and `Object.assign` refusing a null target instead of dereferencing it. Those six moved the corpus from 4,783 passes to 5,009 and the crash count from 23 to 16.
+- **A bug in my own headless path.** The four-argument `fetch_url` dropped its timeout and its byte limit and forwarded zeros, so any request made that way refused its own body as too large. It was found by my new tunnel test, not by luck.
+- **Two defects only the Windows test run could show me.** A nested `Function` call reallocated the vector of compiled programs while the outer call was still walking it, so a runtime now keeps those programs in a container that cannot move. And a 1 MiB Windows thread ran out of stack inside my parser and my evaluator long before any script recursion limit was reached; the exe now reserves 8 MiB, the same order my Linux tests already had, and every expression checks the budget so a deeply nested one cannot reach the guard page either. Both were found by the hosted Windows job, and neither was visible on my own machine.
+- **A tunnel test that dials.** My VPN page has a "Test my tunnel" button that makes one real request through the configured server on a worker thread and prints what came back - the status, the scheme and the server it used, or the exact reason it failed. A connected label nobody tested is not evidence, so the panel now carries the words of the last attempt.
+- **A conformance job.** `.github/workflows/Psycho_conformance.yml` builds the runner on a hosted runner, fetches the corpus at the pinned commit, runs it and keeps the per-test record as an artifact. The number in my documents can be re-derived from a run.
 
-## What my audit of step 8 found
+## About Proton VPN
 
-I tested the classes first, then wired them into the request path, then tested the path, and the order matters because most of what follows only showed up once the pieces were joined.
+I did not add Proton VPN in this build, and I am not going to describe a panel as a connection.
 
-- **An exception was compared against the wrong host.** My per-site allowlist checked the request's host instead of the page's host, so excusing a site did nothing for the third-party requests that site made. My own test caught it. It now compares the page host, and falls back to the request host for a navigation where they are the same thing.
-- **The always-HTTPS upgrade never happened.** An earlier edit to the shared request check did not apply, and my tests were passing because they only looked at the class, not at the fetch. The test that read the returned address proved it, and the upgrade is now in the one place every request goes through.
-- **A job object would have killed my browser when I changed the cap.** My first version set `KILL_ON_JOB_CLOSE`, which ends every process in the job when the last handle closes. Changing the memory cap closed the handle and recreated the job, so changing a setting would have terminated the browser. I removed that rule, keep one job for the life of the process, and rewrite its limits in place.
-- **A second thread writing the same counters as the window.** My totals were plain integers touched by a tab's worker thread and read by the window. They are atomics now, and the per-tab counters belong to the tab that owns them.
+Their extension source is not reachable from here: `ProtonVPN/browser-extension`, `ProtonVPN/extension` and `protonvpn/browser-extension` all answer 404 through the GitHub API, and I will not reconstruct their client from a description. Even with the source in hand, a live session needs an account and a reachable Proton endpoint, and this environment has neither, so "connected" could only ever have been a label I typed.
 
-The full page is in `docs/Psycho_STEP8-AUDIT.md`, including what this environment could not test: no live TLS mixed content, no subscription-sized list, and no isolation test because there is no isolation to test.
+What I did instead is make the thing a Proton endpoint would use testable: my own SOCKS5 and HTTPS proxy transport, a fail-closed route, and a connect test that dials the configured server, sends a real request through it and reports the answer in the server's own words. If you point it at a Proton endpoint on your machine and press the button, it will tell you whether the tunnel came up rather than claiming it did.
 
 ## What I checked before calling this build done
 
-- My engine test suite passed: **718 checks**. That is 70 more than the last build, and they cover the HTTPS store and its cap, the mixed content and form refusals, the upgrade and its fallback, the filter parser and matcher, the exceptions, and the block decision taken through the same fetch a tab uses.
-- My source audit passed: **250 checks**, including that my filter engine is mine, that I bundle no third-party list, that every request goes through one shared check, and that my panel prints the sentence about isolation instead of a tick.
-- My naming audit passed: **21 checks**. My plan audit passed: **377 checks**.
-- The Windows executable was compiled and linked by the release workflow from this exact commit, and the release was published with the executable in it. If that build had failed, there would be no release to read this in.
-
-## What I am still not claiming about my security work
-
-- **Page code is not isolated from my browser.** There is no AppContainer profile, no second process and no restricted token for page code in this build. The job object limits memory and CPU; it is not a security boundary, and a page that finds a bug in my engine is in the same process as my window.
-- **No CSP is enforced.** A page's `Content-Security-Policy` header is read and its effects are not applied yet, so my own mixed content rule is the only thing standing between a page and a cleartext subresource.
-- **My HSTS store only knows what a site told me.** There is no preload list, no `includeSubDomains` inheritance beyond the label match, and clearing my profile clears the store.
-- **A fallback is a downgrade by design.** With always-HTTPS on, a host that cannot answer over TLS gets one plain request, and a network attacker can make that happen. I count it, and I would rather it be a counted decision than a silent one.
-- **My blocker does not hide page elements.** Cosmetic rules are refused by name, so a page keeps its ad-shaped holes. My list is short and mine, not a subscription, and it does not update itself.
-- **No fuzzing yet.** My parsers have unit tests and hand-written edge cases, not a fuzz corpus.
-- **The update manifest is not signed.** I verify a SHA-256 before offering an update; signing the manifest itself is still on my plan.
+- My engine test suite passed: **742 checks**, 24 more than the last build, including the six language pieces above and the tunnel probe against a loopback SOCKS5 proxy.
+- My tunnel probe was tested two ways: a real SOCKS5 proxy on a loopback port answers, and a dead port is reported as a refusal with a reason. With no server configured it says there is nothing to dial.
+- My source audit passed: **264 checks**. My naming audit passed: **23 checks**. My plan audit passed: **377 checks**.
+- The Windows executable was compiled, tested and published by the release workflow from this commit.
 
 ## What I am not claiming
 
-- **YouTube and Netflix do not play.** My engine has my own media pipeline and my own Media Source Extensions, but no H.264 decoder, no AAC decoder, no VP8, VP9 or Opus, and no WebM. The streams those sites send are refused by name. DRM will only ever arrive as a separately licensed extension, never inside my engine.
-- **Proton VPN is not bundled.** I have no Proton code in this build. My own transport and a panel I can point at a proxy are what exist, and a panel with a server in it is not proof of a working VPN.
+- **YouTube and Netflix do not play.** My engine has my own media pipeline and Media Source Extensions, but no H.264, AAC, VP8, VP9 or Opus decoder and no WebM. DRM can only ever arrive as a separately licensed extension, never inside my engine.
+- **Proton VPN is not bundled and no Proton session was run.** What exists is my own transport and a test that dials whatever server I configure.
+- **My conformance number is a language number, not a browser number.** Test262 does not measure my HTML, CSS or layout, and I have not run a WPT subset: their harness needs modules and async iteration, which my engine does not have yet.
+- **The sixteen crashes are real.** They are recorded per test in the report and are on my list; a crash in my interpreter is worse than a missing feature.
 - WebP and progressive JPEG are not decoded. My page says so in its diagnostics rather than showing a blank space without explanation.
 - WebRTC is not implemented, so my extension-facing WebRTC policy setting is a stored preference, not a leak prevention I can demonstrate.
+- Page code runs in my browser process. A job object limits its memory and CPU time; it is not isolation.
 - My vault, password manager, translation, media keys and full legacy settings parity are not finished.
 - This build is unsigned, so Windows SmartScreen may warn me.
 
