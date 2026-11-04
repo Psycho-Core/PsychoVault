@@ -9,9 +9,11 @@
 #include <ws2tcpip.h>
 #else
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -46,6 +48,52 @@ int last_socket_error() {
   return errno;
 }
 #endif
+
+// True when the connection completed, false when it failed or ran out of time. The
+// socket is put back into blocking mode either way.
+bool connect_with_timeout(intptr_t fd, const addrinfo *at, int timeout_ms) {
+#ifdef _WIN32
+  u_long nonblocking = 1;
+  if (ioctlsocket(SOCKET(fd), FIONBIO, &nonblocking) != 0)
+    return false;
+  bool done = false;
+  if (connect(SOCKET(fd), at->ai_addr, int(at->ai_addrlen)) == 0) {
+    done = true;
+  } else if (WSAGetLastError() == WSAEWOULDBLOCK) {
+    fd_set writable;
+    FD_ZERO(&writable);
+    FD_SET(SOCKET(fd), &writable);
+    timeval limit{timeout_ms / 1000, (timeout_ms % 1000) * 1000};
+    if (select(0, nullptr, &writable, nullptr, &limit) == 1) {
+      int so_error = 0;
+      int size = sizeof so_error;
+      getsockopt(SOCKET(fd), SOL_SOCKET, SO_ERROR, reinterpret_cast<char *>(&so_error), &size);
+      done = so_error == 0;
+    }
+  }
+  u_long blocking = 0;
+  ioctlsocket(SOCKET(fd), FIONBIO, &blocking);
+  return done;
+#else
+  int flags = fcntl(int(fd), F_GETFL, 0);
+  if (flags < 0 || fcntl(int(fd), F_SETFL, flags | O_NONBLOCK) < 0)
+    return false;
+  bool done = false;
+  if (connect(int(fd), at->ai_addr, at->ai_addrlen) == 0) {
+    done = true;
+  } else if (errno == EINPROGRESS) {
+    pollfd waiting{int(fd), POLLOUT, 0};
+    if (poll(&waiting, 1, timeout_ms) == 1) {
+      int so_error = 0;
+      socklen_t size = sizeof so_error;
+      getsockopt(int(fd), SOL_SOCKET, SO_ERROR, &so_error, &size);
+      done = so_error == 0;
+    }
+  }
+  fcntl(int(fd), F_SETFL, flags);
+  return done;
+#endif
+}
 
 } // namespace
 
@@ -99,13 +147,13 @@ bool Socket::connect_to(const std::string &host, int port, int timeout_ms, std::
                sizeof limit);
     setsockopt(SOCKET(fd), SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char *>(&limit),
                sizeof limit);
-    if (connect(SOCKET(fd), at->ai_addr, int(at->ai_addrlen)) == 0)
+    if (connect_with_timeout(fd, at, timeout_ms))
       break;
 #else
     timeval tv{timeout_ms / 1000, (timeout_ms % 1000) * 1000};
     setsockopt(int(fd), SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
     setsockopt(int(fd), SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
-    if (connect(int(fd), at->ai_addr, at->ai_addrlen) == 0)
+    if (connect_with_timeout(fd, at, timeout_ms))
       break;
 #endif
     close_handle(fd);
@@ -154,7 +202,16 @@ bool Socket::read_some(uint8_t *out, size_t capacity, size_t &got, std::string &
   ssize_t n = ::recv(int(fd_), out, capacity, 0);
 #endif
   if (n < 0) {
-    error = "the read from my proxy failed";
+#ifdef _WIN32
+    int code = WSAGetLastError();
+    error = code == WSAETIMEDOUT || code == WSAEWOULDBLOCK
+                ? "my proxy did not answer in time"
+                : "the read from my proxy failed (error " + std::to_string(code) + ")";
+#else
+    error = errno == EAGAIN || errno == EWOULDBLOCK
+                ? "my proxy did not answer in time"
+                : "the read from my proxy failed (error " + std::to_string(errno) + ")";
+#endif
     return false;
   }
   got = size_t(n);
@@ -311,7 +368,12 @@ bool socks5_connect(Stream &stream, const TunnelTarget &target, const std::strin
 // ---- HTTP CONNECT --------------------------------------------------------
 bool http_connect(Stream &stream, const TunnelTarget &target, const std::string &user,
                   const std::string &pass, bool has_auth, std::string &error) {
-  std::string authority = target.host + ":" + std::to_string(target.port);
+  // An IPv6 literal has to be bracketed in a request target or the colons inside it
+  // read as the port separator.
+  std::string authority = target.host.find(':') != std::string::npos &&
+                                  target.host.front() != '['
+                              ? "[" + target.host + "]:" + std::to_string(target.port)
+                              : target.host + ":" + std::to_string(target.port);
   std::string request = "CONNECT " + authority + " HTTP/1.1\r\nHost: " + authority + "\r\n";
   if (has_auth && !user.empty()) {
     std::string raw = user + ":" + pass;
@@ -347,8 +409,6 @@ bool http_connect(Stream &stream, const TunnelTarget &target, const std::string 
     error = "my proxy refused CONNECT to " + authority + " with status " + std::to_string(status);
     return false;
   }
-  if (head.find("Proxy-Authenticate") != std::string::npos && has_auth)
-    return true;
   return true;
 }
 
@@ -429,6 +489,12 @@ bool http_exchange(Stream &stream, const HttpRequest &request, HttpResponse &res
         error = "the server closed before it sent a complete response head";
       return false;
     }
+    if (got == 0) {
+      // No bytes and no failure would be an endless wait, so I treat it as the end
+      // of the response.
+      error = "the server stopped sending before it finished its response head";
+      return false;
+    }
     buffer.append(reinterpret_cast<const char *>(chunk), got);
   }
   if (!parse_head(buffer, response, consumed)) {
@@ -441,7 +507,7 @@ bool http_exchange(Stream &stream, const HttpRequest &request, HttpResponse &res
     response.bytes.assign(rest.begin(), rest.end());
     return true;
   };
-  if (response.status == 204 || response.status == 304)
+  if (request.method == "HEAD" || response.status == 204 || response.status == 304)
     return finish();
   if (response.chunked) {
     std::string body;
@@ -450,8 +516,15 @@ bool http_exchange(Stream &stream, const HttpRequest &request, HttpResponse &res
       while (rest.size() < at + more) {
         uint8_t chunk[8192];
         size_t got = 0;
-        if (!stream.read_some(chunk, sizeof chunk, got, error))
+        if (!stream.read_some(chunk, sizeof chunk, got, error)) {
+          if (error.empty())
+            error = "the server closed part way through a chunked body";
           return false;
+        }
+        if (got == 0) {
+          error = "the server stopped sending part way through a chunked body";
+          return false;
+        }
         rest.append(reinterpret_cast<const char *>(chunk), got);
       }
       return true;
@@ -467,11 +540,26 @@ bool http_exchange(Stream &stream, const HttpRequest &request, HttpResponse &res
         }
         line_end = rest.find("\r\n", at);
       }
-      std::string size_text = rest.substr(at, line_end - at);
+      std::string size_text = trim(rest.substr(at, line_end - at));
       auto extension = size_text.find(';');
       if (extension != std::string::npos)
-        size_text = size_text.substr(0, extension);
-      size_t size = size_t(std::strtoull(trim(size_text).c_str(), nullptr, 16));
+        size_text = trim(size_text.substr(0, extension));
+      if (size_text.empty() || size_text.size() > 15) {
+        error = "that chunked response had a chunk size I could not read";
+        return false;
+      }
+      size_t size = 0;
+      for (char digit_char : size_text) {
+        int digit = (digit_char >= '0' && digit_char <= '9')   ? digit_char - '0'
+                    : (digit_char >= 'a' && digit_char <= 'f') ? digit_char - 'a' + 10
+                    : (digit_char >= 'A' && digit_char <= 'F') ? digit_char - 'A' + 10
+                                                                : -1;
+        if (digit < 0 || size > (request.max_bytes + 1) / 16) {
+          error = "that chunked response had a chunk size I could not read";
+          return false;
+        }
+        size = size * 16 + size_t(digit);
+      }
       at = line_end + 2;
       if (size == 0)
         break;
@@ -481,6 +569,10 @@ bool http_exchange(Stream &stream, const HttpRequest &request, HttpResponse &res
         error = "that response was larger than I will hold in memory";
         return false;
       }
+      if (rest.compare(at + size, 2, "\r\n") != 0) {
+        error = "that chunked response was missing the line break after a chunk";
+        return false;
+      }
       body.append(rest, at, size);
       at += size + 2;
     }
@@ -488,8 +580,25 @@ bool http_exchange(Stream &stream, const HttpRequest &request, HttpResponse &res
     response.bytes.assign(response.body.begin(), response.body.end());
     return true;
   }
-  std::string length_text = header_value(response, "Content-Length");
+  std::string length_text;
+  for (const auto &entry : response.headers) {
+    if (lower(entry.first) != "content-length")
+      continue;
+    auto value = trim(entry.second);
+    if (length_text.empty())
+      length_text = value;
+    else if (value != length_text) {
+      // Two different lengths in one response is an argument about where the body
+      // ends, and I will not guess which side is lying.
+      error = "that response gave two different Content-Length values";
+      return false;
+    }
+  }
   if (!length_text.empty()) {
+    if (length_text.find_first_not_of("0123456789") != std::string::npos) {
+      error = "that response gave a Content-Length that is not a number";
+      return false;
+    }
     size_t want = size_t(std::strtoull(length_text.c_str(), nullptr, 10));
     if (want > request.max_bytes) {
       error = "that response was larger than I will hold in memory";
@@ -498,9 +607,13 @@ bool http_exchange(Stream &stream, const HttpRequest &request, HttpResponse &res
     while (rest.size() < want) {
       uint8_t chunk[8192];
       size_t got = 0;
-      if (!stream.read_some(chunk, sizeof chunk, got, error)) {
-        if (error.empty())
-          break; // the body I have is what arrived, which is honest
+      if (!stream.read_some(chunk, sizeof chunk, got, error) || got == 0) {
+        if (!error.empty())
+          return false;
+        // A clean close before the promised length is a truncated body. Returning
+        // the piece I have would render half a page and call it a success.
+        error = "the connection closed " + std::to_string(want - rest.size()) +
+                " bytes before the end of the body";
         return false;
       }
       rest.append(reinterpret_cast<const char *>(chunk), got);
@@ -525,6 +638,8 @@ bool http_exchange(Stream &stream, const HttpRequest &request, HttpResponse &res
         return false;
       break;
     }
+    if (got == 0)
+      break;
     rest.append(reinterpret_cast<const char *>(chunk), got);
   }
   return finish();
@@ -536,12 +651,27 @@ Resource tunneled_fetch(const Url &url, const TunnelConfig &config, const std::s
   Resource out;
   out.url = url.href();
   out.status = 0;
+  // The scheme is checked first so an unsupported one is named rather than reported
+  // as a server I cannot dial. A scheme I never wrote must not fall through to a
+  // CONNECT request that happens to look plausible.
+  if (config.proxy.scheme != "socks5" && config.proxy.scheme != "https" &&
+      config.proxy.scheme != "http") {
+    out.ok = false;
+    out.error = "fail-closed: I have no transport for a " + config.proxy.scheme + " proxy";
+    return out;
+  }
   if (!config.proxy.valid()) {
     out.ok = false;
     out.error = "fail-closed: my proxy is not a server I can dial";
     return out;
   }
   Url current = url;
+  // The method and the body change when a redirect says they do, so they are not
+  // the caller's constants any more.
+  std::string active_method = method;
+  std::string active_body = body;
+  // I send a referer for the page that sent me here, not for the address I am at.
+  std::string referer = url.origin();
   for (int hop = 0; hop <= 5; ++hop) {
     if (current.scheme != "http" && current.scheme != "https") {
       out.ok = false;
@@ -594,13 +724,13 @@ Resource tunneled_fetch(const Url &url, const TunnelConfig &config, const std::s
       top = origin_tls.get();
     }
     HttpRequest request;
-    request.method = method;
+    request.method = active_method;
     request.path = current.path + (current.query.empty() ? "" : "?" + current.query);
     if (request.path.empty())
       request.path = "/";
     request.host = current.host;
     request.port = int(current.effective_port());
-    request.body = body;
+    request.body = active_body;
     request.max_bytes = max_bytes;
     request.headers.emplace_back("Accept", "*/*");
     request.headers.emplace_back("Accept-Encoding", "identity");
@@ -609,11 +739,12 @@ Resource tunneled_fetch(const Url &url, const TunnelConfig &config, const std::s
       request.headers.emplace_back("Accept-Language", config.accept_language);
     if (config.send_dnt)
       request.headers.emplace_back("DNT", "1");
-    if (!config.strip_referrer)
-      request.headers.emplace_back("Referer", current.origin() + "/");
-    if (!config.cookie_header.empty())
+    if (!config.strip_referrer && !referer.empty())
+      request.headers.emplace_back("Referer", referer + "/");
+    // A redirect to another host must not carry the first host's cookies with it.
+    if (!config.cookie_header.empty() && lower(current.host) == lower(url.host))
       request.headers.emplace_back("Cookie", config.cookie_header);
-    if (!body.empty())
+    if (!active_body.empty())
       request.headers.emplace_back("Content-Type",
                                    content_type.empty() ? "application/x-www-form-urlencoded"
                                                         : content_type);
@@ -644,6 +775,15 @@ Resource tunneled_fetch(const Url &url, const TunnelConfig &config, const std::s
           location = entry.second;
       auto next = location.empty() ? std::nullopt : resolve_url(current, location);
       if (next) {
+        // 303 means look over there with a GET. 301 and 302 keep a GET as a GET and
+        // turn a POST into one, which is what a browser does with a form reply. 307
+        // and 308 are the two that say keep the method and the body.
+        if (response.status == 303 ||
+            ((response.status == 301 || response.status == 302) && active_method == "POST")) {
+          active_method = "GET";
+          active_body.clear();
+        }
+        referer = current.origin();
         current = *next;
         out.url = current.href();
         continue;

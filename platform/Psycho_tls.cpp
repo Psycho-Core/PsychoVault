@@ -36,6 +36,8 @@ struct TlsStream::Impl {
   }
   bool alive = false;
   std::string server_name;
+  // The subject from the certificate, filled in once the handshake is verified.
+  std::string subject;
   Bytes incoming, plain;
 #ifdef _WIN32
   CredHandle credentials{};
@@ -49,7 +51,7 @@ TlsStream::~TlsStream() = default;
 
 const std::string &TlsStream::peer_subject() const {
   static const std::string empty;
-  return impl_ ? impl_->server_name : empty;
+  return impl_ ? impl_->subject : empty;
 }
 
 #ifdef _WIN32
@@ -77,16 +79,26 @@ bool verify_certificate(PCCERT_CONTEXT leaf, const std::string &server_name, std
   }
   CERT_CHAIN_PARA params{};
   params.cbSize = sizeof params;
+  // Revocation checking is a flag on the call, not on the parameters, and asking is
+  // the difference between "this certificate is revoked" and "nobody told me either
+  // way". I ask, and I keep the two answers apart below.
   PCCERT_CHAIN_CONTEXT chain = nullptr;
   if (!CertGetCertificateChain(nullptr, leaf, nullptr, leaf->hCertStore, &params,
-                               CERT_CHAIN_CACHE_END_CERT, nullptr, &chain) ||
+                               CERT_CHAIN_CACHE_END_CERT |
+                                   CERT_CHAIN_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT,
+                               nullptr, &chain) ||
       !chain) {
     error = "I could not build a certificate chain for this server, so I stopped";
     return false;
   }
   DWORD status = chain->TrustStatus.dwErrorStatus;
+  if (status & CERT_TRUST_IS_REVOKED) {
+    error = "the certificate this server sent is revoked, so I stopped";
+    CertFreeCertificateChain(chain);
+    return false;
+  }
   if ((status & CERT_TRUST_IS_UNTRUSTED_ROOT) || (status & CERT_TRUST_IS_PARTIAL_CHAIN) ||
-      (status & CERT_TRUST_IS_NOT_TIME_VALID) || (status & CERT_TRUST_IS_REVOKED)) {
+      (status & CERT_TRUST_IS_NOT_TIME_VALID) || (status & CERT_TRUST_IS_NOT_SIGNATURE_VALID)) {
     error = "the certificate this server sent does not chain to a root I trust, so I stopped";
     CertFreeCertificateChain(chain);
     return false;
@@ -207,10 +219,11 @@ std::unique_ptr<TlsStream> TlsStream::open(Stream &underneath, const std::string
     return nullptr;
   }
   bool verified = verify_certificate(leaf, server_name, error);
-  char name[512] = {0};
-  CertGetNameStringA(leaf, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, nullptr, name, sizeof name);
-  if (verified)
-    impl.server_name = server_name;
+  // The subject the certificate actually carries, which is what peer_subject means.
+  char subject[512] = {0};
+  if (CertGetNameStringA(leaf, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, nullptr, subject,
+                         sizeof subject) > 1)
+    impl.subject = subject;
   CertFreeCertificateContext(leaf);
   if (!verified)
     return nullptr;
@@ -326,8 +339,12 @@ bool TlsStream::read_some(uint8_t *out, size_t capacity, size_t &got, std::strin
       got = take;
       return true;
     }
-    if (impl.incoming.empty())
-      return true;
+    if (impl.incoming.empty()) {
+      // A control record carried nothing for the page. Reading again is the right
+      // move; returning a successful zero-byte read would leave my HTTP framing
+      // waiting for bytes that never arrive.
+      continue;
+    }
   }
   error = "the TLS stream did not give me a record I could read";
   return false;

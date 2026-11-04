@@ -14,11 +14,26 @@ I build my own browser engine. This is a development preview I can test, not a f
 - **Proxy logins that stay with the proxy.** A username and password are saved against the server they were typed for and are only ever sent to that server. An extension that supplies credentials for its own proxy gets its own record, and neither set travels to a proxy it was not entered for.
 - **A VPN panel I can actually use.** The VPN page now shows the server, the scheme, the username and a masked password, a toggle for refusing requests when the tunnel fails, and a button that turns the tunnel off. I type `host:port` in the same address bar I use for everything else, and my settings remember it.
 
+## What my audit of step 7 found
+
+I shipped step 7, then went back through it line by line instead of trusting a green build. Fifteen things were wrong, and the ones that mattered were not typos.
+
+- **A download bypassed my proxy.** The worst of them. A page load and its subresources went through my tunnel, and a download opened its own session with no reference to the VPN. It now takes the same route decision as everything else, and a fail-closed policy refuses the download with the reason.
+- **A cookie and a referer followed a redirect to another host.** The cookie header went out on every hop, and the referer named the page I was fetching rather than the page that sent me.
+- **A 303 kept its POST body,** and so did a 301 or 302 after a form reply. A 303 now becomes a GET with no body, 301 and 302 turn a POST into a GET, and 307 and 308 keep both.
+- **Framing that believed the wrong things.** A chunk size I could not read was treated as the end of the body, a body shorter than its Content-Length was returned as complete, two disagreeing lengths were accepted, and a HEAD reply was read as if it carried a body.
+- **A zero-byte successful read could spin my framing forever.** Found while reading the TLS layer, and fixed in both places.
+- **Revocation was claimed but never checked,** and the subject accessor returned the name I asked for instead of the subject the certificate carries.
+- **A blocking connect ignored my timeout,** so a proxy that dropped packets could hold a tab for over a minute.
+- **My own transport was a Windows-only feature in practice,** because the headless build refused everything before it. It now tunnels through the same code, which is how these defects got tests at all.
+
+The full page is in `docs/Psycho_STEP7-AUDIT.md`, including what the audit could not test: no live Proton session, and no real certificate handshake in this environment.
+
 ## What I checked before calling this build done
 
 I would rather show a number than a claim, so this is what I ran.
 
-- My engine test suite passed: 608 checks. That includes the media readers, the source buffer path, my own HTTP framing and the whole tunnel.
+- My engine test suite passed: 648 checks. That includes the media readers, the source buffer path, my own HTTP framing and the whole tunnel.
 - My tunnel was tested over a real loopback socket, not a script. A small SOCKS5 proxy runs inside my test, my client speaks to it, the name `example.test` arrives at the proxy rather than being resolved on this machine, and a page comes back through my framing.
 - A redirect through that tunnel was tested the same way. The first request got a 302, the second went to the new path inside a fresh tunnel with the right `Host` line, and the page behind it came back.
 - My source audit passed: 225 checks. My naming audit passed: 21 checks. My plan audit passed: 377 checks.
@@ -27,6 +42,13 @@ I would rather show a number than a claim, so this is what I ran.
 One thing I want to be straight about: while writing the SOCKS5 tests I had three failures in a row that turned out to be my test's byte indices, not my client. I wrote a standalone probe, printed what my client actually put on the wire, and compared it byte for byte. The client was right; my arithmetic in the test was wrong. I fixed the test and left the probe result in the test comments.
 
 Two more things went wrong in ways worth writing down. I had a check that passed on Linux and failed on the Windows runner with numbers that contradicted the failure line, so I printed the real values and the frame itself into the log. The cause was my own test helper being called `near`, which a Windows header defines as an empty macro, so every check whose expectation was zero quietly became a comma expression. It is renamed, and my naming audit now refuses that class of name in my tests. Then I built with address and undefined behaviour sanitizers and they caught a real bug in my JavaScript runtime: when a script threw, I collected garbage while the thrown value was still in the caller's hands, so the error message could read freed memory. I no longer collect on the way out of a throw.
+
+## What I am still not claiming about the tunnel
+
+- **No live Proton session.** I have no Proton code, no account and no endpoint of theirs here, so a working proxy I control is not a working VPN provider.
+- **No real certificate handshake was exercised.** My SChannel path compiles, links and reads correctly, but I cannot complete a handshake against a real host in this environment. The HTTPS-through-an-HTTPS-proxy page load on my own machine is the check that settles it.
+- **Revocation checking is requested, not proven.** A status I could not fetch is not a refusal, and I am not calling "nobody answered" a verification.
+- **One tunnel per hop.** A redirect opens a new tunnel rather than reusing one, so each hop pays for its own handshake.
 
 ## What I am not claiming
 
