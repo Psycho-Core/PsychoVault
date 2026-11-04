@@ -1030,6 +1030,20 @@ struct Browser {
       break;
     case 3: {
       note(vpn_summary());
+      // The proxy I tunnel through, and the rule that a failed tunnel is the end of
+      // the request rather than a quiet direct connection.
+      value_row("Server", profile.proxy.active() ? profile.proxy.single.authority() : "none",
+                "setting-vpn-server");
+      value_row("Scheme", profile.proxy.active() ? profile.proxy.single.scheme : "none",
+                "setting-vpn-scheme");
+      value_row("Username", profile.proxy.has_auth() ? profile.proxy.user : "none",
+                "setting-vpn-user");
+      value_row("Password", profile.proxy.has_auth() ? std::string(8, '*') : "none",
+                "setting-vpn-pass");
+      toggle("Refuse requests when the tunnel fails", profile.proxy.fail_closed,
+             "setting-vpn-fail-closed", "Nothing falls back to a direct socket.");
+      button("Turn my tunnel off", "setting-vpn-off");
+      note("My own SOCKS5 and HTTPS proxy transport carries this, not WinHTTP.");
       auto records = extensions.list();
       if (records.empty()) {
         note("I have no extensions installed.");
@@ -1118,6 +1132,51 @@ struct Browser {
     if (key == "homepage") {
       if (!profile.set_home_page(value)) status = "That is not a URL I can use as a home page";
       else status = "Home page saved";
+    } else if (key == "vpnServer") {
+      // I take host:port and never guess a scheme, because an HTTPS proxy and a
+      // SOCKS5 proxy behave differently and a wrong guess leaks.
+      auto colon = value.rfind(':');
+      if (value.empty()) {
+        profile.proxy = ProxyConfig::direct();
+        status = "My tunnel is off";
+      } else if (colon == std::string::npos) {
+        status = "A tunnel server needs host:port";
+      } else {
+        std::string host = value.substr(0, colon);
+        int port = std::atoi(value.c_str() + colon + 1);
+        if (host.empty() || port <= 0 || port > 65535) {
+          status = "That is not a host and port I can dial";
+        } else {
+          if (!profile.proxy.active())
+            profile.proxy = ProxyConfig();
+          profile.proxy.mode = ProxyConfig::Mode::FixedServers;
+          profile.proxy.single.host = host;
+          profile.proxy.single.port = port;
+          if (profile.proxy.single.scheme.empty())
+            profile.proxy.single.scheme = "socks5";
+          profile.proxy.fail_closed = true;
+          status = "Tunnel set to " + profile.proxy.single.scheme + " " + host + ":" +
+                   std::to_string(port);
+        }
+      }
+    } else if (key == "vpnScheme") {
+      const std::string wanted = lower(value);
+      for (auto candidate : {"socks5", "https", "http"}) {
+        if (wanted != candidate)
+          continue;
+        profile.proxy.single.scheme = candidate;
+        status = std::string("Tunnel scheme ") + candidate;
+        if (wanted == "socks5" || wanted == "https")
+          profile.proxy.fail_closed = true;
+      }
+      if (lower(value) != "socks5" && lower(value) != "https" && lower(value) != "http")
+        status = "My tunnel takes socks5, https or http";
+    } else if (key == "vpnUser") {
+      profile.proxy.user = value;
+      status = "Tunnel username saved";
+    } else if (key == "vpnPass") {
+      profile.proxy.password = value;
+      status = "Tunnel password saved";
     } else if (key == "customSearch") {
       if (!profile.set_custom_search(value)) status = "A custom search URL must contain %s";
       else { if (!value.empty()) profile.set_search_engine("custom"); status = "Custom search saved"; }
@@ -1371,6 +1430,27 @@ struct Browser {
           profile.strip_referrer = !profile.strip_referrer; save_profile();
         } else if (h.action == "setting-clear-exit") {
           profile.clear_on_exit = !profile.clear_on_exit; save_profile();
+        } else if (h.action == "setting-vpn-server") {
+          begin_setting_edit(
+              "vpnServer",
+              profile.proxy.active() ? profile.proxy.single.authority() : std::string());
+        } else if (h.action == "setting-vpn-scheme") {
+          begin_setting_edit("vpnScheme",
+                             profile.proxy.active() ? profile.proxy.single.scheme
+                                                    : std::string("socks5"));
+        } else if (h.action == "setting-vpn-user") {
+          begin_setting_edit("vpnUser", profile.proxy.user);
+        } else if (h.action == "setting-vpn-pass") {
+          begin_setting_edit("vpnPass", profile.proxy.password);
+        } else if (h.action == "setting-vpn-fail-closed") {
+          profile.proxy.fail_closed = !profile.proxy.fail_closed;
+          save_profile();
+          status = profile.proxy.fail_closed ? "A failed tunnel stops the request"
+                                             : "A failed tunnel may connect direct";
+        } else if (h.action == "setting-vpn-off") {
+          profile.proxy = ProxyConfig::direct();
+          save_profile();
+          status = "My tunnel is off";
         } else if (h.action == "setting-clear-history") {
           profile.clear_history(); save_profile(); status = "I cleared my browsing history";
         } else if (h.action == "setting-download-dir") {

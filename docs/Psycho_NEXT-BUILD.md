@@ -11,8 +11,8 @@ I am working through my browser one step at a time, in the order that gets me so
 | 3 | CSS and layout: positioning, flexbox, grid, transforms | Done, and this build fixes nine defects my own audit of it found |
 | 4 | Browsing fundamentals: cookies, local storage, forms, find in page, zoom | Done in this build: my own cookie jar, local and session storage with a quota, GET and POST forms, the history API, find in page and zoom |
 | 5 | More image formats and canvas | Done in this build: my own JPEG decoder, my own SVG renderer and a 2D drawing surface |
-| 6 | Media: audio, video and Media Source Extensions | Not started |
-| 7 | VPN transport, including the TLS-to-proxy path Proton needs | Not started |
+| 6 | Media: audio, video and Media Source Extensions | Done in this build: my own WAV and AVI readers, a player, a mixer, source buffers and blob URLs, with the containers I cannot decode named instead of faked |
+| 7 | VPN transport, including the TLS-to-proxy path Proton needs | Done in this build: my own sockets, SOCKS5, HTTP `CONNECT`, HTTP framing, SChannel TLS stacked over my own stream, fail-closed routing and a VPN panel |
 | 8 | Security: operating-system containment for page code, certificate policy, ad blocking | Not started |
 | 9 | Conformance measurement with Test262 and web-platform-tests subsets | Not started |
 | 10 | Published release and a verified updater cycle | Publishing on every build; the install and rollback half is not tested |
@@ -50,6 +50,35 @@ I am working through my browser one step at a time, in the order that gets me so
 - **Images on a page.** `img` and `canvas` take their intrinsic size, respect
   `width` and `height` and aspect ratio, decode through my own code and are
   painted by my own raster.
+
+## What this build adds over 0.9.0
+
+- **A media pipeline I wrote.** My own WAV reader, my own AVI reader for MJPEG
+  video with PCM audio, an MP4 box reader that reports what is inside it, a
+  player with seek, pause, rate, volume, mute and loop, and a mixer that sums
+  every element that is playing. The picture goes through my own JPEG decoder
+  and is scaled into the box my layout gave the element.
+- **Sound that leaves the machine.** My shell opens one WASAPI shared-mode
+  stream, 48 kHz stereo 16 bit with the device's own conversion, and asks the
+  page thread for exactly the frames it needs. When nothing plays it writes
+  silence rather than repeating old audio.
+- **Media Source Extensions.** A page can create a source buffer, append bytes in
+  pieces, read back the range it has, end the stream, and attach the whole thing
+  to an element through a blob URL. An element that was told to play before the
+  data existed starts once enough media arrives.
+- **My own VPN transport.** A socket layer, a SOCKS5 client that hands the
+  hostname to the proxy unresolved, an HTTP `CONNECT` request, and HTTP/1.1
+  framing that understands `Content-Length`, chunked bodies and a body that ends
+  when the connection does. A redirect reconnects inside the tunnel instead of
+  falling out to a direct request.
+- **TLS I can stack.** SChannel does the handshake and the certificate work, with
+  a chain built against the name I asked for, and it refuses an untrusted,
+  expired, revoked or wrong-name certificate and refuses renegotiation. Because
+  my TLS wraps a stream, TLS to the proxy and the origin's TLS inside it are the
+  same code path twice.
+- **A VPN panel.** Server, scheme, username, masked password, a fail-closed
+  toggle and an off switch, all saved with my settings. I type `host:port` in my
+  own address bar.
 
 ## What this build adds over 0.8.0
 
@@ -114,7 +143,7 @@ I want to be straight about one difference: my engine runs one statement at a ti
 
 ## Evidence required before I hand over a preview
 
-- The engine and page-host tests pass locally and on Windows. They now stand at 460 checks, including pattern matching, promise ordering, async/await and a `fetch` round trip through my page host.
+- The engine and page-host tests pass locally and on Windows. They now stand at 608 checks, including pattern matching, promise ordering, async/await, a `fetch` round trip through my page host, my media readers, and a tunnel driven over a real loopback socket.
 - The single-file gate passes on hosted Windows for the exact commit I publish.
 - A local HTTP test proves main-document, stylesheet, script and PNG loading through my page host.
 - The Windows artifact contains only my executables, notices and build metadata - no profile, credential or source-control directory.

@@ -1,4 +1,5 @@
 #include "Psycho_network.hpp"
+#include "Psycho_transport.hpp"
 #include <filesystem>
 #include <fstream>
 #ifdef _WIN32
@@ -157,6 +158,7 @@ struct ProxyAttempt {
   bool ok = false;
   std::string error;
   bool used_proxy = false;
+  ProxyServer server;
 };
 ProxyAttempt apply_proxy(HINTERNET session, const Url &url, const NetworkPolicy &policy) {
   ProxyAttempt attempt;
@@ -169,10 +171,11 @@ ProxyAttempt apply_proxy(HINTERNET session, const Url &url, const NetworkPolicy 
   }
   if (server.empty()) return {true, {}, false}; // bypassed or explicit DIRECT
   if (server.scheme != "http") {
-    // WinHTTP tunnels http proxies with CONNECT. It cannot open a TLS session to
-    // the proxy itself, nor speak SOCKS5. I refuse instead of leaking direct.
-    attempt.error = "I cannot tunnel through a " + server.scheme +
-                    " proxy yet; refusing the request rather than connecting directly";
+    // A SOCKS5 or HTTPS proxy never reaches WinHTTP: my own transport takes it
+    // before this point. Reaching here means the scheme is one I do not route, so I
+    // refuse instead of leaking direct.
+    attempt.error = "I have no transport for a " + server.scheme +
+                    " proxy; refusing the request rather than connecting directly";
     return attempt;
   }
   WINHTTP_PROXY_INFO info{};
@@ -192,14 +195,35 @@ ProxyAttempt apply_proxy(HINTERNET session, const Url &url, const NetworkPolicy 
   }
   attempt.ok = true;
   attempt.used_proxy = true;
+  attempt.server = server;
   return attempt;
 }
 
 double now_seconds() {
   return double(now_ms()) / 1000.0;
 }
+// Credentials for the proxy that was actually routed to. My own VPN panel records
+// them on the server they belong to, and an extension hands them over for the proxy it
+// named, so a login is never sent to a proxy it was not entered for.
+bool proxy_credentials(const NetworkPolicy &policy, const ProxyServer &routed,
+                       std::string &user, std::string &password) {
+  if (routed.empty())
+    return false;
+  if (policy.proxy.has_auth() && lower(policy.proxy.single.host) == lower(routed.host)) {
+    user = policy.proxy.user;
+    password = policy.proxy.password;
+    return true;
+  }
+  if (policy.has_proxy_auth && !policy.proxy_user.empty()) {
+    user = policy.proxy_user;
+    password = policy.proxy_pass;
+    return true;
+  }
+  return false;
+}
+
 std::wstring request_headers(const Url &url, const NetworkPolicy &policy,
-                            const RequestOptions &request) {
+                            const RequestOptions &request, const ProxyServer &routed) {
   std::wstring headers = L"Accept: */*\r\nAccept-Encoding: identity\r\n";
   headers += L"User-Agent: " + wide(policy.user_agent) + L"\r\n";
   if (!policy.accept_language.empty())
@@ -223,13 +247,47 @@ std::wstring request_headers(const Url &url, const NetworkPolicy &policy,
                L"\r\n";
     headers += L"Content-Length: " + std::to_wstring(request.body.size()) + L"\r\n";
   }
-  if (policy.has_proxy_auth && !policy.proxy_user.empty()) {
+  std::string login_user, login_password;
+  if (proxy_credentials(policy, routed, login_user, login_password)) {
     // I only ever send proxy credentials to the proxy, never to the origin.
-    auto raw = policy.proxy_user + ":" + policy.proxy_pass;
+    auto raw = login_user + ":" + login_password;
     Bytes bytes(raw.begin(), raw.end());
     headers += L"Proxy-Authorization: Basic " + wide(base64_encode(bytes)) + L"\r\n";
   }
   return headers;
+}
+} // namespace
+
+namespace {
+// When the resolved route is a proxy WinHTTP cannot tunnel through, I hand the
+// request to my own transport. That covers a SOCKS5 proxy and an HTTPS proxy, which
+// is what Proton's 4443 endpoint is, and it never falls back to a direct socket.
+bool tunnel_route(const Url &url, const NetworkPolicy &policy, ProxyServer &server,
+                  std::string &reason) {
+  if (!policy.proxy.active())
+    return false;
+  if (!policy.proxy.route(url, server, reason))
+    return true; // fail-closed: the caller reads the reason and sends nothing
+  if (server.empty())
+    return false; // bypassed, so a direct request is what policy asked for
+  return server.scheme == "socks5" || server.scheme == "https";
+}
+TunnelConfig tunnel_config(const NetworkPolicy &policy, const ProxyServer &server, const Url &url) {
+  TunnelConfig config;
+  config.proxy = server;
+  config.has_auth = proxy_credentials(policy, server, config.user, config.pass);
+  config.user_agent = policy.user_agent;
+  config.accept_language = policy.accept_language;
+  config.send_dnt = policy.send_dnt;
+  config.strip_referrer = policy.strip_referrer;
+  config.fail_closed = true;
+  if (policy.cookies) {
+    bool cross_site =
+        !policy.top_level_host.empty() && lower(policy.top_level_host) != lower(url.host);
+    config.cookie_header = policy.cookies->header_for(url, double(now_ms()) / 1000.0, cross_site,
+                                                     policy.block_third_party_cookies);
+  }
+  return config;
 }
 } // namespace
 
@@ -249,6 +307,20 @@ Resource fetch_url(const Url &initial, const NetworkPolicy &policy, const Reques
     out.ok = false;
     out.error = blocked;
     return out;
+  }
+  ProxyServer routed;
+  std::string route_reason;
+  if (tunnel_route(initial, policy, routed, route_reason)) {
+    if (routed.empty()) {
+      // Fail-closed: policy named no usable proxy for this URL, so I neither tunnel
+      // nor connect directly.
+      out.ok = false;
+      out.error = route_reason.empty() ? "fail-closed: no proxy is configured for that URL"
+                                       : route_reason;
+      return out;
+    }
+    return tunneled_fetch(initial, tunnel_config(policy, routed, initial), options.method,
+                          options.body, options.content_type, timeout_ms, max_bytes);
   }
   Url url = initial;
   HINTERNET session = WinHttpOpen(L"PsychoVault/0.2", WINHTTP_ACCESS_TYPE_NO_PROXY,
@@ -301,7 +373,7 @@ Resource fetch_url(const Url &initial, const NetworkPolicy &policy, const Reques
       out.error = "request failed";
       break;
     }
-    auto headers = request_headers(url, policy, options);
+    auto headers = request_headers(url, policy, options, proxy.server);
     BOOL sent = WinHttpSendRequest(request, headers.c_str(), DWORD(headers.size()),
                                    options.body.empty() ? WINHTTP_NO_REQUEST_DATA
                                                         : LPVOID(options.body.data()),
@@ -338,7 +410,8 @@ Resource fetch_url(const Url &initial, const NetworkPolicy &policy, const Reques
     }
     if (status == 407) {
       out.ok = false;
-      out.error = policy.has_proxy_auth
+      std::string login_user, login_password;
+      out.error = proxy_credentials(policy, proxy.server, login_user, login_password)
                       ? "the proxy rejected my credentials (HTTP 407)"
                       : "the proxy requires authentication (HTTP 407)";
       WinHttpCloseHandle(request);
@@ -480,7 +553,7 @@ DownloadOutcome download_to_file(const Url &initial, const std::string &destinat
       break;
     }
     // A download is a plain GET, so it carries the same cookies as a page load.
-    auto headers = request_headers(url, policy, RequestOptions{});
+    auto headers = request_headers(url, policy, RequestOptions{}, proxy.server);
     BOOL sent = WinHttpSendRequest(request, headers.c_str(), DWORD(headers.size()),
                                    WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
                 WinHttpReceiveResponse(request, nullptr);

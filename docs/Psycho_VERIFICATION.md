@@ -5,8 +5,9 @@ I separate what passed from what failed, what is blocked and what I have not run
 ## Passed locally
 
 - My GCC build of the engine, my page host and my test suite, and a full Clang/MinGW cross-build of the Windows browser executable.
-- My engine test suite: **460 checks passed**. This covers URL/JSON/UTF-8, DOM, CSS, my JavaScript interpreter, PNG decode, layout, proxy routing, PAC evaluation, extension permissions, download naming, profile persistence, my bundled VPN bridge, and my page host loading a page, fetching its subresources, decoding an image and reporting frames, my cookie jar, my web storage quota and a real form post.
-- My source-ownership and boundary audit: **207 passed, 0 failed**. This now includes the single-executable promise: no second executable, no resource compiler, no helper process.
+- My engine test suite: **608 checks passed**. This covers URL/JSON/UTF-8, DOM, CSS, my JavaScript interpreter, PNG and JPEG decode, layout, proxy routing, PAC evaluation, extension permissions, download naming, profile persistence, my bundled VPN bridge, my page host loading a page, fetching its subresources, decoding an image and reporting frames, my cookie jar, my web storage quota, a real form post, my WAV and AVI readers, my source buffers and the tunnel below.
+- My socket-level tunnel checks. A SOCKS5 proxy runs inside my own test on a loopback port. My client greets it, offers authentication, asks for a hostname that no one here can resolve, and the proxy is the side that receives that name. A page comes back through my own HTTP framing. A second run answers 302 on the first tunnel and opens a new tunnel for the redirected path, with `Host: redirect.test` on the second request. A third run with no proxy configured refuses with a `fail-closed` error instead of connecting.
+- My source-ownership and boundary audit: **219 passed, 0 failed**. This now includes the single-executable promise: no second executable, no resource compiler, no helper process.
 - My file-naming audit: **20 passed, 0 failed**.
 - My plan audit: **377 passed, 0 failed**.
 - Windows cross-compilation of every module with Clang/MinGW targeting `x86_64-windows-gnu`, including a full link of `PsychoVault.exe`, which catches MSVC-class errors before I spend a hosted build.
@@ -208,7 +209,7 @@ capital letters matches, and that a query that is not there returns nothing.
 ## Blocked or not implemented, and I do not claim otherwise
 
 - **Operating-system containment.** My pages render inside my browser process. I removed the separate contained renderer because it never started reliably, so this is a real security gap I have to close again later.
-- **YouTube and Netflix.** No media pipeline, no Media Source Extensions, no DRM. Netflix needs a licensed Widevine module, which can only ever be a separate extension.
+- **YouTube and Netflix.** I have my own media pipeline and my own Media Source Extensions. What I do not have is a decoder for the codecs those sites send: no H.264, no AAC, no VP8, VP9 or Opus, and no WebM. A page that offers an MP4 gets the codec name back. Netflix additionally needs a licensed Widevine module, which can only ever be a separate extension.
 - **Proton VPN.** Not bundled and not verified. My own VPN bridge is bundled instead and is clearly labelled as mine.
 - **TLS-to-proxy and SOCKS5.** I refuse these rather than leak a direct connection. Proton uses TLS-to-proxy, so this is a real gap.
 - Modern JavaScript beyond my step 2 work: no modules, no generators, no typed arrays, no object spread inside a literal, no `Symbol` identity beyond a string key, and no lookbehind or `\u{...}` in patterns.

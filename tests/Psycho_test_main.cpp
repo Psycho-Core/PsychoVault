@@ -4,6 +4,7 @@
 #include "../platform/Psycho_extension.hpp"
 #include "../platform/Psycho_download.hpp"
 #include "../platform/Psycho_host.hpp"
+#include "../platform/Psycho_transport.hpp"
 #include "Psycho_image_fixtures.hpp"
 #include "Psycho_media_fixtures.hpp"
 #include <cassert>
@@ -11,6 +12,7 @@
 #include <cmath>
 #include <filesystem>
 #include <iostream>
+#include <cstring>
 #include <thread>
 using namespace pv;
 static int passed = 0;
@@ -213,6 +215,180 @@ static Bytes make_mp4(const char *handler, const char *codec) {
   file.insert(file.end(), moov.begin(), moov.end());
   return file;
 }
+
+// A scripted stream for my protocol tests: I feed it the bytes a proxy would send
+// and read back exactly what my client wrote.
+class ScriptStream : public Stream {
+public:
+  Bytes script, written;
+  std::string failure;
+  bool write_all(const uint8_t *data, size_t size, std::string &) override {
+    written.insert(written.end(), data, data + size);
+    return true;
+  }
+  bool read_some(uint8_t *out, size_t capacity, size_t &got, std::string &error) override {
+    got = 0;
+    if (at >= script.size()) {
+      error = failure;
+      return false;
+    }
+    size_t take = std::min(capacity, script.size() - at);
+    std::memcpy(out, script.data() + at, take);
+    at += take;
+    got = take;
+    return true;
+  }
+  bool alive() const override {
+    return true;
+  }
+  std::string text() const {
+    return std::string(written.begin(), written.end());
+  }
+  size_t at = 0;
+};
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#define PSYCHO_CLOSESOCKET closesocket
+#else
+#define PSYCHO_CLOSESOCKET ::close
+#endif
+#ifndef _WIN32
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
+namespace {
+// A tiny SOCKS5 proxy that runs inside my own test on a loopback port. It answers
+// the handshake the way a real proxy does and then speaks HTTP over the tunnel, so
+// the whole path from my client through my own framing is exercised on a real socket.
+struct LoopbackProxy {
+  int listener = -1;
+  int port = 0;
+  std::string seen_host, failure;
+  std::vector<std::string> requests;
+  std::thread worker;
+  // Each entry is the body of one reply, and `statuses` holds the matching status
+  // lines, so I can serve a redirect and then the page behind it.
+  explicit LoopbackProxy(std::vector<std::pair<std::string, std::string>> replies) {
+    listener = int(socket(AF_INET, SOCK_STREAM, 0));
+    if (listener < 0) {
+      failure = "socket";
+      return;
+    }
+    int yes = 1;
+    setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char *>(&yes), sizeof yes);
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = 0;
+    if (bind(listener, reinterpret_cast<sockaddr *>(&address), sizeof address) != 0) {
+      failure = "bind";
+      return;
+    }
+    socklen_t size = sizeof address;
+    if (getsockname(listener, reinterpret_cast<sockaddr *>(&address), &size) != 0) {
+      failure = "getsockname";
+      return;
+    }
+    port = ntohs(address.sin_port);
+    if (listen(listener, 1) != 0) {
+      failure = "listen";
+      return;
+    }
+    worker = std::thread([this, replies] {
+      // A redirect hop gets its own tunnel, so I accept one connection per reply and
+      // run the handshake again each time.
+      for (const auto &reply : replies) {
+        int client = int(accept(listener, nullptr, nullptr));
+        if (client < 0) {
+          failure = "accept";
+          return;
+        }
+        auto read_exact = [&](uint8_t *out, size_t size) {
+          size_t done = 0;
+          while (done < size) {
+            int n = int(recv(client, reinterpret_cast<char *>(out + done), int(size - done), 0));
+            if (n <= 0)
+              return false;
+            done += size_t(n);
+          }
+          return true;
+        };
+        auto write_all = [&](const void *data, size_t size) {
+          return send(client, reinterpret_cast<const char *>(data), int(size), 0) == int(size);
+        };
+        uint8_t greeting[2] = {0, 0};
+        if (!read_exact(greeting, 2))
+          return;
+        std::vector<uint8_t> methods(static_cast<size_t>(greeting[1]), 0);
+        if (!greeting[1] || !read_exact(methods.data(), methods.size()))
+          return;
+        uint8_t chosen[2] = {5, 0};
+        if (!write_all(chosen, 2))
+          return;
+        uint8_t head[4] = {0, 0, 0, 0};
+        if (!read_exact(head, 4))
+          return;
+        if (head[3] == 3) {
+          uint8_t length = 0;
+          if (!read_exact(&length, 1))
+            return;
+          std::string name(size_t(length), '\0');
+          if (!read_exact(reinterpret_cast<uint8_t *>(name.data()), name.size()))
+            return;
+          seen_host = name;
+        } else if (head[3] == 1) {
+          uint8_t address[4] = {0, 0, 0, 0};
+          if (!read_exact(address, 4))
+            return;
+          char text[32] = {0};
+          std::snprintf(text, sizeof text, "%u.%u.%u.%u", address[0], address[1], address[2],
+                        address[3]);
+          seen_host = text;
+        } else {
+          return;
+        }
+        uint8_t port_bytes[2] = {0, 0};
+        if (!read_exact(port_bytes, 2))
+          return;
+        uint8_t connected[10] = {5, 0, 0, 1, 127, 0, 0, 1, 0, 80};
+        if (!write_all(connected, sizeof connected))
+          return;
+        // The tunnel is open, so I read one request and answer it.
+        std::string request;
+        char chunk[1024];
+        while (request.find("\r\n\r\n") == std::string::npos) {
+          int n = int(recv(client, chunk, sizeof chunk, 0));
+          if (n <= 0)
+            break;
+          request.append(chunk, size_t(n));
+        }
+        requests.push_back(request);
+        const auto &status = reply.first;
+        const auto &body = reply.second;
+        std::string text = "HTTP/1.1 " + status + "\r\nContent-Type: text/html\r\n";
+        if (status.rfind("30", 0) == 0)
+          text += "Location: /moved\r\nContent-Length: 0\r\n";
+        else
+          text += "Content-Length: " + std::to_string(body.size()) + "\r\n";
+        text += "Connection: close\r\n\r\n" + body;
+        write_all(text.data(), text.size());
+        shutdown(client, 2);
+        PSYCHO_CLOSESOCKET(client);
+      }
+    });
+  }
+  ~LoopbackProxy() {
+    if (worker.joinable())
+      worker.join();
+    if (listener >= 0)
+      PSYCHO_CLOSESOCKET(listener);
+  }
+};
+} // namespace
 
 int main() {
   CHECK(parse_url("https://example.com/a/../b?x=1#f")->href() == "https://example.com/b?x=1#f");
@@ -1046,6 +1222,191 @@ int main() {
     CHECK(title.find("|play") != std::string::npos);
     CHECK(title.find("buffered:25") != std::string::npos);
   }
+  // ---- step 7: my own tunnel through a proxy ----
+  {
+    // SOCKS5 without a password: my client offers method 0, then asks for a name
+    // as a name, so the lookup happens on the far side and not on my machine.
+    ScriptStream stream;
+    TunnelTarget target{"example.com", 443};
+    std::string error;
+    // The script is the two replies in order: the method choice, then success with
+    // a bound address. The two authentication methods my client offers are the
+    // bytes it writes before it asks for those.
+    stream.script = Bytes{5, 0, 5, 0, 0, 1, 127, 0, 0, 1, 0x1f, 0x90};
+    CHECK(socks5_connect(stream, target, "", "", false, error));
+    auto sent = stream.written;
+    CHECK(sent.size() == 3 + 7 + size_t(target.host.size()));
+    CHECK(sent[0] == 5 && sent[1] == 1 && sent[2] == 0);
+    CHECK(sent[3] == 5 && sent[4] == 1 && sent[5] == 0);
+    // Address type 3 is a domain name, which is the whole point of the tunnel.
+    CHECK(sent[6] == 3);
+    CHECK(sent[7] == uint8_t(target.host.size()));
+    CHECK(std::string(sent.begin() + 8, sent.begin() + 8 + std::ptrdiff_t(target.host.size())) ==
+          "example.com");
+    CHECK(sent[sent.size() - 2] == 0x01 && sent[sent.size() - 1] == 0xbb);
+  }
+  {
+    // SOCKS5 with a username and password, and a refusal mapped to words a person
+    // can read.
+    ScriptStream stream;
+    stream.script = Bytes{5, 2, 1, 0, 5, 0, 0, 1, 10, 0, 0, 7, 0, 80};
+    TunnelTarget target{"10.0.0.7", 80};
+    std::string error;
+    CHECK(socks5_connect(stream, target, "user", "pass", true, error));
+    auto text = stream.text();
+    CHECK(text.find("user") != std::string::npos);
+    // With a literal address I send the four bytes, not the text: the request
+    // begins at byte 13, right after the greeting and the credentials.
+    size_t request_at = 4 + 3 + 4 + 4;
+    CHECK(stream.written[request_at] == 5);
+    CHECK(stream.written[request_at + 3] == 1);
+    CHECK(stream.written[request_at + 4] == 10);
+  }
+  {
+    ScriptStream refused;
+    // Success on the method, then code 4: the proxy could not resolve the name.
+    refused.script = Bytes{5, 0, 5, 4, 0, 1, 0, 0, 0, 0, 0, 0};
+    std::string error;
+    CHECK(!socks5_connect(refused, TunnelTarget{"does-not-exist.test", 443}, "", "", false, error));
+    CHECK(error.find("resolve") != std::string::npos);
+    CHECK(error.find("did not ask") != std::string::npos);
+    ScriptStream auth_required;
+    auth_required.script = Bytes{5, 2};
+    error.clear();
+    CHECK(!socks5_connect(auth_required, TunnelTarget{"example.com", 443}, "", "", false, error));
+    CHECK(error.find("username and password") != std::string::npos);
+    ScriptStream no_method;
+    no_method.script = Bytes{5, 0xff};
+    error.clear();
+    CHECK(!socks5_connect(no_method, TunnelTarget{"example.com", 443}, "", "", false, error));
+    CHECK(error.find("authentication") != std::string::npos);
+  }
+  {
+    // CONNECT: the authority line, the proxy credentials, and a 200 that opens the
+    // tunnel versus a 407 that refuses it.
+    ScriptStream stream;
+    stream.script = Bytes{'H', 'T', 'T', 'P', '/', '1', '.', '1', ' ', '2', '0', '0', ' ', 'O',
+                          'K', '\r', '\n', '\r', '\n'};
+    std::string error;
+    CHECK(http_connect(stream, TunnelTarget{"secure.example", 443}, "alice", "secret", true, error));
+    auto text = stream.text();
+    CHECK(text.rfind("CONNECT secure.example:443 HTTP/1.1\r\n", 0) == 0);
+    CHECK(text.find("Proxy-Authorization: Basic ") != std::string::npos);
+    CHECK(text.find("\r\n\r\n") != std::string::npos);
+    ScriptStream denied;
+    denied.script = Bytes{'H', 'T', 'T', 'P', '/', '1', '.', '1', ' ', '4', '0', '7', ' ', 'X',
+                          '\r', '\n', '\r', '\n'};
+    error.clear();
+    CHECK(!http_connect(denied, TunnelTarget{"secure.example", 443}, "", "", false, error));
+    CHECK(error.find("407") != std::string::npos);
+  }
+  {
+    // My HTTP framing: a length, chunks, and a body that ends when the connection
+    // does. All three are the shapes a real server answers with.
+    ScriptStream fixed;
+    std::string reply = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n"
+                        "Content-Length: 11\r\n\r\nhello world";
+    fixed.script.assign(reply.begin(), reply.end());
+    HttpRequest request;
+    request.host = "example.com";
+    HttpRequest asked;
+    asked.host = "example.com";
+    asked.headers.emplace_back("Accept", "*/*");
+    HttpResponse response;
+    std::string error;
+    CHECK(http_exchange(fixed, asked, response, error));
+    CHECK(response.status == 200);
+    CHECK(response.body == "hello world");
+    // The request line my client wrote is the one the server sees.
+    CHECK(fixed.text().rfind("GET / HTTP/1.1\r\n", 0) == 0);
+    CHECK(fixed.text().find("Host: example.com") != std::string::npos);
+    ScriptStream chunked;
+    std::string chunks = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+                         "5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n";
+    chunked.script.assign(chunks.begin(), chunks.end());
+    response = HttpResponse();
+    CHECK(http_exchange(chunked, asked, response, error));
+    CHECK(response.body == "hello world");
+    ScriptStream until_close;
+    std::string closing = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nuntil the end";
+    until_close.script.assign(closing.begin(), closing.end());
+    response = HttpResponse();
+    CHECK(http_exchange(until_close, asked, response, error));
+    CHECK(response.body == "until the end");
+    // A head that never finishes is an error, not a silent empty page.
+    ScriptStream broken;
+    broken.script.assign({65, 66});
+    response = HttpResponse();
+    error.clear();
+    CHECK(!http_exchange(broken, asked, response, error));
+    CHECK(!error.empty());
+  }
+  {
+    // A redirect inside the tunnel stays inside the tunnel. The proxy answers 302 on
+    // the first request and the page on the second over the same connection, and the
+    // name still reaches the proxy rather than being resolved here.
+    LoopbackProxy proxy(std::vector<std::pair<std::string, std::string>>{
+        {"302 Found", ""}, {"200 OK", "moved page"}});
+    CHECK(proxy.failure.empty());
+    TunnelConfig config;
+    config.proxy.scheme = "socks5";
+    config.proxy.host = "127.0.0.1";
+    config.proxy.port = proxy.port;
+    config.user_agent = "PsychoVault-test";
+    Resource out = tunneled_fetch(*parse_url("http://redirect.test/start"), config, "GET", "", "",
+                                  5000, kMaxResourceBytes);
+    CHECK(out.ok);
+    CHECK(out.text == "moved page");
+    CHECK(out.url == "http://redirect.test/moved");
+    CHECK(proxy.requests.size() == 2);
+    if (proxy.requests.size() == 2) {
+      CHECK(proxy.requests[0].rfind("GET /start HTTP/1.1", 0) == 0);
+      CHECK(proxy.requests[1].rfind("GET /moved HTTP/1.1", 0) == 0);
+      // The Host line names the origin, not the proxy, so a virtual host still works.
+      CHECK(proxy.requests[1].find("Host: redirect.test") != std::string::npos);
+    }
+    CHECK(proxy.seen_host == "redirect.test");
+  }
+  {
+    // Fail-closed: a proxy that is not a server I can dial is an error, and an
+    // https address in a build with no TLS provider is refused by name.
+    TunnelConfig config;
+    config.proxy.host = "127.0.0.1";
+    config.proxy.port = 1;
+    config.proxy.scheme = "socks5";
+    Resource out = tunneled_fetch(*parse_url("https://example.com/"), config, "GET", "", "", 1000,
+                                  kMaxResourceBytes);
+    CHECK(!out.ok);
+    CHECK(out.status == 0);
+    CHECK(!out.error.empty());
+    TunnelConfig empty_config;
+    out = tunneled_fetch(*parse_url("https://example.com/"), empty_config, "GET", "", "", 1000,
+                         kMaxResourceBytes);
+    CHECK(!out.ok);
+    CHECK(out.error.rfind("fail-closed", 0) == 0);
+  }
+  {
+    // The whole tunnel over a real loopback socket: my client speaks SOCKS5 to a
+    // proxy, the proxy is handed a name rather than an address, and the page comes
+    // back through my own HTTP framing.
+    LoopbackProxy proxy(std::vector<std::pair<std::string, std::string>>{
+        {"200 OK", "tunnelled page"}});
+    CHECK(proxy.failure.empty());
+    CHECK(proxy.port > 0);
+    TunnelConfig config;
+    config.proxy.scheme = "socks5";
+    config.proxy.host = "127.0.0.1";
+    config.proxy.port = proxy.port;
+    config.user_agent = "PsychoVault-test";
+    Resource out = tunneled_fetch(*parse_url("http://example.test/page?q=1"), config, "GET", "",
+                                  "", 5000, kMaxResourceBytes);
+    CHECK(out.ok);
+    CHECK(out.status == 200);
+    CHECK(out.mime == "text/html");
+    CHECK(out.text == "tunnelled page");
+    // The name reached the proxy, so nothing resolved it on this machine.
+    CHECK(proxy.seen_host == "example.test");
+  }
   Canvas c(64, 64, 0xff000000);
   c.fill({0, 0, 64, 64}, 0xff112233);
   c.stroke({4, 4, 20, 20}, 0xffffffff);
@@ -1382,6 +1743,8 @@ int main() {
     profile.proxy.single = ProxyServer{"http", "127.0.0.1", 3128};
     profile.proxy.fail_closed = true;
     profile.proxy.owner_extension = "vpn-test";
+    profile.proxy.user = "tunnel-user";
+    profile.proxy.password = "tunnel-secret";
     CHECK(profile.save());
     Profile restored = Profile::open(path, false);
     CHECK(!restored.block_ads);
@@ -1399,6 +1762,9 @@ int main() {
     CHECK(restored.proxy.fail_closed);
     CHECK(restored.proxy.single.authority() == "127.0.0.1:3128");
     CHECK(restored.proxy.owner_extension == "vpn-test");
+    CHECK(restored.proxy.has_auth());
+    CHECK(restored.proxy.user == "tunnel-user");
+    CHECK(restored.proxy.password == "tunnel-secret");
     CHECK(profile.remove_user_word("PSYCHO"));
     CHECK(profile.user_words.empty());
     std::error_code ignored;
