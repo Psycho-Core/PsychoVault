@@ -1,6 +1,7 @@
 #include "Psycho_network.hpp"
 #include "Psycho_transport.hpp"
 #include <filesystem>
+#include <ctime>
 #include <fstream>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -39,14 +40,41 @@ bool policy_blocks(const NetworkPolicy &policy, const Url &url, std::string &rea
     reason = "I only fetch http and https URLs";
     return true;
   }
-  if (policy.block_ads) {
-    auto exception = host_matches_list(policy.allowed_hosts, url.host);
-    if (!exception.empty()) return false;
-    auto blocked = host_matches_list(policy.blocked_hosts, url.host);
-    if (!blocked.empty()) {
-      reason = "blocked by my ad blocker: " + blocked;
+  // My HTTPS policy comes first: a page served over TLS may not pull a subresource
+  // over plain HTTP, whatever any other setting says.
+  if (policy.https) {
+    Url page;
+    page.scheme = policy.top_level_scheme;
+    page.host = policy.top_level_host;
+    if (policy.top_level_scheme == "https" && url.scheme == "http" &&
+        policy.https->blocks_mixed_content(page, url)) {
+      ++policy.https->blocked_mixed;
+      reason = "refused a plain HTTP " + resource_type_name(policy.type) +
+               " inside an HTTPS page (" + url.host + ")";
       return true;
     }
+  }
+  if (!policy.block_ads) return false;
+  if (!host_matches_list(policy.allowed_hosts, url.host).empty()) return false;
+  if (policy.filters && policy.filter_counts) {
+    ++policy.filter_counts->evaluated;
+    if (const FilterRule *rule =
+            policy.filters->match(url, policy.type, policy.top_level_host)) {
+      if (rule->exception) {
+        ++policy.filter_counts->allowed_by_exception;
+        return false;
+      }
+      ++policy.filter_counts->blocked;
+      reason = "blocked by my filter: " + rule->source;
+      return true;
+    }
+  }
+  auto blocked = host_matches_list(policy.blocked_hosts, url.host);
+  if (!blocked.empty()) {
+    // The host list is the older, coarser mechanism, and it still applies.
+    if (policy.filter_counts) ++policy.filter_counts->blocked;
+    reason = "blocked by my ad blocker: " + blocked;
+    return true;
   }
   return false;
 }
@@ -176,6 +204,7 @@ bool tunnel_route(const Url &url, const NetworkPolicy &policy, ProxyServer &serv
 TunnelConfig tunnel_config(const NetworkPolicy &policy, const ProxyServer &server, const Url &url) {
   TunnelConfig config;
   config.proxy = server;
+  config.https = policy.https;
   config.has_auth = proxy_credentials(policy, server, config.user, config.pass);
   config.user_agent = policy.user_agent;
   config.accept_language = policy.accept_language;
@@ -191,6 +220,30 @@ TunnelConfig tunnel_config(const NetworkPolicy &policy, const ProxyServer &serve
   return config;
 }
 } // namespace
+
+// The checks every request goes through before a transport is even chosen: the
+// HTTPS upgrade a host asked for, the refusal to post a form body in clear text,
+// and the block decision itself. Both builds share this so a rule cannot be true in
+// one and missing in the other.
+bool prepare_request(const Url &initial, const NetworkPolicy &policy, const RequestOptions &options,
+                     Url &target, std::string &reason) {
+  target = initial;
+  if (policy.https && policy.https->should_upgrade(target)) {
+    target.scheme = "https";
+    ++policy.https->upgraded;
+  }
+  Url page;
+  page.scheme = "https";
+  page.host = policy.top_level_host;
+  page.valid = true;
+  if (policy.https && options.method == "POST" && policy.top_level_scheme == "https" &&
+      policy.https->blocks_insecure_submit(page, target)) {
+    ++policy.https->blocked_submit;
+    reason = "I will not send a form body from an HTTPS page to a plain HTTP address";
+    return false;
+  }
+  return !policy_blocks(policy, target, reason);
+}
 
 #ifdef _WIN32
 namespace {
@@ -304,6 +357,7 @@ bool routed_scheme_needs_tunnel(const ProxyServer &server) {
   return server.scheme == "socks5" || server.scheme == "https";
 }
 
+
 Resource fetch_url(const Url &initial, const NetworkPolicy &policy, int timeout_ms,
                    size_t max_bytes) {
   return fetch_url(initial, policy, RequestOptions{}, timeout_ms, max_bytes);
@@ -311,19 +365,22 @@ Resource fetch_url(const Url &initial, const NetworkPolicy &policy, int timeout_
 Resource fetch_url(const Url &initial, const NetworkPolicy &policy, const RequestOptions &options,
                    int timeout_ms, size_t max_bytes) {
   Resource out;
-  out.url = initial.href();
-  // Zero means I never got a response, which is what a fetch promise rejects
-  // on. A response with an error status still counts as a response.
-  out.status = 0;
+  Url url;
   std::string blocked;
-  if (policy_blocks(policy, initial, blocked)) {
+  if (!prepare_request(initial, policy, options, url, blocked)) {
+    out.url = initial.href();
     out.ok = false;
+    out.status = 0;
     out.error = blocked;
     return out;
   }
+  out.url = url.href();
+  // Zero means I never got a response, which is what a fetch promise rejects
+  // on. A response with an error status still counts as a response.
+  out.status = 0;
   ProxyServer routed;
   std::string route_reason;
-  if (tunnel_route(initial, policy, routed, route_reason)) {
+  if (tunnel_route(url, policy, routed, route_reason)) {
     if (routed.empty()) {
       // Fail-closed: policy named no usable proxy for this URL, so I neither tunnel
       // nor connect directly.
@@ -332,10 +389,10 @@ Resource fetch_url(const Url &initial, const NetworkPolicy &policy, const Reques
                                        : route_reason;
       return out;
     }
-    return tunneled_fetch(initial, tunnel_config(policy, routed, initial), options.method,
-                          options.body, options.content_type, timeout_ms, max_bytes);
+    Resource tunneled = tunneled_fetch(url, tunnel_config(policy, routed, url), options.method,
+                                       options.body, options.content_type, timeout_ms, max_bytes);
+    return tunneled;
   }
-  Url url = initial;
   HINTERNET session = WinHttpOpen(L"PsychoVault/0.2", WINHTTP_ACCESS_TYPE_NO_PROXY,
                                   WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
   if (!session) {
@@ -448,6 +505,16 @@ Resource fetch_url(const Url &initial, const NetworkPolicy &policy, const Reques
       WinHttpCloseHandle(request);
       WinHttpCloseHandle(connect);
       break;
+    }
+    // A Strict-Transport-Security header is only worth reading from an HTTPS answer,
+    // and this is the same rule the tunnel path applies.
+    if (policy.https && url.scheme == "https") {
+      wchar_t sts[512];
+      size = sizeof(sts);
+      if (WinHttpQueryHeaders(request, WINHTTP_QUERY_CUSTOM, L"Strict-Transport-Security", sts,
+                              &size, WINHTTP_NO_HEADER_INDEX))
+        policy.https->record_header(url.host, true, narrow(sts),
+                                    int64_t(std::time(nullptr)) * 1000);
     }
     wchar_t mime[256];
     size = sizeof(mime);
@@ -771,23 +838,26 @@ Resource fetch_url(const Url &url, const NetworkPolicy &policy, int, size_t) {
 Resource fetch_url(const Url &url, const NetworkPolicy &policy, const RequestOptions &options,
                    int timeout_ms, size_t max_bytes) {
   Resource r;
-  r.url = url.href();
-  r.status = 0;
+  Url target;
   std::string reason;
-  if (policy_blocks(policy, url, reason)) {
+  if (!prepare_request(url, policy, options, target, reason)) {
+    r.url = url.href();
     r.ok = false;
+    r.status = 0;
     r.error = reason;
     return r;
   }
+  r.url = target.href();
+  r.status = 0;
   ProxyServer routed;
-  if (tunnel_route(url, policy, routed, reason)) {
+  if (tunnel_route(target, policy, routed, reason)) {
     if (routed.empty()) {
       r.ok = false;
       r.error = reason.empty() ? "fail-closed: no proxy is configured for that URL" : reason;
       return r;
     }
-    return tunneled_fetch(url, tunnel_config(policy, routed, url), options.method, options.body,
-                          options.content_type, timeout_ms, max_bytes);
+    return tunneled_fetch(target, tunnel_config(policy, routed, target), options.method,
+                          options.body, options.content_type, timeout_ms, max_bytes);
   }
   r.ok = false;
   r.error = "this build has no direct network transport; point me at a proxy and I will tunnel";

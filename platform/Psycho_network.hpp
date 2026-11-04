@@ -2,6 +2,7 @@
 #include "../engine/Psycho_base.hpp"
 #include "../engine/Psycho_cookies.hpp"
 #include "Psycho_proxy.hpp"
+#include "../engine/Psycho_security.hpp"
 
 namespace pv {
 
@@ -17,6 +18,16 @@ struct NetworkPolicy {
   bool block_ads = false;
   std::vector<std::string> blocked_hosts;
   std::vector<std::string> allowed_hosts; // per-site shield exceptions
+  // My certificate and transport policy. It upgrades a host that asked for HTTPS,
+  // records the ones that ask, and refuses mixed content.
+  HttpsPolicy *https = nullptr;
+  // My filter list engine, and where its counters live so the panel can show what
+  // it is doing. A host list alone cannot express a path or a resource type.
+  const FilterList *filters = nullptr;
+  FilterCounters *filter_counts = nullptr;
+  // What this request is for, and whether the page that asked is itself secure.
+  ResourceType type = ResourceType::Document;
+  std::string top_level_scheme = "https";
   // Credentials a VPN extension supplied through webRequest.onAuthRequired.
   std::string proxy_user, proxy_pass;
   bool has_proxy_auth = false;

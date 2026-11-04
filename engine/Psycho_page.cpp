@@ -1520,7 +1520,7 @@ void Page::install_media() {
   });
   js_->global().properties["URL"] = url;
 }
-void Page::request(std::string input) {
+void Page::request(std::string input, ResourceType type) {
   auto u = resolve_url(doc.url, input);
   if (!u || !u->network())
     return;
@@ -1528,7 +1528,7 @@ void Page::request(std::string input) {
   if (requested_.count(href) || requested_.size() >= kMaxResources)
     return;
   requested_.insert(href);
-  requests.push_back(href);
+  requests.push_back({href, type});
 }
 void Page::resource(const Resource &res) {
   Resource stored = res;
@@ -1627,7 +1627,7 @@ void Page::run_scripts() {
           continue;
         auto it = resources_.find(u->href());
         if (it == resources_.end()) {
-          request(src);
+          request(src, ResourceType::Script);
           if (!has_attr(n, "async") && !has_attr(n, "defer"))
             return;
         } else if (it->second.ok)
@@ -1636,15 +1636,15 @@ void Page::run_scripts() {
           executed_.insert(n.id);
       }
     } else if (n.name == "link" && lower(n.attribute("rel")) == "stylesheet")
-      request(n.attribute("href"));
+      request(n.attribute("href"), ResourceType::Stylesheet);
     else if (n.name == "img")
-      request(n.attribute("src"));
+      request(n.attribute("src"), ResourceType::Image);
     else if (n.name == "video" || n.name == "audio") {
       if (!n.attribute("src").empty())
-        request(n.attribute("src"));
+        request(n.attribute("src"), ResourceType::Media);
       for (int c : n.children)
         if (doc.nodes[c].name == "source" && !doc.nodes[c].attribute("src").empty())
-          request(doc.nodes[c].attribute("src"));
+          request(doc.nodes[c].attribute("src"), ResourceType::Media);
     }
   }
   // Deferred scripts run after the blocking scripts have had their resources

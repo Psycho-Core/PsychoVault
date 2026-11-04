@@ -2,6 +2,7 @@
 // and my HTTP framing. Nothing here resolves a hostname locally when a proxy is
 // meant to do it, and nothing here quietly connects direct when a tunnel fails.
 #include "Psycho_transport.hpp"
+#include <ctime>
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -753,6 +754,14 @@ Resource tunneled_fetch(const Url &url, const TunnelConfig &config, const std::s
       out.ok = false;
       out.error = error;
       return out;
+    }
+    // I record a Strict-Transport-Security header only from an HTTPS answer, which
+    // is the only place it can be trusted.
+    if (config.https) {
+      for (const auto &entry : response.headers)
+        if (lower(entry.first) == "strict-transport-security")
+          config.https->record_header(current.host, current.scheme == "https", entry.second,
+                                      int64_t(std::time(nullptr)) * 1000);
     }
     out.status = response.status;
     out.mime = [&] {

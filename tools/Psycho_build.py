@@ -12,10 +12,12 @@ ENGINE=["engine/Psycho_base.cpp","engine/Psycho_dom.cpp","engine/Psycho_css.cpp"
         "engine/Psycho_js_runtime.cpp","engine/Psycho_raster.cpp","engine/Psycho_image.cpp",
         "engine/Psycho_layout.cpp","engine/Psycho_page.cpp","engine/Psycho_regex.cpp","engine/Psycho_cookies.cpp",
         "engine/Psycho_storage.cpp","engine/Psycho_jpeg.cpp","engine/Psycho_svg.cpp","engine/Psycho_canvas.cpp",
-        "engine/Psycho_media.cpp","engine/Psycho_mse.cpp","engine/Psycho_page_media.cpp"]
+        "engine/Psycho_media.cpp","engine/Psycho_mse.cpp","engine/Psycho_page_media.cpp",
+        "engine/Psycho_security.cpp"]
 PLATFORM=["platform/Psycho_host.cpp","platform/Psycho_network.cpp","platform/Psycho_profile.cpp",
           "platform/Psycho_proxy.cpp","platform/Psycho_extension.cpp","platform/Psycho_download.cpp",
-          "platform/Psycho_transport.cpp","platform/Psycho_tls.cpp"]
+          "platform/Psycho_transport.cpp","platform/Psycho_tls.cpp",
+          "platform/Psycho_sandbox.cpp"]
 def run(cmd,env=None):
     print("+",subprocess.list2cmdline([str(x) for x in cmd]),flush=True)
     subprocess.run([str(x) for x in cmd],cwd=ROOT,env=env,check=True)

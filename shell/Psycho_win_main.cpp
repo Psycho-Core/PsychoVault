@@ -341,7 +341,7 @@ void Session::run() {
   // My page host fetches through the same policy my downloads and tabs use, and
   // reports straight back to this thread.
   Host host(
-      [this](const std::string &link) {
+      [this](const std::string &link, ResourceType type) {
         auto parsed = parse_url(link);
         if (!parsed) {
           Resource resource;
@@ -350,6 +350,9 @@ void Session::run() {
           resource.error = "Invalid resource URL";
           return resource;
         }
+        // The kind of resource decides which filter rules apply and whether this is
+        // a mixed-content request, so it travels with the fetch.
+        policy.type = type;
         return fetch_url(*parsed, policy);
       },
       [this](HostEvent event) { deliver(std::move(event)); });

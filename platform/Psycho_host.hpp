@@ -25,7 +25,9 @@ class Host {
 public:
   // I hand every URL to this and get a Resource back. It is called on whichever
   // thread drives the host, so it may block.
-  using Fetcher = std::function<Resource(const std::string &url)>;
+  // Every request carries what kind of thing it is, because my filter rules and my
+  // mixed-content rule both need to know.
+  using Fetcher = std::function<Resource(const std::string &url, ResourceType type)>;
   // I send a form body through my own network stack, never through a shortcut.
   using Poster = std::function<Resource(const std::string &url, const std::string &body,
                                         const std::string &content_type)>;
@@ -62,7 +64,7 @@ public:
   double scroll_position() const { return scroll_; }
 
 private:
-  Resource fetch(const std::string &url) const;
+  Resource fetch(const std::string &url, ResourceType type) const;
   void settle();
   void emit();
   void send_post();

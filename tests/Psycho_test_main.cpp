@@ -710,7 +710,7 @@ int main() {
   {
     std::vector<HostEvent> events;
     Host host(
-        [](const std::string &url) {
+        [](const std::string &url, ResourceType) {
           Resource r;
           r.url = url;
           if (url == "https://local.test/") {
@@ -1157,7 +1157,7 @@ int main() {
     Bytes avi = make_avi();
     std::vector<HostEvent> events;
     Host host(
-        [&](const std::string &url) {
+        [&](const std::string &url, ResourceType) {
           Resource r;
           r.url = url;
           if (url == "https://media.test/") {
@@ -1232,7 +1232,7 @@ int main() {
     Bytes wav = make_wav(8000, 2000, 9000);
     std::vector<HostEvent> events;
     Host host(
-        [&](const std::string &url) {
+        [&](const std::string &url, ResourceType) {
           Resource r;
           r.url = url;
           if (url == "https://mse.test/segment.wav") {
@@ -2259,7 +2259,7 @@ int main() {
   {
     std::map<std::string, int> fetches;
     std::vector<HostEvent> events;
-    Host::Fetcher fetcher = [&](const std::string &url) {
+    Host::Fetcher fetcher = [&](const std::string &url, ResourceType) {
       ++fetches[url];
       Resource r;
       r.url = url;
@@ -2327,7 +2327,7 @@ int main() {
   {
     std::vector<HostEvent> events;
     Host host(
-        [](const std::string &url) {
+        [](const std::string &url, ResourceType) {
           Resource r;
           r.url = url;
           r.mime = "text/html";
@@ -2361,7 +2361,7 @@ int main() {
   {
     std::vector<HostEvent> events;
     Host host(
-        [](const std::string &url) {
+        [](const std::string &url, ResourceType) {
           Resource r;
           r.url = url;
           r.mime = "text/html";
@@ -2385,7 +2385,7 @@ int main() {
   {
     std::vector<HostEvent> events;
     Host host(
-        [](const std::string &url) {
+        [](const std::string &url, ResourceType) {
           Resource r;
           r.url = url;
           r.mime = "text/html";
@@ -2408,7 +2408,7 @@ int main() {
   {
     bool reported = false;
     Host host(
-        [](const std::string &url) {
+        [](const std::string &url, ResourceType) {
           Resource r;
           r.url = url;
           r.ok = false;
@@ -2427,7 +2427,7 @@ int main() {
   {
     std::vector<HostEvent> events;
     Host host(
-        [](const std::string &url) -> Resource {
+        [](const std::string &url, ResourceType) -> Resource {
           if (url == "https://example.test/") {
             Resource r;
             r.url = url;
