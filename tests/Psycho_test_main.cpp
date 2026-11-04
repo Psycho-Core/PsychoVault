@@ -4,10 +4,16 @@
 #include "../platform/Psycho_extension.hpp"
 #include "../platform/Psycho_download.hpp"
 #include "../platform/Psycho_host.hpp"
+#include "../platform/Psycho_transport.hpp"
 #include "Psycho_image_fixtures.hpp"
-#include <filesystem>
+#include "Psycho_media_fixtures.hpp"
 #include <cassert>
+#include <chrono>
+#include <cmath>
+#include <filesystem>
 #include <iostream>
+#include <cstring>
+#include <thread>
 using namespace pv;
 static int passed = 0;
 #define CHECK(x)                                                                                   \
@@ -48,13 +54,362 @@ static Rect node_box(Page &page, const char *id, bool *fixed = nullptr) {
                 painted_box->num("h")};
   return Rect{0, 0, -1, -1};
 }
-static bool near(double a, double b) {
+// Not `near`: Windows headers define that as an empty macro, which turns
+// near(x, 0) into the comma expression (x, 0) and fails only when the
+// expectation is zero. That cost me a hosted build to find.
+static bool close_to(double a, double b) {
   return std::abs(a - b) < 1.0;
 }
 static std::string js_eval(const std::string &s) {
   js::Runtime r;
   return r.run(s).to_string();
 }
+// ---- media fixtures I build by hand, so the tests exercise real parsing ----
+static Bytes make_wav(int rate, int count, double amplitude) {
+  Bytes w;
+  auto le16 = [&](uint16_t v) {
+    w.push_back(uint8_t(v & 0xff));
+    w.push_back(uint8_t((v >> 8) & 0xff));
+  };
+  auto le32 = [&](uint32_t v) {
+    for (int i = 0; i < 4; ++i)
+      w.push_back(uint8_t((v >> (8 * i)) & 0xff));
+  };
+  auto tag = [&](const char *t) {
+    for (int i = 0; i < 4; ++i)
+      w.push_back(uint8_t(t[i]));
+  };
+  tag("RIFF");
+  le32(uint32_t(36 + count * 2));
+  tag("WAVE");
+  tag("fmt ");
+  le32(16);
+  le16(1);
+  le16(1);
+  le32(uint32_t(rate));
+  le32(uint32_t(rate * 2));
+  le16(2);
+  le16(16);
+  tag("data");
+  le32(uint32_t(count * 2));
+  for (int i = 0; i < count; ++i)
+    le16(uint16_t(int16_t(std::sin(double(i) * 0.05) * amplitude)));
+  return w;
+}
+// A two frame MJPEG AVI at four frames a second, so the second frame starts at a
+// quarter of a second and a seek to 0.3 lands on it.
+static Bytes make_avi() {
+  auto tag = [](Bytes &o, const char *t) {
+    for (int i = 0; i < 4; ++i)
+      o.push_back(uint8_t(t[i]));
+  };
+  auto le16 = [](Bytes &o, uint16_t v) {
+    o.push_back(uint8_t(v & 0xff));
+    o.push_back(uint8_t((v >> 8) & 0xff));
+  };
+  auto le32 = [](Bytes &o, uint32_t v) {
+    for (int i = 0; i < 4; ++i)
+      o.push_back(uint8_t((v >> (8 * i)) & 0xff));
+  };
+  auto put_le32 = [](Bytes &o, size_t at, uint32_t v) {
+    for (int i = 0; i < 4; ++i)
+      o[at + size_t(i)] = uint8_t((v >> (8 * i)) & 0xff);
+  };
+  auto chunk = [&](Bytes &o, const char *t, const Bytes &body) {
+    tag(o, t);
+    le32(o, uint32_t(body.size()));
+    o.insert(o.end(), body.begin(), body.end());
+    if (body.size() & 1)
+      o.push_back(0);
+  };
+  Bytes strh;
+  tag(strh, "vids");
+  strh.resize(56, 0);
+  Bytes strf;
+  le32(strf, 40);
+  le32(strf, 32);
+  le32(strf, 16);
+  le16(strf, 1);
+  le16(strf, 24);
+  tag(strf, "MJPG");
+  strf.resize(40, 0);
+  Bytes avih(56, 0);
+  put_le32(avih, 0, 250000);
+  put_le32(avih, 16, 2);
+  put_le32(avih, 32, 32);
+  put_le32(avih, 36, 16);
+  Bytes strl;
+  tag(strl, "strl");
+  chunk(strl, "strh", strh);
+  chunk(strl, "strf", strf);
+  Bytes hdrl;
+  tag(hdrl, "hdrl");
+  chunk(hdrl, "avih", avih);
+  tag(hdrl, "LIST");
+  le32(hdrl, uint32_t(strl.size()));
+  hdrl.insert(hdrl.end(), strl.begin(), strl.end());
+  Bytes red(fixtures::frame_red.begin(), fixtures::frame_red.end());
+  Bytes green(fixtures::frame_green.begin(), fixtures::frame_green.end());
+  Bytes movi;
+  tag(movi, "movi");
+  chunk(movi, "00dc", red);
+  chunk(movi, "00dc", green);
+  Bytes avi;
+  tag(avi, "RIFF");
+  le32(avi, uint32_t(4 + hdrl.size() + 8 + movi.size()));
+  tag(avi, "AVI ");
+  tag(avi, "LIST");
+  le32(avi, uint32_t(hdrl.size()));
+  avi.insert(avi.end(), hdrl.begin(), hdrl.end());
+  tag(avi, "LIST");
+  le32(avi, uint32_t(movi.size()));
+  avi.insert(avi.end(), movi.begin(), movi.end());
+  return avi;
+}
+// An MP4 with one track of the codec I ask for. Every size is big-endian, which is
+// what a real file uses.
+static Bytes make_mp4(const char *handler, const char *codec) {
+  auto tag = [](Bytes &o, const char *t) {
+    for (int i = 0; i < 4; ++i)
+      o.push_back(uint8_t(t[i]));
+  };
+  auto be32 = [](Bytes &o, uint32_t v) {
+    for (int i = 0; i < 4; ++i)
+      o.push_back(uint8_t((v >> (8 * (3 - i))) & 0xff));
+  };
+  auto be32_at = [](Bytes &o, size_t at, uint32_t v) {
+    for (int i = 0; i < 4; ++i)
+      o[at + size_t(i)] = uint8_t((v >> (8 * (3 - i))) & 0xff);
+  };
+  auto box = [&](Bytes &o, const char *t, const Bytes &payload) {
+    be32(o, uint32_t(payload.size() + 8));
+    tag(o, t);
+    o.insert(o.end(), payload.begin(), payload.end());
+  };
+  Bytes ftyp;
+  tag(ftyp, "isom");
+  be32(ftyp, 0x200);
+  tag(ftyp, "isom");
+  tag(ftyp, "mp41");
+  Bytes mvhd(100, 0);
+  be32_at(mvhd, 12, 1000);
+  be32_at(mvhd, 16, 2500);
+  Bytes tkhd(84, 0);
+  be32_at(tkhd, 76, 32u << 16);
+  be32_at(tkhd, 80, 16u << 16);
+  Bytes hdlr(24, 0);
+  for (int i = 0; i < 4; ++i)
+    hdlr[8 + size_t(i)] = uint8_t(handler[i]);
+  Bytes stsd(16, 0);
+  for (int i = 0; i < 4; ++i)
+    stsd[12 + size_t(i)] = uint8_t(codec[i]);
+  Bytes stbl, minf, mdia, trak, body, moov;
+  box(stbl, "stsd", stsd);
+  box(minf, "stbl", stbl);
+  box(mdia, "hdlr", hdlr);
+  box(mdia, "minf", minf);
+  box(trak, "mdia", mdia);
+  box(trak, "tkhd", tkhd);
+  box(body, "mvhd", mvhd);
+  box(body, "trak", trak);
+  box(moov, "moov", body);
+  Bytes file;
+  box(file, "ftyp", ftyp);
+  file.insert(file.end(), moov.begin(), moov.end());
+  return file;
+}
+
+// A scripted stream for my protocol tests: I feed it the bytes a proxy would send
+// and read back exactly what my client wrote.
+class ScriptStream : public Stream {
+public:
+  Bytes script, written;
+  std::string failure;
+  bool write_all(const uint8_t *data, size_t size, std::string &) override {
+    written.insert(written.end(), data, data + size);
+    return true;
+  }
+  bool read_some(uint8_t *out, size_t capacity, size_t &got, std::string &error) override {
+    got = 0;
+    if (at >= script.size()) {
+      error = failure;
+      return false;
+    }
+    size_t take = std::min(capacity, script.size() - at);
+    std::memcpy(out, script.data() + at, take);
+    at += take;
+    got = take;
+    return true;
+  }
+  bool alive() const override {
+    return true;
+  }
+  std::string text() const {
+    return std::string(written.begin(), written.end());
+  }
+  size_t at = 0;
+};
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#define PSYCHO_CLOSESOCKET closesocket
+#else
+#define PSYCHO_CLOSESOCKET ::close
+#endif
+#ifndef _WIN32
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
+namespace {
+// Winsock needs starting before the first socket call, and my proxy opens its
+// listening socket before my client has spoken to anything.
+bool test_sockets_ready() {
+#ifdef _WIN32
+  static bool once = [] {
+    WSADATA data{};
+    return WSAStartup(MAKEWORD(2, 2), &data) == 0;
+  }();
+  return once;
+#else
+  return true;
+#endif
+}
+// A tiny SOCKS5 proxy that runs inside my own test on a loopback port. It answers
+// the handshake the way a real proxy does and then speaks HTTP over the tunnel, so
+// the whole path from my client through my own framing is exercised on a real socket.
+struct LoopbackProxy {
+  int listener = -1;
+  int port = 0;
+  std::string seen_host, failure;
+  std::vector<std::string> requests;
+  std::thread worker;
+  // Each entry is the body of one reply, and `statuses` holds the matching status
+  // lines, so I can serve a redirect and then the page behind it.
+  explicit LoopbackProxy(std::vector<std::pair<std::string, std::string>> replies) {
+    if (!test_sockets_ready()) {
+      failure = "winsock";
+      return;
+    }
+    listener = int(socket(AF_INET, SOCK_STREAM, 0));
+    if (listener < 0) {
+      failure = "socket";
+      return;
+    }
+    int yes = 1;
+    setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char *>(&yes), sizeof yes);
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = 0;
+    if (bind(listener, reinterpret_cast<sockaddr *>(&address), sizeof address) != 0) {
+      failure = "bind";
+      return;
+    }
+    socklen_t size = sizeof address;
+    if (getsockname(listener, reinterpret_cast<sockaddr *>(&address), &size) != 0) {
+      failure = "getsockname";
+      return;
+    }
+    port = ntohs(address.sin_port);
+    if (listen(listener, 1) != 0) {
+      failure = "listen";
+      return;
+    }
+    worker = std::thread([this, replies] {
+      // A redirect hop gets its own tunnel, so I accept one connection per reply and
+      // run the handshake again each time.
+      for (const auto &reply : replies) {
+        int client = int(accept(listener, nullptr, nullptr));
+        if (client < 0) {
+          failure = "accept";
+          return;
+        }
+        auto read_exact = [&](uint8_t *out, size_t size) {
+          size_t done = 0;
+          while (done < size) {
+            int n = int(recv(client, reinterpret_cast<char *>(out + done), int(size - done), 0));
+            if (n <= 0)
+              return false;
+            done += size_t(n);
+          }
+          return true;
+        };
+        auto write_all = [&](const void *data, size_t size) {
+          return send(client, reinterpret_cast<const char *>(data), int(size), 0) == int(size);
+        };
+        uint8_t greeting[2] = {0, 0};
+        if (!read_exact(greeting, 2))
+          return;
+        std::vector<uint8_t> methods(static_cast<size_t>(greeting[1]), 0);
+        if (!greeting[1] || !read_exact(methods.data(), methods.size()))
+          return;
+        uint8_t chosen[2] = {5, 0};
+        if (!write_all(chosen, 2))
+          return;
+        uint8_t head[4] = {0, 0, 0, 0};
+        if (!read_exact(head, 4))
+          return;
+        if (head[3] == 3) {
+          uint8_t length = 0;
+          if (!read_exact(&length, 1))
+            return;
+          std::string name(size_t(length), '\0');
+          if (!read_exact(reinterpret_cast<uint8_t *>(name.data()), name.size()))
+            return;
+          seen_host = name;
+        } else if (head[3] == 1) {
+          uint8_t address[4] = {0, 0, 0, 0};
+          if (!read_exact(address, 4))
+            return;
+          char text[32] = {0};
+          std::snprintf(text, sizeof text, "%u.%u.%u.%u", address[0], address[1], address[2],
+                        address[3]);
+          seen_host = text;
+        } else {
+          return;
+        }
+        uint8_t port_bytes[2] = {0, 0};
+        if (!read_exact(port_bytes, 2))
+          return;
+        uint8_t connected[10] = {5, 0, 0, 1, 127, 0, 0, 1, 0, 80};
+        if (!write_all(connected, sizeof connected))
+          return;
+        // The tunnel is open, so I read one request and answer it.
+        std::string request;
+        char chunk[1024];
+        while (request.find("\r\n\r\n") == std::string::npos) {
+          int n = int(recv(client, chunk, sizeof chunk, 0));
+          if (n <= 0)
+            break;
+          request.append(chunk, size_t(n));
+        }
+        requests.push_back(request);
+        const auto &status = reply.first;
+        const auto &body = reply.second;
+        std::string text = "HTTP/1.1 " + status + "\r\nContent-Type: text/html\r\n";
+        if (status.rfind("30", 0) == 0)
+          text += "Location: /moved\r\nContent-Length: 0\r\n";
+        else
+          text += "Content-Length: " + std::to_string(body.size()) + "\r\n";
+        text += "Connection: close\r\n\r\n" + body;
+        write_all(text.data(), text.size());
+        shutdown(client, 2);
+        PSYCHO_CLOSESOCKET(client);
+      }
+    });
+  }
+  ~LoopbackProxy() {
+    if (worker.joinable())
+      worker.join();
+    if (listener >= 0)
+      PSYCHO_CLOSESOCKET(listener);
+  }
+};
+} // namespace
+
 int main() {
   CHECK(parse_url("https://example.com/a/../b?x=1#f")->href() == "https://example.com/b?x=1#f");
   CHECK(parse_url("http://example.com:80/")->href() == "http://example.com/");
@@ -160,7 +515,7 @@ int main() {
               "#a{position:absolute;top:10px;left:20px;width:50px;height:30px}"
               "</style><div id=p><div id=a>x</div></div>");
     Rect a = node_box(page, "a");
-    CHECK(near(a.x, 30) && near(a.y, 20) && near(a.w, 50) && near(a.h, 30));
+    CHECK(close_to(a.x, 30) && close_to(a.y, 20) && close_to(a.w, 50) && close_to(a.h, 30));
   }
   {
     Page page;
@@ -169,7 +524,7 @@ int main() {
               "#r{position:relative;top:5px;left:7px;width:100px;height:20px}"
               "</style><div id=r>rel</div>");
     Rect r = node_box(page, "r");
-    CHECK(near(r.x, 7) && near(r.y, 5));
+    CHECK(close_to(r.x, 7) && close_to(r.y, 5));
   }
   {
     Page page;
@@ -179,7 +534,14 @@ int main() {
               "</style><div id=f>fixed</div>");
     bool fixed = false;
     Rect f = node_box(page, "f", &fixed);
-    CHECK(near(f.x, 0) && near(f.y, 0) && fixed);
+    if (!(close_to(f.x, 0) && close_to(f.y, 0) && fixed)) {
+      // When this fails I want the frame itself in the log, not just a false.
+      std::cerr << "fixed-diag node=" << page.doc.by_id("f") << " x=" << f.x << " y=" << f.y
+                << " w=" << f.w << " h=" << f.h << " fixed=" << fixed << "\n";
+      auto again = page.render(800, 600, 0);
+      std::cerr << "fixed-frame " << again.dump().substr(0, 4000) << "\n";
+    }
+    CHECK(close_to(f.x, 0) && close_to(f.y, 0) && fixed);
   }
   {
     Page page;
@@ -189,7 +551,7 @@ int main() {
               "#a,#b{width:50px;height:20px}"
               "</style><div id=f><div id=a>a</div><div id=b>b</div></div>");
     Rect a = node_box(page, "a"), b = node_box(page, "b");
-    CHECK(near(a.x, 100) && near(b.x, 150));
+    CHECK(close_to(a.x, 100) && close_to(b.x, 150));
   }
   {
     Page page;
@@ -199,7 +561,7 @@ int main() {
               "#a{flex:1;height:20px}#b{flex:2;height:20px}"
               "</style><div id=f><div id=a>a</div><div id=b>b</div></div>");
     Rect a = node_box(page, "a"), b = node_box(page, "b");
-    CHECK(near(a.w, 100) && near(b.w, 200));
+    CHECK(close_to(a.w, 100) && close_to(b.w, 200));
   }
   {
     Page page;
@@ -209,7 +571,7 @@ int main() {
               "#a{width:40px;height:20px}"
               "</style><div id=f><div id=a>a</div></div>");
     Rect a = node_box(page, "a");
-    CHECK(near(a.y, 40));
+    CHECK(close_to(a.y, 40));
   }
   {
     // A flex row in normal flow starts below what came before it and takes the
@@ -226,10 +588,10 @@ int main() {
               "<div id=after>after</div>");
     Rect first = node_box(page, "first"), a = node_box(page, "a"), b = node_box(page, "b");
     Rect f = node_box(page, "f"), after = node_box(page, "after");
-    CHECK(near(first.y, 20) && near(first.h, 20));
-    CHECK(near(a.y, 60) && near(b.y, 60));
-    CHECK(near(f.y, 60) && near(f.h, 50));
-    CHECK(near(after.y, 110));
+    CHECK(close_to(first.y, 20) && close_to(first.h, 20));
+    CHECK(close_to(a.y, 60) && close_to(b.y, 60));
+    CHECK(close_to(f.y, 60) && close_to(f.h, 50));
+    CHECK(close_to(after.y, 110));
   }
   {
     Page page;
@@ -239,7 +601,7 @@ int main() {
               "#a{height:20px}#b{height:30px}"
               "</style><div id=f><div id=a>a</div><div id=b>b</div></div>");
     Rect a = node_box(page, "a"), b = node_box(page, "b");
-    CHECK(near(a.y, 0) && near(b.y, 30));
+    CHECK(close_to(a.y, 0) && close_to(b.y, 30));
   }
   {
     Page page;
@@ -249,7 +611,7 @@ int main() {
               "#a,#b{height:20px}"
               "</style><div id=g><div id=a>a</div><div id=b>b</div></div>");
     Rect a = node_box(page, "a"), b = node_box(page, "b");
-    CHECK(near(a.w, 100) && near(b.x, 110) && near(b.w, 200));
+    CHECK(close_to(a.w, 100) && close_to(b.x, 110) && close_to(b.w, 200));
   }
   {
     Page page;
@@ -258,7 +620,7 @@ int main() {
               "#t{transform:translate(15px,25px);width:100px;height:20px}"
               "</style><div id=t>t</div>");
     Rect t = node_box(page, "t");
-    CHECK(near(t.x, 15) && near(t.y, 25));
+    CHECK(close_to(t.x, 15) && close_to(t.y, 25));
   }
   // fetch() goes through my own network hook and resolves through promises.
   {
@@ -487,7 +849,7 @@ int main() {
               "#abs{position:absolute;top:0;left:0;width:40px;height:30px}"
               "</style><div id=rel><div id=abs></div></div>");
     Rect abs = node_box(page, "abs");
-    CHECK(near(abs.x, 15) && near(abs.y, 15));
+    CHECK(close_to(abs.x, 15) && close_to(abs.y, 15));
   }
   {
     // Max-Age wins over Expires whatever order a server writes them in.
@@ -537,9 +899,9 @@ int main() {
     if (hits.size() == 2) {
       // "hello" starts in the first run and ends two characters into the second,
       // so the highlight covers 20px plus two ninths of the 60px run.
-      CHECK(near(hits[0].x, 0) && near(hits[0].y, 0));
+      CHECK(close_to(hits[0].x, 0) && close_to(hits[0].y, 0));
       CHECK(hits[0].w > 30 && hits[0].w < 40);
-      CHECK(near(hits[1].y, 20) && hits[1].x > 50 && hits[1].x < 60);
+      CHECK(close_to(hits[1].y, 20) && hits[1].x > 50 && hits[1].x < 60);
     }
     CHECK(find_in_paint(paint, "HELLO").size() == 2);
     CHECK(find_in_paint(paint, "nothing").empty());
@@ -611,6 +973,470 @@ int main() {
       CHECK(std::get<2>(edge) > 150);
       CHECK(std::get<3>(corner) == 0);
     }
+  }
+  // ---- audio and video: my own containers, player and media sources ----
+  {
+    Bytes wav = make_wav(8000, 2000, 8000);
+    MediaInfo info;
+    std::string error;
+    CHECK(probe_media(wav, info, error));
+    CHECK(info.container == "WAV");
+    CHECK(info.has_audio && !info.has_video);
+    CHECK(close_to(info.duration * 100, 25.0));
+    CHECK(close_to(info.sample_rate, 8000));
+    CHECK(media_type_supported("audio/wav"));
+    CHECK(media_type_supported("video/x-msvideo"));
+    CHECK(!media_type_supported("video/webm"));
+
+    MediaPlayer player;
+    CHECK(player.load(wav, "audio/wav", error));
+    CHECK(player.ready() && player.paused());
+    CHECK(close_to(player.duration() * 100, 25.0));
+    player.play(100.0);
+    player.advance(100.1);
+    CHECK(!player.paused());
+    CHECK(close_to(player.current_time() * 10, 1.0));
+    // I ask for a device rate that is not the file rate, so the resampler runs.
+    std::vector<int16_t> mixed(480 * 2, 0);
+    CHECK(player.pull_audio(mixed.data(), 480, 48000) == 480);
+    bool any = false;
+    for (int16_t sample : mixed)
+      if (sample != 0)
+        any = true;
+    CHECK(any);
+    player.seek(0.2, 102.0);
+    CHECK(close_to(player.current_time() * 10, 2.0));
+    // Loop wraps at the end instead of stopping.
+    player.set_loop(true);
+    player.play(103.0);
+    player.advance(200.0);
+    CHECK(!player.ended());
+    CHECK(player.current_time() < 0.05);
+    // Muting stops the samples themselves, not just a label.
+    player.set_muted(true);
+    std::vector<int16_t> silent(64 * 2, 0);
+    CHECK(player.pull_audio(silent.data(), 64, 48000) == 0);
+  }
+  {
+    Bytes avi = make_avi();
+    MediaInfo info;
+    std::string error;
+    CHECK(probe_media(avi, info, error));
+    CHECK(info.container == "AVI");
+    CHECK(info.has_video && !info.has_audio);
+    CHECK(info.video_codec == "MJPEG");
+    CHECK(info.width == 32 && info.height == 16);
+    CHECK(close_to(info.frame_rate, 4.0));
+    MediaPlayer video;
+    CHECK(video.load(avi, "video/x-msvideo", error));
+    CHECK(close_to(video.duration() * 100, 50.0));
+    auto colour = [](const Image *image) {
+      const uint8_t *p = &image->pixels[(size_t(4) * size_t(image->width) + 4) * 4];
+      return std::make_tuple(int(p[2]), int(p[1]), int(p[0]));
+    };
+    const Image *first = video.frame();
+    CHECK(first && first->width == 32 && first->height == 16);
+    auto red_pixel = colour(first);
+    CHECK(std::get<0>(red_pixel) > 200 && std::get<1>(red_pixel) < 60);
+    video.seek(0.3, 10.0);
+    const Image *second = video.frame();
+    CHECK(second != nullptr);
+    auto green_pixel = colour(second);
+    CHECK(std::get<1>(green_pixel) > 200 && std::get<0>(green_pixel) < 60);
+  }
+  {
+    // An MP4 that says what it holds: my reader walks the box tree and then names
+    // the codec I have no decoder for instead of pretending to play it.
+    MediaInfo info;
+    std::string error;
+    auto h264 = make_mp4("vide", "avc1");
+    CHECK(!probe_media(h264, info, error));
+    CHECK(info.duration > 0 && close_to(info.duration * 10, 25.0));
+    CHECK(info.video_codec == "avc1");
+    CHECK(info.width == 32 && info.height == 16);
+    CHECK(error.find("H.264") != std::string::npos);
+    CHECK(error.find("decoder") != std::string::npos);
+    MediaPlayer refused;
+    CHECK(!refused.load(h264, "video/mp4", error));
+    CHECK(!refused.ready());
+    auto aac = make_mp4("soun", "mp4a");
+    CHECK(!probe_media(aac, info, error));
+    CHECK(info.audio_codec == "mp4a");
+    CHECK(error.find("AAC") != std::string::npos);
+  }
+  {
+    // The typed arrays Media Source Extensions needs are real byte views: a
+    // subarray shares the bytes and set writes through them.
+    CHECK(js_eval("(new Uint8Array(5)).length") == "5");
+    CHECK(js_eval("var b=new Uint8Array(4);b[2]=7;b[2]") == "7");
+    CHECK(js_eval("var b=new Uint8Array(4);b[0]=1;b[1]=2;b[2]=3;var c=b.subarray(1);c.length")
+          == "3");
+    CHECK(js_eval("var b=new Uint8Array(4);b[0]=1;b[1]=2;b[2]=3;var c=b.subarray(1);c[0]=9;b[1]")
+          == "9");
+    CHECK(js_eval("var b=new Uint8Array(4);b.set([4,5],2);b[2]+','+b[3]") == "4,5");
+    CHECK(js_eval("var b=new Uint8Array(new ArrayBuffer(3));b.buffer.byteLength") == "3");
+    CHECK(js_eval("var s=0;var b=new Uint8Array(3);b[0]=1;b[1]=2;b[2]=3;for(var v of b)s+=v;s")
+          == "6");
+    CHECK(js_eval("var b=new Uint8Array(4);b[0]=1;b[1]=2;b.join('-')") == "1-2-0-0");
+    CHECK(js_eval("var b=new Uint8Array(4);b[0]=1;var c=b.slice(0,2);c[0]=9;b[0]") == "1");
+  }
+  {
+    // A source buffer grows its playable range as the bytes arrive, which is the
+    // whole point of appending before the file is complete.
+    std::string error;
+    SourceBuffer buffer("audio/wav");
+    CHECK(buffer.mime() == "audio/wav");
+    MediaSourceState source;
+    CHECK(source.add_source_buffer("audio/wav", error));
+    CHECK(source.buffer_count() == 1);
+    CHECK(!source.add_source_buffer("video/webm", error));
+    CHECK(error.find("NotSupportedError") != std::string::npos);
+    Bytes wav = make_wav(8000, 2000, 8000);
+    size_t half = 24 + 2000;
+    CHECK(half < wav.size());
+    SourceBuffer *first_buffer = source.buffer(0);
+    CHECK(first_buffer != nullptr);
+    CHECK(first_buffer->append(wav.data(), half, error));
+    auto ranges = first_buffer->buffered();
+    CHECK(ranges.size() == 1);
+    CHECK(ranges.front().second > 0 && ranges.front().second < 0.25);
+    CHECK(first_buffer->append(wav.data() + half, wav.size() - half, error));
+    ranges = first_buffer->buffered();
+    CHECK(ranges.size() == 1);
+    CHECK(close_to(ranges.front().second * 100, 25.0));
+    CHECK(close_to(source.duration() * 100, 25.0));
+    auto newest = source.newest(error);
+    CHECK(newest != nullptr);
+    MediaPlayer from_source;
+    CHECK(from_source.load_shared(newest, error));
+    CHECK(close_to(from_source.duration() * 100, 25.0));
+    // A source buffer cannot cut a decoded segment in half, and it says so.
+    CHECK(!first_buffer->remove(0.0, 0.1, error));
+    CHECK(error.find("cannot remove") != std::string::npos);
+    CHECK(source.end_of_stream(error));
+    CHECK(source.ended());
+    CHECK(!source.add_source_buffer("audio/wav", error));
+    CHECK(source.total_bytes() == wav.size());
+  }
+  {
+    // The same path through my page host: an audio element plays a WAV, a video
+    // element shows real frames, and the frame changes after a seek.
+    Bytes wav = make_wav(8000, 2000, 12000);
+    Bytes avi = make_avi();
+    std::vector<HostEvent> events;
+    Host host(
+        [&](const std::string &url) {
+          Resource r;
+          r.url = url;
+          if (url == "https://media.test/") {
+            r.mime = "text/html";
+            r.text = "<!doctype html><title>media</title><body>"
+                     "<audio id=tone src=\"/tone.wav\"></audio>"
+                     "<video id=clip src=\"/clip.avi\" width=32 height=16></video>"
+                     "<script>"
+                     "var a=document.getElementById('tone');"
+                     "a.addEventListener('play',function(){document.title='tone:'+"
+                     "Math.round(a.duration*100);});"
+                     "a.play();"
+                     "setTimeout(function(){"
+                     "var v=document.getElementById('clip');"
+                     "v.currentTime=0.3;"
+                     "v.pause();"
+                     "document.title+='|seek:'+Math.round(v.currentTime*100);"
+                     "},20);"
+                     "</script></body>";
+            return r;
+          }
+          if (url == "https://media.test/tone.wav") {
+            r.mime = "audio/wav";
+            r.bytes = wav;
+            return r;
+          }
+          if (url == "https://media.test/clip.avi") {
+            r.mime = "video/x-msvideo";
+            r.bytes = avi;
+            return r;
+          }
+          r.ok = false;
+          r.status = 404;
+          return r;
+        },
+        [&events](HostEvent event) { events.push_back(std::move(event)); });
+    std::string error;
+    CHECK(host.load("https://media.test/", error));
+    CHECK(error.empty());
+    bool saw_media_image = false, saw_red = false, saw_green = false;
+    int frame_width = 0, frame_height = 0;
+    std::string last_title;
+    for (int i = 0; i < 20; ++i) {
+      host.pump();
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    for (const auto &event : events) {
+      if (event.tag == "image" && event.url.rfind("media:", 0) == 0 && event.image) {
+        saw_media_image = true;
+        frame_width = event.image->width;
+        frame_height = event.image->height;
+        const uint8_t *p = &event.image->pixels[(size_t(2) * size_t(frame_width) + 2) * 4];
+        if (int(p[2]) > int(p[1]) + 100)
+          saw_red = true;
+        if (int(p[1]) > int(p[2]) + 100)
+          saw_green = true;
+      }
+      if (event.tag == "frame")
+        last_title = event.frame.str("title");
+    }
+    CHECK(saw_media_image);
+    CHECK(frame_width == 32 && frame_height == 16);
+    CHECK(last_title.rfind("tone:25", 0) == 0);
+    CHECK(last_title.find("seek:") != std::string::npos);
+    // The clip starts red and turns green once the page seeks to the second frame.
+    CHECK(saw_red);
+    CHECK(saw_green);
+  }
+  {
+    // A page that builds its own media source and appends a fetched segment plays
+    // it, which is the path a streaming site uses.
+    Bytes wav = make_wav(8000, 2000, 9000);
+    std::vector<HostEvent> events;
+    Host host(
+        [&](const std::string &url) {
+          Resource r;
+          r.url = url;
+          if (url == "https://mse.test/segment.wav") {
+            r.mime = "audio/wav";
+            r.bytes = wav;
+            return r;
+          }
+          if (url == "https://mse.test/") {
+            r.mime = "text/html";
+            r.text = "<!doctype html><title>mse</title><body><audio id=a></audio><script>"
+                     "var a=document.getElementById('a');"
+                     "a.addEventListener('loadedmetadata',function(){"
+                     "document.title='ms:'+Math.round(a.duration*100);});"
+                     "a.addEventListener('play',function(){document.title+='|play';});"
+                     "var ms=new MediaSource();"
+                     "a.src=URL.createObjectURL(ms);"
+                     "ms.addEventListener('sourceopen',function(){"
+                     "var sb=ms.addSourceBuffer('audio/wav');"
+                     "sb.addEventListener('updateend',function(){"
+                     "document.title+='|buffered:'+Math.round(sb.buffered.end(0)*100);"
+                     "ms.endOfStream();});"
+                     "fetch('/segment.wav').then(function(r){return r.arrayBuffer();})"
+                     ".then(function(buf){sb.appendBuffer(new Uint8Array(buf));});"
+                     "});"
+                     "a.play();"
+                     "</script></body>";
+            return r;
+          }
+          r.ok = false;
+          r.status = 404;
+          return r;
+        },
+        [&events](HostEvent event) { events.push_back(std::move(event)); });
+    std::string error;
+    CHECK(host.load("https://mse.test/", error));
+    CHECK(error.empty());
+    std::string title;
+    for (int i = 0; i < 8; ++i) {
+      host.pump();
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    for (const auto &event : events)
+      if (event.tag == "frame")
+        title = event.frame.str("title");
+    CHECK(title.rfind("ms:25", 0) == 0);
+    CHECK(title.find("|play") != std::string::npos);
+    CHECK(title.find("buffered:25") != std::string::npos);
+  }
+  // ---- step 7: my own tunnel through a proxy ----
+  {
+    // SOCKS5 without a password: my client offers method 0, then asks for a name
+    // as a name, so the lookup happens on the far side and not on my machine.
+    ScriptStream stream;
+    TunnelTarget target{"example.com", 443};
+    std::string error;
+    // The script is the two replies in order: the method choice, then success with
+    // a bound address. The two authentication methods my client offers are the
+    // bytes it writes before it asks for those.
+    stream.script = Bytes{5, 0, 5, 0, 0, 1, 127, 0, 0, 1, 0x1f, 0x90};
+    CHECK(socks5_connect(stream, target, "", "", false, error));
+    auto sent = stream.written;
+    CHECK(sent.size() == 3 + 7 + size_t(target.host.size()));
+    CHECK(sent[0] == 5 && sent[1] == 1 && sent[2] == 0);
+    CHECK(sent[3] == 5 && sent[4] == 1 && sent[5] == 0);
+    // Address type 3 is a domain name, which is the whole point of the tunnel.
+    CHECK(sent[6] == 3);
+    CHECK(sent[7] == uint8_t(target.host.size()));
+    CHECK(std::string(sent.begin() + 8, sent.begin() + 8 + std::ptrdiff_t(target.host.size())) ==
+          "example.com");
+    CHECK(sent[sent.size() - 2] == 0x01 && sent[sent.size() - 1] == 0xbb);
+  }
+  {
+    // SOCKS5 with a username and password, and a refusal mapped to words a person
+    // can read.
+    ScriptStream stream;
+    stream.script = Bytes{5, 2, 1, 0, 5, 0, 0, 1, 10, 0, 0, 7, 0, 80};
+    TunnelTarget target{"10.0.0.7", 80};
+    std::string error;
+    CHECK(socks5_connect(stream, target, "user", "pass", true, error));
+    auto text = stream.text();
+    CHECK(text.find("user") != std::string::npos);
+    // With a literal address I send the four bytes, not the text: the request
+    // begins at byte 13, right after the greeting and the credentials.
+    size_t request_at = 4 + 3 + 4 + 4;
+    CHECK(stream.written[request_at] == 5);
+    CHECK(stream.written[request_at + 3] == 1);
+    CHECK(stream.written[request_at + 4] == 10);
+  }
+  {
+    ScriptStream refused;
+    // Success on the method, then code 4: the proxy could not resolve the name.
+    refused.script = Bytes{5, 0, 5, 4, 0, 1, 0, 0, 0, 0, 0, 0};
+    std::string error;
+    CHECK(!socks5_connect(refused, TunnelTarget{"does-not-exist.test", 443}, "", "", false, error));
+    CHECK(error.find("resolve") != std::string::npos);
+    CHECK(error.find("did not ask") != std::string::npos);
+    ScriptStream auth_required;
+    auth_required.script = Bytes{5, 2};
+    error.clear();
+    CHECK(!socks5_connect(auth_required, TunnelTarget{"example.com", 443}, "", "", false, error));
+    CHECK(error.find("username and password") != std::string::npos);
+    ScriptStream no_method;
+    no_method.script = Bytes{5, 0xff};
+    error.clear();
+    CHECK(!socks5_connect(no_method, TunnelTarget{"example.com", 443}, "", "", false, error));
+    CHECK(error.find("authentication") != std::string::npos);
+  }
+  {
+    // CONNECT: the authority line, the proxy credentials, and a 200 that opens the
+    // tunnel versus a 407 that refuses it.
+    ScriptStream stream;
+    stream.script = Bytes{'H', 'T', 'T', 'P', '/', '1', '.', '1', ' ', '2', '0', '0', ' ', 'O',
+                          'K', '\r', '\n', '\r', '\n'};
+    std::string error;
+    CHECK(http_connect(stream, TunnelTarget{"secure.example", 443}, "alice", "secret", true, error));
+    auto text = stream.text();
+    CHECK(text.rfind("CONNECT secure.example:443 HTTP/1.1\r\n", 0) == 0);
+    CHECK(text.find("Proxy-Authorization: Basic ") != std::string::npos);
+    CHECK(text.find("\r\n\r\n") != std::string::npos);
+    ScriptStream denied;
+    denied.script = Bytes{'H', 'T', 'T', 'P', '/', '1', '.', '1', ' ', '4', '0', '7', ' ', 'X',
+                          '\r', '\n', '\r', '\n'};
+    error.clear();
+    CHECK(!http_connect(denied, TunnelTarget{"secure.example", 443}, "", "", false, error));
+    CHECK(error.find("407") != std::string::npos);
+  }
+  {
+    // My HTTP framing: a length, chunks, and a body that ends when the connection
+    // does. All three are the shapes a real server answers with.
+    ScriptStream fixed;
+    std::string reply = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n"
+                        "Content-Length: 11\r\n\r\nhello world";
+    fixed.script.assign(reply.begin(), reply.end());
+    HttpRequest request;
+    request.host = "example.com";
+    HttpRequest asked;
+    asked.host = "example.com";
+    asked.headers.emplace_back("Accept", "*/*");
+    HttpResponse response;
+    std::string error;
+    CHECK(http_exchange(fixed, asked, response, error));
+    CHECK(response.status == 200);
+    CHECK(response.body == "hello world");
+    // The request line my client wrote is the one the server sees.
+    CHECK(fixed.text().rfind("GET / HTTP/1.1\r\n", 0) == 0);
+    CHECK(fixed.text().find("Host: example.com") != std::string::npos);
+    ScriptStream chunked;
+    std::string chunks = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+                         "5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n";
+    chunked.script.assign(chunks.begin(), chunks.end());
+    response = HttpResponse();
+    CHECK(http_exchange(chunked, asked, response, error));
+    CHECK(response.body == "hello world");
+    ScriptStream until_close;
+    std::string closing = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nuntil the end";
+    until_close.script.assign(closing.begin(), closing.end());
+    response = HttpResponse();
+    CHECK(http_exchange(until_close, asked, response, error));
+    CHECK(response.body == "until the end");
+    // A head that never finishes is an error, not a silent empty page.
+    ScriptStream broken;
+    broken.script.assign({65, 66});
+    response = HttpResponse();
+    error.clear();
+    CHECK(!http_exchange(broken, asked, response, error));
+    CHECK(!error.empty());
+  }
+  {
+    // A redirect inside the tunnel stays inside the tunnel. The proxy answers 302 on
+    // the first request and the page on the second over the same connection, and the
+    // name still reaches the proxy rather than being resolved here.
+    LoopbackProxy proxy(std::vector<std::pair<std::string, std::string>>{
+        {"302 Found", ""}, {"200 OK", "moved page"}});
+    if (!proxy.failure.empty())
+      std::cerr << "proxy would not start: " << proxy.failure << "\n";
+    CHECK(proxy.failure.empty());
+    TunnelConfig config;
+    config.proxy.scheme = "socks5";
+    config.proxy.host = "127.0.0.1";
+    config.proxy.port = proxy.port;
+    config.user_agent = "PsychoVault-test";
+    Resource out = tunneled_fetch(*parse_url("http://redirect.test/start"), config, "GET", "", "",
+                                  5000, kMaxResourceBytes);
+    CHECK(out.ok);
+    CHECK(out.text == "moved page");
+    CHECK(out.url == "http://redirect.test/moved");
+    CHECK(proxy.requests.size() == 2);
+    if (proxy.requests.size() == 2) {
+      CHECK(proxy.requests[0].rfind("GET /start HTTP/1.1", 0) == 0);
+      CHECK(proxy.requests[1].rfind("GET /moved HTTP/1.1", 0) == 0);
+      // The Host line names the origin, not the proxy, so a virtual host still works.
+      CHECK(proxy.requests[1].find("Host: redirect.test") != std::string::npos);
+    }
+    CHECK(proxy.seen_host == "redirect.test");
+  }
+  {
+    // Fail-closed: a proxy that is not a server I can dial is an error, and an
+    // https address in a build with no TLS provider is refused by name.
+    TunnelConfig config;
+    config.proxy.host = "127.0.0.1";
+    config.proxy.port = 1;
+    config.proxy.scheme = "socks5";
+    Resource out = tunneled_fetch(*parse_url("https://example.com/"), config, "GET", "", "", 1000,
+                                  kMaxResourceBytes);
+    CHECK(!out.ok);
+    CHECK(out.status == 0);
+    CHECK(!out.error.empty());
+    TunnelConfig empty_config;
+    out = tunneled_fetch(*parse_url("https://example.com/"), empty_config, "GET", "", "", 1000,
+                         kMaxResourceBytes);
+    CHECK(!out.ok);
+    CHECK(out.error.rfind("fail-closed", 0) == 0);
+  }
+  {
+    // The whole tunnel over a real loopback socket: my client speaks SOCKS5 to a
+    // proxy, the proxy is handed a name rather than an address, and the page comes
+    // back through my own HTTP framing.
+    LoopbackProxy proxy(std::vector<std::pair<std::string, std::string>>{
+        {"200 OK", "tunnelled page"}});
+    if (!proxy.failure.empty())
+      std::cerr << "proxy would not start: " << proxy.failure << "\n";
+    CHECK(proxy.failure.empty());
+    CHECK(proxy.port > 0);
+    TunnelConfig config;
+    config.proxy.scheme = "socks5";
+    config.proxy.host = "127.0.0.1";
+    config.proxy.port = proxy.port;
+    config.user_agent = "PsychoVault-test";
+    Resource out = tunneled_fetch(*parse_url("http://example.test/page?q=1"), config, "GET", "",
+                                  "", 5000, kMaxResourceBytes);
+    CHECK(out.ok);
+    CHECK(out.status == 200);
+    CHECK(out.mime == "text/html");
+    CHECK(out.text == "tunnelled page");
+    // The name reached the proxy, so nothing resolved it on this machine.
+    CHECK(proxy.seen_host == "example.test");
   }
   Canvas c(64, 64, 0xff000000);
   c.fill({0, 0, 64, 64}, 0xff112233);
@@ -948,6 +1774,8 @@ int main() {
     profile.proxy.single = ProxyServer{"http", "127.0.0.1", 3128};
     profile.proxy.fail_closed = true;
     profile.proxy.owner_extension = "vpn-test";
+    profile.proxy.user = "tunnel-user";
+    profile.proxy.password = "tunnel-secret";
     CHECK(profile.save());
     Profile restored = Profile::open(path, false);
     CHECK(!restored.block_ads);
@@ -965,6 +1793,9 @@ int main() {
     CHECK(restored.proxy.fail_closed);
     CHECK(restored.proxy.single.authority() == "127.0.0.1:3128");
     CHECK(restored.proxy.owner_extension == "vpn-test");
+    CHECK(restored.proxy.has_auth());
+    CHECK(restored.proxy.user == "tunnel-user");
+    CHECK(restored.proxy.password == "tunnel-secret");
     CHECK(profile.remove_user_word("PSYCHO"));
     CHECK(profile.user_words.empty());
     std::error_code ignored;
@@ -1614,8 +2445,8 @@ int main() {
     auto media_frame = media.render(400, 300, 0);
     bool sized = false;
     for (const auto &command : media_frame.at("paint").array)
-      if (int(command.num("kind")) == int(PaintCommand::Kind::Image) && near(command.num("w"), 32) &&
-          near(command.num("h"), 32))
+      if (int(command.num("kind")) == int(PaintCommand::Kind::Image) && close_to(command.num("w"), 32) &&
+          close_to(command.num("h"), 32))
         sized = true;
     CHECK(sized);
   }
@@ -1635,8 +2466,8 @@ int main() {
                  "<!doctype html><style>body{margin:0}#a{border-bottom:2px solid #000;height:20px}"
                  "#b{border:1px solid red;height:10px}</style><div id=a></div><div id=b></div>");
     Rect border_a = node_box(borders, "a"), border_b = node_box(borders, "b");
-    CHECK(near(border_a.h, 22) && near(border_a.y, 0));
-    CHECK(near(border_b.y, 22) && near(border_b.h, 12));
+    CHECK(close_to(border_a.h, 22) && close_to(border_a.y, 0));
+    CHECK(close_to(border_b.y, 22) && close_to(border_b.h, 12));
   }
   {
     // Two stacked margins collapse to the larger one, so the second box starts
@@ -1645,7 +2476,7 @@ int main() {
     collapse.load(*parse_url("https://collapse.test/"),
                   "<!doctype html><style>body{margin:0}#a{margin-bottom:20px;height:10px}"
                   "#b{margin-top:30px;height:10px}</style><div id=a></div><div id=b></div>");
-    CHECK(near(node_box(collapse, "b").y, 40));
+    CHECK(close_to(node_box(collapse, "b").y, 40));
   }
   {
     // A percentage height resolves against the parent's height, never its width.
@@ -1653,7 +2484,7 @@ int main() {
     percent.load(*parse_url("https://percent.test/"),
                  "<!doctype html><style>body{margin:0}#p{height:100px}#a{height:50%}</style>"
                  "<div id=p><div id=a></div></div>");
-    CHECK(near(node_box(percent, "a").h, 50));
+    CHECK(close_to(node_box(percent, "a").h, 50));
   }
   {
     // grid-template-rows fixes the track heights.
@@ -1663,7 +2494,7 @@ int main() {
               "grid-template-columns:50px 50px;grid-template-rows:40px 20px}#c{height:10px}</style>"
               "<div id=g><div></div><div></div><div id=c></div></div>");
     Rect c = node_box(grid, "c");
-    CHECK(near(c.y, 40) && near(c.x, 0) && near(c.w, 50));
+    CHECK(close_to(c.y, 40) && close_to(c.x, 0) && close_to(c.w, 50));
   }
   {
     // flex order and align-self move one item without touching the rest.
@@ -1673,8 +2504,8 @@ int main() {
               "#a{width:50px;height:10px;order:2}#b{width:50px;height:10px;order:1;"
               "align-self:flex-end}</style><div id=f><div id=a></div><div id=b></div></div>");
     Rect flex_a = node_box(flex, "a"), flex_b = node_box(flex, "b");
-    CHECK(near(flex_a.x, 50) && near(flex_a.y, 0));
-    CHECK(near(flex_b.x, 0) && near(flex_b.y, 50));
+    CHECK(close_to(flex_a.x, 50) && close_to(flex_a.y, 0));
+    CHECK(close_to(flex_b.x, 0) && close_to(flex_b.y, 50));
   }
   {
     // Sticky stays where the flow puts it until a scroll asks for it.
@@ -1682,7 +2513,7 @@ int main() {
     sticky.load(*parse_url("https://sticky.test/"),
                 "<!doctype html><style>body{margin:0}#a{position:sticky;top:5px;height:20px}</style>"
                 "<div id=a></div>");
-    CHECK(near(node_box(sticky, "a").y, 0));
+    CHECK(close_to(node_box(sticky, "a").y, 0));
   }
   {
     // A gradient background, an overflow clip and the paint pass that applies

@@ -79,8 +79,20 @@ jobs:
       - name: Run engine tests
         shell: pwsh
         run: |
-          .\build\pv-tests.exe | Tee-Object build/engine-tests.txt
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # My checks write a failing line to stderr, so both streams go into the log
+          # I keep, and the exit code goes in with them.
+          .\build\pv-tests.exe 2>&1 | Tee-Object build/engine-tests.txt
+          $code = $LASTEXITCODE
+          "exit code: $code" | Tee-Object -Append build/engine-tests.txt
+          if ($code -ne 0) { exit $code }
+
+      - name: Keep my test log when a check fails
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: psychovault-test-log
+          path: build/engine-tests.txt
+          if-no-files-found: ignore
 
       - name: Render headless engine fixture
         shell: pwsh

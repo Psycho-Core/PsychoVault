@@ -58,8 +58,20 @@ jobs:
       - name: Run engine tests
         shell: pwsh
         run: |
-          .\build\pv-tests.exe | Tee-Object build/engine-tests.txt
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Both streams go into the file, because my checks report a failure on
+          # stderr and I want that line to survive into the log and the annotation.
+          .\build\pv-tests.exe 2>&1 | Tee-Object build/engine-tests.txt
+          $code = $LASTEXITCODE
+          "exit code: $code" | Tee-Object -Append build/engine-tests.txt
+          if ($code -ne 0) { exit $code }
+      - name: Publish my failing check
+        if: failure()
+        shell: pwsh
+        run: |
+          if (Test-Path build/engine-tests.txt) {
+            $lines = Get-Content build/engine-tests.txt | Select-Object -Last 15
+            foreach ($line in $lines) { Write-Host "::error::$line" }
+          }
       - name: Render headless engine fixture
         shell: pwsh
         run: |

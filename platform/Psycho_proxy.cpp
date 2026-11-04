@@ -247,6 +247,8 @@ Json ProxyConfig::to_json() const {
   j.set("pac", pac);
   j.set("failClosed", fail_closed);
   j.set("ownerExtension", owner_extension);
+  j.set("user", user);
+  j.set("password", password);
   Json list = Json::make_array();
   for (const auto &b : bypass) list.array.push_back(Json(b));
   j.set("bypassList", std::move(list));
@@ -293,6 +295,10 @@ std::optional<ProxyConfig> ProxyConfig::from_json(const Json &json, std::string 
   }
   config.fail_closed = json.flag("failClosed", false);
   config.owner_extension = json.str("ownerExtension");
+  // A proxy username without a password is still a real login, so I do not
+  // demand both.
+  config.user = json.str("user");
+  config.password = json.str("password");
   const Json *list = json.find("bypassList");
   if (list && list->type == Json::Type::Array) {
     for (const auto &entry : list->array) {

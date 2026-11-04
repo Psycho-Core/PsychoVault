@@ -25,6 +25,10 @@ public:
   // connection if the chosen proxy is unusable.
   bool fail_closed = false;
   std::string owner_extension;
+  // Credentials for the proxy itself. They are stored beside the settings and
+  // only ever sent to the proxy, never to an origin server.
+  std::string user, password;
+  bool has_auth() const { return !user.empty(); }
 
   static ProxyConfig direct();
   bool proxy_bypasses(const Url &url) const;
