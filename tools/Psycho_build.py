@@ -20,7 +20,7 @@ ENGINE=["engine/Psycho_base.cpp","engine/Psycho_dom.cpp","engine/Psycho_css.cpp"
 PLATFORM=["platform/Psycho_host.cpp","platform/Psycho_network.cpp","platform/Psycho_profile.cpp",
           "platform/Psycho_proxy.cpp","platform/Psycho_extension.cpp","platform/Psycho_download.cpp",
           "platform/Psycho_transport.cpp","platform/Psycho_tls.cpp","platform/Psycho_vault.cpp",
-          "platform/Psycho_sandbox.cpp"]
+          "platform/Psycho_spell.cpp","platform/Psycho_sandbox.cpp"]
 def run(cmd,env=None):
     print("+",subprocess.list2cmdline([str(x) for x in cmd]),flush=True)
     subprocess.run([str(x) for x in cmd],cwd=ROOT,env=env,check=True)
@@ -53,6 +53,13 @@ def msvc_env():
 def main():
     ap=argparse.ArgumentParser();ap.add_argument("--compiler",choices=["auto","msvc","gcc"],default="auto");ap.add_argument("--outdir",default="build");ap.add_argument("--sanitizers",action="store_true");ap.add_argument("--target",choices=["all","engine","tests","conformance"],default="all",help="build one target, so a measurement job does not compile the shell as well");args=ap.parse_args()
     out=(ROOT/args.outdir).resolve();out.mkdir(parents=True,exist_ok=True)
+    # My spelling vocabulary ships inside the exe: this header embeds the words
+    # file as one raw string, so a portable build has no loose assets.
+    words=(ROOT/"platform/Psycho_words.txt").read_text(encoding="utf-8")
+    assert ")PVWORDS" not in words
+    (out/"Psycho_embedded_words.hpp").write_text(
+        "#pragma once\nnamespace pv {\ninline const char kPVEmbeddedWords[] = R\"PVWORDS("
+        + words + ")PVWORDS\";\n} // namespace pv\n", encoding="utf-8")
     windows=os.name=="nt";compiler=args.compiler
     if compiler=="auto":compiler="msvc" if windows else "gcc"
     env=msvc_env() if compiler=="msvc" else os.environ.copy()
@@ -60,7 +67,7 @@ def main():
     def target(name,sources,libs=(),subsystem=None,entry=None):
         obj=out/"obj"/name;obj.parent.mkdir(parents=True,exist_ok=True);obj.mkdir(exist_ok=True)
         if compiler=="msvc":
-            cmd=[cxx,"/nologo","/std:c++20","/EHsc","/O2","/MT","/W3","/WX","/permissive-","/DUNICODE","/D_UNICODE","/D_CRT_SECURE_NO_WARNINGS","/sdl","/GS","/guard:cf","/I"+str(ROOT),"/D"+VERSION_DEFINE,"/Fo"+str(obj)+os.sep]
+            cmd=[cxx,"/nologo","/std:c++20","/EHsc","/O2","/MT","/W3","/WX","/permissive-","/DUNICODE","/D_UNICODE","/D_CRT_SECURE_NO_WARNINGS","/sdl","/GS","/guard:cf","/I"+str(ROOT),"/I"+str(out),"/D"+VERSION_DEFINE,"/Fo"+str(obj)+os.sep]
             cmd+= [str(ROOT/s) for s in sources]
             cmd+=["/link","/DYNAMICBASE","/NXCOMPAT","/HIGHENTROPYVA","/INCREMENTAL:NO"]
             if subsystem:cmd+=[f"/SUBSYSTEM:"+subsystem]
@@ -76,7 +83,7 @@ def main():
             # when it inlines a vector of strings. It is a known false positive in the
             # header, so I keep the warning visible and stop it being fatal.
             cmd=[cxx,"-std=c++20","-O2","-g","-Wall","-Wextra","-Werror","-D"+VERSION_DEFINE,
-                 "-Wno-error=array-bounds","-I"+str(ROOT)]
+                 "-Wno-error=array-bounds","-I"+str(ROOT),"-I"+str(out)]
             if args.sanitizers:cmd+=["-fsanitize=address,undefined","-fno-omit-frame-pointer"]
             cmd+= [str(ROOT/s) for s in sources]
             cmd+=["-pthread","-o",str(out/name)]

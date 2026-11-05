@@ -7,6 +7,7 @@
 #include "../platform/Psycho_transport.hpp"
 #include "../platform/Psycho_sandbox.hpp"
 #include "../platform/Psycho_vault.hpp"
+#include "../platform/Psycho_spell.hpp"
 #include "Psycho_image_fixtures.hpp"
 #include "Psycho_media_fixtures.hpp"
 #include <cassert>
@@ -3142,6 +3143,56 @@ int main() {
       }
       CHECK(refused);
     }
+  }
+  {
+    // My spelling engine: dictionary, suggestions, and the text-side rules.
+    pv::Spell spell;
+    CHECK(spell.correct("anything")); // an empty dictionary stays quiet
+    spell.load_builtin_embedded();
+    CHECK(spell.builtin_count() > 2000);
+    CHECK(spell.correct("the"));
+    CHECK(spell.correct("hello"));
+    CHECK(spell.correct("The"));   // capitalised start
+    CHECK(spell.correct("HELLO")); // shouted
+    CHECK(spell.correct("don't"));
+    CHECK(spell.correct("it's"));
+    CHECK(spell.correct("cat's")); // possessive on a known word
+    CHECK(!spell.correct("zxqwvbalo"));
+    CHECK(!spell.correct("helllo"));
+    CHECK(spell.correct("h"));   // too short to flag
+    CHECK(spell.correct("h3ll0")); // anything with digits is a token, not prose
+    // Suggestions come one edit away, best shapes first.
+    auto to_the = spell.suggest("teh");
+    CHECK(std::find(to_the.begin(), to_the.end(), "the") != to_the.end());
+    CHECK(std::find(spell.suggest("helllo").begin(), spell.suggest("helllo").end(), "hello") !=
+          spell.suggest("helllo").end());
+    CHECK(std::find(spell.suggest("hxuse").begin(), spell.suggest("hxuse").end(), "house") !=
+          spell.suggest("hxuse").end());
+    // Longer unknowns get a second edit of reach.
+    CHECK(std::find(spell.suggest("dictionarry").begin(), spell.suggest("dictionarry").end(),
+                    "dictionary") != spell.suggest("dictionarry").end());
+    // My own words count even with the built-in dictionary switched off.
+    spell.builtin_enabled = false;
+    CHECK(!spell.correct("hello"));
+    spell.add_user("psychovault");
+    CHECK(spell.correct("psychovault"));
+    CHECK(spell.active_count() == 1);
+    spell.builtin_enabled = true;
+    CHECK(spell.correct("hello"));
+    // A dictionary source stream contributes words through the same path.
+    spell.replace_extra("florinke zarbolux are mine now");
+    CHECK(spell.extra_count() == 5); // florinke, zarbolux, are, mine, now
+    CHECK(spell.correct("florinke"));
+    // Text checking: words flagged in place, URLs and emails left alone.
+    auto marks = pv::spell_check_text(spell, "hello zxqwv world");
+    CHECK(marks.size() == 1 && marks[0].start == 6 && marks[0].length == 5);
+    marks = pv::spell_check_text(spell, "hello world");
+    CHECK(marks.empty());
+    CHECK(pv::spell_looks_like_url("duckduckgo.com"));
+    CHECK(pv::spell_looks_like_url("https://example.com/a b"));
+    CHECK(!pv::spell_looks_like_url("type some words"));
+    marks = pv::spell_check_text(spell, "visit duckduckgo.com now");
+    CHECK(marks.empty() || marks.back().length != 13);
   }
   std::cout << passed << " engine checks passed\n";
   return 0;

@@ -68,6 +68,12 @@ public:
   std::vector<std::string> user_words;
   // My vault relocks itself this many minutes after I unlock it.
   int vault_lock_minutes = 10;
+  // My own dictionary feeds my checker when this is on; my words always count.
+  bool spell_builtin = true;
+  // A file path or URL I keep extra dictionary words from, cached in my profile.
+  std::string spell_dict_source;
+  // The one language pack I ship is English; the list persists for later packs.
+  std::string spell_langs = "en";
   // Extensions the user installed, so I can reload them on the next launch.
   std::vector<std::string> extension_directories;
   // Site state I keep with the profile so a restart is not a sign-out.
