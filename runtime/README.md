@@ -66,5 +66,20 @@ What exists now (P1 in progress):
   line. `Psycho_surface_win32.cpp` presents the target through a top-down DIB
   section - proven on the first authorized manual Windows build.
 
-Next in P1: S026-S027 (the tab model and the navigation controller in the
-broker), then S028 internal schemes and the preload bridge.
+- `tabs/Psycho_tabs.*` (S026, rules done): my tab model - ordered tab lists
+  per attached window, and the laws are structural, not advisory. Pinned tabs
+  are always a prefix of the order, so no index can ever smuggle an unpinned
+  tab into the pin block (family-crossing indices clamp, never refuse). A
+  group never spans windows, never straddles the pin boundary, holds only
+  contiguous members, and evaporates when its last member closes. The active
+  tab can never be discarded; waking a sleeper bumps its generation counter,
+  which is the honest record of a fresh load. Single tabs, whole groups and
+  whole windows move between windows through one transplant primitive. The
+  recently-closed stack is bounded to 25 and restores positions, pin state and
+  group identity from snapshots - under fresh ids, because history ids are
+  never resurrected - and a refused restore leaves memory intact. 107 new
+  checks (1031 total).
+
+Next in P1: S027 (the WebContents-equivalent navigation controller - session
+history, back/forward, reload/stop, loading and error state notifications on
+the Tab channel), then S028 internal schemes and the preload bridge.
