@@ -6,6 +6,7 @@
 #include "../apphost/Psycho_apphost.hpp"
 #include "../services/Psycho_services.hpp"
 #include "../keys/Psycho_keys.hpp"
+#include "../ime/Psycho_ime.hpp"
 #include "../../engine/Psycho_js.hpp"
 #include "../surface/Psycho_surface.hpp"
 #include "../window/Psycho_window.hpp"
@@ -1383,6 +1384,158 @@ int run_runtime_bus_tests(int &shared) {
     RT_CHECK(keys.resolve({true, false, false, "p"}, in_field).empty());
     RT_CHECK(keys.resolve(palette, in_field) == "edit.inspect"); // shadow remapped
     RT_CHECK(!keys.unbind_command("palette.open")); // already gone, said so
+  }
+
+  // S033 IME and dead keys: one composition state per surface, candidate
+  // window placement inside the window, commit as the only path to text,
+  // and the dead-key law end to end.
+  {
+    std::vector<std::pair<int, Composition>> preedits;
+    std::vector<std::pair<int, std::string>> commits;
+    ImeService::Seams seams;
+    seams.on_preedit = [&](int id, const Composition &c) {
+      preedits.push_back({id, c});
+    };
+    seams.on_commit = [&](int id, const std::string &t) {
+      commits.push_back({id, t});
+    };
+    const ImeRect win{0, 0, 800, 600};
+    ImeRect caret{100, 100, 2, 20};
+    seams.window_rect = [&](int) { return win; };
+    seams.caret_rect = [&](int) { return caret; };
+    ImeService ime(seams);
+    Error e;
+    size_t commits_before = 0;
+
+    // A build without the pieces refuses by name, never silently.
+    {
+      ImeService bare(ImeService::Seams{});
+      RT_CHECK(!bare.begin(1, e) && e.code == "ime.unavailable");
+    }
+
+    // A platform composition end to end: begin, update, place, commit.
+    RT_CHECK(ime.begin(7, e));
+    RT_CHECK(ime.composing(7) && !ime.pending_accent(7));
+    RT_CHECK(!ime.begin(7, e) && e.code == "ime.busy"); // one per surface
+    RT_CHECK(ime.update(7, "\xc3\xa9t", 3, e));         // "ét" (\xc3\xa9 = é)
+    const Composition *comp = ime.composition(7);
+    RT_CHECK(comp != nullptr && comp->preedit == "\xc3\xa9t" && comp->caret == 3);
+    // Caret law: mid-character and past-the-end both refuse by name.
+    RT_CHECK(!ime.update(7, "\xc3\xa9t", 1, e) && e.code == "ime.caret");
+    RT_CHECK(!ime.update(7, "\xc3\xa9t", 4, e) && e.code == "ime.caret");
+    // Text law: malformed UTF-8 and unbounded preedit both refuse...
+    RT_CHECK(!ime.update(7, std::string("\x80"), 0, e) && e.code == "ime.text");
+    RT_CHECK(!ime.update(7, std::string(5000, 'a'), 5000, e) && e.code == "ime.text");
+    // ...and a refused update never touched the honest state.
+    comp = ime.composition(7);
+    RT_CHECK(comp->preedit == "\xc3\xa9t" && comp->caret == 3);
+
+    // The candidate window follows the caret and stays in the window.
+    int cx = -1, cy = -1;
+    RT_CHECK(ime.candidate_position(7, cx, cy, e));
+    RT_CHECK(cx == 100 && cy == 120); // the caret's baseline, unclamped
+    caret = ImeRect{700, 560, 2, 20}; // typing at the window's far corner
+    RT_CHECK(ime.candidate_position(7, cx, cy, e));
+    RT_CHECK(cx == 540); // 800-260: pulled back off the right edge
+    RT_CHECK(cy == 380); // 560-180: flipped above the caret line
+    caret = ImeRect{100, 100, 2, 20};
+
+    // Commit: text crosses exactly once, the composition ends, the
+    // underline clears; and afterwards everything idle refuses.
+    commits_before = commits.size();
+    RT_CHECK(ime.commit(7, "\xc3\xa9tudiant", e));
+    RT_CHECK(commits.size() == commits_before + 1 && commits.back().first == 7 &&
+             commits.back().second == "\xc3\xa9tudiant");
+    RT_CHECK(!ime.composing(7) && ime.composition(7) == nullptr);
+    RT_CHECK(!preedits.empty() && preedits.back().second.preedit.empty());
+    RT_CHECK(!ime.candidate_position(7, cx, cy, e) && e.code == "ime.idle");
+    RT_CHECK(!ime.commit(7, "again", e) && e.code == "ime.idle");
+
+    // Cancel: the field is exactly as it was - nothing ever crosses.
+    RT_CHECK(ime.begin(7, e) && ime.update(7, "draft", 5, e));
+    commits_before = commits.size();
+    RT_CHECK(ime.cancel(7, e));
+    RT_CHECK(commits.size() == commits_before && !ime.composing(7));
+    RT_CHECK(!ime.cancel(7, e) && e.code == "ime.idle");
+    // An empty commit is the platform's last-moment "never mind": legal,
+    // ends the composition, delivers nothing.
+    RT_CHECK(ime.begin(7, e) && ime.update(7, "x", 1, e));
+    commits_before = commits.size();
+    RT_CHECK(ime.commit(7, "", e));
+    RT_CHECK(commits.size() == commits_before && !ime.composing(7));
+
+    // Dead keys: the pending accent IS the one composition state.
+    RT_CHECK(ime.dead_key(3, "'", e));
+    RT_CHECK(ime.composing(3) && ime.pending_accent(3));
+    RT_CHECK(ime.composition(3)->preedit == "'");
+    RT_CHECK(!ime.begin(3, e) && e.code == "ime.busy"); // ...so begin refuses
+    RT_CHECK(ime.type_char(3, 'e', e));
+    RT_CHECK(commits.back().second == "\xc3\xa9" && !ime.composing(3)); // é
+
+    // The combining table, audited: uppercase, and beyond Latin-1.
+    RT_CHECK(ime.dead_key(3, "'", e) && ime.type_char(3, 'E', e));
+    RT_CHECK(commits.back().second == "\xc3\x89"); // É
+    RT_CHECK(ime.dead_key(3, "^", e) && ime.type_char(3, 'g', e));
+    RT_CHECK(commits.back().second == "\xc4\x9d"); // ĝ
+    RT_CHECK(ime.dead_key(3, "~", e) && ime.type_char(3, 'N', e));
+    RT_CHECK(commits.back().second == "\xc3\x91"); // Ñ
+
+    // Law 5's honest fallbacks: no combination, space, the same accent
+    // twice, and one accent after another.
+    RT_CHECK(ime.dead_key(3, "~", e) && ime.type_char(3, 'b', e));
+    RT_CHECK(commits.back().second == "~b"); // accent and letter both arrive
+    RT_CHECK(ime.dead_key(3, "`", e) && ime.type_char(3, ' ', e));
+    RT_CHECK(commits.back().second == "`"); // space asks for the accent
+    RT_CHECK(ime.dead_key(3, "'", e) && ime.dead_key(3, "'", e));
+    RT_CHECK(commits.back().second == "'" && !ime.composing(3));
+    commits_before = commits.size();
+    RT_CHECK(ime.dead_key(3, "'", e) && ime.dead_key(3, "^", e));
+    RT_CHECK(commits.size() == commits_before + 1 && commits.back().second == "'");
+    RT_CHECK(ime.pending_accent(3) && ime.composition(3)->preedit == "^");
+    RT_CHECK(ime.type_char(3, 'e', e) && commits.back().second == "\xc3\xaa"); // ê
+
+    // Dead-key refusals: unknown accent by name, typing with nothing
+    // pending, a dead key against a live platform composition.
+    RT_CHECK(!ime.dead_key(3, "%", e) && e.code == "ime.accent");
+    RT_CHECK(!ime.type_char(3, 'e', e) && e.code == "ime.idle");
+    RT_CHECK(ime.begin(4, e));
+    RT_CHECK(!ime.dead_key(4, "'", e) && e.code == "ime.busy");
+    commits_before = commits.size();
+    RT_CHECK(ime.cancel(4, e));
+    RT_CHECK(commits.size() == commits_before);
+    // Cancelling a pending accent drops it: nothing crosses, state clears.
+    RT_CHECK(ime.dead_key(3, "'", e));
+    commits_before = commits.size();
+    RT_CHECK(ime.cancel(3, e));
+    RT_CHECK(commits.size() == commits_before && !ime.composing(3));
+
+    // A dying surface takes its composition with it - death is not an
+    // error, and saying so twice is not either.
+    RT_CHECK(ime.dead_key(5, "'", e));
+    commits_before = commits.size();
+    ime.surface_closed(5);
+    RT_CHECK(!ime.composing(5) && commits.size() == commits_before);
+    ime.surface_closed(5);
+
+    // Two surfaces never share one keystroke's worth of state.
+    RT_CHECK(ime.dead_key(8, "'", e));
+    RT_CHECK(ime.begin(9, e) && ime.update(9, "ime-", 4, e));
+    RT_CHECK(ime.composing(8) && ime.composing(9));
+    RT_CHECK(ime.commit(9, "ime-text", e) && !ime.composing(9));
+    RT_CHECK(ime.pending_accent(8)); // the neighbor's finish left it alone
+    RT_CHECK(ime.type_char(8, 'o', e) && commits.back().second == "\xc3\xb3"); // ó
+
+    // Placement needs its seams: a half-built placement stack refuses.
+    {
+      ImeService::Seams partial;
+      partial.on_preedit = seams.on_preedit;
+      partial.on_commit = seams.on_commit;
+      ImeService blind(partial);
+      RT_CHECK(blind.begin(1, e));
+      RT_CHECK(!blind.candidate_position(1, cx, cy, e) &&
+               e.code == "ime.unavailable");
+      RT_CHECK(blind.cancel(1, e));
+    }
   }
 
   shared += rt_passed;

@@ -163,5 +163,28 @@ What exists now (P1 in progress):
   unclaimed key always propagates. Unbinding a command wipes every scope.
   33 new checks (1976 total).
 
-Next in P1: S033 (IME and dead-key handling end to end), then S034 (focus
-and activation rules at the broker).
+- `ime/Psycho_ime.*` (S033, rules done): my IME and dead-key law, end to end
+  for the editor surfaces I own - page fields plug the same service in at
+  S062. *One composition per surface:* a dead key's pending accent and a
+  platform IME's preedit are the same state, so beginning either over the
+  other refuses. *Platform text is suspect:* preedit must be strictly valid
+  UTF-8 (overlongs, surrogates and truncations refuse), bounded at 4096
+  bytes, and the caret must sit on a character boundary inside it - refused
+  updates never touch the honest state. *Commit is the only path to text:*
+  cancel leaves the field exactly as it was, an empty commit delivers
+  nothing, and every committed string crosses the seam exactly once before
+  the state dies. *The candidate window follows the caret and stays in the
+  window:* hung at the caret's baseline, clamped off the edges, flipping
+  above the caret line when the bottom would clip - and with no composition
+  in flight, asking where it goes refuses. *A dead key is a pending accent,
+  not text:* accent+space gives the accent, a combining letter gives the
+  precomposed letter (the full audit table, both cases - five accent tokens,
+  acute through diaeresis, into the extended Latin range), anything else
+  gives accent plus letter, the
+  same accent twice gives the accent, and cancelling drops it honestly. All
+  platform touchpoints - preedit sink, commit delivery, caret and window
+  rects - sit behind seams that refuse by name until the authorized Windows
+  build wires them. 71 new checks (2047 total).
+
+Next in P1: S034 (focus and activation rules at the broker), then S035
+(the download service).
