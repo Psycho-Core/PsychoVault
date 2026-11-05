@@ -8,6 +8,7 @@
 #include "../keys/Psycho_keys.hpp"
 #include "../ime/Psycho_ime.hpp"
 #include "../focus/Psycho_focus.hpp"
+#include "../downloads/Psycho_downloads.hpp"
 #include "../../engine/Psycho_js.hpp"
 #include "../surface/Psycho_surface.hpp"
 #include "../window/Psycho_window.hpp"
@@ -1674,6 +1675,192 @@ int run_runtime_bus_tests(int &shared) {
     RT_CHECK(events.size() == n + 1 && events[n] == "blur:window:1");
     RT_CHECK(focus.window_opened(3, e) && focus.active_window() == 3 &&
              events.back() == "focus:window:3");
+  }
+
+  // S035 download service: one bounded history, a narrow state machine,
+  // pause only where the wire said yes, every byte accounted, open/reveal
+  // only for what honestly finished.
+  {
+    struct FakeTransport {
+      int next_handle = 100;
+      int refuse_next = 0;
+      std::vector<int> begun, paused, cancelled;
+      std::vector<std::pair<int, uint64_t>> resumed;
+      std::vector<std::string> opened, revealed;
+      std::set<std::string> existing;
+    } tr;
+    DownloadService::Seams dseams;
+    dseams.begin_download = [&](const DownloadRecord &r) {
+      if (tr.refuse_next > 0) {
+        --tr.refuse_next;
+        return 0;
+      }
+      tr.begun.push_back(r.id);
+      return tr.next_handle++;
+    };
+    dseams.pause_download = [&](int h) { tr.paused.push_back(h); };
+    dseams.resume_download = [&](int h, uint64_t from) {
+      tr.resumed.push_back({h, from});
+    };
+    dseams.cancel_download = [&](int h) { tr.cancelled.push_back(h); };
+    dseams.open_file = [&](const std::string &p) { tr.opened.push_back(p); };
+    dseams.reveal_file = [&](const std::string &p) { tr.revealed.push_back(p); };
+    dseams.file_exists = [&](const std::string &p) {
+      return tr.existing.count(p) != 0;
+    };
+    int changes = 0;
+    dseams.on_change = [&](const DownloadRecord &) { ++changes; };
+    DownloadService dl(dseams);
+    Error e;
+
+    // A build with no transport refuses by name; the URL law names itself.
+    {
+      DownloadService bare(DownloadService::Seams{});
+      RT_CHECK(bare.start("https://h/f.zip", "", e) == 0 &&
+               e.code == "download.unavailable");
+    }
+    RT_CHECK(dl.start("", "", e) == 0 && e.code == "download.url");
+    RT_CHECK(dl.start("ftp://h/f", "", e) == 0 && e.code == "download.url");
+    // The save-as suggestion never trusts the wire.
+    RT_CHECK(DownloadService::sanitize_filename("https://h/dir/report(1).pdf?dl=1") ==
+             "report_1_.pdf");
+    RT_CHECK(DownloadService::sanitize_filename("https://h/") == "download");
+    RT_CHECK(DownloadService::sanitize_filename("https://h/..") == "download");
+    RT_CHECK(DownloadService::sanitize_filename("https://h/a/../../b.zip") == "b.zip");
+
+    // Happy path: begin rides the seam, progress and pause/resume obey.
+    const int d1 = dl.start("https://h/app.zip", "", e);
+    RT_CHECK(d1 == 1 && tr.begun.size() == 1 && tr.begun[0] == 1);
+    RT_CHECK(dl.record(d1) != nullptr &&
+             dl.record(d1)->state == DownloadState::Running &&
+             dl.record(d1)->suggested_name == "app.zip");
+    RT_CHECK(dl.progress(d1, 500, 1000, true, e));
+    RT_CHECK(dl.record(d1)->received == 500 && dl.record(d1)->total == 1000 &&
+             dl.record(d1)->resumable);
+    RT_CHECK(!dl.progress(999, 1, 1, true, e) && e.code == "download.unknown");
+    // Law 4: no regress, no overrun, no shrinking known total - and a
+    // refused report never touches the honest numbers.
+    RT_CHECK(!dl.progress(d1, 400, 1000, true, e) && e.code == "download.regress");
+    RT_CHECK(!dl.progress(d1, 1001, 1000, true, e) && e.code == "download.overrun");
+    RT_CHECK(!dl.progress(d1, 500, 900, true, e) && e.code == "download.regress");
+    RT_CHECK(dl.record(d1)->received == 500 && dl.record(d1)->total == 1000);
+    // Pause/resume where supported: handle and resume byte position named.
+    RT_CHECK(dl.pause(d1, e) && dl.record(d1)->state == DownloadState::Paused);
+    RT_CHECK(tr.paused.size() == 1 && tr.paused[0] == 100);
+    RT_CHECK(!dl.pause(d1, e) && e.code == "download.state"); // already paused
+    RT_CHECK(dl.resume(d1, e) && dl.record(d1)->state == DownloadState::Running);
+    RT_CHECK(tr.resumed.size() == 1 && tr.resumed[0].first == 100 &&
+             tr.resumed[0].second == 500);
+    RT_CHECK(!dl.resume(d1, e) && e.code == "download.state"); // not paused
+    // d1's story is told: cancel it. (Active in flight from here: only d5.)
+    RT_CHECK(dl.cancel(d1, e) && dl.record(d1)->state == DownloadState::Cancelled);
+
+    // The wire's no is law, and its latest word is the word that counts.
+    const int d2 = dl.start("https://h/stream.mp4", "", e);
+    RT_CHECK(d2 == 2 && dl.progress(d2, 10, 100, false, e));
+    RT_CHECK(!dl.pause(d2, e) && e.code == "download.cannot-pause");
+    const int d3 = dl.start("https://h/big.iso", "", e);
+    RT_CHECK(d3 == 3 && dl.progress(d3, 50, 100, true, e) && dl.pause(d3, e));
+    RT_CHECK(dl.resume(d3, e) && dl.progress(d3, 50, 100, false, e));
+    RT_CHECK(!dl.pause(d3, e) && e.code == "download.cannot-pause");
+    // Cancel is terminal: nothing moves a finished record, by any verb.
+    RT_CHECK(dl.cancel(d2, e) && dl.record(d2)->state == DownloadState::Cancelled);
+    RT_CHECK(!dl.cancel(d2, e) && e.code == "download.finished");
+    RT_CHECK(!dl.pause(d2, e) && e.code == "download.finished");
+    RT_CHECK(!dl.progress(d2, 20, 100, false, e) && e.code == "download.finished");
+    // A completion short of the known total is a failed download, told
+    // honestly - and the completion event itself is accepted (it happened).
+    RT_CHECK(dl.complete(d3, e));
+    RT_CHECK(dl.record(d3)->state == DownloadState::Failed &&
+             dl.record(d3)->error == "download.truncated");
+    RT_CHECK(!dl.open(d3, e) && e.code == "download.not-complete");
+
+    // Save-as chooses before bytes finish; open/reveal touch only what
+    // finished, exists, and was actually targeted.
+    const int d4 = dl.start("https://h/movie.mkv", "", e);
+    RT_CHECK(d4 == 4);
+    RT_CHECK(!dl.set_target(d4, "", e) && e.code == "download.target");
+    RT_CHECK(!dl.open(d4, e) && e.code == "download.not-complete");
+    RT_CHECK(dl.set_target(d4, "/downloads/movie.mkv", e));
+    RT_CHECK(dl.progress(d4, 2048, 2048, false, e) && dl.complete(d4, e));
+    RT_CHECK(dl.record(d4)->state == DownloadState::Complete);
+    RT_CHECK(!dl.open(d4, e) && e.code == "download.missing"); // disk disagrees
+    tr.existing.insert("/downloads/movie.mkv");
+    RT_CHECK(dl.open(d4, e) && tr.opened.size() == 1 &&
+             tr.opened[0] == "/downloads/movie.mkv");
+    RT_CHECK(dl.reveal(d4, e) && tr.revealed.size() == 1 &&
+             tr.revealed[0] == "/downloads/movie.mkv");
+    RT_CHECK(!dl.set_target(d4, "/elsewhere", e) && e.code == "download.finished");
+    // Unknown size is legal: total 0 means the wire has not said.
+    const int d5 = dl.start("https://h/blob", "", e);
+    RT_CHECK(d5 == 5 && dl.progress(d5, 700, 0, false, e));
+    RT_CHECK(dl.progress(d5, 700, 900, true, e) && dl.record(d5)->total == 900);
+    const int changes_before = changes;
+    RT_CHECK(dl.progress(d5, 800, 900, true, e) && changes == changes_before + 1);
+    // Completion with no target finishes fine; opening it has nothing to
+    // open and says so by name.
+    const int d6 = dl.start("https://h/note.txt", "", e);
+    RT_CHECK(d6 == 6 && dl.progress(d6, 5, 5, false, e) && dl.complete(d6, e));
+    RT_CHECK(!dl.open(d6, e) && e.code == "download.target");
+    // Failure is a first-class terminal state with its reason on record.
+    const int d7 = dl.start("https://h/patch.diff", "", e);
+    RT_CHECK(d7 == 7 && dl.fail(d7, "socket reset", e));
+    RT_CHECK(dl.record(d7)->state == DownloadState::Failed &&
+             dl.record(d7)->error == "socket reset");
+    // Law 1: even a transport refusal is a recorded attempt, id consumed.
+    tr.refuse_next = 1;
+    RT_CHECK(dl.start("https://h/nope.bin", "", e) == 0 &&
+             e.code == "download.transport");
+    RT_CHECK(dl.record(8) != nullptr &&
+             dl.record(8)->state == DownloadState::Failed &&
+             dl.record(8)->error == "download.transport");
+    RT_CHECK(dl.active_count() == 1); // only d5 still runs
+
+    // The caps: at most 32 in flight, the newest 200 in history.
+    std::vector<int> batch_ids;
+    for (int i = 0; i < 31; ++i) {
+      const int id = dl.start("https://h/cap.bin", "", e);
+      RT_CHECK(id > 0);
+      batch_ids.push_back(id);
+    }
+    RT_CHECK(dl.active_count() == 32);
+    RT_CHECK(dl.start("https://h/one-more.bin", "", e) == 0 &&
+             e.code == "download.too-many");
+    int cleanup_failures = 0;
+    if (!dl.cancel(d5, e)) ++cleanup_failures;
+    for (int id : batch_ids)
+      if (!dl.cancel(id, e)) ++cleanup_failures;
+    RT_CHECK(cleanup_failures == 0 && dl.active_count() == 0);
+    // Run 205 complete downloads through: ids 40..244 (1..39 are history).
+    int loop_failures = 0;
+    for (int i = 0; i < 205; ++i) {
+      const int id = dl.start("https://h/bulk.bin", "", e);
+      if (id <= 0 || !dl.progress(id, 1, 1, true, e) || !dl.complete(id, e))
+        ++loop_failures;
+    }
+    RT_CHECK(loop_failures == 0);
+    RT_CHECK(dl.history().size() == DownloadService::kHistoryLimit);
+    RT_CHECK(dl.history().front().id == 45); // 244 attempts, newest 200 kept
+    RT_CHECK(dl.history().back().id == 244);
+    RT_CHECK(dl.record(1) == nullptr); // evicted, none dangling
+
+    // History hygiene: erasing an in-flight record refuses; clearing keeps
+    // what still moves.
+    const int d_alive = dl.start("https://h/live.dat", "", e);
+    RT_CHECK(d_alive == 245 && dl.active_count() == 1);
+    RT_CHECK(!dl.remove_record(d_alive, e) && e.code == "download.state");
+    const int oldest = dl.history().front().id;
+    RT_CHECK(dl.remove_record(oldest, e) && dl.record(oldest) == nullptr);
+    dl.clear_history();
+    RT_CHECK(dl.history().size() == 1 && dl.history().front().id == d_alive);
+    // Every verb names the unknown.
+    RT_CHECK(!dl.resume(999, e) && e.code == "download.unknown");
+    RT_CHECK(!dl.complete(999, e) && e.code == "download.unknown");
+    RT_CHECK(!dl.fail(999, "x", e) && e.code == "download.unknown");
+    RT_CHECK(!dl.open(999, e) && e.code == "download.unknown");
+    RT_CHECK(!dl.set_target(999, "/x", e) && e.code == "download.unknown");
+    RT_CHECK(!dl.remove_record(999, e) && e.code == "download.unknown");
+    RT_CHECK(std::string(download_state_name(DownloadState::Paused)) == "paused");
   }
 
   shared += rt_passed;
