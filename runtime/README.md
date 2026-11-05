@@ -186,5 +186,23 @@ What exists now (P1 in progress):
   rects - sit behind seams that refuse by name until the authorized Windows
   build wires them. 71 new checks (2047 total).
 
-Next in P1: S034 (focus and activation rules at the broker), then S035
-(the download service).
+- `focus/Psycho_focus.*` (S034, rules done): my focus and activation law.
+  *One answer at every level:* at most one active window, one focused tab
+  per window, one focused element per tab - dead nodes answer "nothing" or
+  refuse by name, never a guess. *Blur before focus, never twice:* every
+  transition announces blur strictly before focus, and re-asking for what
+  already holds focus is a silent no-op. *Modality captures its own window:*
+  while a dialog is modal, tab switches and element focus inside refuse -
+  other windows live free; this is the same fact S031's one-modal-per-window
+  dialog service keeps, wired together at the M1 slice. *The dead cannot
+  hold focus:* closing the focused tab moves focus to the tab after it in
+  open order, else the one before; closing the active window activates the
+  most recently opened remaining window, else the app honestly holds no
+  focus - and death is not an event, a dying page hears no blur. *Visibility
+  and throttling:* a tab is ACTIVE in the active unoccluded window, VISIBLE
+  as the focused tab of a see-able window, HIDDEN otherwise - background
+  tabs, occluded windows, unknown ids - with timer floors 0 / 250 / 1000 ms
+  falling out (policy constants; the tiers are law). 68 new checks (2115
+  total).
+
+Next in P1: S035 (the download service), then S036 (site permissions).
