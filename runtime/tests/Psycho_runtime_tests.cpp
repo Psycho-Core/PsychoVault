@@ -1,4 +1,5 @@
 #include "../app/Psycho_instance.hpp"
+#include "../tabs/Psycho_tabs.hpp"
 #include "../surface/Psycho_surface.hpp"
 #include "../window/Psycho_window.hpp"
 #include "../ipc/Psycho_bus.hpp"
@@ -523,6 +524,146 @@ int run_runtime_bus_tests(int &shared) {
     RT_CHECK(registry.resize(first, 4, 4, error));
     RT_CHECK(registry.find(first)->width == 4 && registry.find(first)->pixels[3] == 0);
     RT_CHECK(registry.destroy(first) && registry.find(first) == nullptr);
+  }
+
+
+  // S026 tab model: ordered tab lists per window, the pin-prefix law, groups
+  // that never split windows or families, discard/revive accounting, moves at
+  // every scope, and a bounded LIFO recently-closed stack.
+  {
+    TabModel tabs;
+    Error e;
+    RT_CHECK(tabs.open_tab(7, "ghost", -1, e) == -1 && e.code == "tabs.window-missing");
+    RT_CHECK(tabs.attach_window(1, e) && tabs.attach_window(2, e));
+    RT_CHECK(!tabs.attach_window(1, e) && e.code == "tabs.window-exists");
+
+    // Insertion indices: front, end, middle; the first tab is the active one.
+    RT_CHECK(tabs.open_tab(1, "alpha", -1, e) == 1);   // alpha  -> [1]
+    RT_CHECK(tabs.open_tab(1, "beta", 0, e) == 2);     // beta   -> [2,1]
+    RT_CHECK(tabs.open_tab(1, "gamma", -1, e) == 3);   // gamma  -> [2,1,3]
+    RT_CHECK(tabs.open_tab(1, "delta", 1, e) == 4);    // delta  -> [2,4,1,3]
+    RT_CHECK(tabs.order(1) == std::vector<int>({2, 4, 1, 3}));
+    RT_CHECK(tabs.active_in(1)->id == 1);
+
+    // The pin law: pins are a prefix. Pinning moves to the pin-block end.
+    RT_CHECK(tabs.set_pinned(4, true, e)); // [4,2,1,3]
+    RT_CHECK(tabs.set_pinned(1, true, e)); // [4,1,2,3]
+    RT_CHECK(tabs.order(1) == std::vector<int>({4, 1, 2, 3}));
+    // A misplaced index never refuses - it clamps into the legal family region
+    // on BOTH sides of the boundary.
+    RT_CHECK(tabs.move_within_window(1, 3, 0, e));   // unpinned to 0 clamps to 2: [4,1,3,2]
+    RT_CHECK(tabs.order(1) == std::vector<int>({4, 1, 3, 2}));
+    RT_CHECK(tabs.move_within_window(1, 4, 3, e));   // pinned to 3 clamps to 1: [1,4,3,2]
+    RT_CHECK(tabs.order(1) == std::vector<int>({1, 4, 3, 2}));
+    // Unpinning lands at the start of the unpinned region - after the one
+    // surviving pin (delta), never before it. Re-unpin is a no-op.
+    RT_CHECK(tabs.set_pinned(1, false, e) && tabs.set_pinned(1, false, e));
+    RT_CHECK(tabs.order(1) == std::vector<int>({4, 1, 3, 2}) && !tabs.find(1)->pinned);
+    RT_CHECK(!tabs.move_within_window(1, 999, 0, e) && e.code == "tabs.missing");
+    RT_CHECK(!tabs.move_within_window(9, 1, 0, e) && e.code == "tabs.window-missing");
+    RT_CHECK(!tabs.move_within_window(2, 4, 0, e) && e.code == "tabs.wrong-window");
+
+    // Mute, and the discard constitution: the active tab refuses to sleep;
+    // activating a sleeper revives it and the generation counter tells.
+    RT_CHECK(!tabs.discard(1, e) && e.code == "tab.discard-active");
+    RT_CHECK(tabs.discard(2, e) && tabs.find(2)->state == TabState::Discarded);
+    RT_CHECK(tabs.activate(2, e));
+    RT_CHECK(tabs.find(2)->state == TabState::Live && tabs.find(2)->generation == 1);
+    RT_CHECK(tabs.set_muted(2, true, e) && tabs.find(2)->muted);
+
+    // Closing the active last tab hands activity to the new last one.
+    RT_CHECK(tabs.close_tab(2, e)); // [1,4,3], active beta was last
+    RT_CHECK(tabs.active_in(1)->id == 3);
+    RT_CHECK(tabs.closed().size() == 1 && tabs.closed().back().label == "beta");
+
+    // Groups: never straddle the pin boundary, never span windows, refuse to
+    // double up, and their members become contiguous in relative order.
+    RT_CHECK(tabs.set_pinned(4, true, e)); // [4,1,3]
+    RT_CHECK(tabs.group_tabs({4, 3}, "mix", "red", e) == -1 && e.code == "group.pin-split");
+    int work = tabs.group_tabs({3, 1}, "Work", "teal", e);
+    RT_CHECK(work > 0);
+    RT_CHECK(tabs.order(1) == std::vector<int>({4, 1, 3}) &&
+             tabs.find(1)->group_id == work && tabs.find(3)->group_id == work);
+    RT_CHECK(tabs.find_group(work)->name == "Work" &&
+             tabs.find_group(work)->window_id == 1);
+    RT_CHECK(tabs.group_tabs({1}, "again", "red", e) == -1 && e.code == "group.duplicate");
+    RT_CHECK(tabs.open_tab(2, "echo", -1, e) == 5);
+    // (alpha would refuse as a duplicate first; echo + delta proves the
+    // window law with both members otherwise legal.)
+    RT_CHECK(tabs.group_tabs({5, 4}, "split", "red", e) == -1 &&
+             e.code == "group.window-split");
+    RT_CHECK(tabs.set_group(work, "Deep Work", "blue", e) &&
+             tabs.find_group(work)->name == "Deep Work");
+
+    // A group travels as one block. The window's active tab was inside the
+    // block - the successor takes over without any sleeper waking.
+    RT_CHECK(tabs.move_group_to_window(work, 2, 0, e)); // w1 [4], w2 [1,3,5]
+    RT_CHECK(tabs.active_in(1)->id == 4);
+    RT_CHECK(tabs.order(2) == std::vector<int>({1, 3, 5}));
+    RT_CHECK(tabs.find_group(work)->window_id == 2);
+    RT_CHECK(!tabs.move_to_window(1, 1, -1, e) && e.code == "tabs.grouped-move");
+
+    // One ungrouped tab crosses windows; its old window repairs its active tab.
+    RT_CHECK(tabs.move_to_window(5, 1, -1, e)); // w1 [4,5], w2 [1,3]
+    RT_CHECK(tabs.order(1) == std::vector<int>({4, 5}));
+    RT_CHECK(tabs.active_in(2)->id == 3);
+
+    // Window merge: pins and unpins keep their families, order is preserved,
+    // the source ends up empty and that is the only state that detaches.
+    RT_CHECK(tabs.attach_window(3, e));
+    RT_CHECK(tabs.open_tab(3, "kilo", -1, e) == 6);
+    RT_CHECK(tabs.set_pinned(6, true, e)); // w3 [6(pinned)]
+    RT_CHECK(tabs.move_window_to_window(1, 3, -1, e));
+    RT_CHECK(tabs.order(3) == std::vector<int>({6, 4, 5}));
+    RT_CHECK(tabs.order(1).empty() && tabs.active_in(1) == nullptr);
+    RT_CHECK(tabs.find(4)->window_id == 3);
+    RT_CHECK(!tabs.move_window_to_window(1, 1, -1, e) && e.code == "tabs.same-window");
+    RT_CHECK(tabs.detach_window(1, e));
+    RT_CHECK(!tabs.detach_window(3, e) && e.code == "tabs.window-busy");
+
+    // Closing one of two group members keeps the group; the last member's
+    // close evaporates it (an empty group is not a thing).
+    RT_CHECK(tabs.close_tab(1, e)); // alpha leaves group w2 [3]
+    RT_CHECK(tabs.find_group(work) != nullptr);
+    RT_CHECK(tabs.close_tab(3, e)); // gamma: last member, group evaporates
+    RT_CHECK(tabs.find_group(work) == nullptr && tabs.active_in(2) == nullptr);
+    RT_CHECK(tabs.closed().size() == 3); // beta, alpha, gamma
+
+    // LIFO restore: gamma comes back first, its dead group restored from the
+    // snapshot under a FRESH id (history ids are never resurrected).
+    int gamma2 = tabs.reopen_last(e);
+    RT_CHECK(gamma2 == 7);
+    RT_CHECK(tabs.active_in(2)->id == 7 && tabs.find(7)->generation == 0);
+    RT_CHECK(tabs.find(7)->group_id != -1 && tabs.find(7)->group_id != work);
+    RT_CHECK(tabs.find_group(tabs.find(7)->group_id)->name == "Deep Work");
+    int alpha2 = tabs.reopen_last(e);
+    RT_CHECK(alpha2 == 8 && tabs.order(2) == std::vector<int>({8, 7}));
+    RT_CHECK(tabs.closed().size() == 1); // beta stays: its window is gone
+    RT_CHECK(tabs.reopen_last(e) == -1 && e.code == "tabs.closed-window-missing");
+    RT_CHECK(tabs.closed().size() == 1); // refusal never drops memory
+
+    // A discarded tab that reopens wakes and the generation tells the story.
+    RT_CHECK(!tabs.discard(8, e) && e.code == "tab.discard-active");
+    RT_CHECK(tabs.activate(7, e));
+    RT_CHECK(tabs.discard(8, e));
+    RT_CHECK(tabs.close_tab(8, e));
+    int alpha3 = tabs.reopen_last(e);
+    RT_CHECK(tabs.find(alpha3)->state == TabState::Live &&
+             tabs.find(alpha3)->generation == 1);
+    RT_CHECK(tabs.active_in(2)->id == alpha3);
+  }
+
+  // The closed stack is bounded: memory of what I closed is capped at 25.
+  {
+    TabModel bound;
+    Error e;
+    bound.attach_window(9, e);
+    for (int i = 0; i < 30; ++i) {
+      int id = bound.open_tab(9, "t" + std::to_string(i), -1, e);
+      RT_CHECK(bound.close_tab(id, e));
+    }
+    RT_CHECK(bound.closed().size() == 25);
+    RT_CHECK(bound.closed().front().tab_id == 6); // oldest five fell off
   }
 
   shared += rt_passed;
