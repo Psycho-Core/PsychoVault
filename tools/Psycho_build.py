@@ -21,6 +21,8 @@ PLATFORM=["platform/Psycho_host.cpp","platform/Psycho_network.cpp","platform/Psy
           "platform/Psycho_proxy.cpp","platform/Psycho_extension.cpp","platform/Psycho_download.cpp",
           "platform/Psycho_transport.cpp","platform/Psycho_tls.cpp","platform/Psycho_vault.cpp",
           "platform/Psycho_spell.cpp","platform/Psycho_sandbox.cpp"]
+# P1 of my master plan: my runtime (broker + typed IPC bus + broker-side tests).
+RUNTIME=["runtime/ipc/Psycho_bus.cpp","runtime/broker/Psycho_broker.cpp","runtime/tests/Psycho_runtime_tests.cpp"]
 def run(cmd,env=None):
     print("+",subprocess.list2cmdline([str(x) for x in cmd]),flush=True)
     subprocess.run([str(x) for x in cmd],cwd=ROOT,env=env,check=True)
@@ -97,7 +99,7 @@ def main():
     if args.target in ("all","engine"):
         target("pv-engine",ENGINE+["tools/Psycho_engine_cli.cpp"],winlibs if windows else [])
     if args.target in ("all","tests"):
-        target("pv-tests",ENGINE+PLATFORM+["tests/Psycho_test_main.cpp"],winlibs if windows else [])
+        target("pv-tests",ENGINE+PLATFORM+RUNTIME+["tests/Psycho_test_main.cpp"],winlibs if windows else [])
     # The conformance runner is its own small target: my parser and interpreter plus
     # the tool that walks a Test262 tree, so a measurement never needs the shell.
     if args.target in ("all","conformance"):
@@ -107,7 +109,7 @@ def main():
     if windows and args.target in ("all","tests"):
         # My browser is one file because my page host and my engine are linked
         # straight into it. Nothing is unpacked and nothing sits beside it.
-        target("PsychoVault",ENGINE+PLATFORM+["shell/Psycho_win_main.cpp"],winlibs,"WINDOWS")
+        target("PsychoVault",ENGINE+PLATFORM+RUNTIME+["shell/Psycho_win_main.cpp"],winlibs,"WINDOWS")
     print("Built",out)
 if __name__=="__main__":
     try:main()
