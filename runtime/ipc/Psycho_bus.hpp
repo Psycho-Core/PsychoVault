@@ -1,5 +1,6 @@
 // PsychoVault original source. My runtime message bus - the framed, typed,
-// capability-checked spine of my own Electron. P1/S021 of docs/Psycho_MASTER-PLAN.md.
+// capability-checked spine of my own application runtime. P1/S021 of
+// docs/Psycho_MASTER-PLAN.md.
 //
 // What this guarantees, concretely:
 //  - framed, length-prefixed messages on the wire (u32 length + one JSON object),
