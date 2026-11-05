@@ -45,6 +45,17 @@ What exists now (P1 in progress):
   shape, listener thread with a clean quit path - proven on the first
   authorized manual Windows build.
 
-Next in P1: S024-S027 (window/tab surfaces on real windows), then wiring the
-supervisor underneath the renderer hosts S022 introduced, then S028 internal
-schemes and the preload bridge work.
+- `window/Psycho_window.*` (S024, rules done): my BrowserWindow equivalent's
+  decisions - creation with clamping into monitor work areas, cross-monitor
+  moves (destination monitor resolved first, then clamped), min/max/fullscreen
+  with restore geometry kept, single-owner focus with deterministic fallover,
+  per-window DPI scale and taskbar identity (`PsychoCore.PsychoVault.Browser`).
+  27 new checks, 898 total. `Psycho_window_win32.cpp` is the real OS half: my
+  own window class, SetWindowPos/ShowWindow application, AppUserModelID, a
+  WM_DPICHANGED path that obeys the rules object; proven on the first
+  authorized manual Windows build. Fullscreen style-swap polish rides S025's
+  presentation work.
+
+Next in P1: S025 (surface presentation - the engine paints into my surface and
+the broker composites it), S026-S027 (the tab model and navigation controller),
+then S028 internal schemes and the preload bridge.

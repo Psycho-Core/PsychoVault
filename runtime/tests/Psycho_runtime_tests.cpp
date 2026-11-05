@@ -1,4 +1,5 @@
 #include "../app/Psycho_instance.hpp"
+#include "../window/Psycho_window.hpp"
 #include "../ipc/Psycho_bus.hpp"
 #include "../broker/Psycho_broker.hpp"
 #include "../process/Psycho_process.hpp"
@@ -362,6 +363,82 @@ int run_runtime_bus_tests(int &shared) {
     AppInstance e(stubborn);
     RT_CHECK(e.start(first, error) == AppInstance::Start::Primary);
     RT_CHECK(!e.quit(error) && error == "disk full" && e.running());
+  }
+
+  // S024 the window model: geometry clamps, focus rules, state restore and
+  // taskbar identity - every rule decided here, applied through a fake seam.
+  {
+    std::vector<WindowRecord> applied;
+    WindowRules::Seams seams;
+    seams.monitors = [] {
+      return std::vector<WindowRules::Monitor>{{"primary", {0, 0, 1920, 1040}},
+                                               {"side", {1920, 0, 1600, 900}}};
+    };
+    seams.apply = [&](const WindowRecord &record) { applied.push_back(record); };
+    WindowRules rules(seams);
+    std::string error;
+
+    // Creation clamps into the monitor's work area and carries my identity.
+    int one = rules.create("PsychoVault", {100, 100, 800, 600}, error);
+    const WindowRecord *rec = rules.find(one);
+    RT_CHECK(rec && rec->bounds == (WinRect{100, 100, 800, 600}) &&
+             rec->monitor_id == "primary" && !rec->taskbar_id.empty());
+    RT_CHECK(rules.taskbar_identity() == "PsychoCore.PsychoVault.Browser");
+
+    // A window asked past the edge is pulled fully into the work area.
+    RT_CHECK(rules.move_resize(one, {1800, 900, 900, 400}));
+    rec = rules.find(one);
+    RT_CHECK(rec->bounds.x + rec->bounds.w <= 1920 && rec->bounds.y + rec->bounds.h <= 1040);
+
+    // Too small grows to my minimums instead of wallowing.
+    RT_CHECK(rules.move_resize(one, {50, 50, 10, 10}));
+    rec = rules.find(one);
+    RT_CHECK(rec->bounds.w == 320 && rec->bounds.h == 200 && rec->state == WindowState::Normal);
+
+    // Maximise remembers where to come back to; restore returns exactly.
+    WinRect before = rec->bounds;
+    RT_CHECK(rules.maximize(one));
+    rec = rules.find(one);
+    RT_CHECK(rec->state == WindowState::Maximized && rec->bounds == (WinRect{0, 0, 1920, 1040}));
+    // Geometry keys are refused while maximised: geometry belongs to the state.
+    RT_CHECK(!rules.move_resize(one, {10, 10, 500, 500}));
+    RT_CHECK(rules.restore(one));
+    rec = rules.find(one);
+    RT_CHECK(rec->state == WindowState::Normal && rec->bounds == before);
+
+    // Fullscreen takes the monitor's whole work area, restore brings me back.
+    RT_CHECK(rules.fullscreen(one));
+    rec = rules.find(one);
+    RT_CHECK(rec->state == WindowState::Fullscreen && rec->bounds.w == 1920);
+    RT_CHECK(rules.restore(one));
+    RT_CHECK(rules.find(one)->bounds == before);
+
+    // A window pushed onto the second monitor adopts its identity.
+    RT_CHECK(rules.move_resize(one, {2000, 100, 700, 500}));
+    rec = rules.find(one);
+    RT_CHECK(rec->monitor_id == "side" && rec->bounds.x + rec->bounds.w <= 3520);
+
+    // Focus is single-owner; focus on a minimised window is refused.
+    int two = rules.create("Second", {200, 200, 640, 480}, error);
+    RT_CHECK(rules.focus(one));
+    RT_CHECK(rules.find(one)->focused && !rules.find(two)->focused);
+    RT_CHECK(rules.minimize(two));
+    RT_CHECK(!rules.focus(two));
+
+    // Destroying the focused window falls focus to the survivor deterministically.
+    RT_CHECK(rules.focus(two) == false);
+    RT_CHECK(rules.restore(two) && rules.focus(two));
+    rules.destroy(two);
+    RT_CHECK(rules.find(two) == nullptr && rules.find(one)->focused);
+
+    // DPI changes land as scale on the record; nonsense scales are refused.
+    rules.dpi_changed(one, 1.5);
+    RT_CHECK(rules.find(one)->dpi_scale == 1.5);
+    rules.dpi_changed(one, 0);
+    RT_CHECK(rules.find(one)->dpi_scale == 1.5);
+
+    // Every accepted mutation reached the platform seam in order.
+    RT_CHECK(applied.size() >= 10 && applied.back().id == one);
   }
 
   shared += rt_passed;
