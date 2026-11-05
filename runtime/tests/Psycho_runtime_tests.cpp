@@ -5,6 +5,7 @@
 #include "../bridge/Psycho_bridge.hpp"
 #include "../apphost/Psycho_apphost.hpp"
 #include "../services/Psycho_services.hpp"
+#include "../keys/Psycho_keys.hpp"
 #include "../../engine/Psycho_js.hpp"
 #include "../surface/Psycho_surface.hpp"
 #include "../window/Psycho_window.hpp"
@@ -1321,6 +1322,67 @@ int run_runtime_bus_tests(int &shared) {
     for (int i = 0; i < 16; ++i) RT_CHECK(ctx.open(info, e) > 0);
     RT_CHECK(ctx.outstanding() == 16);
     RT_CHECK(ctx.open(info, e) == 0 && e.code == "context.too-many");
+  }
+
+
+  // S032 shortcut registry: one canonical language shared with menus, scope
+  // law with the editable shadow, and propagation of the unclaimed.
+  {
+    ShortcutRegistry keys;
+    Error e;
+    const KeyContext on_page{false};
+    const KeyContext in_field{true};
+
+    // Bind law: named keys may stand alone; printable characters may not;
+    // unknown tokens and empty targets refuse, by name.
+    RT_CHECK(keys.bind(KeyScope::App, "ctrl+t", "tab.new", e));
+    RT_CHECK(keys.bind(KeyScope::App, "Shift+Ctrl+P", "palette.open", e));
+    RT_CHECK(keys.bind(KeyScope::App, "F5", "nav.reload", e));
+    RT_CHECK(!keys.bind(KeyScope::App, "t", "evil", e) && e.code == "keys.bare");
+    RT_CHECK(!keys.bind(KeyScope::App, "Ctrl+Nonsense", "evil", e) &&
+             e.code == "keys.key");
+    RT_CHECK(!keys.bind(KeyScope::App, "Ctrl+Alt+", "evil", e) && e.code == "keys.key");
+    RT_CHECK(!keys.bind(KeyScope::App, "Ctrl+T", "tab.other", e) &&
+             e.code == "keys.duplicate");
+    RT_CHECK(!keys.bind(KeyScope::App, "Ctrl+Q", "", e) && e.code == "keys.command");
+    // The same accelerator in the OTHER scope is legal: the shadow law.
+    RT_CHECK(keys.bind(KeyScope::Editable, "Ctrl+Shift+P", "edit.inspect", e));
+
+    // My menus and my keys speak ONE canonical language, case-free on both.
+    KeyEvent palette{true, false, true, "p"};
+    RT_CHECK(ShortcutRegistry::accelerator_for(palette) == "Ctrl+Shift+P");
+    RT_CHECK(ShortcutRegistry::accelerator_for(palette) ==
+             MenuService::canonical_accelerator("shift+ctrl+p"));
+
+    // Resolution law: app scope fires on a page AND inside an editable field.
+    KeyEvent ctrl_t{true, false, false, "t"};
+    RT_CHECK(keys.resolve(ctrl_t, on_page) == "tab.new");
+    RT_CHECK(keys.resolve(ctrl_t, in_field) == "tab.new");
+    RT_CHECK(keys.resolve({true, false, false, "T"}, on_page) == "tab.new"); // case-free
+    RT_CHECK(keys.resolve({false, false, false, "F5"}, on_page) == "nav.reload");
+    RT_CHECK(keys.resolve({false, false, false, "f5"}, on_page) == "nav.reload");
+    // The shadow law, proven both directions on the same chord.
+    RT_CHECK(keys.resolve(palette, in_field) == "edit.inspect");
+    RT_CHECK(keys.resolve(palette, on_page) == "palette.open");
+    // Editable bindings do not fire on a page: the key stays with the content.
+    RT_CHECK(keys.bind(KeyScope::Editable, "Ctrl+A", "edit.select-all", e));
+    RT_CHECK(keys.resolve({true, false, false, "a"}, in_field) == "edit.select-all");
+    RT_CHECK(keys.resolve({true, false, false, "a"}, on_page) == "");
+    // The unclaimed keys always propagate - typing belongs to the page.
+    RT_CHECK(keys.resolve({false, false, false, "k"}, on_page).empty());
+    RT_CHECK(keys.resolve({false, false, false, " "}, in_field).empty());
+    RT_CHECK(keys.resolve({true, false, false, "="}, on_page).empty());
+
+    // A command's bindings die together across scopes; unbinding is truth.
+    RT_CHECK(keys.bind(KeyScope::Editable, "Ctrl+P", "palette.open", e));
+    RT_CHECK(keys.resolve({true, false, false, "p"}, in_field) == "palette.open");
+    RT_CHECK(keys.size() == 6); // tab.new, palette.open x2 scopes, reload, inspect, select-all
+    RT_CHECK(keys.unbind_command("palette.open"));
+    RT_CHECK(keys.size() == 4); // both palette bindings died together
+    RT_CHECK(keys.resolve(palette, on_page).empty());
+    RT_CHECK(keys.resolve({true, false, false, "p"}, in_field).empty());
+    RT_CHECK(keys.resolve(palette, in_field) == "edit.inspect"); // shadow remapped
+    RT_CHECK(!keys.unbind_command("palette.open")); // already gone, said so
   }
 
   shared += rt_passed;
