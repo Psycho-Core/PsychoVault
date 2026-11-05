@@ -1,5 +1,7 @@
 # My Test262 measurement
 
+This is a measurement of my JavaScript engine as it stands today, not a claim about the finished browser. The engine work it exposes is sequenced in `docs/Psycho_MASTER-PLAN.md` (P2 and P5); the numbers below will be re-run and republished as the engine grows.
+
 I wanted a number I could not talk my way out of, so I wrote a runner that walks the Test262 tree and executes every test through my own parser and my own interpreter. Nothing from another engine is involved: the tests are inputs, and all the code that runs them is mine.
 
 ## The run

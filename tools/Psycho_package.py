@@ -2,9 +2,12 @@
 """I package only verified Windows files and emit the manifest my updater reads.
 
 I never package a profile, a credential, a build tree or source control.
-My engine and my page host are linked inside PsychoVault.exe, so that one file is
-enough to browse and it is my update payload. I still publish a ZIP with my
-development tools, but nobody needs them to run my browser.
+
+SUPERSEDED FOR RELEASE (P0/S011, docs/Psycho_MASTER-PLAN.md). The portable
+single-file exe model is retired: the browser ships as an installer built from
+`installer/` at P10, with the extension payload inside the installed product.
+This script is kept only as the payload/hash staging groundwork that P10
+replaces; do not publish a release from it.
 """
 from __future__ import annotations
 import argparse
@@ -45,7 +48,9 @@ def main() -> None:
     stage = out / "package"
     stage.mkdir(parents=True, exist_ok=True)
     files: dict[str, pathlib.Path] = {name: out / name for name in BINARIES}
-    files["README-TEST.md"] = ROOT / "docs/Psycho_TEST-BUILD.md"
+    build_doc = ROOT / "docs/Psycho_BUILD-AND-RELEASE.md"
+    if build_doc.exists():
+        files["README-BUILD.md"] = build_doc
     files["NOTICE.txt"] = ROOT / "NOTICE.txt"
 
     info = out / "BUILD-INFO.txt"
