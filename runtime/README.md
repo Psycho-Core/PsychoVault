@@ -94,6 +94,21 @@ What exists now (P1 in progress):
   widens it in S028. 679 new checks (1710 total), including a 300-navigation
   proof that both bounds hold.
 
-Next in P1: S028 (the internal `psychovault://` scheme - page registry,
-privileged-origin rules, no web access to internal origins without a
-permission capability), then the preload bridge (S029-S031).
+- `internal/Psycho_internal.*` (S028, rules done): my internal scheme
+  `psychovault://` and its three laws. Pages exist only by registry (nine
+  stock entries, address space fixed; web probing can never invent one). Every
+  page is its own origin: a settings page may hold its own resources but never
+  reaches history's - cross-internal fetches refuse. Web content gets nothing
+  by default: fetching an internal origin needs the Internal-channel
+  capability AND a page that opted in - both, never either, and no stock page
+  opts in - while web top-level navigation into the scheme is refused
+  unconditionally. Canonicalisation folds case, strips the lone root slash,
+  refuses traversal, escapes and backslash separators outright. New bus
+  channel `Internal` (wire id 22, every stock channel's number unchanged) plus
+  `internal:list`/`internal:fetch` schemas; `admit_browser_url` widens S027's
+  admission seam so broker-driven navigation reaches my pages while the stock
+  web policy still refuses them. 86 new checks (1796 total).
+
+Next in P1: S029 (the preload bridge - per-page isolated script context, the
+curated window.psycho namespace, freeze semantics, no direct broker access),
+then S030 app-layer JS host and S031 broker services.

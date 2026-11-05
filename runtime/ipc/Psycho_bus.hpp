@@ -48,6 +48,7 @@ enum class Channel : uint16_t {
   Perf = 19,
   Vault = 20,
   Translate = 21,
+  Internal = 22, // my psychovault:// scheme surface: pages, resources, diagnostics
   Diagnostics = 30,
   Lifecycle = 31,
 };
