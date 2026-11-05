@@ -150,6 +150,7 @@ Profile Profile::open(const std::string &directory, bool private_mode) {
     p.battery_saver = settings.flag("batterySaver", false);
     p.block_autoplay = settings.flag("blockAutoplay", false);
     p.spell_check = settings.flag("spellCheck", true);
+    p.vault_lock_minutes = int(std::clamp(settings.num("vaultLockMin", 10), 1.0, 1440.0));
     read_list("spellUserWords", p.user_words);
     read_list("extensionDirectories", p.extension_directories);
     read_list("disabledExtensions", p.disabled_extensions);
@@ -265,6 +266,7 @@ bool Profile::save() {
   settings.set("dismissedUpdate", bounded(dismissed_update, 120));
   settings.set("blockAutoplay", block_autoplay);
   settings.set("spellCheck", spell_check);
+  settings.set("vaultLockMin", vault_lock_minutes);
   {
     Json dial = Json::make_array();
     for (auto &d : speed_dial) {
