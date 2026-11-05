@@ -69,6 +69,17 @@ Schemas Schemas::stock() {
   s.add("nav:notify",
         fields({{"url", T::String, true}, {"title", T::String, true}, {"loading", T::Bool, true}}));
   s.add("tab:new", fields({{"url", T::String, false}}));
+  // S027 WebContents notifications: my navigation controller speaks on the Tab
+  // channel, notify-only (request id 0), always naming the contents it speaks for.
+  s.add("tab:loading", fields({{"contents", T::Number, true}, {"url", T::String, true},
+                               {"kind", T::String, true}}));
+  s.add("tab:state", fields({{"contents", T::Number, true}, {"state", T::String, true}}));
+  s.add("tab:url", fields({{"contents", T::Number, true}, {"url", T::String, true},
+                           {"entry", T::Number, true}}));
+  s.add("tab:title", fields({{"contents", T::Number, true}, {"title", T::String, true}}));
+  s.add("tab:favicon", fields({{"contents", T::Number, true}, {"favicon", T::String, true}}));
+  s.add("tab:error", fields({{"contents", T::Number, true}, {"code", T::String, true},
+                             {"message", T::String, true}, {"url", T::String, true}}));
   s.add("tab:activate", fields({{"id", T::Number, true}}));
   s.add("win:focus", fields({{"id", T::Number, true}}));
   s.add("lifecycle:ping", fields({}));

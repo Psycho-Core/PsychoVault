@@ -80,6 +80,20 @@ What exists now (P1 in progress):
   never resurrected - and a refused restore leaves memory intact. 107 new
   checks (1031 total).
 
-Next in P1: S027 (the WebContents-equivalent navigation controller - session
-history, back/forward, reload/stop, loading and error state notifications on
-the Tab channel), then S028 internal schemes and the preload bridge.
+- `content/Psycho_content.*` (S027, model done): my WebContents equivalent -
+  a per-tab navigation controller with committed session history, back and
+  forward travel, reload and stop, and every state change announced on the Tab
+  channel through envelopes that validate against the stock schema registry.
+  The rules with teeth: exactly one navigation in flight (starting another
+  aborts the first and the aborted corpse stays in the bounded audit log), a
+  committed NEW navigation severs the forward tail at commit and never before
+  it, a revisit refreshes metadata but never grows history, a failed
+  navigation changes nothing that was already true, and both ledgers are
+  bounded (100 history entries, 256 logged navigations). URLs are canonicalised
+  by an admit-policy seam that ships http/https-only; the internal scheme
+  widens it in S028. 679 new checks (1710 total), including a 300-navigation
+  proof that both bounds hold.
+
+Next in P1: S028 (the internal `psychovault://` scheme - page registry,
+privileged-origin rules, no web access to internal origins without a
+permission capability), then the preload bridge (S029-S031).
