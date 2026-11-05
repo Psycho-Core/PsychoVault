@@ -318,6 +318,30 @@ bool Profile::save_session() {
   ok = write_file_atomic(directory + "/owned-session-state.json", state.dump() + "\n", error) && ok;
   return ok;
 }
+Json Profile::load_workspaces() const {
+  Json state;
+  // The same file contract as the rest of my profile: missing is empty, and a
+  // broken document is ignored rather than guessed.
+  try {
+    auto text = read_text_file(directory + "/owned-workspaces.json");
+    if (auto parsed = Json::parse(text))
+      state = *parsed;
+  } catch (const std::exception &) {
+  }
+  return state;
+}
+bool Profile::save_workspaces(const Json &state) {
+  if (private_mode)
+    return true;
+  std::error_code ec;
+  fs::create_directories(utf8_path(directory), ec);
+  if (ec) {
+    error = "cannot create profile directory";
+    return false;
+  }
+  return write_file_atomic(directory + "/owned-workspaces.json", state.dump() + "\n",
+                           error);
+}
 void Profile::visit(const std::string &title, const std::string &url) {
   if (private_mode || !valid_browser_url(url) || !starts(url, "http"))
     return;

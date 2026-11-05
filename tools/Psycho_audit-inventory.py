@@ -72,7 +72,7 @@ DEFAULT_KEYS = {
     "blockAllowSites": ("DONE", r'read_list\("blockAllowSites"'),
     "blockAds": ("DONE", r'settings\.set\("blockAds"'),
     "homepage": ("DONE", r'settings\.set\("homePage"'),
-    "workspacesEnabled": ("PARTIAL", "the flag persists; the workspace list/switch/rename UI is not built"),
+    "workspacesEnabled": ("DONE", "\"workspaceRename:\""),
     "restore": ("DONE", r'settings\.set\("restoreTabs"'),
     "remember": ("DEFERRED", "no history opt-out switch; history always recorded outside private mode"),
     "theme": ("DONE", r'settings\.set\("theme"'),
@@ -139,7 +139,7 @@ NAMESPACES = {
     "view": ("PARTIAL", "split view is not restored; zoom and hidings exist"),
     "downloads": ("DONE", "downloads.snapshot()"),
     "ui": ("PARTIAL", "no ui:menu; theme/accent/sidebar toggles serve the same ground"),
-    "ws": ("DEFERRED", "workspace management UI is not built"),
+    "ws": ("DONE", "draw_workspaces"),
     "clip": ("DONE", "void paste()"),
     "rail": ("DEFERRED", "the service rail is not rebuilt"),
     "spell": ("PARTIAL", "add/remove exist; the dictionary engine is pending"),
@@ -152,7 +152,7 @@ NAMESPACES = {
 
 FEATURE_BULLETS = {
     "tabs: new/close/activate/reopen/pin/mute/move/drag": ("PARTIAL", "new/close/activate/reopen/pin/mute/move all exist (buttons, chords and the tab context menu); drag-reorder with the mouse is the remaining piece"),
-    "workspaces: list/switch/new/close/rename/menu": ("PARTIAL", "a persisted flag only; the workspace tray is not built"),
+    "workspaces: list/switch/new/close/rename/menu": ("DONE", "workspace_switch"),
     "private windows": ("DONE", r'"--private"'),
     "split view": ("DEFERRED", "split view is not rebuilt"),
     "command palette": ("DEFERRED", "the command palette is not rebuilt"),
@@ -181,7 +181,7 @@ STORES = {
     "history.json": ("DONE", "owned-history.json"),
     "downloads.json": ("DONE", "owned-downloads.json"),
     "session.json": ("DONE", "owned-session.json"),
-    "workspaces.json": ("DEFERRED", "workspaces are a flag; a store follows the tray UI"),
+    "workspaces.json": ("DONE", "owned-workspaces.json"),
     "vault.bin": ("DEFERRED", "the vault is not implemented"),
     "vault.key.json": ("DEFERRED", "the vault is not implemented"),
     "vault-migration.json": ("DEFERRED", "the vault is not implemented"),
@@ -247,7 +247,7 @@ NS_PREFIX = {
     "view": ("DEFERRED", "split view"),
     "vpncheck": ("PARTIAL", "my tunnel test shows the connected server; a public-IP check page is pending"),
     "win": ("PARTIAL", "close/max/min are native; win:private is my --private process flag"),
-    "ws": ("DEFERRED", "workspaces UI"),
+    "ws": ("DONE", "owned-workspaces.json"),
     "zoom": ("DONE", "set_zoom("),
 }
 

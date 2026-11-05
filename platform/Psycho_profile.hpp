@@ -23,6 +23,9 @@ public:
   // Pin and mute ride along with the session as one '1'/'0' flag per tab.
   std::string session_pinned, session_muted;
   int session_active = 0;
+  // Workspaces persist as one small JSON document; the shell owns the shape.
+  Json load_workspaces() const;
+  bool save_workspaces(const Json &state);
   // Downloads
   std::string download_directory;
   bool ask_save_location = false, download_notify = true;

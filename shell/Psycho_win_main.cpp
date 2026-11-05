@@ -557,6 +557,7 @@ struct Browser {
     downloads.set_directory(profile.download_directory);
     if (!private_mode) downloads.load(profile.directory);
     install_extension_effects();
+    load_workspaces_state();
     if (!private_mode) {
       std::string storage_error;
       extensions.load_storage(profile.directory, storage_error);
@@ -956,6 +957,7 @@ struct Browser {
     profile.session_active = active;
     if (!profile.save_session() && profile_error.empty())
       profile_error = profile.error;
+    save_workspaces();
   }
   void back() {
     Tab &t = current();
@@ -996,7 +998,7 @@ struct Browser {
     double x = 52;
     for (size_t i = 0; i < tabs.size() && x < width - 180; ++i) {
       bool sel = int(i) == active;
-      Rect r{x, 6, tabs[i].pinned ? 96 : 180, 32};
+      Rect r{x, 6, double(tabs[i].pinned ? 96 : 180), 32};
       c.fill(r, sel ? PANEL : CHROME);
       if (sel) {
         c.line(r.x, r.y, r.x + r.w, r.y, ACCENT, 2);
@@ -1084,6 +1086,10 @@ struct Browser {
     hits.push_back({{4, 104, 36, 36}, "history", 0, {}});
     c.text(12, 152, "D", 14, downloads.active_count() ? ACCENT : MUTED);
     hits.push_back({{4, 144, 36, 36}, "downloads", 0, {}});
+    if (profile.workspaces) {
+      c.text(12, 192, "W", 14, panel_workspaces ? ACCENT : MUTED, panel_workspaces);
+      hits.push_back({{4, 184, 36, 36}, "workspaces", 0, {}});
+    }
     c.text(12, height - 158, "A", 14, profile.block_ads ? ACCENT : MUTED, profile.block_ads);
     hits.push_back({{4, double(height - 166), 36, 36}, "toggle-adblock", 0, {}});
     c.text(12, height - 114, "V", 14, profile.proxy.active() ? ACCENT : MUTED,
@@ -1094,6 +1100,8 @@ struct Browser {
     c.fill(content, BG);
     if (panel_downloads)
       draw_downloads(c);
+    else if (panel_workspaces)
+      draw_workspaces(c);
     else if (panel_bookmarks || panel_history)
       draw_panel(c);
     else if (settings)
@@ -1465,6 +1473,17 @@ struct Browser {
     bool pinned = false, muted = false;
   };
   std::vector<ClosedTab> closed_tabs;
+  // One workspace is one named set of tabs. The live workspace is re-captured
+  // from the tab strip every save, so the disk copy is never out of date.
+  struct Workspace {
+    std::string name = "Main";
+    std::vector<std::string> tabs;
+    int active = 0;
+    std::string pinned, muted;
+  };
+  std::vector<Workspace> workspaces;
+  size_t workspace = 0;
+  bool panel_workspaces = false;
   void begin_setting_edit(const std::string &key, const std::string &current_value) {
     editing_setting = key;
     address = current_value;
@@ -1544,6 +1563,18 @@ struct Browser {
         confinement = confinement_status();
         save_profile();
       }
+    } else if (key == "workspaceNew") {
+      workspace_new(value);
+      status = "Workspace created: " + workspaces[workspace].name;
+      return;
+    } else if (starts(key, "workspaceRename:")) {
+      int index = std::atoi(key.c_str() + 16);
+      if (index >= 0 && size_t(index) < workspaces.size()) {
+        workspaces[size_t(index)].name = value.empty() ? workspaces[size_t(index)].name : value;
+        save_workspaces();
+        status = "Workspace renamed";
+      }
+      return;
     } else if (key == "filterFile") {
       profile.filter_list_path = value;
       load_security_state();
@@ -1656,6 +1687,49 @@ struct Browser {
     if (!shown)
       c.text(content.x + 40, y, needle.empty() ? "Nothing saved yet."
                                                : "Nothing matches.", 13, MUTED);
+  }
+  void draw_workspaces(Canvas &c) {
+    c.text(content.x + 40, content.y + 30, "Workspaces", 24, TEXT, true);
+    c.text(content.x + 40, content.y + 60,
+           "Each workspace keeps its own tabs. New and rename are typed into my address bar.",
+           12, MUTED);
+    Rect add{content.x + content.w - 200, content.y + 24, 150, 30};
+    c.fill(add, PANEL);
+    c.stroke(add, BORDER);
+    c.text(add.x + 12, add.y + 7, "New workspace", 12, TEXT);
+    hits.push_back({add, "workspace-new", 0, {}});
+    double y = content.y + 100;
+    for (size_t i = 0; i < workspaces.size() && y < content.y + content.h - 60; ++i) {
+      // The live workspace is shown with the strip as it stands right now.
+      Workspace shown = workspaces[i];
+      if (i == workspace) {
+        shown.tabs.clear();
+        for (auto &tab : tabs)
+          shown.tabs.push_back(tab.url);
+      }
+      Rect row{content.x + 40, y, content.w - 80, 48};
+      c.fill(row, i == workspace ? PANEL : BG);
+      c.stroke(row, i == workspace ? ACCENT : BORDER);
+      c.text(row.x + 12, row.y + 7, shown.name, 14, TEXT, i == workspace);
+      c.text(row.x + 12, row.y + 26,
+             std::to_string(shown.tabs.size()) + " tab" +
+                 (shown.tabs.size() == 1 ? "" : "s") +
+                 (i == workspace ? " - active" : ""),
+             11, MUTED);
+      Rect rename{row.x + row.w - 270, row.y + 10, 76, 28};
+      c.stroke(rename, BORDER);
+      c.text(rename.x + 12, rename.y + 6, "Rename", 12, TEXT);
+      hits.push_back({rename, "workspace-rename", int(i), {}});
+      Rect close{row.x + row.w - 180, row.y + 10, 76, 28};
+      c.stroke(close, BORDER);
+      c.text(close.x + 16, close.y + 6, "Close", 12, TEXT);
+      hits.push_back({close, "workspace-close", int(i), {}});
+      Rect open_b{row.x + row.w - 90, row.y + 10, 76, 28};
+      c.stroke(open_b, BORDER);
+      c.text(open_b.x + 18, open_b.y + 6, "Open", 12, TEXT);
+      hits.push_back({open_b, "workspace-open", int(i), {}});
+      y += 56;
+    }
   }
   // I turn a frame into the paint list my raster reads, in window coordinates.
   std::vector<PaintCommand> frame_commands(const Tab &t, double origin_x, double origin_y) const {
@@ -1994,7 +2068,20 @@ struct Browser {
           address_focus = home_focus = false;
         else if (h.action == "find-close")
           close_find();
-        else if (h.action == "suggest") {
+        else if (h.action == "workspaces") {
+          panel_workspaces = !panel_workspaces;
+          panel_bookmarks = panel_history = panel_downloads = false;
+        } else if (h.action == "workspace-new") {
+          begin_setting_edit("workspaceNew", "");
+        } else if (h.action == "workspace-rename") {
+          if (h.index >= 0 && size_t(h.index) < workspaces.size())
+            begin_setting_edit("workspaceRename:" + std::to_string(h.index),
+                               workspaces[size_t(h.index)].name);
+        } else if (h.action == "workspace-close") {
+          workspace_close(h.index);
+        } else if (h.action == "workspace-open") {
+          workspace_switch(size_t(h.index));
+        } else if (h.action == "suggest") {
           navigate(h.value);
         } else if (h.action == "dial-remove") {
           if (h.index >= 0 && size_t(h.index) < profile.speed_dial.size()) {
@@ -2019,8 +2106,10 @@ struct Browser {
             status = "Type an address in my search box first";
         } else if (h.action == "download-reveal") {
           if (!h.value.empty())
-            ShellExecuteW(hwnd, L"open", L"explorer.exe",
-                          (L"/select,"" + utf16_of(h.value) + L""").c_str(),
+            // Explorer selects the file for a /select switch with a quoted
+            // path, built as a named string so the call itself stays simple.
+            std::wstring select = L"/select,\"" + utf16_of(h.value) + L"\"";
+            ShellExecuteW(hwnd, L"open", L"explorer.exe", select.c_str(),
                           nullptr, SW_SHOWNORMAL);
         } else if (h.action == "downloads-folder") {
           ShellExecuteW(hwnd, L"open", utf16_of(downloads.directory()).c_str(),
@@ -2309,6 +2398,130 @@ struct Browser {
     if (cp < 32 || (cp >= 0xd800 && cp <= 0xdfff))
       return;
     insert_text(utf8_encode(cp));
+  }
+  void load_workspaces_state() {
+    if (private_mode)
+      return;
+    Json state = profile.load_workspaces();
+    if (state.type != Json::Type::Object)
+      return;
+    if (const Json *list = state.find("list"))
+      if (list->type == Json::Type::Array)
+        for (auto &entry : list->array) {
+          if (workspaces.size() >= 32)
+            break;
+          Workspace w;
+          w.name = entry.str("name", "Main");
+          w.active = int(entry.num("active", 0));
+          w.pinned = entry.str("pinned");
+          w.muted = entry.str("muted");
+          if (const Json *tabs_json = entry.find("tabs"))
+            if (tabs_json->type == Json::Type::Array)
+              for (auto &t : tabs_json->array) {
+                if (w.tabs.size() >= 64)
+                  break;
+                if (t.type == Json::Type::String && valid_browser_url(t.string))
+                  w.tabs.push_back(t.string);
+              }
+          workspaces.push_back(std::move(w));
+        }
+    workspace = size_t(std::clamp(int(state.num("active", 0)), 0,
+                                  int(workspaces.empty() ? 0 : workspaces.size() - 1)));
+  }
+  void capture_workspace() {
+    if (workspaces.empty())
+      workspaces.push_back(Workspace{});
+    if (workspace >= workspaces.size())
+      workspace = 0;
+    Workspace &w = workspaces[workspace];
+    w.tabs.clear();
+    w.pinned.clear();
+    w.muted.clear();
+    for (auto &tab : tabs) {
+      w.tabs.push_back(tab.url);
+      w.pinned += tab.pinned ? '1' : '0';
+      w.muted += tab.muted ? '1' : '0';
+    }
+    w.active = active;
+  }
+  void save_workspaces() {
+    if (private_mode || !profile.workspaces)
+      return;
+    capture_workspace();
+    Json list = Json::make_array();
+    for (auto &w : workspaces) {
+      Json entry = Json::make_object();
+      entry.set("name", w.name);
+      Json urls = Json::make_array();
+      for (auto &u : w.tabs)
+        urls.array.push_back(Json(u));
+      entry.set("tabs", urls);
+      entry.set("active", double(w.active));
+      entry.set("pinned", w.pinned);
+      entry.set("muted", w.muted);
+      list.array.push_back(std::move(entry));
+    }
+    Json state = Json::make_object();
+    state.set("active", double(workspace));
+    state.set("list", list);
+    if (!profile.save_workspaces(state) && profile_error.empty())
+      profile_error = profile.error;
+  }
+  // A workspace swap stops every live session and rebuilds the strip from the
+  // stored list, exactly like my launch restore does.
+  void load_workspace_tabs(Workspace &w) {
+    for (auto &tab : tabs)
+      stop_session(tab);
+    tabs.clear();
+    for (auto &u : w.tabs)
+      new_tab(u, false);
+    if (tabs.empty())
+      new_tab();
+    for (size_t i = 0; i < tabs.size(); ++i) {
+      if (i < w.pinned.size())
+        tabs[i].pinned = w.pinned[i] == '1';
+      if (i < w.muted.size())
+        tabs[i].muted = w.muted[i] == '1';
+    }
+    active = std::clamp(w.active, 0, int(tabs.size()) - 1);
+    select_tab(active);
+  }
+  void workspace_switch(size_t index) {
+    if (index == workspace || index >= workspaces.size())
+      return;
+    capture_workspace();
+    workspace = index;
+    load_workspace_tabs(workspaces[workspace]);
+    status = "Workspace: " + workspaces[workspace].name;
+    save_session();
+  }
+  void workspace_new(const std::string &name) {
+    if (workspaces.size() >= 32)
+      return;
+    capture_workspace();
+    Workspace w;
+    w.name = name.empty() ? "Workspace " + std::to_string(workspaces.size() + 1)
+                          : name;
+    workspaces.push_back(w);
+    workspace = workspaces.size() - 1;
+    load_workspace_tabs(workspaces[workspace]);
+    save_session();
+  }
+  void workspace_close(int index) {
+    if (index < 0 || index >= int(workspaces.size()))
+      return;
+    if (workspaces.size() <= 1) {
+      status = "My last workspace cannot be closed";
+      return;
+    }
+    workspaces.erase(workspaces.begin() + index);
+    if (size_t(index) < workspace)
+      --workspace;
+    else if (size_t(index) == workspace) {
+      workspace = std::min(size_t(index), workspaces.size() - 1);
+      load_workspace_tabs(workspaces[workspace]);
+    }
+    save_session();
   }
   void write_clipboard(const std::string &text) {
     int n = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()),
@@ -2876,7 +3089,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     b.new_tab("psychovault://newtab", false);
   } else if (b.profile.restore_tabs && !b.profile.session_tabs.empty()) {
     b.tabs.clear();
-    for (auto &u : b.profile.session_tabs)
+    // The session file mirrors the active workspace; a workspace store with
+    // entries takes precedence because it is the richer record.
+    const auto &source_tabs =
+        (!b.workspaces.empty() && !b.workspaces[b.workspace].tabs.empty())
+            ? b.workspaces[b.workspace].tabs
+            : b.profile.session_tabs;
+    for (auto &u : source_tabs)
       b.new_tab(u, false);
     for (size_t i = 0; i < b.tabs.size(); ++i) {
       if (i < b.profile.session_pinned.size())
