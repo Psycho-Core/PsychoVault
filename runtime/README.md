@@ -205,4 +205,24 @@ What exists now (P1 in progress):
   falling out (policy constants; the tiers are law). 68 new checks (2115
   total).
 
-Next in P1: S035 (the download service), then S036 (site permissions).
+- `downloads/Psycho_downloads.*` (S035, rules done): my broker download
+  service - the law in front of `platform/Psycho_download.*`'s transport,
+  which the M1 slice adapts through the seams. *One bounded history:* ids
+  monotonic, never reused, every attempt recorded - even a transport refusal
+  leaves a Failed record; at most 32 in flight, the newest 200 kept (the cap
+  split proves the evicted are always terminal). *A narrow state machine:*
+  running <-> paused, then exactly one of complete/cancelled/failed;
+  terminals never move, by any verb; save-as chooses the target only while
+  bytes can still move. *Pause needs a yes from the wire:* the response's
+  latest word on ranges is the word that counts; resume re-enters naming the
+  byte already held. *Every byte accounted:* no regress, no overrun, a known
+  total never shrinks; a completion short of the total is honestly recorded
+  as Failed("download.truncated") without pretending the event didn't
+  happen. *Open and reveal touch only what finished:* wrong state, no chosen
+  target, and vanished files all refuse by name. Unknown size is legal
+  (total 0), the save-as suggestion is sanitized from the URL and never
+  trusts it (".." and "(1)" become "download" and "report_1_.pdf"). 105 new
+  checks (2220 total).
+
+Next in P1: S036 (site permissions by origin), then S037 (private
+sessions).
