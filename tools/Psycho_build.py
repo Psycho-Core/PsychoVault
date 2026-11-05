@@ -8,6 +8,9 @@ loads a page and draws it.
 from __future__ import annotations
 import argparse, os, pathlib, shutil, subprocess, sys
 ROOT=pathlib.Path(__file__).resolve().parents[1]
+VERSION=(ROOT/"Psycho_VERSION.txt").read_text(encoding="utf-8").strip() or "0.0.0-dev"
+# The running exe knows its own version so the updater can compare honestly.
+VERSION_DEFINE='PSYCHO_VAULT_VERSION="%s"' % VERSION
 ENGINE=["engine/Psycho_base.cpp","engine/Psycho_dom.cpp","engine/Psycho_css.cpp","engine/Psycho_js_parser.cpp",
         "engine/Psycho_js_runtime.cpp","engine/Psycho_raster.cpp","engine/Psycho_image.cpp",
         "engine/Psycho_layout.cpp","engine/Psycho_page.cpp","engine/Psycho_regex.cpp","engine/Psycho_cookies.cpp",
@@ -16,7 +19,7 @@ ENGINE=["engine/Psycho_base.cpp","engine/Psycho_dom.cpp","engine/Psycho_css.cpp"
         "engine/Psycho_security.cpp"]
 PLATFORM=["platform/Psycho_host.cpp","platform/Psycho_network.cpp","platform/Psycho_profile.cpp",
           "platform/Psycho_proxy.cpp","platform/Psycho_extension.cpp","platform/Psycho_download.cpp",
-          "platform/Psycho_transport.cpp","platform/Psycho_tls.cpp",
+          "platform/Psycho_transport.cpp","platform/Psycho_tls.cpp","platform/Psycho_vault.cpp",
           "platform/Psycho_sandbox.cpp"]
 def run(cmd,env=None):
     print("+",subprocess.list2cmdline([str(x) for x in cmd]),flush=True)
@@ -57,7 +60,7 @@ def main():
     def target(name,sources,libs=(),subsystem=None,entry=None):
         obj=out/"obj"/name;obj.parent.mkdir(parents=True,exist_ok=True);obj.mkdir(exist_ok=True)
         if compiler=="msvc":
-            cmd=[cxx,"/nologo","/std:c++20","/EHsc","/O2","/MT","/W3","/WX","/permissive-","/DUNICODE","/D_UNICODE","/D_CRT_SECURE_NO_WARNINGS","/sdl","/GS","/guard:cf","/I"+str(ROOT),"/Fo"+str(obj)+os.sep]
+            cmd=[cxx,"/nologo","/std:c++20","/EHsc","/O2","/MT","/W3","/WX","/permissive-","/DUNICODE","/D_UNICODE","/D_CRT_SECURE_NO_WARNINGS","/sdl","/GS","/guard:cf","/I"+str(ROOT),"/D"+VERSION_DEFINE,"/Fo"+str(obj)+os.sep]
             cmd+= [str(ROOT/s) for s in sources]
             cmd+=["/link","/DYNAMICBASE","/NXCOMPAT","/HIGHENTROPYVA","/INCREMENTAL:NO"]
             if subsystem:cmd+=[f"/SUBSYSTEM:"+subsystem]
@@ -72,7 +75,7 @@ def main():
             # gcc 15 reports an array-bounds error inside libstdc++'s own string move
             # when it inlines a vector of strings. It is a known false positive in the
             # header, so I keep the warning visible and stop it being fatal.
-            cmd=[cxx,"-std=c++20","-O2","-g","-Wall","-Wextra","-Werror",
+            cmd=[cxx,"-std=c++20","-O2","-g","-Wall","-Wextra","-Werror","-D"+VERSION_DEFINE,
                  "-Wno-error=array-bounds","-I"+str(ROOT)]
             if args.sanitizers:cmd+=["-fsanitize=address,undefined","-fno-omit-frame-pointer"]
             cmd+= [str(ROOT/s) for s in sources]

@@ -53,6 +53,7 @@ public:
   void set_poster(Poster poster);
   CookieJar &cookies() { return page_->cookies(); }
   Storage &local_storage() { return page_->local_storage(); }
+  void set_autoplay_blocked(bool blocked) { page_->block_autoplay = blocked; }
   Storage &session_storage() { return page_->session_storage(); }
   double next_timer_delay() const;
   // Media. My shell asks whether anything is playing so it can keep its own clock

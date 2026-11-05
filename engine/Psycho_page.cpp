@@ -831,6 +831,14 @@ public:
         return r.make_native([this, id](js::Values &) {
           auto &rt = *page.js_;
           js::Value promise = rt.make_promise();
+          if (page.block_autoplay && !page.user_active_recently()) {
+            // Scripted playback without a gesture is refused with a rejected
+            // promise, which is exactly what a page is told to expect.
+            page.dispatch(id, "pause", rt.make_object());
+            rt.settle_promise(promise.object, 0,
+                              js::Value());
+            return promise;
+          }
           MediaPlayer *player = page.player_for(id);
           if (!player) {
             page.update_media(id);
@@ -1863,6 +1871,7 @@ void Page::activate(int target) {
   }
 }
 void Page::click(double x, double y) {
+  note_user_activation();
   int target = hit(x, y);
   // A media element owns everything inside its box: the strip along the bottom is
   // the scrub bar, and the rest of the box plays or pauses it.

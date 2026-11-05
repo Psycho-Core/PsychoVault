@@ -16,8 +16,26 @@ public:
   std::string search_engine = "duckduckgo", home_page = "psychovault://newtab", custom_search;
   std::vector<Bookmark> bookmarks;
   std::vector<HistoryEntry> history;
+  // The new-tab speed dial. Empty in a fresh profile means the factory row,
+  // not "dial disabled" - defaults are filled in on load.
+  std::vector<Bookmark> speed_dial;
   std::vector<std::string> session_tabs;
+  // Pin and mute ride along with the session as one '1'/'0' flag per tab.
+  std::string session_pinned, session_muted;
   int session_active = 0;
+  // Workspaces persist as one small JSON document; the shell owns the shape.
+  Json load_workspaces() const;
+  bool save_workspaces(const Json &state);
+  // The panic button, the dismissed-update tag and my diagnostics files.
+  bool panic_enabled = false;
+  std::string panic_url, dismissed_update;
+  // running.marker witnesses a clean exit; surviving a crash means it is still
+  // there on the next launch.
+  bool crashed_last_run() const;
+  void mark_running();
+  void clear_running_marker();
+  void append_error_log(const std::string &line);
+  std::vector<std::string> read_error_log(size_t max_lines = 20) const;
   // Downloads
   std::string download_directory;
   bool ask_save_location = false, download_notify = true;
@@ -45,6 +63,7 @@ public:
   bool battery_saver = false;
   bool history_dirty = false; // visited pages pending flush to disk
   // Spelling
+  bool block_autoplay = false;
   bool spell_check = true;
   std::vector<std::string> user_words;
   // Extensions the user installed, so I can reload them on the next launch.

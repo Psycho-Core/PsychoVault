@@ -16,6 +16,8 @@ struct NetworkPolicy {
   bool strip_referrer = false;
   bool block_third_party_cookies = true;
   bool block_ads = false;
+  // Carried to the page host so a scripted play() without a gesture is refused.
+  bool block_autoplay = false;
   // Upgrade every plain HTTP request, not only the hosts that asked with a header.
   // A navigation that cannot reach the upgraded address falls back once.
   bool https_only = false;

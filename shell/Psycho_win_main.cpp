@@ -51,6 +51,7 @@ struct Tab {
   std::vector<std::string> history;
   size_t index = 0;
   bool loading = false, started = false, recorded = false;
+  bool pinned = false, muted = false;
   double scroll = 0, zoom = 1.0;
   uint64_t generation = 0;
   Json frame;
@@ -65,6 +66,28 @@ struct Hit {
   int index = 0;
   std::string value;
 };
+#ifndef PSYCHO_VAULT_VERSION
+#define PSYCHO_VAULT_VERSION "0.0.0-dev"
+#endif
+struct MenuLine {
+  std::string label, action;
+};
+static std::filesystem::path shell_path(const std::string &text) {
+  int n = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()),
+                              nullptr, 0);
+  std::wstring wide(size_t(n > 0 ? n : 0), 0);
+  if (n > 0)
+    MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()), wide.data(), n);
+  return std::filesystem::path(wide);
+}
+static std::wstring utf16_of(const std::string &text) {
+  int n = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()),
+                              nullptr, 0);
+  std::wstring out(size_t(n > 0 ? n : 0), 0);
+  if (n > 0)
+    MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()), out.data(), n);
+  return out;
+}
 // The result of my tunnel test. A worker fills it and the painting code reads it,
 // so neither has to trust the other's lifetime.
 struct TunnelTest {
@@ -249,6 +272,7 @@ struct Session {
   std::deque<Json> outgoing;
   std::atomic<bool> stopping{false};
   std::atomic<bool> ready{false};
+  std::atomic<bool> muted{false};
   std::vector<std::string> diagnostics;
   AudioOut audio;
   ~Session() {
@@ -440,6 +464,7 @@ void Session::run() {
     note(before, result);
     return result;
   });
+  host.set_autoplay_blocked(policy.block_autoplay);
   std::string error;
   if (!host.load(url, error)) {
     if (!stopping)
@@ -459,13 +484,16 @@ void Session::run() {
     lock.unlock();
     bool worked = !stopping && host.pump();
     // The device is opened the first time a page actually plays something, and from
-    // then on it is topped up on this same thread.
-    if (host.media_playing() && !audio.ready()) {
-      std::string why;
-      if (!audio.open(why) && !why.empty())
-        note("media", why);
+    // then on it is topped up on this same thread. A muted tab simply skips the
+    // feed, so the page keeps playing in silence until I unmute it.
+    if (!muted.load()) {
+      if (host.media_playing() && !audio.ready()) {
+        std::string why;
+        if (!audio.open(why) && !why.empty())
+          note("media", why);
+      }
+      audio.pump(host);
     }
-    audio.pump(host);
     lock.lock();
     if (worked)
       continue;
@@ -502,6 +530,10 @@ struct Browser {
   // Find in page
   bool find_open = false;
   std::string find_text;
+  // The bookmarks and history panels share one filter box.
+  bool panel_focus = false;
+  std::string panel_search;
+  size_t panel_search_caret = 0;
   std::vector<Rect> find_marks;
   int find_at = 0;
   std::string extension_error, download_error;
@@ -537,6 +569,13 @@ struct Browser {
     downloads.set_directory(profile.download_directory);
     if (!private_mode) downloads.load(profile.directory);
     install_extension_effects();
+    load_workspaces_state();
+    crashed_last = !private_mode && profile.crashed_last_run();
+    profile.mark_running();
+    reload_log_cache();
+    // My launch check is cheap and off-thread; the banner only shows on news.
+    if (!private_mode)
+      check_for_update();
     if (!private_mode) {
       std::string storage_error;
       extensions.load_storage(profile.directory, storage_error);
@@ -592,6 +631,7 @@ struct Browser {
     out.strip_referrer = profile.strip_referrer;
     out.block_third_party_cookies = profile.block_third_party_cookies;
     out.block_ads = profile.block_ads;
+    out.block_autoplay = profile.block_autoplay;
     out.blocked_hosts = profile.blocked_hosts;
     out.allowed_hosts = profile.block_allow_sites;
     out.https = https.get();
@@ -709,6 +749,7 @@ struct Browser {
     return "VPN " + profile.proxy.mode_name() + " via " + server.authority();
   }
   ~Browser() {
+    profile.clear_running_marker();
     if (profile.clear_on_exit && !private_mode) {
       profile.clear_history();
       save_profile();
@@ -754,12 +795,29 @@ struct Browser {
   void close_tab(int index) {
     if (index < 0 || index >= int(tabs.size()))
       return;
+    if (tabs[size_t(index)].pinned) {
+      status = "Unpin the tab before closing it";
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
     if (tabs.size() <= 1) {
       stop_session(current());
       tabs.clear();
       new_tab();
       save_session();
       return;
+    }
+    if (!tabs[size_t(index)].url.empty()) {
+      ClosedTab closed;
+      closed.url = tabs[size_t(index)].url;
+      closed.title = tabs[size_t(index)].title;
+      closed.history = tabs[size_t(index)].history;
+      closed.index = tabs[size_t(index)].index;
+      closed.pinned = tabs[size_t(index)].pinned;
+      closed.muted = tabs[size_t(index)].muted;
+      closed_tabs.push_back(std::move(closed));
+      if (closed_tabs.size() > 20)
+        closed_tabs.erase(closed_tabs.begin());
     }
     stop_session(tabs[size_t(index)]);
     tabs.erase(tabs.begin() + index);
@@ -875,6 +933,7 @@ struct Browser {
     session->report = report;
     session->jar = &cookies;
     session->storage = &local_storage;
+    session->muted.store(tab.muted);
     if (auto host_url = parse_url(target)) {
       session->policy.top_level_host = host_url->host;
       session->policy.top_level_scheme = host_url->scheme;
@@ -908,11 +967,17 @@ struct Browser {
     if (private_mode)
       return;
     profile.session_tabs.clear();
-    for (auto &tab : tabs)
+    profile.session_pinned.clear();
+    profile.session_muted.clear();
+    for (auto &tab : tabs) {
       profile.session_tabs.push_back(tab.url);
+      profile.session_pinned.push_back(tab.pinned);
+      profile.session_muted.push_back(tab.muted);
+    }
     profile.session_active = active;
     if (!profile.save_session() && profile_error.empty())
       profile_error = profile.error;
+    save_workspaces();
   }
   void back() {
     Tab &t = current();
@@ -953,17 +1018,26 @@ struct Browser {
     double x = 52;
     for (size_t i = 0; i < tabs.size() && x < width - 180; ++i) {
       bool sel = int(i) == active;
-      Rect r{x, 6, 180, 32};
+      Rect r{x, 6, double(tabs[i].pinned ? 96 : 180), 32};
       c.fill(r, sel ? PANEL : CHROME);
       if (sel) {
         c.line(r.x, r.y, r.x + r.w, r.y, ACCENT, 2);
       }
-      c.text(r.x + 12, r.y + 8, tabs[i].title.substr(0, 22), 13, sel ? TEXT : MUTED, sel);
+      // A pinned tab is one letter of its title, and pinning blocks closing so
+      // the close control goes away. A muted tab carries a small dot.
+      c.text(r.x + 12, r.y + 8,
+             tabs[i].pinned ? tabs[i].title.substr(0, 1)
+                            : tabs[i].title.substr(0, 22),
+             13, sel ? TEXT : MUTED, sel);
+      if (tabs[i].muted)
+        c.text(r.x + r.w - (tabs[i].pinned ? 22 : 42), r.y + 12, "o", 10, ACCENT);
       hits.push_back({r, "tab", int(i), {}});
-      Rect close{r.x + r.w - 24, r.y + 6, 18, 18};
-      c.text(close.x + 4, close.y + 1, "x", 12, MUTED);
-      hits.push_back({close, "close-tab", int(i), {}});
-      x += 184;
+      if (!tabs[i].pinned && profile.show_tab_close_buttons) {
+        Rect close{r.x + r.w - 24, r.y + 6, 18, 18};
+        c.text(close.x + 4, close.y + 1, "x", 12, MUTED);
+        hits.push_back({close, "close-tab", int(i), {}});
+      }
+      x += r.w + 4;
     }
     c.text(x + 4, 12, "+", 18, MUTED);
     hits.push_back({{x, 4, 28, 32}, "new-tab", 0, {}});
@@ -989,6 +1063,38 @@ struct Browser {
       double cx = addr.x + 12 + c.text_width(address.substr(0, address_caret), 13);
       c.line(cx, addr.y + 5, cx, addr.y + 24, ACCENT);
     }
+    if (address_focus && !address.empty()) {
+      // My suggestions come from my own bookmarks and history - a dropdown of
+      // things I actually saved, filtered by the text I am typing.
+      std::string needle = ascii_lower(address);
+      std::vector<std::pair<std::string, std::string>> found;
+      auto consider = [&](const std::string &title, const std::string &url) {
+        if (found.size() >= 6)
+          return;
+        if (ascii_lower(title + "  " + url).find(needle) == std::string::npos)
+          return;
+        for (auto &f : found)
+          if (f.second == url)
+            return;
+        found.push_back({title, url});
+      };
+      for (auto &b : profile.bookmarks)
+        consider(b.title, b.url);
+      for (auto &hh : profile.history)
+        consider(hh.title, hh.url);
+      if (!found.empty()) {
+        Rect box{addr.x, addr.y + addr.h + 4, addr.w, double(found.size()) * 28 + 8};
+        c.fill(box, PANEL);
+        c.stroke(box, BORDER);
+        double ry = box.y + 4;
+        for (auto &f : found) {
+          c.text(box.x + 12, ry + 6, (f.first + "  -  " + f.second).substr(0, 100),
+                 12, TEXT);
+          hits.push_back({{box.x, ry, box.w, 28}, "suggest", 0, f.second});
+          ry += 28;
+        }
+      }
+    }
     c.text(width - 52, 52, "*", 18, MUTED);
     hits.push_back({{double(width - 60), 44, 32, 36}, "bookmark", 0, {}});
     // Rail: only controls with real behaviour are shown.
@@ -1000,6 +1106,10 @@ struct Browser {
     hits.push_back({{4, 104, 36, 36}, "history", 0, {}});
     c.text(12, 152, "D", 14, downloads.active_count() ? ACCENT : MUTED);
     hits.push_back({{4, 144, 36, 36}, "downloads", 0, {}});
+    if (profile.workspaces) {
+      c.text(12, 192, "W", 14, panel_workspaces ? ACCENT : MUTED, panel_workspaces);
+      hits.push_back({{4, 184, 36, 36}, "workspaces", 0, {}});
+    }
     c.text(12, height - 158, "A", 14, profile.block_ads ? ACCENT : MUTED, profile.block_ads);
     hits.push_back({{4, double(height - 166), 36, 36}, "toggle-adblock", 0, {}});
     c.text(12, height - 114, "V", 14, profile.proxy.active() ? ACCENT : MUTED,
@@ -1010,6 +1120,8 @@ struct Browser {
     c.fill(content, BG);
     if (panel_downloads)
       draw_downloads(c);
+    else if (panel_workspaces)
+      draw_workspaces(c);
     else if (panel_bookmarks || panel_history)
       draw_panel(c);
     else if (settings)
@@ -1018,6 +1130,89 @@ struct Browser {
       draw_home(c);
     else
       draw_content(c);
+    if (palette_open) {
+      Rect box{content.x + content.w / 2 - 300, content.y + 20, 600, 38};
+      c.fill(box, PANEL);
+      c.stroke(box, ACCENT);
+      c.text(box.x + 14, box.y + 10,
+             (palette_text.empty() ? "Type a command" : palette_text).substr(0, 64), 13,
+             palette_text.empty() ? MUTED : TEXT);
+      double cx2 = box.x + 14 + c.text_width(palette_text.substr(0, palette_caret), 13);
+      c.line(cx2, box.y + 8, cx2, box.y + 30, ACCENT);
+      auto matches = palette_matches();
+      if (palette_index >= int(matches.size()))
+        palette_index = int(matches.size()) - 1;
+      double ry = box.y + box.h + 2;
+      for (size_t i = 0; i < matches.size() && i < 8; ++i) {
+        Rect row{box.x, ry, 600, 30};
+        c.fill(row, int(i) == palette_index ? 0xff16233a : PANEL);
+        c.stroke(row, BORDER);
+        c.text(row.x + 14, row.y + 8, matches[i]->label, 13, TEXT);
+        c.text(row.x + row.w - 118, row.y + 8, matches[i]->chord, 12, MUTED);
+        hits.push_back({row, "palette-run", int(i), matches[i]->id});
+        ry += 32;
+      }
+    }
+    // Two banners can sit on the page area: crash recovery, then update.
+    double banner_y = content.y;
+    if (crashed_last && !recovery_dismissed) {
+      Rect strip{content.x, banner_y, content.w, 34};
+      c.fill(strip, 0xff2a2107);
+      c.text(strip.x + 14, strip.y + 9,
+             "My last session ended unexpectedly. Your tabs were restored.", 12, TEXT);
+      Rect keep{strip.x + strip.w - 262, strip.y + 4, 150, 26};
+      c.fill(keep, PANEL);
+      c.stroke(keep, BORDER);
+      c.text(keep.x + 10, keep.y + 6, "Keep restored session", 11, TEXT);
+      hits.push_back({keep, "recovery-keep", 0, {}});
+      Rect fresh{strip.x + strip.w - 102, strip.y + 4, 94, 26};
+      c.fill(fresh, PANEL);
+      c.stroke(fresh, BORDER);
+      c.text(fresh.x + 10, fresh.y + 6, "Start fresh", 11, TEXT);
+      hits.push_back({fresh, "recovery-fresh", 0, {}});
+      banner_y += 36;
+    }
+    if (!next_update.version.empty() && !update_snoozed &&
+        profile.dismissed_update != next_update.version) {
+      Rect strip{content.x, banner_y, content.w, 34};
+      c.fill(strip, 0xff0a2410);
+      std::string line = next_update.ready
+          ? "Update " + next_update.version + " verified - restart to install"
+          : "Update " + next_update.version + " is available";
+      c.text(strip.x + 14, strip.y + 9, line, 12, TEXT);
+      Rect first{strip.x + strip.w - 302, strip.y + 4, 90, 26};
+      c.fill(first, PANEL);
+      c.stroke(first, BORDER);
+      if (next_update.ready) {
+        c.text(first.x + 10, first.y + 6, "Restart now", 11, TEXT);
+        hits.push_back({first, "update-restart", 0, {}});
+      } else {
+        c.text(first.x + 22, first.y + 6, next_update.installing ? "..." : "Install", 11, TEXT);
+        hits.push_back({first, "update-install", 0, {}});
+      }
+      Rect later{strip.x + strip.w - 202, strip.y + 4, 76, 26};
+      c.fill(later, PANEL);
+      c.stroke(later, BORDER);
+      c.text(later.x + 22, later.y + 6, "Later", 11, TEXT);
+      hits.push_back({later, "update-later", 0, {}});
+      Rect dismiss{strip.x + strip.w - 114, strip.y + 4, 86, 26};
+      c.fill(dismiss, PANEL);
+      c.stroke(dismiss, BORDER);
+      c.text(dismiss.x + 14, dismiss.y + 6, "Dismiss", 11, TEXT);
+      hits.push_back({dismiss, "update-dismiss", 0, {}});
+      banner_y += 36;
+    }
+    if (menu_open) {
+      const int w = 220, h = int(menu_items.size()) * 30 + 10;
+      Rect box{double(menu_x), double(menu_y), double(w), double(h)};
+      c.fill(box, PANEL);
+      c.stroke(box, BORDER);
+      double my = box.y + 5;
+      for (auto &item : menu_items) {
+        c.text(box.x + 12, my + 7, item.label, 13, TEXT);
+        my += 30;
+      }
+    }
     if (find_open) {
       Rect bar{content.x + content.w - 330, content.y + 10, 310, 34};
       c.fill(bar, PANEL);
@@ -1066,17 +1261,32 @@ struct Browser {
            home_search.empty() ? "Search DuckDuckGo or enter an address" : home_search, 14,
            home_search.empty() ? MUTED : TEXT);
     hits.push_back({search, "home-search", 0, {}});
-    const char *labels[] = {"GitHub", "YouTube", "Reddit", "Wikipedia", "Mail", "News"};
-    const char *urls[] = {"https://github.com/",     "https://www.youtube.com/",
-                          "https://www.reddit.com/", "https://www.wikipedia.org/",
-                          "https://mail.proton.me/", "https://news.ycombinator.com/"};
-    for (int i = 0; i < 6; ++i) {
-      Rect tile{cx - 324 + i * 108, cy + 130, 96, 84};
+    // My speed dial lives in the profile now, so the tiles below are whatever
+    // I saved - not a hardcoded row. A right click menu on any page adds it
+    // here, and each tile's corner removes it.
+    for (size_t i = 0; i < profile.speed_dial.size() && i < 24; ++i) {
+      int col = int(i) % 6, rowi = int(i) / 6;
+      Rect tile{cx - 324 + col * 108, cy + 130 + rowi * 100, 96, 84};
       c.fill(tile, 0xff0d1420);
       c.stroke(tile, BORDER);
-      c.text(tile.x + 38, tile.y + 16, std::string(1, labels[i][0]), 18, ACCENT, true);
-      c.text(tile.x + 12, tile.y + 52, labels[i], 12, MUTED);
-      hits.push_back({tile, "tile", 0, urls[i]});
+      const std::string &label = profile.speed_dial[i].title;
+      c.text(tile.x + 38, tile.y + 16,
+             label.empty() ? "?" : label.substr(0, 1), 18, ACCENT, true);
+      c.text(tile.x + 10, tile.y + 52, label.substr(0, 12), 12, MUTED);
+      hits.push_back({tile, "tile", int(i), profile.speed_dial[i].url});
+      Rect remove{tile.x + tile.w - 20, tile.y + 4, 16, 16};
+      c.text(remove.x + 4, remove.y, "x", 10, MUTED);
+      hits.push_back({remove, "dial-remove", int(i), {}});
+    }
+    if (profile.speed_dial.size() < 24) {
+      size_t i = profile.speed_dial.size();
+      int col = int(i) % 6, rowi = int(i) / 6;
+      Rect tile{cx - 324 + col * 108, cy + 130 + rowi * 100, 96, 84};
+      c.fill(tile, 0xff0d1420);
+      c.stroke(tile, BORDER);
+      c.text(tile.x + 34, tile.y + 14, "+", 20, MUTED, true);
+      c.text(tile.x + 10, tile.y + 52, "Add from box", 11, MUTED);
+      hits.push_back({tile, "dial-add", 0, {}});
     }
     c.text(cx - 170, content.y + content.h - 50, "Development engine - not a finished browser", 12,
            MUTED);
@@ -1089,6 +1299,16 @@ struct Browser {
     c.stroke(clear, BORDER);
     c.text(clear.x + 12, clear.y + 7, "Clear finished", 12, TEXT);
     hits.push_back({clear, "downloads-clear", 0, {}});
+    Rect folder{content.x + content.w - 200, content.y + 60, 150, 30};
+    c.fill(folder, PANEL);
+    c.stroke(folder, BORDER);
+    c.text(folder.x + 12, folder.y + 7, "Open folder", 12, TEXT);
+    hits.push_back({folder, "downloads-folder", 0, {}});
+    Rect pick{content.x + content.w - 380, content.y + 24, 160, 30};
+    c.fill(pick, PANEL);
+    c.stroke(pick, BORDER);
+    c.text(pick.x + 12, pick.y + 7, "Change folder...", 12, TEXT);
+    hits.push_back({pick, "downloads-pickdir", 0, {}});
     auto items = downloads.snapshot();
     double y = content.y + 100;
     if (items.empty())
@@ -1120,6 +1340,10 @@ struct Browser {
         c.stroke(open, BORDER);
         c.text(open.x + 20, open.y + 6, "Open", 12, TEXT);
         hits.push_back({open, "download-open", item.id, item.path});
+        Rect reveal{row.x + row.w - 180, row.y + 12, 76, 28};
+        c.stroke(reveal, BORDER);
+        c.text(reveal.x + 14, reveal.y + 6, "Reveal", 12, TEXT);
+        hits.push_back({reveal, "download-reveal", item.id, item.path});
       }
       y += 64;
     }
@@ -1183,12 +1407,18 @@ struct Browser {
              "I reopen my last tabs and the tab I was using.");
       toggle("Workspaces", profile.workspaces, "setting-workspaces", "");
       value_row("Home page", profile.home_page, "setting-home");
+      toggle("Panic button", profile.panic_enabled, "setting-panic",
+             "Ctrl+Shift+Q hides everything and opens my panic page.");
+      value_row("Panic URL", profile.panic_url.empty() ? "my home page" : profile.panic_url,
+                "setting-panic-url");
       value_row("Custom search", profile.custom_search.empty() ? "not set" : "configured",
                 "setting-custom-search");
       break;
     case 1:
       toggle("Block ads and trackers", profile.block_ads, "setting-block-ads",
              "I refuse the request before a socket opens.");
+      toggle("Block autoplay", profile.block_autoplay, "setting-block-autoplay",
+             "A video or song only starts after I have clicked the page.");
       toggle("Block third-party cookies", profile.block_third_party_cookies,
              "setting-third-party-cookies", "");
       toggle("Send Do Not Track", profile.send_dnt, "setting-dnt", "I add DNT: 1 to every request.");
@@ -1311,12 +1541,25 @@ struct Browser {
       note("Translation is not implemented yet.");
       break;
     default:
-      note("PsychoVault development build - owned engine");
+      note(std::string("PsychoVault ") + PSYCHO_VAULT_VERSION + " - owned engine");
       note("Profile: " + profile.directory);
       note(vpn_summary());
       note("Extensions: " + std::to_string(extensions.list().size()));
       button("Check for an update", "setting-check-update");
-      if (!update_status.empty()) note(update_status);
+      {
+        std::lock_guard lock(update_mutex);
+        if (!update_status.empty()) note(update_status);
+      }
+      y += 10;
+      c.text(x, y, "Error log", 16, TEXT, true);
+      y += 30;
+      for (auto &line : log_cache) {
+        c.text(x, y, line.substr(0, 110), 11, MUTED);
+        y += 20;
+      }
+      if (log_cache.empty()) { c.text(x, y, "Nothing logged yet.", 12, MUTED); y += 24; }
+      y += 8;
+      button("Clear error log", "setting-clear-log");
       note("I verify a release hash before I offer to install it.");
       break;
     }
@@ -1325,6 +1568,55 @@ struct Browser {
   }
   std::string update_status;
   std::string editing_setting;
+  // A right click opens one of my own menus. menu_click() maps a row back to
+  // its action string and apply_menu() dispatches it, so a menu entry is read
+  // and run in exactly one place.
+  bool menu_open = false;
+  int menu_tab = -1;
+  int menu_x = 0, menu_y = 0;
+  std::vector<MenuLine> menu_items;
+  // Recently closed tabs keep their whole back stack so Ctrl+Shift+T puts the
+  // tab back exactly as it was, not just the address it ended on.
+  struct ClosedTab {
+    std::string url, title;
+    std::vector<std::string> history;
+    size_t index = 0;
+    bool pinned = false, muted = false;
+  };
+  std::vector<ClosedTab> closed_tabs;
+  // One workspace is one named set of tabs. The live workspace is re-captured
+  // from the tab strip every save, so the disk copy is never out of date.
+  struct Workspace {
+    std::string name = "Main";
+    std::vector<std::string> tabs;
+    int active = 0;
+    std::string pinned, muted;
+  };
+  std::vector<Workspace> workspaces;
+  size_t workspace = 0;
+  bool panel_workspaces = false;
+  // Ctrl+Shift+P: one box, one filtered command list, Enter or a click runs.
+  bool palette_open = false;
+  std::string palette_text;
+  size_t palette_caret = 0;
+  int palette_index = 0;
+  // The crash marker said the last run did not exit cleanly; I say so once and
+  // the banner below lets me keep or bin the restored tabs.
+  bool crashed_last = false, recovery_dismissed = false;
+  // Update flow state: what the check found, what the install thread is doing.
+  struct PreparedUpdate {
+    std::string version, url, sha256;
+    uint64_t size = 0;
+    bool installing = false, ready = false;
+  };
+  PreparedUpdate next_update;
+  bool update_snoozed = false;
+  std::vector<std::string> log_cache;
+  void reload_log_cache() { log_cache = profile.read_error_log(10); }
+  void log_line(const std::string &subsystem, const std::string &message) {
+    profile.append_error_log(subsystem + ": " + message);
+    reload_log_cache();
+  }
   void begin_setting_edit(const std::string &key, const std::string &current_value) {
     editing_setting = key;
     address = current_value;
@@ -1404,6 +1696,27 @@ struct Browser {
         confinement = confinement_status();
         save_profile();
       }
+    } else if (key == "panicUrl") {
+      if (value.empty() || starts(value, "http://") || starts(value, "https://")) {
+        profile.panic_url = value;
+        save_profile();
+        status = value.empty() ? "Panic opens my home page" : "Panic opens " + value;
+      } else {
+        status = "A panic URL must start with http:// or https://";
+      }
+      return;
+    } else if (key == "workspaceNew") {
+      workspace_new(value);
+      status = "Workspace created: " + workspaces[workspace].name;
+      return;
+    } else if (starts(key, "workspaceRename:")) {
+      int index = std::atoi(key.c_str() + 16);
+      if (index >= 0 && size_t(index) < workspaces.size()) {
+        workspaces[size_t(index)].name = value.empty() ? workspaces[size_t(index)].name : value;
+        save_workspaces();
+        status = "Workspace renamed";
+      }
+      return;
     } else if (key == "filterFile") {
       profile.filter_list_path = value;
       load_security_state();
@@ -1420,50 +1733,310 @@ struct Browser {
     save_profile();
     sync_address();
   }
-  void check_for_update() {
-    update_status = "Checking my releases...";
-    auto url = parse_url("https://api.github.com/repos/Psycho-Core/PsychoVault/releases/latest");
-    if (!url) { update_status = "I could not build the release URL"; return; }
-    auto response = fetch_url(*url, policy(), 15000, 1024 * 1024);
-    if (!response.ok) { update_status = "Update check failed: " + response.error; return; }
-    auto json = Json::parse(response.text);
-    if (!json) { update_status = "The release response was not valid JSON"; return; }
-    auto tag = json->str("tag_name");
-    if (tag.empty()) { update_status = "I have not published a release yet"; return; }
-    bool has_manifest = false, has_exe = false;
-    const Json *assets = json->find("assets");
-    if (assets && assets->type == Json::Type::Array)
-      for (const auto &asset : assets->array) {
-        auto name = asset.str("name");
-        if (name == "PsychoVault-update.json") has_manifest = true;
-        if (name == "PsychoVault.exe") has_exe = true;
-      }
-    update_status = "Latest release " + tag + (has_exe ? " (exe present" : " (no exe");
-    update_status += has_manifest ? ", manifest present)" : ", no manifest)";
+  static std::vector<int> version_parts(std::string text) {
+    if (!text.empty() && (text[0] == 'v' || text[0] == 'V'))
+      text.erase(text.begin());
+    std::vector<int> out;
+    std::string part;
+    for (char ch : text) {
+      if (ch == '.') {
+        out.push_back(std::atoi(part.c_str()));
+        part.clear();
+      } else if (ch >= '0' && ch <= '9')
+        part += ch;
+    }
+    out.push_back(std::atoi(part.c_str()));
+    while (out.size() < 3)
+      out.push_back(0);
+    return out;
   }
+  static bool version_newer(const std::string &candidate, const std::string &current) {
+    auto a = version_parts(candidate), b = version_parts(current);
+    for (size_t i = 0; i < 3; ++i) {
+      if (a[i] != b[i])
+        return a[i] > b[i];
+    }
+    return false;
+  }
+  // My update check runs off the message thread now: it asks GitHub for the
+  // latest release, compares the version against the one baked into this exe,
+  // and reads my manifest for the asset hash I will verify on install.
+  void check_for_update() {
+    {
+      std::lock_guard lock(update_mutex);
+      if (next_update.installing)
+        return;
+      update_status = "Checking my releases...";
+    }
+    NetworkPolicy probe_policy = policy();
+    HWND window = hwnd;
+    std::thread([this, probe_policy, window] {
+      auto report = [this, window](const std::string &text) {
+        {
+          std::lock_guard lock(update_mutex);
+          update_status = text;
+        }
+        if (window)
+          InvalidateRect(window, nullptr, FALSE);
+      };
+      auto release_url =
+          parse_url("https://api.github.com/repos/Psycho-Core/PsychoVault/releases/latest");
+      if (!release_url) { report("I could not build the release URL"); return; }
+      auto response = fetch_url(*release_url, probe_policy, 15000, 1024 * 1024);
+      if (!response.ok) { report("Update check failed: " + response.error); return; }
+      auto json = Json::parse(response.text);
+      if (!json) { report("The release response was not valid JSON"); return; }
+      std::string tag = json->str("tag_name");
+      std::string manifest_url;
+      if (const Json *assets = json->find("assets"))
+        if (assets->type == Json::Type::Array)
+          for (const auto &asset : assets->array)
+            if (asset.str("name") == "PsychoVault-update.json")
+              manifest_url = asset.str("browser_download_url");
+      std::string version = tag;
+      if (!version.empty() && (version[0] == 'v' || version[0] == 'V'))
+        version.erase(version.begin());
+      if (version.empty() || !version_newer(version, PSYCHO_VAULT_VERSION)) {
+        report("You are on the latest release (" + std::string(PSYCHO_VAULT_VERSION) + ")");
+        return;
+      }
+      if (manifest_url.empty()) {
+        report("Release " + tag + " has no manifest, so I will not touch it");
+        return;
+      }
+      auto manifest_link = parse_url(manifest_url);
+      if (!manifest_link) { report("The manifest URL is not valid"); return; }
+      auto manifest_response = fetch_url(*manifest_link, probe_policy, 15000, 1024 * 1024);
+      if (!manifest_response.ok) {
+        report("Manifest fetch failed: " + manifest_response.error);
+        return;
+      }
+      auto manifest = Json::parse(manifest_response.text);
+      if (!manifest || manifest->str("product") != "PsychoVault") {
+        report("The manifest is not mine");
+        return;
+      }
+      PreparedUpdate found;
+      found.version = manifest->str("version", version);
+      if (const Json *assets = manifest->find("assets"))
+        if (assets->type == Json::Type::Array)
+          for (const auto &asset : assets->array)
+            if (asset.str("name") == "PsychoVault.exe") {
+              found.url = asset.str("url");
+              found.sha256 = lower(asset.str("sha256"));
+              found.size = uint64_t(asset.num("size", 0));
+            }
+      if (found.url.empty() || found.sha256.empty()) {
+        report("The manifest does not name my exe");
+        return;
+      }
+      {
+        std::lock_guard lock(update_mutex);
+        next_update = found;
+        update_status = "Update " + found.version + " is available";
+      }
+      if (window)
+        InvalidateRect(window, nullptr, FALSE);
+    }).detach();
+  }
+  // Download the exe, SHA-256 it against the manifest, stage it beside the
+  // running exe. A mismatch means the file is deleted and nothing is staged.
+  void install_update() {
+    PreparedUpdate wanted;
+    HWND window = hwnd;
+    {
+      std::lock_guard lock(update_mutex);
+      if (next_update.installing || next_update.ready || next_update.url.empty())
+        return;
+      next_update.installing = true;
+      wanted = next_update;
+      update_status = "Downloading update " + wanted.version + " ...";
+    }
+    NetworkPolicy probe_policy = policy();
+    std::string directory = profile.directory;
+    wchar_t self_wide[MAX_PATH * 2] = {0};
+    GetModuleFileNameW(nullptr, self_wide, DWORD((sizeof(self_wide) / sizeof(wchar_t))));
+    int n = WideCharToMultiByte(CP_UTF8, 0, self_wide, -1, nullptr, 0, nullptr, nullptr);
+    std::string self(size_t(n > 0 ? n - 1 : 0), 0);
+    if (n > 0)
+      WideCharToMultiByte(CP_UTF8, 0, self_wide, -1, self.data(), n, nullptr, nullptr);
+    std::thread([this, probe_policy, window, wanted, self] {
+      auto finish = [this, window](const std::string &text, bool ready) {
+        {
+          std::lock_guard lock(update_mutex);
+          update_status = text;
+          next_update.installing = false;
+          next_update.ready = ready;
+        }
+        if (window)
+          InvalidateRect(window, nullptr, FALSE);
+      };
+      auto parsed = parse_url(wanted.url);
+      if (!parsed) { finish("The update URL is not valid", false); return; }
+      auto response = fetch_url(*parsed, probe_policy, 120000, 384u * 1024u * 1024u);
+      if (!response.ok) { finish("Update download failed: " + response.error, false); return; }
+      if (wanted.size && response.text.size() != wanted.size) {
+        finish("The download size does not match my manifest", false);
+        return;
+      }
+      auto digest = sha256(Bytes(response.text.begin(), response.text.end()));
+      static const char digits[] = "0123456789abcdef";
+      std::string hex;
+      for (uint8_t b : digest) {
+        hex += digits[b >> 4];
+        hex += digits[b & 15];
+      }
+      if (hex != wanted.sha256) {
+        finish("Update verification failed - I refuse to install it", false);
+        return;
+      }
+      // Only a hash-verified exe gets staged next to the running one.
+      std::string staged = self + ".staged";
+      std::ofstream out(shell_path(staged), std::ios::binary | std::ios::trunc);
+      out.write(response.text.data(), std::streamsize(response.text.size()));
+      out.close();
+      if (!out) {
+        finish("I could not stage the update on disk", false);
+        return;
+      }
+      finish("Update " + wanted.version + " verified - restart to install", true);
+    }).detach();
+  }
+  // Hand off to a freshly spawned copy of myself in --apply-update mode.
+  void apply_ready_update() {
+    bool ready;
+    {
+      std::lock_guard lock(update_mutex);
+      ready = next_update.ready;
+    }
+    if (!ready)
+      return;
+    wchar_t self[MAX_PATH * 2] = {0};
+    GetModuleFileNameW(nullptr, self, DWORD((sizeof(self) / sizeof(wchar_t))));
+    std::wstring params = L"--apply-update " + std::to_wstring(GetCurrentProcessId()) +
+                          L" \"" + self + L"\"";
+    ShellExecuteW(nullptr, L"open", self, params.c_str(), nullptr, SW_SHOWNORMAL);
+    PostMessageW(hwnd, WM_CLOSE, 0, 0);
+  }
+  std::mutex update_mutex;
   void draw_panel(Canvas &c) {
     bool bm = panel_bookmarks;
     c.text(content.x + 40, content.y + 30, bm ? "Bookmarks" : "History", 24, TEXT, true);
-    size_t y = size_t(content.y) + 80;
+    Rect box{content.x + 40, content.y + 62, 420, 30};
+    c.fill(box, 0xff0a111c);
+    c.stroke(box, panel_focus ? ACCENT : BORDER);
+    c.text(box.x + 12, box.y + 7,
+           (panel_search.empty() ? "Type to filter" : panel_search).substr(0, 48), 12,
+           panel_search.empty() ? MUTED : TEXT);
+    hits.push_back({box, "panel-search", 0, {}});
+    if (panel_focus) {
+      double cx2 = box.x + 12 + c.text_width(panel_search.substr(0, panel_search_caret), 12);
+      c.line(cx2, box.y + 6, cx2, box.y + 24, ACCENT);
+    }
+    std::string needle = ascii_lower(panel_search);
+    auto matches = [&](const std::string &title, const std::string &url) {
+      return needle.empty() ||
+             ascii_lower(title + "  " + url).find(needle) != std::string::npos;
+    };
+    double y = content.y + 106;
+    size_t shown = 0;
+    double max_y = content.y + content.h - 30;
     if (bm) {
-      for (size_t i = 0; i < profile.bookmarks.size() && i < 30; ++i) {
+      for (size_t i = 0; i < profile.bookmarks.size() && shown < 40 &&
+                            y < max_y;
+           ++i) {
         auto &b = profile.bookmarks[i];
-        Rect r{content.x + 40, double(y), content.w - 80, 36};
+        if (!matches(b.title, b.url))
+          continue;
+        Rect r{content.x + 40, y, content.w - 80, 36};
         c.text(r.x, r.y + 8, b.title + "  " + b.url, 13, TEXT);
         hits.push_back({r, "open-bookmark", int(i), b.url});
         y += 40;
+        ++shown;
       }
     } else {
-      for (size_t i = 0; i < profile.history.size() && i < 30; ++i) {
+      // History is grouped by day so the list reads like a diary, newest day
+      // on top. Boundary maths is on purpose local-time like mine.
+      int64_t last_day = -1;
+      std::time_t now = std::time(nullptr);
+      std::tm tm_now{};
+      localtime_s(&tm_now, &now);
+      int64_t today = int64_t(tm_now.tm_year) * 1000 + tm_now.tm_yday;
+      for (size_t i = 0; i < profile.history.size() && shown < 40 &&
+                            y < max_y;
+           ++i) {
         auto &h = profile.history[i];
-        Rect r{content.x + 40, double(y), content.w - 80, 36};
-        c.text(r.x, r.y + 8, h.title + "  " + h.url, 13, TEXT);
+        if (!matches(h.title, h.url))
+          continue;
+        std::time_t when = std::time_t(h.visited);
+        std::tm tm_v{};
+        localtime_s(&tm_v, &when);
+        int64_t day = int64_t(tm_v.tm_year) * 1000 + tm_v.tm_yday;
+        if (day != last_day) {
+          last_day = day;
+          std::string label = day == today     ? "Today"
+                              : day == today - 1 ? "Yesterday"
+                                                 : std::to_string(tm_v.tm_mday) + "/" +
+                                                       std::to_string(tm_v.tm_mon + 1) + "/" +
+                                                       std::to_string(tm_v.tm_year + 1900);
+          c.text(content.x + 40, y + 6, label, 12, ACCENT, true);
+          y += 26;
+          if (y >= max_y)
+            break;
+        }
+        Rect r{content.x + 40, y, content.w - 80, 36};
+        c.text(r.x + 10, r.y + 8, h.title + "  " + h.url, 13, TEXT);
         hits.push_back({r, "open-history", int(i), h.url});
         y += 40;
+        ++shown;
       }
     }
-    if (y == size_t(content.y) + 80)
-      c.text(content.x + 40, double(y), "Nothing saved yet.", 13, MUTED);
+    if (!shown)
+      c.text(content.x + 40, y, needle.empty() ? "Nothing saved yet."
+                                               : "Nothing matches.", 13, MUTED);
+  }
+  void draw_workspaces(Canvas &c) {
+    c.text(content.x + 40, content.y + 30, "Workspaces", 24, TEXT, true);
+    c.text(content.x + 40, content.y + 60,
+           "Each workspace keeps its own tabs. New and rename are typed into my address bar.",
+           12, MUTED);
+    Rect add{content.x + content.w - 200, content.y + 24, 150, 30};
+    c.fill(add, PANEL);
+    c.stroke(add, BORDER);
+    c.text(add.x + 12, add.y + 7, "New workspace", 12, TEXT);
+    hits.push_back({add, "workspace-new", 0, {}});
+    double y = content.y + 100;
+    for (size_t i = 0; i < workspaces.size() && y < content.y + content.h - 60; ++i) {
+      // The live workspace is shown with the strip as it stands right now.
+      Workspace shown = workspaces[i];
+      if (i == workspace) {
+        shown.tabs.clear();
+        for (auto &tab : tabs)
+          shown.tabs.push_back(tab.url);
+      }
+      Rect row{content.x + 40, y, content.w - 80, 48};
+      c.fill(row, i == workspace ? PANEL : BG);
+      c.stroke(row, i == workspace ? ACCENT : BORDER);
+      c.text(row.x + 12, row.y + 7, shown.name, 14, TEXT, i == workspace);
+      c.text(row.x + 12, row.y + 26,
+             std::to_string(shown.tabs.size()) + " tab" +
+                 (shown.tabs.size() == 1 ? "" : "s") +
+                 (i == workspace ? " - active" : ""),
+             11, MUTED);
+      Rect rename{row.x + row.w - 270, row.y + 10, 76, 28};
+      c.stroke(rename, BORDER);
+      c.text(rename.x + 12, rename.y + 6, "Rename", 12, TEXT);
+      hits.push_back({rename, "workspace-rename", int(i), {}});
+      Rect close{row.x + row.w - 180, row.y + 10, 76, 28};
+      c.stroke(close, BORDER);
+      c.text(close.x + 16, close.y + 6, "Close", 12, TEXT);
+      hits.push_back({close, "workspace-close", int(i), {}});
+      Rect open_b{row.x + row.w - 90, row.y + 10, 76, 28};
+      c.stroke(open_b, BORDER);
+      c.text(open_b.x + 18, open_b.y + 6, "Open", 12, TEXT);
+      hits.push_back({open_b, "workspace-open", int(i), {}});
+      y += 56;
+    }
   }
   // I turn a frame into the paint list my raster reads, in window coordinates.
   std::vector<PaintCommand> frame_commands(const Tab &t, double origin_x, double origin_y) const {
@@ -1584,11 +2157,31 @@ struct Browser {
     c.clip = old;
   }
   void click(int x, int y) {
+    if (palette_open) {
+      bool ran = false;
+      for (auto it = hits.rbegin(); it != hits.rend(); ++it)
+        if (it->rect.contains(x, y) && it->action == "palette-run") {
+          run_command(it->value);
+          ran = true;
+          break;
+        }
+      if (!ran)
+        palette_open = false;
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
+    if (menu_click(x, y)) {
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
     for (auto it = hits.rbegin(); it != hits.rend(); ++it)
       if (it->rect.contains(x, y)) {
         auto h = *it;
         address_focus = h.action == "address";
         home_focus = h.action == "home-search";
+        panel_focus = h.action == "panel-search";
+        if (panel_focus)
+          panel_search_caret = panel_search.size();
         if (h.action == "tab")
           select_tab(h.index);
         else if (h.action == "close-tab")
@@ -1615,9 +2208,13 @@ struct Browser {
         } else if (h.action == "bookmarks") {
           panel_bookmarks = !panel_bookmarks;
           panel_history = false;
+          panel_search.clear();
+          panel_search_caret = 0;
         } else if (h.action == "history") {
           panel_history = !panel_history;
           panel_bookmarks = false;
+          panel_search.clear();
+          panel_search_caret = 0;
         } else if (h.action == "settings")
           navigate("psychovault://settings");
         else if (h.action == "tile")
@@ -1658,6 +2255,11 @@ struct Browser {
           begin_setting_edit("customSearch", profile.custom_search);
         } else if (h.action == "setting-block-ads") {
           profile.block_ads = !profile.block_ads; save_profile();
+        } else if (h.action == "setting-block-autoplay") {
+          profile.block_autoplay = !profile.block_autoplay;
+          save_profile();
+          status = profile.block_autoplay ? "Autoplay needs my click first"
+                                          : "Pages may start media on their own";
         } else if (h.action == "setting-https-only") {
           profile.https_only = !profile.https_only; save_profile();
           status = profile.https_only ? "I upgrade every request to HTTPS"
@@ -1791,6 +2393,96 @@ struct Browser {
           address_focus = home_focus = false;
         else if (h.action == "find-close")
           close_find();
+        else if (h.action == "recovery-keep") {
+          recovery_dismissed = true;
+        } else if (h.action == "recovery-fresh") {
+          // Start fresh means exactly that: everything open goes to the reopen
+          // stack, my saved session is cleared, and I land on a clean tab.
+          for (auto &tab : tabs)
+            stop_session(tab);
+          tabs.clear();
+          closed_tabs.clear();
+          profile.session_tabs.clear();
+          save_session();
+          crashed_last = recovery_dismissed = false;
+          new_tab();
+        } else if (h.action == "update-install") {
+          install_update();
+        } else if (h.action == "update-restart") {
+          apply_ready_update();
+        } else if (h.action == "update-later") {
+          update_snoozed = true;
+        } else if (h.action == "update-dismiss") {
+          profile.dismissed_update = next_update.version;
+          save_profile();
+        } else if (h.action == "setting-clear-log") {
+          profile.append_error_log("log cleared by the owner");
+          std::error_code ec;
+          std::filesystem::remove(profile.directory + "/owned-errors.log", ec);
+          reload_log_cache();
+        } else if (h.action == "setting-panic") {
+          profile.panic_enabled = !profile.panic_enabled;
+          save_profile();
+        } else if (h.action == "setting-panic-url") {
+          begin_setting_edit("panicUrl", profile.panic_url);
+        } else if (h.action == "workspaces") {
+          panel_workspaces = !panel_workspaces;
+          panel_bookmarks = panel_history = panel_downloads = false;
+        } else if (h.action == "workspace-new") {
+          begin_setting_edit("workspaceNew", "");
+        } else if (h.action == "workspace-rename") {
+          if (h.index >= 0 && size_t(h.index) < workspaces.size())
+            begin_setting_edit("workspaceRename:" + std::to_string(h.index),
+                               workspaces[size_t(h.index)].name);
+        } else if (h.action == "workspace-close") {
+          workspace_close(h.index);
+        } else if (h.action == "workspace-open") {
+          workspace_switch(size_t(h.index));
+        } else if (h.action == "suggest") {
+          navigate(h.value);
+        } else if (h.action == "dial-remove") {
+          if (h.index >= 0 && size_t(h.index) < profile.speed_dial.size()) {
+            profile.speed_dial.erase(profile.speed_dial.begin() + h.index);
+            save_profile();
+          }
+        } else if (h.action == "dial-add") {
+          // The + tile takes whatever is in my home search box as the address,
+          // so typing a site and clicking + is all it takes to pin it.
+          auto target = navigate_input(home_search, profile.search_template());
+          if (target && target->network()) {
+            bool exists = false;
+            for (auto &d : profile.speed_dial)
+              exists = exists || d.url == target->href();
+            if (!exists) {
+              profile.speed_dial.push_back({target->host, target->href()});
+              save_profile();
+              status = "I added it to my speed dial";
+            } else
+              status = "That site is already on my speed dial";
+          } else
+            status = "Type an address in my search box first";
+        } else if (h.action == "download-reveal") {
+          if (!h.value.empty()) {
+            // Explorer selects the file for a /select switch with a quoted
+            // path, built as a named string so the call itself stays simple.
+            std::wstring select = L"/select,\"" + utf16_of(h.value) + L"\"";
+            ShellExecuteW(hwnd, L"open", L"explorer.exe", select.c_str(),
+                          nullptr, SW_SHOWNORMAL);
+          }
+        } else if (h.action == "downloads-folder") {
+          ShellExecuteW(hwnd, L"open", utf16_of(downloads.directory()).c_str(),
+                        nullptr, nullptr, SW_SHOWNORMAL);
+        } else if (h.action == "downloads-pickdir") {
+          auto chosen = pick_folder(hwnd);
+          if (!chosen.empty()) {
+            if (profile.set_download_directory(chosen)) {
+              downloads.set_directory(profile.download_directory);
+              save_profile();
+              status = "Downloads will save to " + profile.download_directory;
+            } else
+              status = "I cannot write to that folder";
+          }
+        }
         InvalidateRect(hwnd, nullptr, FALSE);
         return;
       }
@@ -1807,6 +2499,70 @@ struct Browser {
   void key(UINT, WPARAM wp, LPARAM) {
     bool ctrl = GetKeyState(VK_CONTROL) < 0;
     bool shift = GetKeyState(VK_SHIFT) < 0;
+    if (menu_open && wp == VK_ESCAPE) {
+      close_menu();
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
+    if (ctrl && shift && wp == 'P') {
+      palette_open = !palette_open;
+      palette_text.clear();
+      palette_caret = 0;
+      palette_index = 0;
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
+    if (ctrl && shift && wp == 'Q') {
+      panic();
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
+    if (palette_open) {
+      auto matches = palette_matches();
+      if (wp == VK_ESCAPE) {
+        palette_open = false;
+      } else if (wp == VK_RETURN) {
+        if (palette_index >= 0 && palette_index < int(matches.size()))
+          run_command(matches[size_t(palette_index)]->id);
+      } else if (wp == VK_UP) {
+        palette_index = std::max(0, palette_index - 1);
+      } else if (wp == VK_DOWN) {
+        palette_index = std::min(int(matches.size()) - 1, palette_index + 1);
+      } else if (wp == VK_BACK) {
+        size_t previous = previous_cp(palette_text, palette_caret);
+        palette_text.erase(previous, palette_caret - previous);
+        palette_caret = previous;
+        palette_index = 0;
+      } else if (wp == VK_LEFT) {
+        palette_caret = previous_cp(palette_text, palette_caret);
+      } else if (wp == VK_RIGHT) {
+        palette_caret = next_cp(palette_text, palette_caret);
+      } else {
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return;
+      }
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
+    if (ctrl && shift && wp == 'T') {
+      reopen_tab();
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
+    if (ctrl && wp == VK_TAB && tabs.size() > 1) {
+      int step = shift ? -1 : 1;
+      select_tab((active + step + int(tabs.size())) % int(tabs.size()));
+      return;
+    }
+    if (ctrl && shift && (wp == VK_LEFT || wp == VK_RIGHT)) {
+      move_tab(active, wp == VK_LEFT ? -1 : 1);
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
+    if (ctrl && wp == 'M') {
+      tab_set_muted(active, !current().muted);
+      return;
+    }
     if (ctrl && wp == 'F') {
       open_find();
       return;
@@ -1888,6 +2644,47 @@ struct Browser {
       InvalidateRect(hwnd, nullptr, FALSE);
       return;
     }
+    if (panel_focus) {
+      if (wp == VK_ESCAPE) {
+        panel_focus = false;
+      } else if (wp == VK_RETURN) {
+        // Enter opens the first match - bookmarks first on the bookmark panel.
+        std::string needle = ascii_lower(panel_search);
+        auto matches = [&](const std::string &title, const std::string &url) {
+          return needle.empty() || ascii_lower(title + "  " + url).find(needle) !=
+                                       std::string::npos;
+        };
+        std::string open_url;
+        if (panel_bookmarks) {
+          for (auto &b : profile.bookmarks)
+            if (matches(b.title, b.url)) { open_url = b.url; break; }
+        } else {
+          for (auto &hh : profile.history)
+            if (matches(hh.title, hh.url)) { open_url = hh.url; break; }
+        }
+        if (!open_url.empty()) {
+          panel_bookmarks = panel_history = false;
+          panel_focus = false;
+          navigate(open_url);
+        }
+      } else if (wp == VK_BACK) {
+        size_t previous = previous_cp(panel_search, panel_search_caret);
+        panel_search.erase(previous, panel_search_caret - previous);
+        panel_search_caret = previous;
+      } else if (wp == VK_DELETE) {
+        panel_search.erase(panel_search_caret,
+                           next_cp(panel_search, panel_search_caret) - panel_search_caret);
+      } else if (wp == VK_LEFT) {
+        panel_search_caret = previous_cp(panel_search, panel_search_caret);
+      } else if (wp == VK_RIGHT) {
+        panel_search_caret = next_cp(panel_search, panel_search_caret);
+      } else if (wp == VK_HOME)
+        panel_search_caret = 0;
+      else if (wp == VK_END)
+        panel_search_caret = panel_search.size();
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
     if (address_focus || home_focus) {
       std::string &text = address_focus ? address : home_search;
       size_t &caret = address_focus ? address_caret : home_search_caret;
@@ -1950,6 +2747,23 @@ struct Browser {
   void insert_text(const std::string &text) {
     if (text.empty())
       return;
+    if (palette_open) {
+      if (palette_text.size() + text.size() <= 120) {
+        palette_text.insert(palette_caret, text);
+        palette_caret += text.size();
+        palette_index = 0;
+      }
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
+    if (panel_focus) {
+      if (panel_search.size() + text.size() <= 200) {
+        panel_search.insert(panel_search_caret, text);
+        panel_search_caret += text.size();
+      }
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
     if (find_open && !address_focus && !home_focus) {
       if (find_text.size() + text.size() <= 512) {
         find_text += text;
@@ -1991,6 +2805,430 @@ struct Browser {
     if (cp < 32 || (cp >= 0xd800 && cp <= 0xdfff))
       return;
     insert_text(utf8_encode(cp));
+  }
+  void load_workspaces_state() {
+    if (private_mode)
+      return;
+    Json state = profile.load_workspaces();
+    if (state.type != Json::Type::Object)
+      return;
+    if (const Json *list = state.find("list"))
+      if (list->type == Json::Type::Array)
+        for (auto &entry : list->array) {
+          if (workspaces.size() >= 32)
+            break;
+          Workspace w;
+          w.name = entry.str("name", "Main");
+          w.active = int(entry.num("active", 0));
+          w.pinned = entry.str("pinned");
+          w.muted = entry.str("muted");
+          if (const Json *tabs_json = entry.find("tabs"))
+            if (tabs_json->type == Json::Type::Array)
+              for (auto &t : tabs_json->array) {
+                if (w.tabs.size() >= 64)
+                  break;
+                if (t.type == Json::Type::String)
+                  if (auto parsed = parse_url(t.string))
+                    if (parsed->network())
+                      w.tabs.push_back(t.string);
+              }
+          workspaces.push_back(std::move(w));
+        }
+    workspace = size_t(std::clamp(int(state.num("active", 0)), 0,
+                                  int(workspaces.empty() ? 0 : workspaces.size() - 1)));
+  }
+  void capture_workspace() {
+    if (workspaces.empty())
+      workspaces.push_back(Workspace{});
+    if (workspace >= workspaces.size())
+      workspace = 0;
+    Workspace &w = workspaces[workspace];
+    w.tabs.clear();
+    w.pinned.clear();
+    w.muted.clear();
+    for (auto &tab : tabs) {
+      w.tabs.push_back(tab.url);
+      w.pinned += tab.pinned ? '1' : '0';
+      w.muted += tab.muted ? '1' : '0';
+    }
+    w.active = active;
+  }
+  void save_workspaces() {
+    if (private_mode || !profile.workspaces)
+      return;
+    capture_workspace();
+    Json list = Json::make_array();
+    for (auto &w : workspaces) {
+      Json entry = Json::make_object();
+      entry.set("name", w.name);
+      Json urls = Json::make_array();
+      for (auto &u : w.tabs)
+        urls.array.push_back(Json(u));
+      entry.set("tabs", urls);
+      entry.set("active", double(w.active));
+      entry.set("pinned", w.pinned);
+      entry.set("muted", w.muted);
+      list.array.push_back(std::move(entry));
+    }
+    Json state = Json::make_object();
+    state.set("active", double(workspace));
+    state.set("list", list);
+    if (!profile.save_workspaces(state) && profile_error.empty())
+      profile_error = profile.error;
+  }
+  // A workspace swap stops every live session and rebuilds the strip from the
+  // stored list, exactly like my launch restore does.
+  void load_workspace_tabs(Workspace &w) {
+    for (auto &tab : tabs)
+      stop_session(tab);
+    tabs.clear();
+    for (auto &u : w.tabs)
+      new_tab(u, false);
+    if (tabs.empty())
+      new_tab();
+    for (size_t i = 0; i < tabs.size(); ++i) {
+      if (i < w.pinned.size())
+        tabs[i].pinned = w.pinned[i] == '1';
+      if (i < w.muted.size())
+        tabs[i].muted = w.muted[i] == '1';
+    }
+    active = std::clamp(w.active, 0, int(tabs.size()) - 1);
+    select_tab(active);
+  }
+  void workspace_switch(size_t index) {
+    if (index == workspace || index >= workspaces.size())
+      return;
+    capture_workspace();
+    workspace = index;
+    load_workspace_tabs(workspaces[workspace]);
+    status = "Workspace: " + workspaces[workspace].name;
+    save_session();
+  }
+  void workspace_new(const std::string &name) {
+    if (workspaces.size() >= 32)
+      return;
+    capture_workspace();
+    Workspace w;
+    w.name = name.empty() ? "Workspace " + std::to_string(workspaces.size() + 1)
+                          : name;
+    workspaces.push_back(w);
+    workspace = workspaces.size() - 1;
+    load_workspace_tabs(workspaces[workspace]);
+    save_session();
+  }
+  void workspace_close(int index) {
+    if (index < 0 || index >= int(workspaces.size()))
+      return;
+    if (workspaces.size() <= 1) {
+      status = "My last workspace cannot be closed";
+      return;
+    }
+    workspaces.erase(workspaces.begin() + index);
+    if (size_t(index) < workspace)
+      --workspace;
+    else if (size_t(index) == workspace) {
+      workspace = std::min(size_t(index), workspaces.size() - 1);
+      load_workspace_tabs(workspaces[workspace]);
+    }
+    save_session();
+  }
+  // The panic button is my one-way escape hatch: every tab goes onto the
+  // reopen stack, a harmless page opens, and Ctrl+Shift+T still brings things
+  // back if I pressed it by mistake.
+  void panic() {
+    if (!profile.panic_enabled) {
+      status = "Panic is off - turn it on in settings first";
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
+    for (auto &tab : tabs) {
+      if (!tab.url.empty()) {
+        ClosedTab closed;
+        closed.url = tab.url;
+        closed.title = tab.title;
+        closed.history = tab.history;
+        closed.index = tab.index;
+        closed.pinned = tab.pinned;
+        closed.muted = tab.muted;
+        closed_tabs.push_back(std::move(closed));
+      }
+      stop_session(tab);
+    }
+    while (closed_tabs.size() > 20)
+      closed_tabs.erase(closed_tabs.begin());
+    tabs.clear();
+    std::string target = profile.panic_url.empty() ? profile.home_page : profile.panic_url;
+    new_tab(target.empty() ? "psychovault://newtab" : target);
+    status = "Panic - Ctrl+Shift+T brings my tabs back";
+  }
+  // The command palette is a box that runs named chrome actions. Each row
+  // lists its chord when there is one, so the palette doubles as a cheat sheet.
+  struct PaletteCommand {
+    const char *label;
+    const char *chord;
+    const char *id;
+  };
+  static const std::vector<PaletteCommand> &palette_commands() {
+    static const std::vector<PaletteCommand> commands = {
+        {"New tab", "Ctrl+T", "palette-new-tab"},
+        {"Close this tab", "Ctrl+W", "palette-close-tab"},
+        {"Reopen closed tab", "Ctrl+Shift+T", "palette-reopen"},
+        {"Duplicate tab", "", "palette-duplicate"},
+        {"Pin or unpin tab", "", "palette-pin"},
+        {"Mute or unmute tab", "Ctrl+M", "palette-mute"},
+        {"Back", "", "palette-back"},
+        {"Forward", "", "palette-forward"},
+        {"Reload", "Ctrl+R", "palette-reload"},
+        {"Stop loading", "Esc", "palette-stop"},
+        {"Go home", "", "palette-home"},
+        {"Bookmarks", "", "palette-bookmarks"},
+        {"History", "", "palette-history"},
+        {"Downloads", "Ctrl+J", "palette-downloads"},
+        {"Workspaces", "", "palette-workspaces"},
+        {"Settings", "", "palette-settings"},
+        {"Find in page", "Ctrl+F", "palette-find"},
+        {"Zoom in", "Ctrl +", "palette-zoom-in"},
+        {"Zoom out", "Ctrl -", "palette-zoom-out"},
+        {"Reset zoom", "Ctrl+0", "palette-zoom-reset"},
+        {"Toggle ad blocker", "", "palette-adblock"},
+        {"Clear browsing history", "", "palette-clear-history"},
+        {"Check for an update", "", "palette-update"},
+        {"Panic", "Ctrl+Shift+Q", "palette-panic"},
+    };
+    return commands;
+  }
+  std::vector<const PaletteCommand *> palette_matches() const {
+    std::vector<const PaletteCommand *> out;
+    std::string needle = ascii_lower(palette_text);
+    for (auto &command : palette_commands())
+      if (needle.empty() || ascii_lower(command.label).find(needle) != std::string::npos)
+        out.push_back(&command);
+    return out;
+  }
+  void run_command(const std::string &id) {
+    palette_open = false;
+    if (id == "palette-new-tab") new_tab();
+    else if (id == "palette-close-tab") close_tab(active);
+    else if (id == "palette-reopen") reopen_tab();
+    else if (id == "palette-duplicate") {
+      Tab t;
+      t.id = next_id++;
+      t.url = current().url;
+      t.title = current().title;
+      t.history.push_back(t.url);
+      t.started = false;
+      tabs.insert(tabs.begin() + active + 1, std::move(t));
+      select_tab(active + 1);
+    } else if (id == "palette-pin") tab_set_pinned(active, !current().pinned);
+    else if (id == "palette-mute") tab_set_muted(active, !current().muted);
+    else if (id == "palette-back") back();
+    else if (id == "palette-forward") forward();
+    else if (id == "palette-reload") navigate(current().url, false);
+    else if (id == "palette-stop") stop();
+    else if (id == "palette-home") navigate(profile.home_page);
+    else if (id == "palette-bookmarks") { panel_bookmarks = true; panel_history = panel_downloads = panel_workspaces = false; }
+    else if (id == "palette-history") { panel_history = true; panel_bookmarks = panel_downloads = panel_workspaces = false; }
+    else if (id == "palette-downloads") { panel_downloads = true; panel_bookmarks = panel_history = panel_workspaces = false; }
+    else if (id == "palette-workspaces") { panel_workspaces = true; panel_bookmarks = panel_history = panel_downloads = false; }
+    else if (id == "palette-settings") navigate("psychovault://settings");
+    else if (id == "palette-find") open_find();
+    else if (id == "palette-zoom-in") set_zoom(current().zoom * 1.1);
+    else if (id == "palette-zoom-out") set_zoom(current().zoom / 1.1);
+    else if (id == "palette-zoom-reset") set_zoom(1.0);
+    else if (id == "palette-adblock") {
+      profile.block_ads = !profile.block_ads;
+      save_profile();
+      status = profile.block_ads ? "Ad blocker on" : "Ad blocker off";
+    } else if (id == "palette-clear-history") {
+      profile.clear_history();
+      save_profile();
+      status = "I cleared my browsing history";
+    } else if (id == "palette-update") check_for_update();
+    else if (id == "palette-panic") panic();
+    InvalidateRect(hwnd, nullptr, FALSE);
+  }
+  void write_clipboard(const std::string &text) {
+    int n = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()),
+                                nullptr, 0);
+    if (n <= 0 || !OpenClipboard(hwnd))
+      return;
+    EmptyClipboard();
+    HGLOBAL handle = GlobalAlloc(GMEM_MOVEABLE, (n + 1) * sizeof(wchar_t));
+    if (handle) {
+      auto *data = static_cast<wchar_t *>(GlobalLock(handle));
+      MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()), data, n);
+      data[n] = 0;
+      GlobalUnlock(handle);
+      SetClipboardData(CF_UNICODETEXT, handle);
+    }
+    CloseClipboard();
+  }
+  void open_menu(int tab, int x, int y, std::vector<MenuLine> items) {
+    menu_open = true;
+    menu_tab = tab;
+    menu_x = std::clamp(x, 44, width - 230);
+    menu_y = std::clamp(y, 40, height - int(items.size()) * 30 - 40);
+    menu_items = std::move(items);
+    InvalidateRect(hwnd, nullptr, FALSE);
+  }
+  void close_menu() {
+    menu_open = false;
+    menu_tab = -1;
+    menu_items.clear();
+  }
+  // True when the click was consumed by the menu - either running a row or
+  // closing it. The menu owns its own geometry so it never needs hits.
+  bool menu_click(int x, int y) {
+    if (!menu_open)
+      return false;
+    const int w = 220, h = int(menu_items.size()) * 30 + 10;
+    if (x < menu_x || x > menu_x + w || y < menu_y || y > menu_y + h ||
+        y < menu_y + 5) {
+      close_menu();
+      return false;
+    }
+    int index = (y - menu_y - 5) / 30;
+    if (index >= 0 && index < int(menu_items.size()))
+      apply_menu(menu_items[size_t(index)].action);
+    close_menu();
+    return true;
+  }
+  void apply_menu(const std::string &id) {
+    if (id == "menu-pin" && menu_tab >= 0 && menu_tab < int(tabs.size()))
+      tab_set_pinned(menu_tab, !tabs[size_t(menu_tab)].pinned);
+    else if (id == "menu-mute" && menu_tab >= 0 && menu_tab < int(tabs.size()))
+      tab_set_muted(menu_tab, !tabs[size_t(menu_tab)].muted);
+    else if (id == "menu-move-left")
+      move_tab(menu_tab, -1);
+    else if (id == "menu-move-right")
+      move_tab(menu_tab, 1);
+    else if (id == "menu-duplicate" && menu_tab >= 0 &&
+             menu_tab < int(tabs.size())) {
+      Tab t;
+      t.id = next_id++;
+      t.url = tabs[size_t(menu_tab)].url;
+      t.title = tabs[size_t(menu_tab)].title;
+      t.history.push_back(t.url);
+      t.index = 0;
+      t.started = false;
+      tabs.insert(tabs.begin() + menu_tab + 1, std::move(t));
+      active = menu_tab + 1;
+      select_tab(active);
+    } else if (id == "menu-close-others") {
+      for (int i = int(tabs.size()) - 1; i >= 0; --i)
+        if (i != menu_tab && !tabs[size_t(i)].pinned)
+          close_tab(i);
+    } else if (id == "menu-create") {
+      new_tab();
+    } else if (id == "menu-reopen") {
+      reopen_tab();
+    } else if (id == "menu-close") {
+      close_tab(menu_tab);
+    } else if (id == "menu-back" && tabs[size_t(active)].index > 0) {
+      back();
+    } else if (id == "menu-forward" &&
+               tabs[size_t(active)].index + 1 < tabs[size_t(active)].history.size()) {
+      forward();
+    } else if (id == "menu-reload") {
+      navigate(current().url, false);
+    } else if (id == "menu-copy-url") {
+      write_clipboard(current().url);
+    } else if (id == "menu-view-source") {
+      navigate("view-source:" + current().url);
+    } else if (id == "menu-dial-add") {
+      // Only a real address becomes a tile - internal pages stay off the dial.
+      if (starts(current().url, "http://") || starts(current().url, "https://")) {
+        bool exists = false;
+        for (auto &d : profile.speed_dial)
+          exists = exists || d.url == current().url;
+        if (!exists) {
+          profile.speed_dial.push_back({current().title, current().url});
+          save_profile();
+          status = "I added this page to my speed dial";
+        } else
+          status = "This page is already on my speed dial";
+      }
+    }
+  }
+  void swap_tabs(int a, int b) {
+    if (a == b || a < 0 || b < 0 || a >= int(tabs.size()) || b >= int(tabs.size()))
+      return;
+    std::swap(tabs[size_t(a)], tabs[size_t(b)]);
+    if (active == a)
+      active = b;
+    else if (active == b)
+      active = a;
+    save_session();
+  }
+  void move_tab(int index, int delta) {
+    if (index < 0 || index >= int(tabs.size()))
+      return;
+    swap_tabs(index, int(std::clamp(index + delta, 0, int(tabs.size()) - 1)));
+  }
+  // Ctrl+Shift+T undoes the most recent close, back stack and all.
+  void reopen_tab() {
+    if (closed_tabs.empty()) {
+      status = "No closed tab to bring back";
+      return;
+    }
+    ClosedTab restore = std::move(closed_tabs.back());
+    closed_tabs.pop_back();
+    Tab t;
+    t.id = next_id++;
+    t.url = restore.url;
+    t.title = restore.title;
+    t.history = restore.history.empty() ? std::vector<std::string>{restore.url}
+                                        : restore.history;
+    t.index = std::min(restore.index, t.history.size() - 1);
+    t.pinned = restore.pinned;
+    t.muted = restore.muted;
+    t.started = false;
+    tabs.push_back(std::move(t));
+    active = int(tabs.size()) - 1;
+    select_tab(active);
+  }
+  void tab_set_pinned(int index, bool pinned) {
+    tabs[size_t(index)].pinned = pinned;
+    save_session();
+    InvalidateRect(hwnd, nullptr, FALSE);
+  }
+  void tab_set_muted(int index, bool muted) {
+    tabs[size_t(index)].muted = muted;
+    if (tabs[size_t(index)].session)
+      tabs[size_t(index)].session->muted.store(muted);
+    save_session();
+    InvalidateRect(hwnd, nullptr, FALSE);
+  }
+  void right_click(int x, int y) {
+    for (auto it = hits.rbegin(); it != hits.rend(); ++it)
+      if (it->rect.contains(x, y) &&
+          (it->action == "tab" || it->action == "close-tab")) {
+        int index = it->index;
+        Tab &t = tabs[size_t(index)];
+        std::vector<MenuLine> items;
+        items.push_back({t.pinned ? "Unpin tab" : "Pin tab", "menu-pin"});
+        items.push_back({t.muted ? "Unmute tab" : "Mute tab", "menu-mute"});
+        items.push_back({"Duplicate tab", "menu-duplicate"});
+        items.push_back({"Move tab left", "menu-move-left"});
+        items.push_back({"Move tab right", "menu-move-right"});
+        items.push_back({"Close other tabs", "menu-close-others"});
+        items.push_back({"New tab", "menu-create"});
+        items.push_back({"Reopen closed tab", "menu-reopen"});
+        items.push_back({"Close tab", "menu-close"});
+        open_menu(index, x, y, std::move(items));
+        return;
+      }
+    if (content.contains(x, y) && !menu_open && !panel_bookmarks &&
+        !panel_history && !panel_downloads && !settings) {
+      std::vector<MenuLine> items;
+      items.push_back({"Back", "menu-back"});
+      items.push_back({"Forward", "menu-forward"});
+      items.push_back({"Reload", "menu-reload"});
+      items.push_back({"Copy page URL", "menu-copy-url"});
+      items.push_back({"Add page to speed dial", "menu-dial-add"});
+      items.push_back({"View page source", "menu-view-source"});
+      open_menu(active, x, y, std::move(items));
+    }
   }
   void paste() {
     if (!OpenClipboard(hwnd))
@@ -2099,6 +3337,11 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (auto b = browser(hwnd))
       b->click(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
     SetFocus(hwnd);
+    return 0;
+  }
+  case WM_RBUTTONDOWN: {
+    if (auto b = browser(hwnd))
+      b->right_click(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
     return 0;
   }
   case WM_MOUSEWHEEL: {
@@ -2324,6 +3567,31 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
   if (argv)
     LocalFree(argv);
   for (size_t i = 0; i < args.size(); ++i) {
+    if (args[i] == "--apply-update" && i + 2 < args.size()) {
+      // I am the small bootstrapper copy my updater spawns: wait for the main
+      // process to exit, drop the verified exe into place, relaunch it, done.
+      DWORD pid = DWORD(std::atoi(args[i + 1].c_str()));
+      std::string target = args[i + 2];
+      HANDLE parent = OpenProcess(SYNCHRONIZE, FALSE, pid);
+      if (parent) {
+        WaitForSingleObject(parent, 30000);
+        CloseHandle(parent);
+      }
+      Sleep(400);
+      // The staged exe went through my SHA-256 check before this flag ran.
+      std::string staged = target + ".staged";
+      std::wstring wide_target = utf16_of(target);
+      std::wstring wide_staged = utf16_of(staged);
+      for (int attempt = 0; attempt < 20; ++attempt) {
+        if (CopyFileW(wide_staged.c_str(), wide_target.c_str(), FALSE))
+          break;
+        Sleep(500);
+      }
+      DeleteFileW(wide_staged.c_str());
+      ShellExecuteW(nullptr, L"open", wide_target.c_str(), L"", nullptr,
+                    SW_SHOWNORMAL);
+      return 0;
+    }
     if (args[i] == "--smoke")
       smoke = true;
     else if (args[i] == "--private")
@@ -2370,8 +3638,20 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     b.new_tab("psychovault://newtab", false);
   } else if (b.profile.restore_tabs && !b.profile.session_tabs.empty()) {
     b.tabs.clear();
-    for (auto &u : b.profile.session_tabs)
+    // The session file mirrors the active workspace; a workspace store with
+    // entries takes precedence because it is the richer record.
+    const auto &source_tabs =
+        (!b.workspaces.empty() && !b.workspaces[b.workspace].tabs.empty())
+            ? b.workspaces[b.workspace].tabs
+            : b.profile.session_tabs;
+    for (auto &u : source_tabs)
       b.new_tab(u, false);
+    for (size_t i = 0; i < b.tabs.size(); ++i) {
+      if (i < b.profile.session_pinned.size())
+        b.tabs[i].pinned = b.profile.session_pinned[i] == '1';
+      if (i < b.profile.session_muted.size())
+        b.tabs[i].muted = b.profile.session_muted[i] == '1';
+    }
     b.active = std::clamp(b.profile.session_active, 0, int(b.tabs.size()) - 1);
     b.sync_address();
     b.settings = starts(b.current().url, "psychovault://settings");

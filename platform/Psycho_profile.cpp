@@ -1,6 +1,7 @@
 #include "Psycho_profile.hpp"
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -135,6 +136,9 @@ Profile Profile::open(const std::string &directory, bool private_mode) {
       else if (!proxy->str("mode", "direct").empty() && proxy->str("mode", "direct") != "direct")
         p.error = "I ignored a damaged proxy record: " + proxy_error;
     }
+    p.panic_enabled = settings.flag("panicEnabled", false);
+    p.panic_url = settings.str("panicUrl");
+    p.dismissed_update = settings.str("dismissedUpdate");
     p.theme = settings.str("theme", "dark");
     p.accent = settings.str("accent", "cyan");
     p.high_contrast = settings.flag("highContrast", false);
@@ -144,10 +148,29 @@ Profile Profile::open(const std::string &directory, bool private_mode) {
     p.cpu_limit = int(std::clamp(settings.num("cpuLimit", 0), 0.0, 100.0));
     p.sleep_tabs_minutes = int(std::clamp(settings.num("sleepTabsMin", 0), 0.0, 1440.0));
     p.battery_saver = settings.flag("batterySaver", false);
+    p.block_autoplay = settings.flag("blockAutoplay", false);
     p.spell_check = settings.flag("spellCheck", true);
     read_list("spellUserWords", p.user_words);
     read_list("extensionDirectories", p.extension_directories);
     read_list("disabledExtensions", p.disabled_extensions);
+  }
+  if (const Json *dial = settings.find("speedDial")) {
+    if (dial->type == Json::Type::Array)
+      for (auto &d : dial->array) {
+        if (p.speed_dial.size() >= 24)
+          break;
+        auto url = d.str("url");
+        if (d.type == Json::Type::Object && valid_browser_url(url))
+          p.speed_dial.push_back({bounded(d.str("title", url), 120), url});
+      }
+  } else {
+    // The factory row, now living in data so the owner can change it.
+    p.speed_dial = {{"GitHub", "https://github.com/"},
+                    {"YouTube", "https://www.youtube.com/"},
+                    {"Reddit", "https://www.reddit.com/"},
+                    {"Wikipedia", "https://www.wikipedia.org/"},
+                    {"Mail", "https://mail.proton.me/"},
+                    {"News", "https://news.ycombinator.com/"}};
   }
   Json bookmarks;
   load("owned-bookmarks.json", bookmarks);
@@ -183,6 +206,8 @@ Profile Profile::open(const std::string &directory, bool private_mode) {
   Json state;
   load("owned-session-state.json", state);
   p.session_active = int(state.num("active", 0));
+  p.session_pinned = bounded(state.str("pinned"), 64);
+  p.session_muted = bounded(state.str("muted"), 64);
   if (!p.session_tabs.empty())
     p.session_active = std::clamp(p.session_active, 0, int(p.session_tabs.size()) - 1);
   else
@@ -235,7 +260,21 @@ bool Profile::save() {
   settings.set("cpuLimit", cpu_limit);
   settings.set("sleepTabsMin", sleep_tabs_minutes);
   settings.set("batterySaver", battery_saver);
+  settings.set("panicEnabled", panic_enabled);
+  settings.set("panicUrl", bounded(panic_url, 2048));
+  settings.set("dismissedUpdate", bounded(dismissed_update, 120));
+  settings.set("blockAutoplay", block_autoplay);
   settings.set("spellCheck", spell_check);
+  {
+    Json dial = Json::make_array();
+    for (auto &d : speed_dial) {
+      Json j = Json::make_object();
+      j.set("title", d.title);
+      j.set("url", d.url);
+      dial.array.push_back(std::move(j));
+    }
+    settings.set("speedDial", dial);
+  }
   write_list("spellUserWords", user_words);
   write_list("extensionDirectories", extension_directories);
   write_list("disabledExtensions", disabled_extensions);
@@ -282,9 +321,84 @@ bool Profile::save_session() {
   state.set("schema", 1);
   state.set("active",
             session_tabs.empty() ? 0 : std::clamp(session_active, 0, int(session_tabs.size()) - 1));
+  state.set("pinned", bounded(session_pinned, 64));
+  state.set("muted", bounded(session_muted, 64));
   bool ok = write_file_atomic(directory + "/owned-session.json", session.dump() + "\n", error);
   ok = write_file_atomic(directory + "/owned-session-state.json", state.dump() + "\n", error) && ok;
   return ok;
+}
+bool Profile::crashed_last_run() const {
+  std::error_code ec;
+  return fs::exists(utf8_path(directory + "/owned-running.marker"), ec);
+}
+void Profile::mark_running() {
+  if (private_mode)
+    return;
+  std::string local_error;
+  write_file_atomic(directory + "/owned-running.marker", "running\n", local_error);
+}
+void Profile::clear_running_marker() {
+  std::error_code ec;
+  fs::remove(utf8_path(directory + "/owned-running.marker"), ec);
+}
+void Profile::append_error_log(const std::string &line) {
+  if (private_mode)
+    return;
+  const std::string path = directory + "/owned-errors.log";
+  // I never let a log grow without bound: past 256 KiB it starts fresh with a
+  // note saying so, because silent truncation is how real bugs get lost.
+  std::error_code ec;
+  if (fs::exists(utf8_path(path), ec) &&
+      fs::file_size(utf8_path(path), ec) > 256u * 1024u) {
+    fs::remove(utf8_path(path), ec);
+    append_error_log("log rotated after reaching 256 KiB");
+  }
+  std::string record = std::to_string(now_ms()) + " " + line.substr(0, 1000) + "\n";
+  std::ofstream out;
+  out.open(utf8_path(path), std::ios::binary | std::ios::app);
+  out.write(record.data(), std::streamsize(record.size()));
+}
+std::vector<std::string> Profile::read_error_log(size_t max_lines) const {
+  std::vector<std::string> lines;
+  try {
+    auto text = read_text_file(directory + "/owned-errors.log");
+    size_t start = 0;
+    while (lines.size() < 200 && start < text.size()) {
+      size_t end = text.find('\n', start);
+      if (end == std::string::npos)
+        end = text.size();
+      lines.push_back(text.substr(start, end - start));
+      start = end + 1;
+    }
+  } catch (const std::exception &) {
+  }
+  if (lines.size() > max_lines)
+    lines.erase(lines.begin(), lines.begin() + (lines.size() - max_lines));
+  return lines;
+}
+Json Profile::load_workspaces() const {
+  Json state;
+  // The same file contract as the rest of my profile: missing is empty, and a
+  // broken document is ignored rather than guessed.
+  try {
+    auto text = read_text_file(directory + "/owned-workspaces.json");
+    if (auto parsed = Json::parse(text))
+      state = *parsed;
+  } catch (const std::exception &) {
+  }
+  return state;
+}
+bool Profile::save_workspaces(const Json &state) {
+  if (private_mode)
+    return true;
+  std::error_code ec;
+  fs::create_directories(utf8_path(directory), ec);
+  if (ec) {
+    error = "cannot create profile directory";
+    return false;
+  }
+  return write_file_atomic(directory + "/owned-workspaces.json", state.dump() + "\n",
+                           error);
 }
 void Profile::visit(const std::string &title, const std::string &url) {
   if (private_mode || !valid_browser_url(url) || !starts(url, "http"))
