@@ -104,6 +104,10 @@ def main() -> int:
                 # The real compiler searches the including file's directory
                 # first, then the repository root, which is exactly how my
                 # build script invokes it.
+                generated = inc == "Psycho_embedded_words.hpp" and \
+                            (ROOT / "platform/Psycho_words.txt").is_file()
+                if generated:
+                    continue
                 if not (target.parent / inc).resolve().exists() and \
                    not (ROOT / inc).resolve().exists():
                     include_missing.append(f"{path}: {inc}")

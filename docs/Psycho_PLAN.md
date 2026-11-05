@@ -4,6 +4,99 @@ This is my plan for rebuilding PsychoVault as my own browser. I am writing it be
 
 Status: the owned engine and native shell foundation is merged. I am now building the next testable Windows preview. This document is a contract and a sequence of gates. It is not evidence that the engine, Proton, the installer, or Android already works.
 
+## 0. My build order now - engine first
+
+This plan describes the full target. This section is the order I actually work
+in, corrected by what my first real exe proved: a browser is only its engine. My
+shell, settings, spelling and vault work are features on top, and they are done
+on top of a machine that still struggles against the live web. From here I climb
+the ladder below and nothing else; each stage ends in something runnable with
+its proof attached. I never report from plans, only from builds.
+
+### Stage A - make my browser real online
+
+1. Put my bundled extensions (Proton VPN, and my ad filter data) inside the one
+   exe using my own appended-payload format, unpacked into my profile on first
+   run, so the portable file really carries my whole product.
+2. Add `psychovault://nettest`: DNS, TCP, TLS and HTTPS checks, each naming its
+   own failure, with a copy button. This page is how a failure on anyone's
+   machine becomes a named bug instead of a shrug.
+3. My CI loads a real page from the live internet on every build and saves the
+   screenshot as proof, starting with a minimal site and growing.
+4. I fix exactly the stage that fails on real machines, using nettest output as
+   the bug report.
+
+### Stage B - my own Electron, built from my parts
+
+The old app was Electron: Chromium rendered it, Node ran its logic, a shell
+owned the windows, an updater kept it current, an installer put it on the
+machine. My equivalent, all written for this project:
+
+| Electron part | My owned equivalent | State |
+| --- | --- | --- |
+| Chromium renderer | My engine (owned HTML, CSS, JS, layout, raster) | Exists, climbing Stage D |
+| Node app process | My C++ shell logic in-process | Exists |
+| preload/IPC | My `chrome`-style webview API surface mapped from the old inventory | Exists, growing with Stage E |
+| Auto-updater (Squirrel) | My signed manifest updater | Exists |
+| Installer (NSIS/Squirrel) | My own installer | Missing - Stage F |
+
+Stage B is not a lump of new work; it is the honest accounting of what exists
+and what each later stage adds.
+
+### Stage C - my engine renders my own UI (the old look comes back)
+
+5. My settings pages become my own HTML and CSS, matched category by category
+   against the 23 pinned reference screenshots: general, privacy, downloads,
+   extensions, performance, appearance, spelling, passwords, accessibility,
+   about.
+6. My engine grows the CSS those pages need: flexbox, grid, positioning,
+   stacking order, rounded corners, shadows, form controls, hover and focus.
+7. Every inventoried control (109 settings controls, 59 defaults, 125
+   interactive controls) wired to real persisted behaviour, not pixels alone.
+8. The new tab page with my logo and speed dials, rendered the same way.
+
+Stage C exit: my engine captures diff against the reference PNGs inside a
+tolerance suite, with keyboard, focus and DPI checks - the R2 gate for real.
+
+### Stage D - the real-sites ladder
+
+9. A curated ladder of real sites, each representing a class: simple content,
+   layout-heavy, app-style, media.
+10. For each rung: a render diff against reference plus an interaction smoke
+    script; my engine, layout and JavaScript gaps are fixed in the order the
+    ladder exposes them, not in the order I find interesting.
+11. A per-build coverage table: which sites pass, which fail, and why.
+
+### Stage E - extensions that actually work
+
+12. My WebExtensions API surface grows in the order Proton needs it (already
+    mapped from the pinned source in my research), then one user-requested
+    extension at a time, each with a test before I say it works; a public
+    compatibility list stays truthful about every extension's status.
+13. The Proton live gate stays exactly as section 8 defines it. Nothing in this
+    re-ordering weakens it.
+
+### Stage F - the product floor
+
+14. My own installer: a real setup exe. It installs per-user under
+    %LOCALAPPDATA%\\Programs like the major browsers do (no admin prompt),
+    writes a Start Menu shortcut, registers in Apps & Features with a working
+    uninstaller, registers my protocol and file associations where Windows
+    allows, preserves the profile across installs and updates, and leaves my
+    signed updater in charge of upgrades.
+15. Feel polish: smooth scrolling, hover states, and animated surfaces as my
+    engine grows them - measured against the old app, per section 11.
+
+### Stage G - staying honest while I climb
+
+16. My conformance pins (WPT subsets, Test262 subsets) grow with every stage
+    and the pass/fail/skip counts publish per build. A merged pull request is a
+    unit of work, never a parity claim.
+
+On time: I measure in build milestones, not calendar promises. The order above
+is fixed; every stage ends with something on the Releases page that the user
+can run and see.
+
 ## 1. My definition of done
 
 I am done when all of these are true:
@@ -353,4 +446,10 @@ I am not giving a fake calendar estimate. The sequence is fixed; the duration de
 
 ## 17. Immediate next step after this plan
 
-I have started P2: the C++20 engine, my own page host, the native shell and the GitHub Actions build now link into one executable that renders pages itself. I have deliberately deferred the P1 process split, because a contained renderer that never answered its own probe was blocking every test I wanted to run. Section 5 still describes the boundary I intend to restore, and my git history keeps the framed IPC and payload work. The current evidence and open gates are in `docs/Psycho_IMPLEMENTATION-STATUS.md`. I will not call P2 complete until conformance subsets and stability gates pass, and I will not call P1 complete until a page renders inside a real containment boundary.
+The immediate work is Stage A, steps 1 and 2: my bundled extensions packed into
+the exe and the connection-checks page, then step 3 so that every build proves
+real internet loading. When the user's machine and my CI agree on what loads,
+Stage C starts - my engine rendering my own settings UI against the pinned
+screenshots. The diagnostics live in the browser itself and the live evidence
+lives in `docs/Psycho_IMPLEMENTATION-STATUS.md`. I will not move a stage
+boundary without its proof artifact attached.
