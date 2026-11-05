@@ -243,6 +243,12 @@ Order matters: my own UI's CSS comes first, then the web's common CSS, then the 
 
 ### P8 - Extension engine (general, MV3 + legacy MV2)
 
+**Entry gate: a published completion audit of everything before this point**
+(M0-M7 exit gates all green, conformance counts published, one clean full
+build, every test passing, the evidence table filled in). Extensions start
+only when that audit exists - by the standing rule that audit comes first,
+then build and test, then extension work.
+
 - **S170** Manifest parsing/validation for MV2 and MV3, permissions, host permissions, CSP, web-accessible resources, `key` handling, stable IDs.
 - **S171** Install pipeline: directory install, CRX3 unpacking with signature check, enable/disable/remove/restore, update check, provenance record.
 - **S172** Extension service worker runtime: registration, events, wake/sleep, alarms, `fetch`, `importScripts`, termination, crash recovery.
