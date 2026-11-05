@@ -11,6 +11,8 @@ I build my own browser engine. This is a development preview I can test, not a f
 - **Two defects only the Windows test run could show me.** A nested `Function` call reallocated the vector of compiled programs while the outer call was still walking it, so a runtime now keeps those programs in a container that cannot move. And a 1 MiB Windows thread ran out of stack inside my parser and my evaluator long before any script recursion limit was reached; the exe now reserves 8 MiB, the same order my Linux tests already had, and every expression checks the budget so a deeply nested one cannot reach the guard page either. Both were found by the hosted Windows job, and neither was visible on my own machine.
 - **A tunnel test that dials.** My VPN page has a "Test my tunnel" button that makes one real request through the configured server on a worker thread and prints what came back - the status, the scheme and the server it used, or the exact reason it failed. A connected label nobody tested is not evidence, so the panel now carries the words of the last attempt.
 - **A conformance job.** `.github/workflows/Psycho_conformance.yml` builds the runner on a hosted runner, fetches the corpus at the pinned commit, runs it and keeps the per-test record as an artifact. The number in my documents can be re-derived from a run.
+- **My vault, encrypted entirely by my own code.** It keeps logins as site | user | password | note rows in one `vault.bin` beside my profile. The key derives from my passphrase with PBKDF2 over my own SHA-256, and the payload is sealed with my own ChaCha20-Poly1305 - both written straight from RFC 8439 and verified against the RFC's official test vectors, plus tamper refusal and a wrong-passphrase rejection. My settings page creates, unlocks, lists, adds, removes, copies and locks it, and it relocks itself after however many minutes I set. My passphrase is never written to disk and is scrubbed from memory on lock.
+- **Autoplay blocking that is enforced, not just tagged.** A scripted `play()` with no recent real click is refused with the rejected promise a page expects, wired from my settings through my network policy into the page host.
 
 ## About Proton VPN
 
@@ -36,7 +38,7 @@ What I did instead is make the thing a Proton endpoint would use testable: my ow
 - WebP and progressive JPEG are not decoded. My page says so in its diagnostics rather than showing a blank space without explanation.
 - WebRTC is not implemented, so my extension-facing WebRTC policy setting is a stored preference, not a leak prevention I can demonstrate.
 - Page code runs in my browser process. A job object limits its memory and CPU time; it is not isolation.
-- My vault, password manager, translation, media keys and full legacy settings parity are not finished.
+- Translation, media keys and full legacy settings parity are not finished, and migration from my old profile's vault is still to come - the vault itself now works.
 - This build is unsigned, so Windows SmartScreen may warn me.
 
 ## How I run it

@@ -101,7 +101,7 @@ I will implement HTTP/1.1 first, then HTTP/2. HTTP/3/QUIC is a later gate unless
 
 ### 3.5 Cryptography and vault
 
-I will use Windows CNG for AES-GCM, hashing, random bytes and signature verification where supported. I will use DPAPI for the old OS-keychain vault path where that is what the old data requires. I will not invent a block cipher, a hash, a signature scheme, or a password KDF.
+My crypto is my own: SHA-256, HMAC, PBKDF2, ChaCha20 and Poly1305 written from the RFCs and proven against their official test vectors, so no third-party crypto library ships inside PsychoVault. Windows CNG enters the picture only for the old OS-keychain vault path if old data demands it. I will not invent a block cipher, a hash, a signature scheme, or a password KDF - I implement the standard constructions in my own code.
 
 For the master-password path, I must preserve compatibility with the old scrypt parameters `N=16384`, `r=8`, `p=1` and AES-256-GCM. If Windows CNG does not provide scrypt directly, I will implement only the scrypt construction over reviewed primitives and test it against known vectors and old fixtures before migration. I will not change the KDF silently during migration.
 

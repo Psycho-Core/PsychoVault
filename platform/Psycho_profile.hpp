@@ -66,6 +66,8 @@ public:
   bool block_autoplay = false;
   bool spell_check = true;
   std::vector<std::string> user_words;
+  // My vault relocks itself this many minutes after I unlock it.
+  int vault_lock_minutes = 10;
   // Extensions the user installed, so I can reload them on the next launch.
   std::vector<std::string> extension_directories;
   // Site state I keep with the profile so a restart is not a sign-out.
