@@ -2,16 +2,12 @@
 # pretend to pass: the job builds my parser and interpreter, runs the Test262 tree
 # this file pins, and writes the summary where I can read it.
 name: Measure my conformance
+# PARKED on purpose (P0/S003). No push, tag or pull-request trigger may start a
+# build until the runtime milestone is real. Run this workflow by hand when the
+# gates in docs/Psycho_MASTER-PLAN.md say an output is worth building; see
+# docs/Psycho_BUILD-AND-RELEASE.md.
 on:
   workflow_dispatch:
-  push:
-    branches: [Master]
-    paths:
-      - 'engine/Psycho_js_*.cpp'
-      - 'engine/Psycho_js.hpp'
-      - 'tools/Psycho_conformance.cpp'
-      - 'tools/Psycho_build.py'
-      - '.github/workflows/Psycho_conformance.yml'
 concurrency:
   group: psychovault-conformance
   cancel-in-progress: false

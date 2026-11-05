@@ -1,26 +1,31 @@
 # PsychoVault
 
-I am building my own browser engine and a native Windows shell, and I am keeping the documents honest as I go. My goal is my old browser back, with my own code under it and Proton VPN arriving as an extension beside it - never another browser's engine underneath.
+I am building my own browser: my own app runtime, my own rendering engine, my own interface and my own installer, with Proton VPN arriving as an extension beside it - never another browser's engine underneath.
 
-This is still a development preview. It renders its own pages, runs its own JavaScript and handles downloads, tabs and settings, but it is not a replacement for a finished browser.
+The old app I made earlier ran on Electron. I want that experience back - the same dark interface, the same tabs, workspaces, settings, vault, blocker, extensions and VPN - on code written for this project. The way to get there is to build my own equivalent of Electron first (a runtime that hosts my UI as web pages and my engine as the thing that draws them), and then grow the engine until it renders the real web.
 
-## Where I keep the work
+## Where the work is
 
-- [PSYCHO.md](PSYCHO.md) - my project guide and the requirements I am holding myself to.
-- [docs/Psycho_PLAN.md](docs/Psycho_PLAN.md) - my architecture, gates and the order I am building in.
-- [docs/Psycho_IMPLEMENTATION-STATUS.md](docs/Psycho_IMPLEMENTATION-STATUS.md) - what works, what does not, and what I actually tested.
+- [PSYCHO.md](PSYCHO.md) - my project guide and the requirements I hold myself to.
+- [docs/Psycho_MASTER-PLAN.md](docs/Psycho_MASTER-PLAN.md) - the rebuild: milestones, and the numbered steps from an empty runtime to an installed release.
+- [docs/Psycho_ARCHITECTURE.md](docs/Psycho_ARCHITECTURE.md) - how my runtime, engine, UI, extension host and installer fit together.
+- [docs/Psycho_REFERENCE.md](docs/Psycho_REFERENCE.md) - how I use the old app and its screenshots as a contract, not as code to copy.
+- [docs/Psycho_FEATURE-INVENTORY.md](docs/Psycho_FEATURE-INVENTORY.md) - every old feature and setting I must bring back.
 - [docs/Psycho_CONFORMANCE.md](docs/Psycho_CONFORMANCE.md) - my Test262 measurement, run by my own runner.
-- [docs/Psycho_FEATURE-INVENTORY.md](docs/Psycho_FEATURE-INVENTORY.md) - the old features and settings I am keeping myself accountable to.
-- [docs/Psycho_VERIFICATION.md](docs/Psycho_VERIFICATION.md) - the record of every check behind each claim.
+- [docs/Psycho_BUILD-AND-RELEASE.md](docs/Psycho_BUILD-AND-RELEASE.md) - how I build, test and ship, including why my GitHub Actions builds are parked until the runtime milestone is real.
 
-## How I build and ship it
+## Where it stands
 
-Everything compiles on GitHub Actions, and each tag publishes a portable executable, a ZIP, a checksums file and an update manifest. The work is broken into steps I can measure; the ninth and latest measures my engine against Test262, and it is live at [releases/tag/v0.12.0](https://github.com/Psycho-Core/PsychoVault/releases/tag/v0.12.0).
+This is a rebuild in progress. The engine, networking, profile, vault and extension groundwork exist and are tested at the unit level. What I have not built yet is the part that makes it feel like my old browser: the runtime that hosts my interface, the interface itself rendered by my own engine, and the installer. That is exactly where the plan starts, and it is why there is no new release to try yet.
+
+## How it will ship
+
+As a real Windows installer - `PsychoVault-Setup-<version>.exe` - that installs, registers, makes shortcuts, appears in Apps & Features and uninstalls. Not a portable exe.
 
 ## What I am not claiming
 
-I am not claiming Proton, full web compatibility, privacy, performance or Android support until I have test evidence of them. Proton VPN is not bundled yet: a live session needs a real account and a reachable endpoint, which this environment does not have - but the gap I recorded earlier about finding their source was my own mistake in a lookup, and their extension is public and GPL-3.0.
+I am not claiming Proton, web compatibility, privacy, performance or Android support until I have test evidence. There is no current release: the last published builds were the earlier preview line and they do not represent what this plan builds. Proton VPN is Proton's own extension, GPL-3.0, bundled and sandboxed as an extension - never merged into my engine.
 
 ## Licence and notices
 
-My engine and shell are my own work. Extensions are the one place third-party code is allowed to arrive, always under its own licence and its own notices. Proton VPN will remain Proton's extension, not part of my browser engine.
+My engine, runtime, interface and installer are my own work. Extensions are the one place third-party code is allowed, always under their own licences and notices. See [NOTICE.txt](NOTICE.txt).

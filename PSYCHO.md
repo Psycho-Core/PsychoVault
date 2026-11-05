@@ -12,7 +12,11 @@ The previous Electron application was responsive and ran well. I want that level
 
 Every line of PsychoVault application and engine source must be written for this project. That includes the browser shell, HTML and CSS engines, JavaScript engine, layout, painting, networking, storage, process isolation, and extension engine. I do not accept copying another browser's implementation and changing the names.
 
-The exception is extensions. Proton VPN is my standard bundled VPN extension, and I want a general extension system rather than a Proton-only hack. Extension code remains separately identified, licensed and sandboxed. An extension exception is not permission to import a third-party browser engine.
+The exception is extensions. Proton VPN is my standard bundled VPN extension, and I want a general extension system rather than a Proton-only hack - I want to be able to add other Chrome and Firefox (MV3/MV2) extensions myself later. Extension code remains separately identified, licensed and sandboxed. An extension exception is not permission to import a third-party browser engine.
+
+The part I got wrong before, and will not get wrong again: Electron gave my old app its feel because it gave me an engine plus an **app runtime**, and because my old interface was **web pages drawn by that engine**. So I am building my own equivalent of Electron first - a runtime that owns windows, tabs, sessions, IPC, extensions and updates, hosting my interface as HTML/CSS/JS rendered by my own engine - and only then growing the engine's web coverage. A hand-drawn native interface is not the target and will not be presented as one.
+
+The product ships as an **installer**, not a portable exe. When I say exe I mean the setup program: it unpacks, registers, creates shortcuts, appears in Apps & Features and uninstalls like every other program.
 
 Using an operating-system API, compiler, standard language library, font service, GPU API or build tool is not the same as embedding another browser. Any such boundary must be explicit in the architecture and dependency audit. I do not want a dependency that quietly supplies the parts I asked to have written.
 
@@ -25,7 +29,11 @@ Using an operating-system API, compiler, standard language library, font service
 5. I want the implementation written, not represented by empty functions, fabricated results, test-only browser APIs or controls that only look finished.
 6. I want every project document and release note written in my plain first-person voice.
 7. I want research and a written plan before major implementation. I want the plan audited against the actual requirements, specifications, extension code and available evidence.
-8. I want GitHub Actions to build the browser. I do not want to be told to compile it myself. Run builds one at a time, fix the first real failure and publish only verified outputs.
+8. I want GitHub Actions to build the browser once the builds are worth running, one at a time, publishing only verified outputs. Until the runtime milestone is real, the workflows stay parked at manual dispatch - I do not want build minutes spent generating the appearance of progress.
+
+## Where the plan lives
+
+`docs/Psycho_MASTER-PLAN.md` is the only plan. It replaces the older plan, audit, status and next-build documents, which are deleted because they described a different product. `docs/Psycho_ARCHITECTURE.md` is the module map, `docs/Psycho_REFERENCE.md` is how I use the old app as a contract, and `docs/Psycho_BUILD-AND-RELEASE.md` is how I build and ship.
 
 ## The interface is a contract
 
@@ -74,7 +82,9 @@ Until the complete acceptance gates pass, describe the project as in development
 
 ## Builds and releases
 
-I want free GitHub-hosted builds, with one active heavy build at a time. Cache only correct, versioned inputs and never reuse an output built from different source as though it were current. Keep build logs and failure notes useful without exposing private information.
+I want free GitHub-hosted builds, with one active heavy build at a time - once there is something worth building. Until the runtime milestone is real, every workflow is parked to manual dispatch: no push, tag or pull-request trigger starts a build. Cache only correct, versioned inputs and never reuse an output built from different source as though it were current. Keep build logs and failure notes useful without exposing private information.
+
+The release artefact is the installer plus its checksum and update manifest. A portable executable is not a release.
 
 I want a Windows x64 release as the first complete desktop target. Android must use the same owned engine and requirements, not a separate third-party browser wearing the same name. Plan Android only after the shared core has stable platform boundaries; do not claim parity from a source port.
 
