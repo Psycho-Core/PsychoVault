@@ -447,6 +447,10 @@ Android is done only when the same ownership, UI, feature, Proton, security, pri
 | P8 | Windows release candidate | Installer, updater, release notes, checksums and signed manifest pass |
 | P9 | Android platform layer | Real-device gates pass or Android remains explicitly deferred |
 
+These phases define the exit gates for the whole build. The order I actually
+work in is owned by section 0 - in particular Proton and extensions wait for
+Stage F, near the end, after the published completion audit at step 23.
+
 I am not giving a fake calendar estimate. The sequence is fixed; the duration depends on measured engine progress. I will report evidence at each gate.
 
 ## 15. Risks and how I am handling them
@@ -478,10 +482,11 @@ I am not giving a fake calendar estimate. The sequence is fixed; the duration de
 
 ## 17. Immediate next step after this plan
 
-The immediate work is Stage A, steps 1 and 2: my bundled extensions packed into
-the exe and the connection-checks page, then step 3 so that every build proves
-real internet loading. When the user's machine and my CI agree on what loads,
-Stage C starts - my engine rendering my own settings UI against the pinned
-screenshots. The diagnostics live in the browser itself and the live evidence
-lives in `docs/Psycho_IMPLEMENTATION-STATUS.md`. I will not move a stage
+The immediate work is Stage A: the connection-checks page first so any failing
+page names its own stage, then the CI step that loads a real page from the
+live internet every build and publishes the capture. When those agree on what
+loads, Stage B starts - PsychoEngine's twelve gated steps - and my bundled
+extensions wait in Stage F where they belong, arriving on a browser that
+already works. The diagnostics live in the browser itself and the live
+evidence lives in `docs/Psycho_IMPLEMENTATION-STATUS.md`. I will not move a stage
 boundary without its proof artifact attached.
