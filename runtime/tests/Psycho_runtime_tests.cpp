@@ -1,4 +1,5 @@
 #include "../app/Psycho_instance.hpp"
+#include "../surface/Psycho_surface.hpp"
 #include "../window/Psycho_window.hpp"
 #include "../ipc/Psycho_bus.hpp"
 #include "../broker/Psycho_broker.hpp"
@@ -439,6 +440,89 @@ int run_runtime_bus_tests(int &shared) {
 
     // Every accepted mutation reached the platform seam in order.
     RT_CHECK(applied.size() >= 10 && applied.back().id == one);
+  }
+
+  // S025 surface presentation: registry ownership rules, present contracts,
+  // compositor clipping and paint order - with real engine paint as payload.
+  {
+    SurfaceRegistry registry;
+    Error error;
+    auto px_at = [](const Surface &s, int x, int y) {
+      size_t at = (size_t(y) * size_t(s.width) + size_t(x)) * 4;
+      return uint32_t(s.pixels[at]) | uint32_t(s.pixels[at + 1]) << 8 |
+             uint32_t(s.pixels[at + 2]) << 16 | uint32_t(s.pixels[at + 3]) << 24;
+    };
+
+    // Creation and the shape rule: a lying frame count is a refusal.
+    int first = registry.create(20, 20, "renderer-1", error);
+    RT_CHECK(first > 0 && registry.find(first)->owner == "renderer-1");
+    RT_CHECK(registry.find(first)->generation == 0);
+    RT_CHECK(!registry.present(first, Bytes(100, 0xaa), 20, 20, error) &&
+             error.code == "surface.shape");
+    Bytes full(20 * 20 * 4, 0xff);
+    RT_CHECK(registry.present(first, full, 20, 20, error) && !error);
+    RT_CHECK(registry.find(first)->generation == 1);
+
+    // Real engine paint as the payload: my Canvas draws, my registry adopts it.
+    Canvas painted(20, 20, 0xff102030);
+    painted.fill(Rect{4, 4, 8, 8}, 0xff3355ee);
+    RT_CHECK(registry.present(first, painted.pixels, 20, 20, error));
+    RT_CHECK(registry.find(first)->generation == 2);
+
+    // Compositing: the painted pixel arrives at the same place in the target.
+    Surface target;
+    target.width = 40;
+    target.height = 40;
+    target.pixels.assign(40 * 40 * 4, 0);
+    Compositor compositor;
+    Error composite_error;
+    RT_CHECK(compositor.composite(registry, {{first, 0, 0}}, target, composite_error));
+    uint32_t engine_color = px_at(target, 6, 6);
+    uint32_t canvas_background = px_at(target, 2, 2);
+    uint32_t untouched_target = px_at(target, 39, 39);
+    RT_CHECK(engine_color == 0xff3355ee);
+    RT_CHECK(canvas_background == 0xff102030); // my engine's fill colour, copied
+    RT_CHECK(untouched_target == 0);           // outside the source stays the target's
+
+    // Paint order: later entries draw over earlier ones on overlap.
+    int second = registry.create(20, 20, "renderer-2", error);
+    Canvas top_coat(20, 20, 0xff010203);
+    top_coat.fill(Rect{4, 4, 8, 8}, 0xff00ff00);
+    RT_CHECK(registry.present(second, top_coat.pixels, 20, 20, error));
+    RT_CHECK(compositor.composite(registry, {{first, 0, 0}, {second, 0, 0}}, target,
+                                  composite_error));
+    RT_CHECK(px_at(target, 6, 6) == 0xff00ff00);
+    RT_CHECK(compositor.composite(registry, {{second, 0, 0}, {first, 0, 0}}, target,
+                                  composite_error));
+    RT_CHECK(px_at(target, 6, 6) == 0xff3355ee);
+
+    // Clipping: an off-edge placement writes nothing outside the destination.
+    Surface small;
+    small.width = 10;
+    small.height = 10;
+    small.pixels.assign(10 * 10 * 4, 0);
+    RT_CHECK(compositor.composite(registry, {{second, -15, 6}}, small, composite_error));
+    // Source columns 15-19 land in target columns 0-4: that sliver paints, the
+    // rest of the target is untouched - proven both ways.
+    RT_CHECK(px_at(small, 2, 8) == 0xff010203);
+    RT_CHECK(px_at(small, 4, 9) == 0xff010203);
+    RT_CHECK(px_at(small, 5, 9) == 0); // one pixel past the intersection: mine, not his
+    RT_CHECK(px_at(small, 9, 5) == 0);
+
+    // Missing surfaces and malformed targets are structured refusals.
+    RT_CHECK(!compositor.composite(registry, {{999, 0, 0}}, target, composite_error) &&
+             composite_error.code == "composite.missing");
+    Surface malformed;
+    malformed.width = 5;
+    malformed.height = 5;
+    malformed.pixels.assign(10, 0);
+    RT_CHECK(!compositor.composite(registry, {{first, 0, 0}}, malformed, composite_error) &&
+             composite_error.code == "composite.target");
+
+    // Registry lifecycle: resize clears, destroy removes.
+    RT_CHECK(registry.resize(first, 4, 4, error));
+    RT_CHECK(registry.find(first)->width == 4 && registry.find(first)->pixels[3] == 0);
+    RT_CHECK(registry.destroy(first) && registry.find(first) == nullptr);
   }
 
   shared += rt_passed;

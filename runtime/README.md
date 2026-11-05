@@ -56,6 +56,15 @@ What exists now (P1 in progress):
   authorized manual Windows build. Fullscreen style-swap polish rides S025's
   presentation work.
 
-Next in P1: S025 (surface presentation - the engine paints into my surface and
-the broker composites it), S026-S027 (the tab model and navigation controller),
-then S028 internal schemes and the preload bridge.
+- `surface/Psycho_surface.*` (S025, rules done): the presentation contract my
+  whole runtime obeys - my engine paints bytes, my broker's registry holds the
+  only writable copy, my compositor intersects before it copies so writing
+  outside the destination is structurally impossible. Shape-lying frames are
+  refused; resize clears instead of smearing stale memory; paint order is list
+  order. 26 new checks (924 total), including a real engine Canvas payload
+  composited pixel-exact and off-edge clipping proven on both sides of the
+  line. `Psycho_surface_win32.cpp` presents the target through a top-down DIB
+  section - proven on the first authorized manual Windows build.
+
+Next in P1: S026-S027 (the tab model and the navigation controller in the
+broker), then S028 internal schemes and the preload bridge.
