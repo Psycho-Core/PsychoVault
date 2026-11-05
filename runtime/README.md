@@ -123,6 +123,19 @@ What exists now (P1 in progress):
   (`psycho.settings.get`); refusals surface in-page as `BridgeError` carrying
   the machine-readable code. 39 new checks (1835 total).
 
-Next in P1: S030 (the app-layer JS host - UI scripts in the renderer with the
-privileges a UI origin needs, errors surfaced to the broker log), then S031
-broker services.
+- `apphost/Psycho_apphost.*` (S030, model done): my app-layer JS host turns
+  the layers below into per-page policy. Origin kind sets the curated minimum:
+  web pages get NO facade; shell pages get the small frozen UI set - and
+  deliberately not vault, proton or extensions (extension-less means exactly
+  that); diagnostics pages get an even smaller read-mostly set. Every failure
+  becomes a broker log record, never a crash across the boundary: page script
+  throws land as `apphost.script` records naming page and label, and a runaway
+  script's fuel exhaustion lands as `apphost.bound` - the script dies, the
+  broker lives. 27 new checks (1862 total), including cross-host isolation
+  proven through a shared broker fakery. Renderer-process wiring belongs to
+  the M1 integration slice on top of S022's envelope; this step is the honest
+  rules layer it will consume.
+
+Next in P1: S031 (broker services - dialogs, clipboard, notifications, tray,
+application menu, context-menu plumbing), then S032 keyboard shortcuts and
+S033 IME.
