@@ -1,4 +1,4 @@
-# runtime/ - my own Electron
+# runtime/ - my own my own runtime
 
 Nothing here yet. This directory is created by P1 of `docs/Psycho_MASTER-PLAN.md` and holds the privileged side of the app:
 
