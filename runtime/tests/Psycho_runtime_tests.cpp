@@ -3,6 +3,7 @@
 #include "../content/Psycho_content.hpp"
 #include "../internal/Psycho_internal.hpp"
 #include "../bridge/Psycho_bridge.hpp"
+#include "../apphost/Psycho_apphost.hpp"
 #include "../../engine/Psycho_js.hpp"
 #include "../surface/Psycho_surface.hpp"
 #include "../window/Psycho_window.hpp"
@@ -1030,6 +1031,77 @@ int run_runtime_bus_tests(int &shared) {
                  .string == "BridgeError");
     RT_CHECK(page.run("try { psycho.settings.get({}); } catch (err) { err.message; }")
                  .string.find("schema.missing") != std::string::npos);
+  }
+
+
+  // S030 app-layer JS host: curated minimum per origin kind, extension-less
+  // privileges, and every failure surfaced to the broker's log as a record.
+  {
+    InternalRegistry registry = InternalRegistry::stock();
+    auto fake_bus = [](Channel, const std::string &method, Json payload, Json &reply,
+                       Error &) {
+      reply = Json::make_object();
+      if (method == "settings:get")
+        reply.set("value", Json(std::string("dark:") + payload.find("key")->string));
+      if (method == "internal:list") reply.set("pages", Json(9));
+      reply.set("ok", Json(true));
+      return true;
+    };
+
+    // A web origin: no facade, nothing to leak, and failures still log.
+    std::vector<Error> web_log;
+    AppHost web(70, nullptr, {fake_bus, [&web_log](const Error &e2) {
+                                web_log.push_back(e2);
+                              }});
+    RT_CHECK(web.kind() == PageKind::Web && web.tab_id() == 70);
+    RT_CHECK(web.page_world().run("typeof psycho").string == "undefined");
+    RT_CHECK(!web.run_ui("throw 'boom';", "web/boot.js"));
+    RT_CHECK(web_log.size() == 1 && web_log[0].code == "apphost.script");
+    RT_CHECK(web_log[0].message == "web web/boot.js: boom");
+    RT_CHECK(web.run_ui("var fine = 1;", "web/fine.js") && web_log.size() == 1);
+
+    // A shell origin: the curated facade exists - and ends where I say it ends.
+    std::vector<Error> shell_log;
+    AppHost shell(71, registry.find("settings"), {fake_bus, [&shell_log](const Error &e3) {
+                                                    shell_log.push_back(e3);
+                                                  }});
+    RT_CHECK(shell.kind() == PageKind::Shell);
+    RT_CHECK(shell.page_world().run("typeof psycho").string == "object");
+    RT_CHECK(shell.page_world().run("typeof psycho.settings.get").string == "function");
+    RT_CHECK(shell.page_world().run("typeof psycho.internal.list").string == "function");
+    // Extension-less means exactly that: these namespaces do not exist here.
+    RT_CHECK(shell.page_world().run("typeof psycho.vault").string == "undefined");
+    RT_CHECK(shell.page_world().run("typeof psycho.proton").string == "undefined");
+    RT_CHECK(shell.page_world().run("typeof psycho.extensions").string == "undefined");
+    // The S029 freeze law holds through the host layer.
+    RT_CHECK(shell.page_world().run("Object.isFrozen(psycho.settings)").boolean);
+    RT_CHECK(shell.page_world().run("psycho.settings.get({key: 'theme'}).value").string ==
+             "dark:theme");
+    RT_CHECK(shell_log.empty()); // a clean boot logs nothing
+
+    // Bound law: a runaway UI script dies, the broker lives, the log tells.
+    RT_CHECK(!shell.run_ui("while (true) {}", "runaway.js"));
+    RT_CHECK(shell_log.size() == 1 && shell_log.back().code == "apphost.bound");
+    // A plain script error is its own record, naming page and label.
+    RT_CHECK(!shell.run_ui("no_such_fn();", "late.js"));
+    RT_CHECK(shell_log.size() == 2 && shell_log.back().code == "apphost.script");
+    RT_CHECK(shell_log.back().message.find("settings") != std::string::npos &&
+             shell_log.back().message.find("late.js") != std::string::npos);
+
+    // A diagnostics origin: read-mostly - internal:list, never settings.
+    std::vector<Error> diag_log;
+    AppHost diag(72, registry.find("nettest"), {fake_bus, [&diag_log](const Error &e4) {
+                                                  diag_log.push_back(e4);
+                                                }});
+    RT_CHECK(diag.kind() == PageKind::Diagnostics);
+    RT_CHECK(diag.page_world().run("typeof psycho.settings").string == "undefined");
+    RT_CHECK(diag.page_world().run("psycho.internal.list({}).pages").number == 9);
+
+    // Isolation carries through: a shell page's world shares nothing with
+    // another host's world, even though they sat under the same broker fakery.
+    RT_CHECK(shell.run_ui("var shared_secret = 7;", "secret.js"));
+    RT_CHECK(diag.page_world().run("typeof shared_secret").string == "undefined");
+    RT_CHECK(diag_log.empty());
   }
 
   shared += rt_passed;
