@@ -109,6 +109,20 @@ What exists now (P1 in progress):
   admission seam so broker-driven navigation reaches my pages while the stock
   web policy still refuses them. 86 new checks (1796 total).
 
-Next in P1: S029 (the preload bridge - per-page isolated script context, the
-curated window.psycho namespace, freeze semantics, no direct broker access),
-then S030 app-layer JS host and S031 broker services.
+- `bridge/Psycho_bridge.*` (S029, laws done): my preload bridge and its four
+  laws. *Isolation:* preload code runs in its own js::Runtime world; the only
+  thing that crosses between worlds is JSON-shaped data. *Curation:* the facade
+  contains exactly the schema-registered bus methods the broker declared;
+  undeclared names don't exist and the dispatcher refuses them even from
+  preload code. *Freeze:* the installed window.psycho graph is frozen - engine
+  law now, `Object.freeze`/`Object.isFrozen` plus the frozen flag honoured at
+  the `set_member` choke point, sloppy-mode silent refusal - so page code
+  cannot patch, shadow or extend it. *No direct broker access:* the page world
+  has no dispatcher, only trampolines through the bridge. Wire names stay
+  colon-shaped on the bus (`settings:get`), dot-shaped in-page
+  (`psycho.settings.get`); refusals surface in-page as `BridgeError` carrying
+  the machine-readable code. 39 new checks (1835 total).
+
+Next in P1: S030 (the app-layer JS host - UI scripts in the renderer with the
+privileges a UI origin needs, errors surfaced to the broker log), then S031
+broker services.

@@ -66,6 +66,9 @@ struct Object {
   std::vector<PromiseReaction> reactions;
   // An object may own engine state, such as a compiled pattern.
   std::shared_ptr<void> internal;
+  // Freeze semantics (S029): a frozen object refuses script-side stores. The
+  // choke point is Runtime::set_member - silent refusal, matching sloppy mode.
+  bool frozen = false;
   bool marked = false;
 };
 struct Env : Object {
