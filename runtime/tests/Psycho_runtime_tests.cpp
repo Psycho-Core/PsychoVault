@@ -3,6 +3,7 @@
 // inside pv-tests; a failure here fails the whole build, like every other check.
 #include "../ipc/Psycho_bus.hpp"
 #include "../broker/Psycho_broker.hpp"
+#include "../process/Psycho_process.hpp"
 #include <iostream>
 
 using namespace pv;
@@ -198,6 +199,86 @@ int run_runtime_bus_tests(int &shared) {
     // Isolation: renderer two never hears what renderer one asked.
     RT_CHECK(broker.renderer_side(b).pending() == 0);
     RT_CHECK(!broker.log().empty());
+  }
+
+  // S022 supervision: the state machine is portable, the world is faked, and
+  // every transition is checked: live, hung, restarted, budget spent.
+  {
+    Clock::time_point now = Clock::now();
+    SupervisionPolicy policy;
+    policy.heartbeat_timeout = std::chrono::milliseconds(1000);
+    policy.max_restarts = 2;
+    int launched = 0, killed = 0;
+    std::vector<std::string> kill_reasons;
+    Supervisor sup(
+        policy,
+        [&](ChildRecord &record, std::string &error) {
+          (void)record;
+          (void)error;
+          ++launched;
+          return true;
+        },
+        [&](const ChildRecord &record, const std::string &reason, std::string &error) {
+          (void)record;
+          (void)error;
+          ++killed;
+          kill_reasons.push_back(reason);
+          return true;
+        },
+        [&] { return now; });
+    std::string error;
+    int id = sup.spawn("renderer-1", error);
+    RT_CHECK(id > 0 && sup.has(id));
+    sup.heartbeat(id);
+    RT_CHECK(sup.records().front().state == ChildState::Live);
+
+    // Inside the heartbeat window: nothing happens.
+    now += std::chrono::milliseconds(500);
+    RT_CHECK(sup.sweep().empty());
+
+    // Past the window: hung, killed for cause, restarted - and attributed.
+    now += std::chrono::milliseconds(600);
+    auto changed = sup.sweep();
+    RT_CHECK(changed.size() == 1 && changed[0].state == ChildState::Hung);
+    const ChildRecord *rec = &sup.records().front();
+    RT_CHECK(rec->state == ChildState::Starting && rec->restarts == 1);
+    RT_CHECK(rec->attribution.find("hung") != std::string::npos);
+    RT_CHECK(launched == 2 && killed == 1);
+
+    // The restarted child heartbeats and is Live again.
+    sup.heartbeat(id);
+    RT_CHECK(sup.records().front().state == ChildState::Live);
+
+    // Hang again: restart two of two.
+    now += std::chrono::milliseconds(1100);
+    sup.sweep();
+    rec = &sup.records().front();
+    RT_CHECK(rec->state == ChildState::Starting && rec->restarts == 2);
+
+    // Hang a third time with the budget spent: retirement, not a retry loop.
+    now += std::chrono::milliseconds(1100);
+    sup.sweep();
+    rec = &sup.records().front();
+    RT_CHECK(rec->state == ChildState::Retired);
+    RT_CHECK(rec->attribution.find("restart budget spent") != std::string::npos);
+    RT_CHECK(launched == 3); // launch + two restarts, no third attempt
+
+    // Operator kill: attribution records who and why.
+    int other = sup.spawn("renderer-2", error);
+    sup.heartbeat(other);
+    std::string kill_error;
+    RT_CHECK(sup.request_kill(other, "user closed the tab", kill_error));
+    RT_CHECK(sup.records()[size_t(other - 1)].attribution == "killed: user closed the tab");
+
+    // Unknown ids are no-ops, never crashes.
+    sup.heartbeat(999);
+    RT_CHECK(!sup.request_kill(999, "ghost", error));
+
+    // The platform seam answers honestly here: no process table on Linux.
+    WinChildHandle fake;
+    std::string platform_error;
+    RT_CHECK(!spawn_child_platform("probe", "pv-renderer.exe", fake, platform_error));
+    RT_CHECK(platform_error == "process.spawn.unsupported");
   }
 
   shared += rt_passed;

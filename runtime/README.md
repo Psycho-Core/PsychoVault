@@ -1,4 +1,4 @@
-# runtime/ - my own Electron
+# runtime/ - my own my own runtime
 
 Nothing here yet. This directory is created by P1 of `docs/Psycho_MASTER-PLAN.md` and holds the privileged side of the app:
 
@@ -27,6 +27,16 @@ What exists now (P1 in progress):
   denial both directions, both back-pressure budgets, lifecycle round-trip,
   structured refusals and two-renderer isolation. They run inside pv-tests.
 
-Next in P1: S022 (real process envelopes: launch, job object, restricted token,
-heartbeat, crash attribution), S023 (single-instance model), S024-S027
-(window/tab surfaces on real windows).
+- `process/Psycho_process.*` (S022, supervision core done): the supervisor with
+  injected clock - spawn, heartbeat windows, hang detection, kill for cause,
+  bounded restarts with a spent-budget retirement, every death attributed with
+  a reason. 17 new checks, 860 total passing. `Psycho_process_win32.cpp` is the
+  real Windows envelope: CreateProcess with suspended launch, a job object that
+  kills the whole tree on close, a maximum-privileges-stripped token, and pipes
+  the S021 wire runs over. It compiles on Windows only and is proven on the
+  first authorized manual Windows build.
+
+Next in P1: S023 (single-instance model: second-launch argument forwarding,
+graceful quit, session save), then S024-S027 (window/tab surfaces on real
+windows), then wiring the supervisor underneath the renderer hosts S022
+introduced.
