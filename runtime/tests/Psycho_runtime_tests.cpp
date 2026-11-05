@@ -4,6 +4,7 @@
 #include "../internal/Psycho_internal.hpp"
 #include "../bridge/Psycho_bridge.hpp"
 #include "../apphost/Psycho_apphost.hpp"
+#include "../services/Psycho_services.hpp"
 #include "../../engine/Psycho_js.hpp"
 #include "../surface/Psycho_surface.hpp"
 #include "../window/Psycho_window.hpp"
@@ -1102,6 +1103,224 @@ int run_runtime_bus_tests(int &shared) {
     RT_CHECK(shell.run_ui("var shared_secret = 7;", "secret.js"));
     RT_CHECK(diag.page_world().run("typeof shared_secret").string == "undefined");
     RT_CHECK(diag_log.empty());
+  }
+
+
+  // S031 broker services: dialog law (origin, single-modal, shape),
+  // clipboard, notifications, tray, menu law (uniqueness, canonical
+  // accelerators, radio exclusivity) and context-menu offered-set law.
+  {
+    Error e;
+
+    // ---- dialogs: validation, origin, modality, result shape.
+    auto fake_picker = [](const DialogRequest &req) {
+      DialogResult r;
+      if (req.message == "cancel") return r; // user pressed escape
+      r.cancelled = false;
+      r.path = req.kind == DialogRequest::Kind::Message ? "" : "C:\\picked.txt";
+      r.button = 0;
+      return r;
+    };
+    DialogService dialogs(DialogService::Seams{fake_picker});
+    DialogResult result;
+    DialogRequest message;
+    message.window_id = 3;
+    message.message = "hello from a page"; // alert-like: pages may do this one
+    RT_CHECK(dialogs.run(message, result, e) && result.button == 0 && !result.cancelled);
+    DialogRequest empty_message;
+    RT_CHECK(!dialogs.run(empty_message, result, e) && e.code == "dialog.message");
+    // File pickers are trusted-chrome only: a page never spawns one.
+    DialogRequest open;
+    open.kind = DialogRequest::Kind::Open;
+    open.window_id = 3;
+    open.filters = {"png"};
+    RT_CHECK(!dialogs.run(open, result, e) && e.code == "dialog.origin");
+    open.from_shell = true;
+    RT_CHECK(dialogs.run(open, result, e) && result.path == "C:\\picked.txt");
+    DialogRequest bad_filter = open;
+    bad_filter.filters = {"jpeg xl"};
+    RT_CHECK(!dialogs.run(bad_filter, result, e) && e.code == "dialog.filter");
+    DialogRequest save;
+    save.kind = DialogRequest::Kind::Save;
+    save.from_shell = true;
+    save.window_id = 3;
+    RT_CHECK(!dialogs.run(save, result, e) && e.code == "dialog.name");
+    save.default_name = "report.txt";
+    RT_CHECK(dialogs.run(save, result, e) && result.path == "C:\\picked.txt");
+    // Cancellation is a first-class answer, not an error.
+    DialogRequest cancelme = message;
+    cancelme.message = "cancel";
+    RT_CHECK(dialogs.run(cancelme, result, e) && result.cancelled);
+    // One modal per window, proven by re-entry from inside the seam itself.
+    DialogService *self = nullptr;
+    bool busy_refused = false;
+    DialogService reenter(DialogService::Seams{[&](const DialogRequest &again) {
+      DialogResult inner;
+      Error inner_error;
+      busy_refused = (!self->run(again, inner, inner_error) &&
+                      inner_error.code == "dialog.busy");
+      return DialogResult{};
+    }});
+    self = &reenter;
+    DialogRequest reentrant = message;
+    reentrant.window_id = 9;
+    RT_CHECK(reenter.run(reentrant, result, e) && busy_refused);
+    RT_CHECK(!reenter.busy(9)); // cleared when the seam returned
+    // No platform seam is a refusal, not a silent nothing.
+    DialogService headless(DialogService::Seams{});
+    RT_CHECK(!headless.run(message, result, e) && e.code == "dialog.unavailable");
+    // A lying seam (says not-cancelled, hands no path) is caught.
+    DialogService lying(DialogService::Seams{[](const DialogRequest &) {
+      DialogResult r;
+      r.cancelled = false;
+      return r;
+    }});
+    RT_CHECK(!lying.run(open, result, e) && e.code == "dialog.result");
+
+    // ---- clipboard: bounded writes, privileged reads, writer on record.
+    bool applied = false;
+    ClipboardService clip(ClipboardService::Seams{
+        [&applied](const std::string &) { applied = true; }});
+    std::string too_big((size_t(1) << 20) + 1, 'x');
+    RT_CHECK(!clip.write_text("shell", too_big, e) && e.code == "clipboard.too-large");
+    RT_CHECK(clip.write_text("shell", "hello", e) && applied &&
+             clip.generation() == 1 && clip.last_writer() == "shell");
+    std::string out;
+    RT_CHECK(!clip.read_text("web.example", false, out, e) &&
+             e.code == "clipboard.denied");
+    RT_CHECK(clip.read_text("shell", true, out, e) && out == "hello");
+
+    // ---- notifications: permission, mute, required title, bounded memory.
+    int posted = 0;
+    NotificationService notes(
+        NotificationService::Seams{[&posted](const Notice &) { ++posted; }});
+    RT_CHECK(!notes.notify("web.example", "Hi", "body", false, e) &&
+             e.code == "notify.permission");
+    RT_CHECK(notes.notify("web.example", "Hi", "body", true, e) && posted == 1);
+    RT_CHECK(!notes.notify("shell", "", "body", true, e) && e.code == "notify.title");
+    notes.mute("web.example", true);
+    RT_CHECK(!notes.notify("web.example", "Hi", "b", true, e) && e.code == "notify.muted");
+    notes.mute("web.example", false);
+    RT_CHECK(notes.notify("web.example", "Hi", "b", true, e) && posted == 2);
+    for (int i = 0; i < 55; ++i) notes.notify("shell", "n", "b", true, e);
+    RT_CHECK(notes.recent().size() == 50 && notes.recent().front().id == 8);
+    RT_CHECK(posted == 57);
+
+    // ---- tray: exactly one, tooltip bounded, events route while alive.
+    std::string tray_got;
+    TrayService tray(TrayService::Seams{
+        [&tray_got](const std::string &event) { tray_got = event; }});
+    RT_CHECK(tray.create("PsychoVault", e));
+    RT_CHECK(!tray.create("again", e) && e.code == "tray.exists");
+    RT_CHECK(!tray.set_tooltip(std::string(129, 't'), e) && e.code == "tray.too-long");
+    RT_CHECK(tray.set_tooltip("PV", e) && tray.tooltip() == "PV");
+    tray.event("left");
+    RT_CHECK(tray_got == "left");
+    tray_got.clear();
+    RT_CHECK(tray.destroy(e) && !tray.alive());
+    tray.event("left"); // dead tray routes nothing
+    RT_CHECK(tray_got.empty());
+    RT_CHECK(!tray.destroy(e) && e.code == "tray.missing");
+    RT_CHECK(!tray.set_tooltip("x", e) && e.code == "tray.missing");
+    RT_CHECK(tray.create("PsychoVault", e)); // rebirth is fine
+
+    // ---- menus: canonical accelerators, uniqueness, radio law, dispatch.
+    RT_CHECK(MenuService::canonical_accelerator("shift+f5") == "Shift+F5");
+    RT_CHECK(MenuService::canonical_accelerator("shift+Ctrl+p") == "Ctrl+Shift+P");
+    // Modifiers sort, the key uppercases whole: canonical IS case-free.
+    RT_CHECK(MenuService::canonical_accelerator("ctrl+alt+delete") == "Alt+Ctrl+DELETE");
+    RT_CHECK(MenuService::canonical_accelerator("") == "");
+    std::string fired;
+    MenuService menus(
+        MenuService::Seams{[&fired](const std::string &id) { fired = id; }});
+    MenuItem file_new{"file.new", "New Tab", "ctrl+t"};
+    MenuItem view_small{"view.small", "Small", "", MenuItem::Type::Radio};
+    MenuItem view_large{"view.large", "Large", "", MenuItem::Type::Radio};
+    MenuItem view_bar{"view.bar", "Toolbar", "ctrl+shift+b", MenuItem::Type::Checkbox};
+    MenuItem view_menu{"menu.view", "View", ""};
+    view_menu.submenu = {view_small, view_large, view_bar};
+    MenuItem sep;
+    sep.type = MenuItem::Type::Separator;
+    RT_CHECK(menus.install({file_new, sep, view_menu}, e));
+    RT_CHECK(menus.find("file.new")->accelerator == "Ctrl+T");
+    RT_CHECK(menus.dispatch("file.new", e) && fired == "file.new");
+    RT_CHECK(!menus.dispatch("menu.nope", e) && e.code == "menu.missing");
+    // Radio: checking one unchecks its siblings.
+    RT_CHECK(menus.dispatch("view.small", e) &&
+             menus.find("view.small")->checked);
+    RT_CHECK(menus.dispatch("view.large", e) && menus.find("view.large")->checked &&
+             !menus.find("view.small")->checked);
+    // Checkbox toggles through dispatch, and accepts a programmatic check.
+    RT_CHECK(menus.dispatch("view.bar", e) && menus.find("view.bar")->checked);
+    RT_CHECK(menus.dispatch("view.bar", e) && !menus.find("view.bar")->checked);
+    RT_CHECK(menus.set_checked("view.bar", true, e) && menus.find("view.bar")->checked);
+    // Disabled commands refuse before any state changes.
+    RT_CHECK(menus.set_enabled("view.large", false, e));
+    RT_CHECK(!menus.dispatch("view.large", e) && e.code == "menu.disabled");
+    // The law at install: duplicate ids and sibling accelerator clashes refuse.
+    MenuItem dupe = file_new;
+    RT_CHECK(!menus.install({file_new, dupe}, e) && e.code == "menu.duplicate");
+    MenuItem clash_a{"a", "A", "Ctrl+N"};
+    MenuItem clash_b{"b", "B", "ctrl+n"};
+    RT_CHECK(!menus.install({clash_a, clash_b}, e) && e.code == "menu.accelerator");
+    MenuItem other_parent{"wrap", "Wrap", ""};
+    other_parent.submenu = {clash_b}; // same accel under a different parent is legal
+    RT_CHECK(menus.install({clash_a, other_parent}, e));
+    std::vector<MenuItem> huge;
+    for (int i = 0; i < 300; ++i)
+      huge.push_back({"h" + std::to_string(i), "h", ""});
+    RT_CHECK(!menus.install(huge, e) && e.code == "menu.too-large");
+
+    // ---- context menus: providers build, the offered set is law.
+    std::string ctx_cmd;
+    int ctx_contents = -1;
+    ContextMenus ctx(ContextMenus::Seams{
+        [&ctx_cmd, &ctx_contents](const std::string &id, const ContextInfo &info) {
+          ctx_cmd = id;
+          ctx_contents = info.contents_id;
+        }});
+    RT_CHECK(ctx.register_provider("link",
+                                   [](const ContextInfo &) {
+                                     return std::vector<MenuItem>{
+                                         {"link.open", "Open Link", ""},
+                                         {"link.copy", "Copy Link", "Ctrl+Shift+C"}};
+                                   },
+                                   e));
+    RT_CHECK(!ctx.register_provider("link", [](const ContextInfo &) {
+                                      return std::vector<MenuItem>{};
+                                    },
+                                    e) &&
+             e.code == "context.duplicate-provider");
+    ContextInfo info;
+    info.kind = "link";
+    info.contents_id = 5;
+    info.link_url = "https://example.com/";
+    uint64_t token = ctx.open(info, e);
+    RT_CHECK(token == 1 && ctx.outstanding() == 1);
+    RT_CHECK(ctx.choose(token, "link.copy", e) && ctx_cmd == "link.copy" &&
+             ctx_contents == 5 && ctx.outstanding() == 0);
+    RT_CHECK(!ctx.choose(token, "link.copy", e) && e.code == "context.token");
+    token = ctx.open(info, e);
+    RT_CHECK(!ctx.choose(token, "menu.nope", e) && e.code == "context.not-offered");
+    RT_CHECK(ctx.outstanding() == 1); // a refused choice keeps the menu open
+    RT_CHECK(ctx.cancel(token) && !ctx.cancel(token));
+    ContextInfo unknown;
+    unknown.kind = "mystery";
+    RT_CHECK(ctx.open(unknown, e) == 0 && e.code == "context.no-provider");
+    // Provider output obeys the same menu law.
+    RT_CHECK(ctx.register_provider("bad",
+                                   [](const ContextInfo &) {
+                                     return std::vector<MenuItem>{{"x", "X", ""},
+                                                                  {"x", "X2", ""}};
+                                   },
+                                   e));
+    ContextInfo badinfo;
+    badinfo.kind = "bad";
+    RT_CHECK(ctx.open(badinfo, e) == 0 && e.code == "menu.duplicate");
+    // Outstanding sessions are bounded.
+    for (int i = 0; i < 16; ++i) RT_CHECK(ctx.open(info, e) > 0);
+    RT_CHECK(ctx.outstanding() == 16);
+    RT_CHECK(ctx.open(info, e) == 0 && e.code == "context.too-many");
   }
 
   shared += rt_passed;

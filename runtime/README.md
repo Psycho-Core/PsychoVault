@@ -136,6 +136,20 @@ What exists now (P1 in progress):
   the M1 integration slice on top of S022's envelope; this step is the honest
   rules layer it will consume.
 
-Next in P1: S031 (broker services - dialogs, clipboard, notifications, tray,
-application menu, context-menu plumbing), then S032 keyboard shortcuts and
-S033 IME.
+- `services/Psycho_services.*` (S031, rules done): the broker's service law,
+  with every OS touchpoint behind a seam that refuses "…unavailable" until the
+  real Windows piece exists. Dialogs: message/web vs picker/shell origin law,
+  one modal per window (proven by seam re-entry), lying pickers caught.
+  Clipboard: 1 MiB writes, writer on record, reads privileged. Notifications:
+  permission then mute then title, the newest 50 remembered, no more. Tray:
+  exactly one, tooltips bounded, events route only while alive. Menus: install
+  whole or not at all - ids unique menu-wide, accelerators canonicalised
+  (modifiers sort, key uppercases) and sibling clashes refused, separators own
+  no id, radio exclusivity enforced through dispatch AND programmatic checks,
+  256 items is the ceiling. Context menus: providers per kind, the offered set
+  is the only legal answer, tokens bounded at 16 - and provider output obeys
+  the same menu law (my own test caught the validator skipping dup-checks on
+  that path; it checks now, unconditionally). 81 new checks (1943 total).
+
+Next in P1: S032 (keyboard shortcut resolution at the broker with a single
+registry), S033 (IME and dead keys end to end), S034 (focus and activation).
