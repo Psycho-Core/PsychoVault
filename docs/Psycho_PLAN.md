@@ -4,104 +4,104 @@ This is my plan for rebuilding PsychoVault as my own browser. I am writing it be
 
 Status: the owned engine and native shell foundation is merged. I am now building the next testable Windows preview. This document is a contract and a sequence of gates. It is not evidence that the engine, Proton, the installer, or Android already works.
 
-## 0. My build order now - engine first
+## 0. My build order now - my own Electron first, extensions last
 
 This plan describes the full target. This section is the order I actually work
-in, corrected by what my first real exe proved: a browser is only its engine. My
-shell, settings, spelling and vault work are features on top, and they are done
-on top of a machine that still struggles against the live web. From here I climb
-the ladder below and nothing else; each stage ends in something runnable with
-its proof attached. I never report from plans, only from builds.
+in, corrected by what my first exe proved and by my user's direction: the
+engine and my own Electron-equivalent come FIRST; Proton VPN and extensions
+come LAST, once they have a real browser underneath them. I climb the ladder
+below and nothing else; each stage ends in something runnable with its proof
+attached. I never report from plans, only from builds.
 
-### Stage A - make my browser real online
+My named parts, all mine and all prefixed like my files:
 
-1. Put my bundled extensions (Proton VPN, and my ad filter data) inside the one
-   exe using my own appended-payload format, unpacked into my profile on first
-   run, so the portable file really carries my whole product.
-2. Add `psychovault://nettest`: DNS, TCP, TLS and HTTPS checks, each naming its
-   own failure, with a copy button. This page is how a failure on anyone's
-   machine becomes a named bug instead of a shrug.
-3. My CI loads a real page from the live internet on every build and saves the
-   screenshot as proof, starting with a minimal site and growing.
-4. I fix exactly the stage that fails on real machines, using nettest output as
+| My part | What it replaces | State |
+| --- | --- | --- |
+| PsychoEngine - owned HTML, CSS, JS, layout, raster | Chromium renderer | Exists, Stage B grows it |
+| PsychoShell - windows, tabs, menus, app logic | Electron main process | Exists |
+| PsychoBridge - my preload/IPC surface mapped from my old inventory | Electron preload + contextBridge | Exists, Stage C grows it |
+| My signed manifest updater | Electron autoUpdater (Squirrel) | Exists and shipped |
+| PsychoSetup - my own installer | NSIS/Squirrel installer | Missing - Stage E |
+
+### Stage A - live-internet truth for my engine
+
+1. `psychovault://nettest`: DNS, TCP, TLS and HTTPS checks that each name their
+   own failure, with a copy button - a failed page on any machine becomes a
+   named bug instead of a shrug.
+2. My CI loads a real page from the live internet on every build and saves the
+   capture as proof, starting minimal and growing.
+3. I fix exactly the stage that fails on real machines, using nettest output as
    the bug report.
 
-### Stage B - my own Electron, built from my parts
+### Stage B - my own Chromium side: grow PsychoEngine
 
-The old app was Electron: Chromium rendered it, Node ran its logic, a shell
-owned the windows, an updater kept it current, an installer put it on the
-machine. My equivalent, all written for this project:
+4. Layout completeness: block and inline finishing, then flexbox, grid,
+   positioning and stacking order, floats, lists and tables - the machinery
+   that decides where everything on a page lands.
+5. Painting completeness: text and fonts, colors and gradients, shadows and
+   rounded corners, images and SVG, scrolling that stays smooth.
+6. JavaScript completeness: the full built-ins, promises and async, the DOM
+   APIs pages actually call, events, timers and fetch - grown against pinned
+   conformance suites whose pass counts publish every build.
+7. Each milestone is proven against captured renders of pinned test pages; the
+   score table is public per build.
 
-| Electron part | My owned equivalent | State |
-| --- | --- | --- |
-| Chromium renderer | My engine (owned HTML, CSS, JS, layout, raster) | Exists, climbing Stage D |
-| Node app process | My C++ shell logic in-process | Exists |
-| preload/IPC | My `chrome`-style webview API surface mapped from the old inventory | Exists, growing with Stage E |
-| Auto-updater (Squirrel) | My signed manifest updater | Exists |
-| Installer (NSIS/Squirrel) | My own installer | Missing - Stage F |
+### Stage C - my own Electron side: my UI rides PsychoEngine
 
-Stage B is not a lump of new work; it is the honest accounting of what exists
-and what each later stage adds.
-
-### Stage C - my engine renders my own UI (the old look comes back)
-
-5. My settings pages become my own HTML and CSS, matched category by category
-   against the 23 pinned reference screenshots: general, privacy, downloads,
-   extensions, performance, appearance, spelling, passwords, accessibility,
-   about.
-6. My engine grows the CSS those pages need: flexbox, grid, positioning,
-   stacking order, rounded corners, shadows, form controls, hover and focus.
-7. Every inventoried control (109 settings controls, 59 defaults, 125
-   interactive controls) wired to real persisted behaviour, not pixels alone -
-   including the full fifteen-thousand-word spelling list my old app carried,
-   which my checker adopts when this surface returns.
-8. The new tab page with my logo and speed dials, rendered the same way.
-
-Stage C exit: my engine captures diff against the reference PNGs inside a
-tolerance suite, with keyboard, focus and DPI checks - the R2 gate for real.
+8. My settings new-tab pages become my own HTML and CSS, rendered by
+   PsychoEngine and matched category by category against the 23 pinned
+   reference screenshots: general, privacy, downloads, extensions,
+   performance, appearance, spelling, passwords, accessibility, about - every
+   inventoried control (109 settings controls, 59 defaults, 125 interactive
+   controls) wired to real persisted behaviour through PsychoBridge, including
+   the full fifteen-thousand-word spelling list my old app carried.
+9. The new tab page, browser window chrome and rail the same way, until my
+   captures diff against the reference PNGs inside a tolerance suite - the R2
+   gate for real.
 
 ### Stage D - the real-sites ladder
 
-9. A curated ladder of real sites, each representing a class: simple content,
-   layout-heavy, app-style, media.
-10. For each rung: a render diff against reference plus an interaction smoke
-    script; my engine, layout and JavaScript gaps are fixed in the order the
-    ladder exposes them, not in the order I find interesting.
-11. A per-build coverage table: which sites pass, which fail, and why.
+10. A curated ladder of real sites, each representing a class: simple content,
+    layout-heavy, app-style, media.
+11. For each rung: a render diff against reference plus an interaction smoke;
+    my engine gaps are fixed in the order the ladder exposes them, not the
+    order I find interesting.
+12. A per-build coverage table: which sites pass, which fail, and why.
 
-### Stage E - extensions that actually work
+### Stage E - the product floor
 
-12. My WebExtensions API surface grows in the order Proton needs it (already
-    mapped from the pinned source in my research), then one user-requested
-    extension at a time, each with a test before I say it works; a public
-    compatibility list stays truthful about every extension's status. The old
-    app's bundled set returns from my reference source: Proton VPN first, then
-    Dark Reader and my proxy switcher.
-13. The Proton live gate stays exactly as section 8 defines it. Nothing in this
-    re-ordering weakens it.
-
-### Stage F - the product floor
-
-14. My own installer, written by me: one setup file named
+13. PsychoSetup, my own installer: one setup file named
     PsychoVault-Setup-<version>.exe, just like the old app shipped. It installs
-    per-user into %LOCALAPPDATA%\\PsychoVault exactly where the old program
-    lived (no admin prompt), records itself under HKCU\\Software\\PsychoVault,
+    per-user into %LOCALAPPDATA%\PsychoVault exactly where the old program
+    lived (no admin prompt), records itself under HKCU\Software\PsychoVault,
     writes a Start Menu shortcut, registers in Apps & Features with a working
     uninstaller of my own, registers my protocol where Windows allows, finds
     and keeps an existing old-profile so nothing is lost, and leaves my signed
     updater in charge of every upgrade after install.
-15. Feel polish: smooth scrolling, hover states, and animated surfaces as my
-    engine grows them - measured against the old app, per section 11.
+14. Feel polish: smooth scrolling, hover states and animated surfaces as
+    PsychoEngine grows them - measured against the old app, per section 11.
+
+### Stage F - extensions LAST, in the order they pull their weight
+
+15. My WebExtensions API surface grows for my old bundled set, in this order:
+    Proton VPN first (so it lands on a browser that already works - already
+    mapped from the pinned source in my research), then Dark Reader, then my
+    proxy switcher; each proven with a test before I say it works.
+16. Then one user-requested extension at a time, each with behaviour tests and
+    an entry on my public compatibility list that tells the truth.
+17. The Proton live gate stays exactly as section 8 defines it. Moving it late
+    never weakens it; it gives Proton a working browser to live in.
 
 ### Stage G - staying honest while I climb
 
-16. My conformance pins (WPT subsets, Test262 subsets) grow with every stage
+18. My conformance pins (WPT subsets, Test262 subsets) grow with every stage
     and the pass/fail/skip counts publish per build. A merged pull request is a
     unit of work, never a parity claim.
 
 On time: I measure in build milestones, not calendar promises. The order above
 is fixed; every stage ends with something on the Releases page that the user
-can run and see.
+can run and see. No GitHub Actions run happens until a change is actually
+ready for it.
 
 ## 1. My definition of done
 
