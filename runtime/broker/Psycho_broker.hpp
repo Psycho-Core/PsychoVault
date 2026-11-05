@@ -1,5 +1,5 @@
-// PsychoVault original source. My broker - the privileged side of my own
-// Electron. P1/S020 of docs/Psycho_MASTER-PLAN.md.
+// PsychoVault original source. My broker - the privileged process of my own
+// application runtime. P1/S020 of docs/Psycho_MASTER-PLAN.md.
 //
 // What S020 means in this file, honestly: the roles (broker, renderer, network,
 // storage, extension host), the capabilities each role gets, the service table,

@@ -31,14 +31,15 @@ TARGET = ROOT / "extensions" / "Psycho-VPN-Proton"
 PIN = "71d7d86f164a2ee8e50ce5a389c9e5cbe0fd6883"
 REPO = "https://github.com/ProtonVPN/proton-vpn-browser-extension"
 EXPECTED_ID = "jplgfhpmjnbigmhklmmbgecoobifkmpa"
-CHROME_NIBBLES = "abcdefghijklmnop"
+ID_NIBBLES = "abcdefghijklmnop"
 
 
-def chromium_id(manifest_key: str) -> str:
-    # Chrome and Firefox both derive the extension id this way: the first 16
+def stable_extension_id(manifest_key: str) -> str:
+    # MV install ids have one standard derivation, used by every extension
+    # host my API is compatible with: the first 16
     # bytes of the SHA-256 of the DER public key, nibbles mapped onto a..p.
     digest = hashlib.sha256(base64.b64decode(manifest_key)).digest()[:16]
-    return "".join(CHROME_NIBBLES[b >> 4] + CHROME_NIBBLES[b & 15] for b in digest)
+    return "".join(ID_NIBBLES[b >> 4] + ID_NIBBLES[b & 15] for b in digest)
 
 
 def main() -> int:
@@ -79,7 +80,7 @@ def main() -> int:
         return 1
 
     manifest = json.loads((distribution / "manifest.json").read_text(encoding="utf-8"))
-    extension_id = chromium_id(manifest["key"])
+    extension_id = stable_extension_id(manifest["key"])
     if extension_id != EXPECTED_ID:
         print(f"derived id {extension_id} does not match the published {EXPECTED_ID}",
               file=sys.stderr)

@@ -101,6 +101,12 @@ def main() -> int:
                 stale.append(f"{path}: {old}")
         if target.suffix in {".cpp", ".hpp", ".h", ".cc"}:
             for inc in re.findall(r'#\s*include\s*"([^"]+)"', text):
+                # My spelling words compile into a generated header under the
+                # build directory, never into the tree: it exists only when a
+                # build runs.
+                if inc == "Psycho_embedded_words.hpp" and \
+                   (ROOT / "platform/Psycho_words.txt").is_file():
+                    continue
                 # The real compiler searches the including file's directory
                 # first, then the repository root, which is exactly how my
                 # build script invokes it.

@@ -3274,7 +3274,7 @@ struct Browser {
     new_tab(target.empty() ? "psychovault://newtab" : target);
     status = "Panic - Ctrl+Shift+T brings my tabs back";
   }
-  // The command palette is a box that runs named chrome actions. Each row
+  // The command palette is a box that runs named interface actions. Each row
   // lists its chord when there is one, so the palette doubles as a cheat sheet.
   struct PaletteCommand {
     const char *label;
