@@ -2393,7 +2393,7 @@ struct Browser {
           address_focus = home_focus = false;
         else if (h.action == "find-close")
           close_find();
-        } else if (h.action == "recovery-keep") {
+        else if (h.action == "recovery-keep") {
           recovery_dismissed = true;
         } else if (h.action == "recovery-fresh") {
           // Start fresh means exactly that: everything open goes to the reopen
