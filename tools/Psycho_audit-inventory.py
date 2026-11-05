@@ -82,7 +82,7 @@ DEFAULT_KEYS = {
     "reduceMotion": ("DONE", r'settings\.set\("reduceMotion"'),
     "showTabCloseButtons": ("DONE", r'settings\.set\("showTabCloseButtons"'),
     "translateTarget": ("DEFERRED", "page translation is not implemented; my settings page says so"),
-    "blockAutoplay": ("DEFERRED", "media autoplay policy is not wired into settings yet"),
+    "blockAutoplay": ("DONE", r'settings\.set\("blockAutoplay"'),
     "blockThirdPartyCookies": ("DONE", r'settings\.set\("blockThirdPartyCookies"'),
     "sendDNT": ("DONE", r'settings\.set\("sendDNT"'),
     "cpuLimit": ("DONE", r'settings\.set\("cpuLimit"'),

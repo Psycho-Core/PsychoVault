@@ -58,6 +58,13 @@ public:
   Json render(double width, double height, double scroll);
   void click(double x, double y);
   void key(const std::string &key, const std::string &text);
+  // My autoplay gate: when on, a scripted play() needs a real click within the
+  // last couple of seconds, which is how every mainstream gesture gate works.
+  bool block_autoplay = false;
+  void note_user_activation() { last_activation_ms_ = double(now_ms()); }
+  bool user_active_recently() const {
+    return double(now_ms()) - last_activation_ms_ < 2500.0;
+  }
   double next_timer_delay() const;
   void tick();
   // I run whatever timers are due now and report whether I ran any.
@@ -127,6 +134,7 @@ private:
   // A page can ask to play before the bytes arrive, so I remember the request and
   // start the moment the element has something to play.
   std::set<int> media_wants_play_;
+  double last_activation_ms_ = -1e15;
   // Events that belong to an object rather than an element, keyed by handle.
   std::map<int, std::vector<Listener>> host_listeners_;
   bool media_wake_ = false;

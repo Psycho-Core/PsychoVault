@@ -63,6 +63,7 @@ public:
   bool battery_saver = false;
   bool history_dirty = false; // visited pages pending flush to disk
   // Spelling
+  bool block_autoplay = false;
   bool spell_check = true;
   std::vector<std::string> user_words;
   // Extensions the user installed, so I can reload them on the next launch.

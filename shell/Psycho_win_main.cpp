@@ -464,6 +464,7 @@ void Session::run() {
     note(before, result);
     return result;
   });
+  host.set_autoplay_blocked(policy.block_autoplay);
   std::string error;
   if (!host.load(url, error)) {
     if (!stopping)
@@ -630,6 +631,7 @@ struct Browser {
     out.strip_referrer = profile.strip_referrer;
     out.block_third_party_cookies = profile.block_third_party_cookies;
     out.block_ads = profile.block_ads;
+    out.block_autoplay = profile.block_autoplay;
     out.blocked_hosts = profile.blocked_hosts;
     out.allowed_hosts = profile.block_allow_sites;
     out.https = https.get();
@@ -1415,6 +1417,8 @@ struct Browser {
     case 1:
       toggle("Block ads and trackers", profile.block_ads, "setting-block-ads",
              "I refuse the request before a socket opens.");
+      toggle("Block autoplay", profile.block_autoplay, "setting-block-autoplay",
+             "A video or song only starts after I have clicked the page.");
       toggle("Block third-party cookies", profile.block_third_party_cookies,
              "setting-third-party-cookies", "");
       toggle("Send Do Not Track", profile.send_dnt, "setting-dnt", "I add DNT: 1 to every request.");
@@ -2251,6 +2255,11 @@ struct Browser {
           begin_setting_edit("customSearch", profile.custom_search);
         } else if (h.action == "setting-block-ads") {
           profile.block_ads = !profile.block_ads; save_profile();
+        } else if (h.action == "setting-block-autoplay") {
+          profile.block_autoplay = !profile.block_autoplay;
+          save_profile();
+          status = profile.block_autoplay ? "Autoplay needs my click first"
+                                          : "Pages may start media on their own";
         } else if (h.action == "setting-https-only") {
           profile.https_only = !profile.https_only; save_profile();
           status = profile.https_only ? "I upgrade every request to HTTPS"

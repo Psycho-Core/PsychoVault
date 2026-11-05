@@ -6,6 +6,7 @@
 #include "../platform/Psycho_host.hpp"
 #include "../platform/Psycho_transport.hpp"
 #include "../platform/Psycho_sandbox.hpp"
+#include "../platform/Psycho_vault.hpp"
 #include "Psycho_image_fixtures.hpp"
 #include "Psycho_media_fixtures.hpp"
 #include <cassert>
@@ -453,6 +454,14 @@ struct LoopbackProxy {
 };
 } // namespace
 
+static const char pg_msg[] = "Cryptographic Forum Research Group";
+static const char sunscreen[] =
+    "Ladies and Gentlemen of the class of '99: If I could offer you only one "
+    "tip for the future, sunscreen would be it.";
+static pv::Bytes pvkdf(const char *password, const char *salt, uint32_t iterations) {
+  return pv::pbkdf2_sha256(pv::Bytes(password, password + std::strlen(password)),
+                           pv::Bytes(salt, salt + std::strlen(salt)), iterations);
+}
 int main() {
   CHECK(parse_url("https://example.com/a/../b?x=1#f")->href() == "https://example.com/b?x=1#f");
   CHECK(parse_url("http://example.com:80/")->href() == "http://example.com/");
@@ -3056,6 +3065,83 @@ int main() {
     CHECK(js_eval("var b=1;b&&=2;b") == "2");
     CHECK(js_eval("var c=0;c||=7;c") == "7");
     CHECK(js_eval("'a-b'.replace(/(\\w)-(\\w)/,'$2$1')") == "ba");
+  }
+  // --- Vault crypto, verified against the RFC vectors ------------------------
+  {
+    auto hex = [](const pv::Bytes &bytes) {
+      static const char d[] = "0123456789abcdef";
+      std::string out;
+      for (uint8_t b : bytes) {
+        out += d[b >> 4];
+        out += d[b & 15];
+      }
+      return out;
+    };
+    auto unhex = [](const char *text) {
+      pv::Bytes out;
+      auto val = [](char c) {
+        return c >= '0' && c <= '9'   ? c - '0'
+               : c >= 'a' && c <= 'f' ? c - 'a' + 10
+                                      : c - 'A' + 10;
+      };
+      for (size_t i = 0; text[i] && text[i + 1]; i += 2)
+        out.push_back(uint8_t(val(text[i]) * 16 + val(text[i + 1])));
+      return out;
+    };
+    // PBKDF2-HMAC-SHA256 published vectors.
+    CHECK(hex(pvkdf("password", "salt", 1)) ==
+          "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b");
+    CHECK(hex(pvkdf("password", "salt", 2)) ==
+          "ae4d0c95af6b46d32d0adff928f06dd02a303f8ef3c251dfd6e2d85a95474c43");
+    CHECK(hex(pvkdf("password", "salt", 4096)) ==
+          "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a");
+    // RFC 8439 section 2.5.2 Poly1305.
+    CHECK(hex(pv::poly1305_mac(pv::Bytes(pg_msg, pg_msg + sizeof pg_msg - 1),
+                               unhex("85d6be7857556d337f4452fe42d506a80103808afb0db2fd"
+                                     "4abff6af4149f51b"))) == "a8061dc1305136c6c22b8baf0c0127a9");
+    // RFC 8439 A.1 vector 1: ChaCha20 with a zero key.
+    pv::Bytes key_seq;
+    for (uint8_t b = 0; b < 32; ++b) key_seq.push_back(b);
+    CHECK(hex(pv::chacha20(key_seq, unhex("000000000000004a00000000"), 1,
+                           pv::Bytes(sunscreen, sunscreen + sizeof sunscreen - 1))) ==
+          "6e2e359a2568f98041ba0728dd0d6981"
+          "e97e7aec1d4360c20a27afccfd9fae0b"
+          "f91b65c5524733ab8f593dabcd62b357"
+          "1639d624e65152ab8f530c359f0861d8"
+          "07ca0dbf500d6a6156a38e088a22b65e"
+          "52bc514d16ccf806818ce91ab7793736"
+          "5af90bbf74a35be6b40b8eedf2785e42"
+          "874d");
+    // RFC 8439 section 2.8.2 AEAD.
+    {
+      pv::Bytes key = unhex("808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f");
+      pv::Bytes nonce = unhex("070000004041424344454647");
+      pv::Bytes aad = unhex("50515253c0c1c2c3c4c5c6c7");
+      pv::Bytes plain(sunscreen, sunscreen + sizeof sunscreen - 1);
+      pv::Bytes sealed = pv::aead_seal(key, nonce, aad, plain);
+      CHECK(hex(pv::Bytes(sealed.end() - 16, sealed.end())) == "1ae10b594f09e26a7e902ecbd0600691");
+      pv::Bytes back;
+      CHECK(pv::aead_open(key, nonce, aad, sealed, back) && back == plain);
+      sealed[0] ^= 1;
+      CHECK(!pv::aead_open(key, nonce, aad, sealed, back));
+    }
+    // The vault itself: seal, reopen, and a wrong passphrase must fail.
+    {
+      pv::Vault vault = pv::Vault::create("correct horse battery staple");
+      vault.entries["mailbox"] = "hunter2";
+      pv::Bytes blob = vault.seal();
+      pv::Bytes saved_key = vault.key;
+      pv::Vault again = pv::Vault::open(blob, "correct horse battery staple");
+      CHECK(again.entries.at("mailbox") == "hunter2");
+      CHECK(again.key == saved_key);
+      bool refused = false;
+      try {
+        pv::Vault::open(blob, "wrong passphrase");
+      } catch (const std::exception &) {
+        refused = true;
+      }
+      CHECK(refused);
+    }
   }
   std::cout << passed << " engine checks passed\n";
   return 0;

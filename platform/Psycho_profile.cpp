@@ -148,6 +148,7 @@ Profile Profile::open(const std::string &directory, bool private_mode) {
     p.cpu_limit = int(std::clamp(settings.num("cpuLimit", 0), 0.0, 100.0));
     p.sleep_tabs_minutes = int(std::clamp(settings.num("sleepTabsMin", 0), 0.0, 1440.0));
     p.battery_saver = settings.flag("batterySaver", false);
+    p.block_autoplay = settings.flag("blockAutoplay", false);
     p.spell_check = settings.flag("spellCheck", true);
     read_list("spellUserWords", p.user_words);
     read_list("extensionDirectories", p.extension_directories);
@@ -262,6 +263,7 @@ bool Profile::save() {
   settings.set("panicEnabled", panic_enabled);
   settings.set("panicUrl", bounded(panic_url, 2048));
   settings.set("dismissedUpdate", bounded(dismissed_update, 120));
+  settings.set("blockAutoplay", block_autoplay);
   settings.set("spellCheck", spell_check);
   {
     Json dial = Json::make_array();
