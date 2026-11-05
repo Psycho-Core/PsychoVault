@@ -10,15 +10,18 @@ This plan describes the full target. This section is the order I actually work
 in, corrected by what my first exe proved and by my user's direction: the
 engine and my own Electron-equivalent come FIRST; Proton VPN and extensions
 come LAST, once they have a real browser underneath them. I climb the ladder
-below and nothing else; each stage ends in something runnable with its proof
-attached. I never report from plans, only from builds.
+below and nothing else; each step has its own gate, and each stage ends in
+something runnable with its proof attached. I never report from plans, only
+from builds. I am not pretending every step of an engine build is knowable in
+advance: the conformance suites and the site ladder are how unknowns surface
+systematically instead of surprising the user.
 
 My named parts, all mine and all prefixed like my files:
 
 | My part | What it replaces | State |
 | --- | --- | --- |
-| PsychoEngine - owned HTML, CSS, JS, layout, raster | Chromium renderer | Exists, Stage B grows it |
-| PsychoShell - windows, tabs, menus, app logic | Electron main process | Exists |
+| PsychoEngine - owned HTML, CSS, JS, layout, raster | the Chromium side | Exists, Stage B grows it |
+| PsychoShell - windows, tabs, menus, app logic | the Electron main process | Exists |
 | PsychoBridge - my preload/IPC surface mapped from my old inventory | Electron preload + contextBridge | Exists, Stage C grows it |
 | My signed manifest updater | Electron autoUpdater (Squirrel) | Exists and shipped |
 | PsychoSetup - my own installer | NSIS/Squirrel installer | Missing - Stage E |
@@ -32,45 +35,60 @@ My named parts, all mine and all prefixed like my files:
    capture as proof, starting minimal and growing.
 3. I fix exactly the stage that fails on real machines, using nettest output as
    the bug report.
+   Stage A exits only when a real page loads and renders on my own hardware and
+   in CI, with the capture published.
 
-### Stage B - my own Chromium side: grow PsychoEngine
+### Stage B - my own Chromium side: grow PsychoEngine, twelve gated steps
 
-4. Layout completeness: block and inline finishing, then flexbox, grid,
-   positioning and stacking order, floats, lists and tables - the machinery
-   that decides where everything on a page lands.
-5. Painting completeness: text and fonts, colors and gradients, shadows and
-   rounded corners, images and SVG, scrolling that stays smooth.
-6. JavaScript completeness: the full built-ins, promises and async, the DOM
-   APIs pages actually call, events, timers and fetch - grown against pinned
-   conformance suites whose pass counts publish every build.
-7. Each milestone is proven against captured renders of pinned test pages; the
-   score table is public per build.
+Each step lands only when its own pinned tests pass, its captured renders
+match their expectations and the public count for its area moves up. No step
+closes on effort spent - only on evidence.
+
+4. Text and fonts on real pages: shaping, wrapping, line metrics, weights and
+   styles through the system text stack my raster already uses.
+5. Block and inline completion: margin collapsing, line boxes, generated
+   content, lists and tables - the box model the real web stands on.
+6. Flexbox: row and column, wrapping, justification and alignment.
+7. Grid: templates, gaps, alignment and spanning.
+8. Positioning and stacking: absolute, fixed, sticky, z-order and clipping.
+9. Paints and effects: colors, gradients, shadows and rounded corners.
+10. Images and SVG everywhere real pages place them inside real layouts.
+11. Scrolling and viewport behaviour: smooth, nested where pages nest it.
+12. JavaScript built-ins fullness: the core object families and typed arrays,
+    proven against pinned Test262 subsets with the count published each build.
+13. JavaScript async: promises, async/await and the microtask queue against the
+    patterns real pages use.
+14. The DOM APIs pages actually call: selectors, tree walking, creation and
+    removal, classes and styles, events with capture and bubble, forms.
+15. The network-facing page APIs: fetch, timers, URL and history helpers.
+    Stage B exits only when steps 4-15 are all green in one build, with the
+    captures and counts published together.
 
 ### Stage C - my own Electron side: my UI rides PsychoEngine
 
-8. My settings new-tab pages become my own HTML and CSS, rendered by
-   PsychoEngine and matched category by category against the 23 pinned
-   reference screenshots: general, privacy, downloads, extensions,
-   performance, appearance, spelling, passwords, accessibility, about - every
-   inventoried control (109 settings controls, 59 defaults, 125 interactive
-   controls) wired to real persisted behaviour through PsychoBridge, including
-   the full fifteen-thousand-word spelling list my old app carried.
-9. The new tab page, browser window chrome and rail the same way, until my
-   captures diff against the reference PNGs inside a tolerance suite - the R2
-   gate for real.
+16. My settings pages become my own HTML and CSS, rendered by PsychoEngine and
+    matched category by category against the 23 pinned reference screenshots:
+    general, privacy, downloads, extensions, performance, appearance, spelling,
+    passwords, accessibility, about - every inventoried control (109 settings
+    controls, 59 defaults, 125 interactive controls) wired to real persisted
+    behaviour through PsychoBridge, including the full fifteen-thousand-word
+    spelling list my old app carried.
+17. The new tab page, browser window chrome and rail the same way, until my
+    captures diff against the reference PNGs inside a tolerance suite - the R2
+    gate for real.
 
 ### Stage D - the real-sites ladder
 
-10. A curated ladder of real sites, each representing a class: simple content,
+18. A curated ladder of real sites, each representing a class: simple content,
     layout-heavy, app-style, media.
-11. For each rung: a render diff against reference plus an interaction smoke;
+19. For each rung: a render diff against reference plus an interaction smoke;
     my engine gaps are fixed in the order the ladder exposes them, not the
     order I find interesting.
-12. A per-build coverage table: which sites pass, which fail, and why.
+20. A per-build coverage table: which sites pass, which fail, and why.
 
 ### Stage E - the product floor
 
-13. PsychoSetup, my own installer: one setup file named
+21. PsychoSetup, my own installer: one setup file named
     PsychoVault-Setup-<version>.exe, just like the old app shipped. It installs
     per-user into %LOCALAPPDATA%\PsychoVault exactly where the old program
     lived (no admin prompt), records itself under HKCU\Software\PsychoVault,
@@ -78,23 +96,31 @@ My named parts, all mine and all prefixed like my files:
     uninstaller of my own, registers my protocol where Windows allows, finds
     and keeps an existing old-profile so nothing is lost, and leaves my signed
     updater in charge of every upgrade after install.
-14. Feel polish: smooth scrolling, hover states and animated surfaces as
+22. Feel polish: smooth scrolling, hover states and animated surfaces as
     PsychoEngine grows them - measured against the old app, per section 11.
+
+### The extensions gate - a full audit, then build, then test, on my owner's rule
+
+23. Before any extension step starts, everything above is audited end to end:
+    the inventory ledger re-read line by line, every conformance count
+    published, the site ladder table green at the agreed level, my document
+    audits all passing, and a full clean build with all tests green. Only when
+    that audit is published does Stage F begin.
 
 ### Stage F - extensions LAST, in the order they pull their weight
 
-15. My WebExtensions API surface grows for my old bundled set, in this order:
+24. My WebExtensions API surface grows for my old bundled set, in this order:
     Proton VPN first (so it lands on a browser that already works - already
     mapped from the pinned source in my research), then Dark Reader, then my
     proxy switcher; each proven with a test before I say it works.
-16. Then one user-requested extension at a time, each with behaviour tests and
+25. Then one user-requested extension at a time, each with behaviour tests and
     an entry on my public compatibility list that tells the truth.
-17. The Proton live gate stays exactly as section 8 defines it. Moving it late
+26. The Proton live gate stays exactly as section 8 defines it. Moving it late
     never weakens it; it gives Proton a working browser to live in.
 
 ### Stage G - staying honest while I climb
 
-18. My conformance pins (WPT subsets, Test262 subsets) grow with every stage
+27. My conformance pins (WPT subsets, Test262 subsets) grow with every stage
     and the pass/fail/skip counts publish per build. A merged pull request is a
     unit of work, never a parity claim.
 
