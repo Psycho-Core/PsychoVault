@@ -22,7 +22,7 @@ PLATFORM=["platform/Psycho_host.cpp","platform/Psycho_network.cpp","platform/Psy
           "platform/Psycho_transport.cpp","platform/Psycho_tls.cpp","platform/Psycho_vault.cpp",
           "platform/Psycho_spell.cpp","platform/Psycho_sandbox.cpp"]
 # P1 of my master plan: my runtime (broker + typed IPC bus + broker-side tests).
-RUNTIME=["runtime/app/Psycho_instance.cpp","runtime/app/Psycho_instance_win32.cpp","runtime/ipc/Psycho_bus.cpp","runtime/broker/Psycho_broker.cpp","runtime/process/Psycho_process.cpp","runtime/process/Psycho_process_win32.cpp","runtime/window/Psycho_window.cpp","runtime/window/Psycho_window_win32.cpp","runtime/surface/Psycho_surface.cpp","runtime/surface/Psycho_surface_win32.cpp","runtime/tabs/Psycho_tabs.cpp","runtime/content/Psycho_content.cpp","runtime/internal/Psycho_internal.cpp","runtime/tests/Psycho_runtime_tests.cpp"]
+RUNTIME=["runtime/app/Psycho_instance.cpp","runtime/app/Psycho_instance_win32.cpp","runtime/ipc/Psycho_bus.cpp","runtime/broker/Psycho_broker.cpp","runtime/process/Psycho_process.cpp","runtime/process/Psycho_process_win32.cpp","runtime/window/Psycho_window.cpp","runtime/window/Psycho_window_win32.cpp","runtime/surface/Psycho_surface.cpp","runtime/surface/Psycho_surface_win32.cpp","runtime/tabs/Psycho_tabs.cpp","runtime/content/Psycho_content.cpp","runtime/internal/Psycho_internal.cpp","runtime/bridge/Psycho_bridge.cpp","runtime/tests/Psycho_runtime_tests.cpp"]
 def run(cmd,env=None):
     print("+",subprocess.list2cmdline([str(x) for x in cmd]),flush=True)
     subprocess.run([str(x) for x in cmd],cwd=ROOT,env=env,check=True)

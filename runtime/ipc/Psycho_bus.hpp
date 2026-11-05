@@ -94,6 +94,9 @@ public:
   using Validator = std::function<bool(const Json &payload, Error &error)>;
   void add(const std::string &name, Validator validate) { table_[name] = std::move(validate); }
   bool validate(const std::string &name, const Json &payload, Error &error) const;
+  // Whether a method name is registered at all - the preload bridge's
+  // curation law asks this before any name may exist on window.psycho.
+  bool knows(const std::string &name) const { return table_.count(name) != 0; }
   // My stock registry: the channels that already have a contract today.
   static Schemas stock();
 

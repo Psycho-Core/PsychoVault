@@ -1196,6 +1196,10 @@ bool Runtime::set_member(const Value &base, const std::string &key, const Value 
   Object *o = base.object;
   if (o->kind == Object::Kind::Host && host_)
     return host_->set(o->host, key, value);
+  // A frozen object ignores every script-side store - the preload bridge's
+  // facade cannot be monkey-patched from page code (S029).
+  if (o->frozen)
+    return true;
   // A typed array writes through to its bytes and never grows.
   if (o->bytes && o->host_type != "ArrayBuffer" && !key.empty() &&
       std::isdigit(static_cast<unsigned char>(key[0]))) {
@@ -3201,6 +3205,17 @@ void Runtime::install_builtins() {
       if (auto t = desc.find("set"); t != desc.end())
         a[0].object->properties["set:" + key] = t->second;
       return a[0];
+    });
+    object.object->properties["freeze"] = make_native([](Values &a) {
+      // S029 freeze semantics: set the flag the store choke point honours.
+      if (!a.empty() && a[0].type == Value::Type::Object && a[0].object)
+        a[0].object->frozen = true;
+      return a.empty() ? Value() : a[0];
+    });
+    object.object->properties["isFrozen"] = make_native([](Values &a) {
+      if (!a.empty() && a[0].type == Value::Type::Object && a[0].object)
+        return Value(a[0].object->frozen);
+      return Value(true); // primitives are always frozen
     });
     object.object->properties["defineProperties"] = make_native([](Values &a) {
       if (a.size() < 2 || a[0].type != Value::Type::Object || !a[0].object ||

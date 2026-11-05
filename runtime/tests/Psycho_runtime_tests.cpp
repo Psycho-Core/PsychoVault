@@ -2,6 +2,8 @@
 #include "../tabs/Psycho_tabs.hpp"
 #include "../content/Psycho_content.hpp"
 #include "../internal/Psycho_internal.hpp"
+#include "../bridge/Psycho_bridge.hpp"
+#include "../../engine/Psycho_js.hpp"
 #include "../surface/Psycho_surface.hpp"
 #include "../window/Psycho_window.hpp"
 #include "../ipc/Psycho_bus.hpp"
@@ -927,6 +929,107 @@ int run_runtime_bus_tests(int &shared) {
       RT_CHECK(env.channel == Channel::Tab);
       RT_CHECK(schemas.validate(env.method, env.payload, e));
     }
+  }
+
+
+  // S029 preload bridge: freeze semantics in my engine, then the four laws -
+  // isolation, curation, freeze, no direct broker access - on window.psycho.
+  {
+    // The engine law the facade stands on: frozen objects ignore stores.
+    js::Runtime engine_world;
+    engine_world.run("var ice = {a: 1}; Object.freeze(ice); ice.a = 2; ice.b = 3;");
+    RT_CHECK(engine_world.run("ice.a").number == 1);
+    RT_CHECK(engine_world.run("typeof ice.b").string == "undefined");
+    RT_CHECK(engine_world.run("Object.isFrozen(ice)").boolean);
+    RT_CHECK(!engine_world.run("Object.isFrozen({})").boolean);
+    RT_CHECK(engine_world.run("Object.isFrozen(7)").boolean);
+
+    // A bridge with a fake broker seam that records and answers.
+    int calls = 0;
+    std::string key_seen;     // set only when a call carries "key"
+    Json last_payload = Json::make_object();
+    PreloadBridge::Seams seams;
+    seams.invoke = [&calls, &key_seen, &last_payload](Channel channel,
+                       const std::string &method, Json payload, Json &reply,
+                       Error &error) {
+      (void)channel; (void)method; (void)error;
+      ++calls;
+      last_payload = payload;
+      reply = Json::make_object();
+      reply.set("pong", Json(true));
+      if (const Json *key = payload.find("key")) {
+        key_seen = key->string;
+        reply.set("value", Json(std::string("dark:") + key->string));
+      }
+      return true;
+    };
+    PreloadBridge bridge(seams);
+    Error e;
+
+    // Curation law: schema-registered names only, never twice.
+    RT_CHECK(bridge.expose(Channel::Settings, "settings:get", e));
+    RT_CHECK(bridge.expose(Channel::Lifecycle, "lifecycle:ping", e));
+    RT_CHECK(!bridge.expose(Channel::Settings, "settings:get", e) &&
+             e.code == "bridge.duplicate");
+    RT_CHECK(!bridge.expose(Channel::Vault, "vault:nope", e) &&
+             e.code == "bridge.unknown-method");
+    Json reply;
+    RT_CHECK(!bridge.dispatch("vault:status", Json::make_object(), reply, e) &&
+             e.code == "bridge.unexposed");
+    RT_CHECK(!bridge.dispatch("settings:get", Json::make_object(), reply, e) &&
+             e.code == "schema.missing");
+
+    // Isolation law: the preload world has the dispatcher and nothing else -
+    // no window, no psycho facade, no page objects.
+    RT_CHECK(bridge.run_preload("var probe = 41 * 2;", e));
+    RT_CHECK(bridge.preload_world().run("probe").number == 82);
+    RT_CHECK(bridge.preload_world().run("typeof __psycho_call").string == "function");
+    // My engine self-binds window in every world by convention - isolation
+    // means the preload world's window carries NO facade and NO page objects.
+    RT_CHECK(bridge.preload_world().run("typeof window").string == "object");
+    RT_CHECK(bridge.preload_world().run("typeof window.psycho").string == "undefined");
+    RT_CHECK(bridge.preload_world().run("typeof psycho").string == "undefined");
+    RT_CHECK(!bridge.run_preload("throw 7;", e) && e.code == "bridge.preload-script");
+
+    // The facade: window.psycho materialised, frozen at every level, and the
+    // page world has NO dispatcher of its own.
+    js::Runtime page;
+    RT_CHECK(bridge.install(page, e));
+    RT_CHECK(page.run("typeof psycho").string == "object");
+    RT_CHECK(page.run("typeof psycho.settings.get").string == "function");
+    RT_CHECK(page.run("typeof psycho.lifecycle.ping").string == "function");
+    RT_CHECK(page.run("typeof psycho.vault").string == "undefined");
+    RT_CHECK(page.run("typeof __psycho_call").string == "undefined");
+    RT_CHECK(page.run("Object.isFrozen(psycho)").boolean);
+    RT_CHECK(page.run("Object.isFrozen(psycho.settings)").boolean);
+    RT_CHECK(page.run("Object.isFrozen(psycho.settings.get)").boolean);
+
+    // Calls round-trip: payload arrives as data, reply clones back as values.
+    RT_CHECK(page.run("psycho.settings.get({key: 'theme'}).value").string == "dark:theme");
+    RT_CHECK(page.run("psycho.lifecycle.ping({}).pong").boolean);
+    RT_CHECK(calls == 2 && key_seen == "theme");
+
+    // Freeze law: page code cannot patch, shadow, replace or extend the facade.
+    page.run("psycho.settings.get = function() { return 0; }; psycho.settings = 0;"
+             "psycho.pwned = 1;");
+    RT_CHECK(page.run("psycho.settings.get({key: 'x'}).value").string == "dark:x");
+    RT_CHECK(page.run("typeof psycho.settings.get").string == "function");
+    RT_CHECK(page.run("typeof psycho.pwned").string == "undefined");
+    RT_CHECK(calls == 3);
+
+    // Only data crosses: a function argument cannot ride into the broker seam.
+    RT_CHECK(page.run("psycho.lifecycle.ping(function() { return 7; }).pong").boolean);
+    RT_CHECK(last_payload.type == Json::Type::Object ||
+             last_payload.type == Json::Type::Null); // never a callable
+
+    // Refusals throw in-page as BridgeError with the machine-readable code.
+    RT_CHECK(page.run("try { psycho.settings.get({}); 'silent'; } catch (err) { 'caught'; }")
+                 .string == "caught");
+    // In-page the refusal is an Error named BridgeError carrying the code.
+    RT_CHECK(page.run("try { psycho.settings.get({}); } catch (err) { err.name; }")
+                 .string == "BridgeError");
+    RT_CHECK(page.run("try { psycho.settings.get({}); } catch (err) { err.message; }")
+                 .string.find("schema.missing") != std::string::npos);
   }
 
   shared += rt_passed;
