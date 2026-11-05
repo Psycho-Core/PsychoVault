@@ -1,5 +1,6 @@
 #include "../app/Psycho_instance.hpp"
 #include "../tabs/Psycho_tabs.hpp"
+#include "../content/Psycho_content.hpp"
 #include "../surface/Psycho_surface.hpp"
 #include "../window/Psycho_window.hpp"
 #include "../ipc/Psycho_bus.hpp"
@@ -664,6 +665,139 @@ int run_runtime_bus_tests(int &shared) {
     }
     RT_CHECK(bound.closed().size() == 25);
     RT_CHECK(bound.closed().front().tab_id == 6); // oldest five fell off
+  }
+
+
+  // S027 WebContents equivalent: navigation controller with committed session
+  // history, canonical URL policy, bounded audit memory and Tab-channel
+  // notifications that all validate against the stock registry.
+  {
+    std::vector<Envelope> told;
+    auto recorder = [&told](const Envelope &env) { told.push_back(env); };
+    WebContents wc(11, 41, {recorder});
+    const Schemas schemas = Schemas::stock();
+    Error e;
+
+    // Refusals change nothing: no state, no history, no envelopes.
+    RT_CHECK(wc.go("   ", e) == -1 && e.code == "nav.empty");
+    RT_CHECK(wc.go("ftp://files.example/x", e) == -1 && e.code == "nav.scheme");
+    RT_CHECK(wc.go("https:///missing", e) == -1 && e.code == "nav.host");
+    RT_CHECK(wc.state() == ContentState::Idle && told.empty());
+    RT_CHECK(wc.go_back(e) == -1 && e.code == "nav.bounds");
+    RT_CHECK(wc.reload(e) == -1 && e.code == "nav.no-entry");
+    RT_CHECK(!wc.set_title("ghost", e) && e.code == "nav.no-entry");
+    RT_CHECK(!wc.fail("net.dns", "no pending", e) && e.code == "nav.no-pending");
+    RT_CHECK(!wc.commit("ghost", "", e) && e.code == "nav.no-pending");
+
+    // First navigation: whitespace trimmed, scheme and host canonicalised.
+    int n1 = wc.go("  HTTPS://Example.COM/Path?q=1  ", e);
+    RT_CHECK(n1 == 1);
+    RT_CHECK(wc.state() == ContentState::Loading);
+    RT_CHECK(wc.pending() && wc.pending()->url == "https://example.com/Path?q=1");
+    RT_CHECK(told.size() == 2 && told[0].method == "tab:loading" &&
+             told[1].method == "tab:state");
+    RT_CHECK(told[0].payload.find("kind")->string == "new" &&
+             told[0].payload.find("contents")->number == 11);
+    RT_CHECK(wc.commit("Example", "fav:a", e));
+    RT_CHECK(wc.history().size() == 1 && wc.index() == 0);
+    RT_CHECK(wc.current()->title == "Example" && wc.current()->favicon == "fav:a" &&
+             wc.current()->navigation == 1);
+    // Commit fan-out order: url, then title, then favicon, then state idle.
+    RT_CHECK(told.size() == 6 && told[2].method == "tab:url" &&
+             told[3].method == "tab:title" && told[4].method == "tab:favicon" &&
+             told[5].method == "tab:state");
+    RT_CHECK(told[2].payload.find("entry")->number == 1);
+    // Every notification I have ever sent validates against the stock schemas.
+    for (const Envelope &env : told) {
+      RT_CHECK(env.channel == Channel::Tab && env.request_id == 0);
+      RT_CHECK(schemas.validate(env.method, env.payload, e));
+    }
+
+    // A, B committed; back revisits A and refreshes its title in place.
+    RT_CHECK(wc.go("https://two.example/", e) == 2);
+    RT_CHECK(wc.commit("Two", "", e));
+    RT_CHECK(wc.index() == 1 && wc.can_go_back() && !wc.can_go_forward());
+    RT_CHECK(wc.go_back(e) == 3);
+    RT_CHECK(wc.pending()->kind == NavKind::Back &&
+             wc.pending()->url == "https://example.com/Path?q=1");
+    RT_CHECK(wc.commit("Example Again", "", e));
+    RT_CHECK(wc.history().size() == 2 && wc.index() == 0);
+    RT_CHECK(wc.history()[0].id == 1 && wc.history()[0].title == "Example Again");
+
+    // User stop: the pending navigation becomes a corpse in the log, the real
+    // (committed) position never moved, and Idle is announced.
+    RT_CHECK(wc.go_forward(e) == 4);
+    RT_CHECK(wc.stop(e));
+    RT_CHECK(wc.log()[3].status == NavStatus::Aborted && wc.index() == 0);
+    RT_CHECK(wc.state() == ContentState::Idle && told.back().method == "tab:state");
+    RT_CHECK(wc.stop(e)); // idempotent: stopping twice is not an error
+
+    // Forward commit with empty metadata touches nothing.
+    RT_CHECK(wc.go_forward(e) == 5);
+    RT_CHECK(wc.commit("", "", e));
+    RT_CHECK(wc.index() == 1 && wc.history()[1].title == "Two");
+
+    // Reload re-renders the same entry: no new entry, same id, metadata may
+    // refresh, the originating navigation stays the one that committed me.
+    RT_CHECK(wc.reload(e) == 6);
+    RT_CHECK(wc.pending()->kind == NavKind::Reload &&
+             wc.pending()->target_index == 1);
+    RT_CHECK(wc.commit("Two Reloaded", "fav:two", e));
+    RT_CHECK(wc.history().size() == 2 && wc.history()[1].id == 2);
+    RT_CHECK(wc.history()[1].title == "Two Reloaded" &&
+             wc.history()[1].favicon == "fav:two" && wc.history()[1].navigation == 2);
+
+    // New navigation from a rewound position kills the forward tail AT COMMIT,
+    // never before: going back, then somewhere else, severs B from history.
+    RT_CHECK(wc.go_back(e) == 7 && wc.commit("", "", e) && wc.index() == 0);
+    RT_CHECK(wc.go("https://c.example/", e) == 8 && wc.commit("C", "", e));
+    RT_CHECK(wc.history().size() == 2 && wc.index() == 1);
+    RT_CHECK(wc.history()[1].url == "https://c.example/" && !wc.can_go_forward());
+
+    // Failure: the state machine says Failed, the log carries the code, and a
+    // failed navigation never rewrites the past.
+    RT_CHECK(wc.go("https://dead.example/", e) == 9);
+    RT_CHECK(wc.fail("net.dns", "the name does not resolve", e));
+    RT_CHECK(wc.state() == ContentState::Failed && wc.error_code() == "net.dns");
+    RT_CHECK(wc.history().size() == 2 && wc.index() == 1);
+    RT_CHECK(wc.log()[8].status == NavStatus::Failed &&
+             wc.log()[8].error_code == "net.dns");
+    RT_CHECK(told[told.size() - 2].method == "tab:error" &&
+             told.back().payload.find("state")->string == "failed");
+
+    // One in flight at a time: starting E aborts D... and loading F while E is
+    // pending aborts E. The aborted navigation stays in the audit log.
+    RT_CHECK(wc.go("https://e.example/", e) == 10);
+    RT_CHECK(wc.go("https://f.example/", e) == 11);
+    RT_CHECK(wc.log()[9].status == NavStatus::Aborted);
+    RT_CHECK(wc.pending() && wc.pending()->url == "https://f.example/");
+    RT_CHECK(wc.commit("F", "", e));
+    RT_CHECK(wc.history().size() == 3 && wc.index() == 2 && !wc.can_go_forward());
+    RT_CHECK(wc.go_forward(e) == -1 && e.code == "nav.bounds");
+
+    // Live edits: script retitles and reicons the committed entry it lives on.
+    RT_CHECK(wc.set_title("F mk2", e) && wc.set_favicon("fav:f2", e));
+    RT_CHECK(wc.current()->title == "F mk2" && wc.current()->favicon == "fav:f2");
+    RT_CHECK(told[told.size() - 2].method == "tab:title" &&
+             told.back().method == "tab:favicon");
+  }
+
+  // Bounded memory, both ledgers: history keeps the newest 100 entries and the
+  // audit log keeps the newest 256 navigations; nothing grows without limit.
+  {
+    WebContents deep(12, 42, {});
+    Error e;
+    for (int i = 0; i < 300; ++i) {
+      RT_CHECK(deep.go("https://cap.example/" + std::to_string(i), e) > 0);
+      RT_CHECK(deep.commit("cap", "", e));
+    }
+    RT_CHECK(deep.history().size() == 100);
+    RT_CHECK(deep.history().front().url == "https://cap.example/200");
+    RT_CHECK(deep.history().back().url == "https://cap.example/299");
+    RT_CHECK(deep.log().size() == 256 && deep.log().front().id == 45);
+    RT_CHECK(deep.can_go_back() && !deep.can_go_forward());
+    RT_CHECK(deep.go_back(e) > 0 && deep.commit("", "", e));
+    RT_CHECK(deep.index() == 98 && deep.current()->url == "https://cap.example/298");
   }
 
   shared += rt_passed;
