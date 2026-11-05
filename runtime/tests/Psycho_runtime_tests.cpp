@@ -7,12 +7,14 @@
 #include "../services/Psycho_services.hpp"
 #include "../keys/Psycho_keys.hpp"
 #include "../ime/Psycho_ime.hpp"
+#include "../focus/Psycho_focus.hpp"
 #include "../../engine/Psycho_js.hpp"
 #include "../surface/Psycho_surface.hpp"
 #include "../window/Psycho_window.hpp"
 #include "../ipc/Psycho_bus.hpp"
 #include "../broker/Psycho_broker.hpp"
 #include "../process/Psycho_process.hpp"
+#include <algorithm>
 #include <iostream>
 
 using namespace pv;
@@ -1536,6 +1538,142 @@ int run_runtime_bus_tests(int &shared) {
                e.code == "ime.unavailable");
       RT_CHECK(blind.cancel(1, e));
     }
+  }
+
+  // S034 focus and activation: one answer at every level, blur before focus
+  // and never twice, modal capture, the dead cannot hold focus, visibility
+  // and throttling fall out of focus.
+  {
+    std::vector<std::string> events;
+    FocusService::Seams fseams;
+    fseams.on_event = [&](const FocusEvent &fe) {
+      std::string s = fe.op == FocusEvent::Op::Blur ? "blur" : "focus";
+      s += fe.level == FocusEvent::Level::Window  ? ":window:"
+           : fe.level == FocusEvent::Level::Tab   ? ":tab:"
+                                                  : ":element:";
+      s += fe.level == FocusEvent::Level::Element ? fe.element
+                                                  : std::to_string(fe.id);
+      events.push_back(s);
+    };
+    FocusService focus(fseams);
+    Error e;
+    int ms = -1;
+    size_t n = 0;
+
+    // Law 1: operations on nodes I never registered refuse by name; the
+    // visibility query's honest answer for a dead node is Hidden.
+    RT_CHECK(!focus.focus_window(7, e) && e.code == "focus.unknown");
+    RT_CHECK(!focus.tab_opened(7, 1, false, e) && e.code == "focus.unknown");
+    RT_CHECK(!focus.focus_tab(7, 1, e) && e.code == "focus.unknown");
+    RT_CHECK(!focus.focus_element(1, "a", e) && e.code == "focus.unknown");
+    RT_CHECK(!focus.blur_element(1, e) && e.code == "focus.unknown");
+    RT_CHECK(!focus.modal_open(7, e) && e.code == "focus.unknown");
+    RT_CHECK(!focus.timer_floor(1, ms, e) && e.code == "focus.unknown");
+    RT_CHECK(focus.visibility_of(1) == PageVisibility::Hidden);
+    RT_CHECK(!focus.window_closed(7, e) && e.code == "focus.unknown");
+
+    // Windows and tabs: opening activates, registering twice refuses.
+    RT_CHECK(focus.window_opened(1, e) && focus.active_window() == 1);
+    RT_CHECK(events.size() == 1 && events[0] == "focus:window:1");
+    RT_CHECK(!focus.window_opened(1, e) && e.code == "focus.duplicate");
+    RT_CHECK(focus.tab_opened(1, 10, true, e) && focus.focused_tab(1) == 10);
+    RT_CHECK(events.back() == "focus:tab:10");
+    RT_CHECK(focus.visibility_of(10) == PageVisibility::Active);
+    RT_CHECK(focus.timer_floor(10, ms, e) && ms == FocusService::kActiveFloorMs);
+    RT_CHECK(!focus.has_page_focus(10)); // no element holds focus yet
+    // A background tab opens quietly: no events, focus stays put.
+    RT_CHECK(focus.tab_opened(1, 11, false, e) && focus.focused_tab(1) == 10 &&
+             events.size() == 2);
+    RT_CHECK(focus.visibility_of(11) == PageVisibility::Hidden);
+    RT_CHECK(focus.timer_floor(11, ms, e) && ms == FocusService::kHiddenFloorMs);
+    // Switching tabs: blur strictly before focus.
+    RT_CHECK(focus.focus_tab(1, 11, e) && focus.focused_tab(1) == 11);
+    RT_CHECK(events.size() == 4 && events[2] == "blur:tab:10" &&
+             events[3] == "focus:tab:11");
+    RT_CHECK(focus.visibility_of(11) == PageVisibility::Active &&
+             focus.visibility_of(10) == PageVisibility::Hidden);
+    // Law 2's silence: re-focusing what holds focus emits nothing.
+    n = events.size();
+    RT_CHECK(focus.focus_tab(1, 11, e) && events.size() == n);
+    RT_CHECK(!focus.focus_tab(1, 99, e) && e.code == "focus.unknown");
+
+    // Page focus: element transitions blur-then-focus as well.
+    RT_CHECK(focus.focus_element(11, "addr", e) &&
+             events.back() == "focus:element:addr");
+    RT_CHECK(focus.focused_element(11) == "addr" && focus.has_page_focus(11));
+    n = events.size();
+    RT_CHECK(focus.focus_element(11, "addr", e) && events.size() == n);
+    RT_CHECK(focus.focus_element(11, "q", e) && events.size() >= n + 2 &&
+             events[n] == "blur:element:addr" && events[n + 1] == "focus:element:q");
+    RT_CHECK(focus.blur_element(11, e) && events.back() == "blur:element:q" &&
+             focus.focused_element(11).empty());
+    n = events.size();
+    RT_CHECK(focus.blur_element(11, e) && events.size() == n);
+    // Page focus flows through window and tab: a background tab's document
+    // cannot take it, and an element needs a name.
+    RT_CHECK(!focus.focus_element(10, "x", e) && e.code == "focus.inactive");
+    RT_CHECK(!focus.focus_element(11, "", e) && e.code == "focus.arg");
+
+    // A second window activates; the first's focused tab drops to Visible,
+    // and occlusion drops it the rest of the way.
+    n = events.size();
+    RT_CHECK(focus.window_opened(2, e) && focus.active_window() == 2);
+    RT_CHECK(events[n] == "blur:window:1" && events[n + 1] == "focus:window:2");
+    RT_CHECK(focus.visibility_of(11) == PageVisibility::Visible);
+    RT_CHECK(focus.timer_floor(11, ms, e) && ms == FocusService::kVisibleFloorMs);
+    RT_CHECK(focus.set_occluded(1, true, e) &&
+             focus.visibility_of(11) == PageVisibility::Hidden);
+    RT_CHECK(focus.timer_floor(11, ms, e) && ms == FocusService::kHiddenFloorMs);
+    RT_CHECK(focus.set_occluded(1, false, e) &&
+             focus.visibility_of(11) == PageVisibility::Visible);
+    RT_CHECK(!focus.set_occluded(9, true, e) && e.code == "focus.unknown");
+    // Page focus in the document sense tracks the whole chain.
+    RT_CHECK(focus.tab_opened(2, 20, true, e) &&
+             focus.focus_element(20, "find", e));
+    RT_CHECK(focus.has_page_focus(20) && !focus.has_page_focus(11));
+
+    // Law 3: a modal dialog captures its own window - tab switches and
+    // element focus refuse; other windows live free.
+    RT_CHECK(focus.modal_open(2, e) && focus.is_modal(2));
+    RT_CHECK(focus.tab_opened(2, 21, false, e) && focus.focused_tab(2) == 20);
+    RT_CHECK(!focus.focus_tab(2, 21, e) && e.code == "focus.modal");
+    RT_CHECK(!focus.focus_element(20, "blocked", e) && e.code == "focus.modal");
+    RT_CHECK(focus.focus_window(1, e) && focus.active_window() == 1);
+    RT_CHECK(focus.focus_window(2, e) && focus.active_window() == 2);
+    RT_CHECK(!focus.modal_open(2, e) && e.code == "focus.modal"); // twice
+    RT_CHECK(focus.modal_close(2, e) && !focus.is_modal(2));
+    RT_CHECK(!focus.modal_close(2, e) && e.code == "focus.modal"); // unclosing
+    RT_CHECK(focus.focus_tab(2, 21, e) && focus.focused_tab(2) == 21);
+
+    // Law 4: closing the focused tab moves focus to the declared fallback -
+    // the tab after it in open order, else the one before - and death is
+    // not an event: the dying tab's element hears no blur.
+    RT_CHECK(focus.focus_element(21, "last", e));
+    n = events.size();
+    RT_CHECK(focus.tab_closed(2, 21, e) && focus.focused_tab(2) == 20);
+    RT_CHECK(events[n] == "blur:tab:21" && events[n + 1] == "focus:tab:20");
+    RT_CHECK(std::find(events.begin(), events.end(), "blur:element:last") ==
+             events.end());
+    RT_CHECK(focus.focused_element(21).empty());
+    RT_CHECK(!focus.focus_tab(2, 21, e) && e.code == "focus.unknown");
+    RT_CHECK(!focus.timer_floor(21, ms, e) && e.code == "focus.unknown");
+    // The last tab closing leaves the window focused on nothing - legal.
+    RT_CHECK(focus.tab_closed(2, 20, e) && focus.focused_tab(2) == -1);
+    RT_CHECK(events.back() == "blur:tab:20");
+
+    // Closing the active window activates the most recently opened
+    // remaining window; closing the last window leaves the app unfocused,
+    // which is legal - and matters again when a new window arrives.
+    n = events.size();
+    RT_CHECK(focus.window_closed(2, e) && focus.active_window() == 1);
+    RT_CHECK(events[n] == "blur:window:2" && events[n + 1] == "focus:window:1");
+    RT_CHECK(focus.visibility_of(11) == PageVisibility::Active &&
+             focus.visibility_of(10) == PageVisibility::Hidden);
+    n = events.size();
+    RT_CHECK(focus.window_closed(1, e) && focus.active_window() == -1);
+    RT_CHECK(events.size() == n + 1 && events[n] == "blur:window:1");
+    RT_CHECK(focus.window_opened(3, e) && focus.active_window() == 3 &&
+             events.back() == "focus:window:3");
   }
 
   shared += rt_passed;
