@@ -66,9 +66,20 @@ struct Hit {
   int index = 0;
   std::string value;
 };
+#ifndef PSYCHO_VAULT_VERSION
+#define PSYCHO_VAULT_VERSION "0.0.0-dev"
+#endif
 struct MenuLine {
   std::string label, action;
 };
+static std::filesystem::path shell_path(const std::string &text) {
+  int n = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()),
+                              nullptr, 0);
+  std::wstring wide(size_t(n > 0 ? n : 0), 0);
+  if (n > 0)
+    MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()), wide.data(), n);
+  return std::filesystem::path(wide);
+}
 static std::wstring utf16_of(const std::string &text) {
   int n = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()),
                               nullptr, 0);
@@ -558,6 +569,12 @@ struct Browser {
     if (!private_mode) downloads.load(profile.directory);
     install_extension_effects();
     load_workspaces_state();
+    crashed_last = !private_mode && profile.crashed_last_run();
+    profile.mark_running();
+    reload_log_cache();
+    // My launch check is cheap and off-thread; the banner only shows on news.
+    if (!private_mode)
+      check_for_update();
     if (!private_mode) {
       std::string storage_error;
       extensions.load_storage(profile.directory, storage_error);
@@ -730,6 +747,7 @@ struct Browser {
     return "VPN " + profile.proxy.mode_name() + " via " + server.authority();
   }
   ~Browser() {
+    profile.clear_running_marker();
     if (profile.clear_on_exit && !private_mode) {
       profile.clear_history();
       save_profile();
@@ -1110,6 +1128,78 @@ struct Browser {
       draw_home(c);
     else
       draw_content(c);
+    if (palette_open) {
+      Rect box{content.x + content.w / 2 - 300, content.y + 20, 600, 38};
+      c.fill(box, PANEL);
+      c.stroke(box, ACCENT);
+      c.text(box.x + 14, box.y + 10,
+             (palette_text.empty() ? "Type a command" : palette_text).substr(0, 64), 13,
+             palette_text.empty() ? MUTED : TEXT);
+      double cx2 = box.x + 14 + c.text_width(palette_text.substr(0, palette_caret), 13);
+      c.line(cx2, box.y + 8, cx2, box.y + 30, ACCENT);
+      auto matches = palette_matches();
+      if (palette_index >= int(matches.size()))
+        palette_index = int(matches.size()) - 1;
+      double ry = box.y + box.h + 2;
+      for (size_t i = 0; i < matches.size() && i < 8; ++i) {
+        Rect row{box.x, ry, 600, 30};
+        c.fill(row, int(i) == palette_index ? 0xff16233a : PANEL);
+        c.stroke(row, BORDER);
+        c.text(row.x + 14, row.y + 8, matches[i]->label, 13, TEXT);
+        c.text(row.x + row.w - 118, row.y + 8, matches[i]->chord, 12, MUTED);
+        hits.push_back({row, "palette-run", int(i), matches[i]->id});
+        ry += 32;
+      }
+    }
+    // Two banners can sit on the page area: crash recovery, then update.
+    double banner_y = content.y;
+    if (crashed_last && !recovery_dismissed) {
+      Rect strip{content.x, banner_y, content.w, 34};
+      c.fill(strip, 0xff2a2107);
+      c.text(strip.x + 14, strip.y + 9,
+             "My last session ended unexpectedly. Your tabs were restored.", 12, TEXT);
+      Rect keep{strip.x + strip.w - 262, strip.y + 4, 150, 26};
+      c.fill(keep, PANEL);
+      c.stroke(keep, BORDER);
+      c.text(keep.x + 10, keep.y + 6, "Keep restored session", 11, TEXT);
+      hits.push_back({keep, "recovery-keep", 0, {}});
+      Rect fresh{strip.x + strip.w - 102, strip.y + 4, 94, 26};
+      c.fill(fresh, PANEL);
+      c.stroke(fresh, BORDER);
+      c.text(fresh.x + 10, fresh.y + 6, "Start fresh", 11, TEXT);
+      hits.push_back({fresh, "recovery-fresh", 0, {}});
+      banner_y += 36;
+    }
+    if (!next_update.version.empty() && !update_snoozed &&
+        profile.dismissed_update != next_update.version) {
+      Rect strip{content.x, banner_y, content.w, 34};
+      c.fill(strip, 0xff0a2410);
+      std::string line = next_update.ready
+          ? "Update " + next_update.version + " verified - restart to install"
+          : "Update " + next_update.version + " is available";
+      c.text(strip.x + 14, strip.y + 9, line, 12, TEXT);
+      Rect first{strip.x + strip.w - 302, strip.y + 4, 90, 26};
+      c.fill(first, PANEL);
+      c.stroke(first, BORDER);
+      if (next_update.ready) {
+        c.text(first.x + 10, first.y + 6, "Restart now", 11, TEXT);
+        hits.push_back({first, "update-restart", 0, {}});
+      } else {
+        c.text(first.x + 22, first.y + 6, next_update.installing ? "..." : "Install", 11, TEXT);
+        hits.push_back({first, "update-install", 0, {}});
+      }
+      Rect later{strip.x + strip.w - 202, strip.y + 4, 76, 26};
+      c.fill(later, PANEL);
+      c.stroke(later, BORDER);
+      c.text(later.x + 22, later.y + 6, "Later", 11, TEXT);
+      hits.push_back({later, "update-later", 0, {}});
+      Rect dismiss{strip.x + strip.w - 114, strip.y + 4, 86, 26};
+      c.fill(dismiss, PANEL);
+      c.stroke(dismiss, BORDER);
+      c.text(dismiss.x + 14, dismiss.y + 6, "Dismiss", 11, TEXT);
+      hits.push_back({dismiss, "update-dismiss", 0, {}});
+      banner_y += 36;
+    }
     if (menu_open) {
       const int w = 220, h = int(menu_items.size()) * 30 + 10;
       Rect box{double(menu_x), double(menu_y), double(w), double(h)};
@@ -1315,6 +1405,10 @@ struct Browser {
              "I reopen my last tabs and the tab I was using.");
       toggle("Workspaces", profile.workspaces, "setting-workspaces", "");
       value_row("Home page", profile.home_page, "setting-home");
+      toggle("Panic button", profile.panic_enabled, "setting-panic",
+             "Ctrl+Shift+Q hides everything and opens my panic page.");
+      value_row("Panic URL", profile.panic_url.empty() ? "my home page" : profile.panic_url,
+                "setting-panic-url");
       value_row("Custom search", profile.custom_search.empty() ? "not set" : "configured",
                 "setting-custom-search");
       break;
@@ -1443,12 +1537,25 @@ struct Browser {
       note("Translation is not implemented yet.");
       break;
     default:
-      note("PsychoVault development build - owned engine");
+      note(std::string("PsychoVault ") + PSYCHO_VAULT_VERSION + " - owned engine");
       note("Profile: " + profile.directory);
       note(vpn_summary());
       note("Extensions: " + std::to_string(extensions.list().size()));
       button("Check for an update", "setting-check-update");
-      if (!update_status.empty()) note(update_status);
+      {
+        std::lock_guard lock(update_mutex);
+        if (!update_status.empty()) note(update_status);
+      }
+      y += 10;
+      c.text(x, y, "Error log", 16, TEXT, true);
+      y += 30;
+      for (auto &line : log_cache) {
+        c.text(x, y, line.substr(0, 110), 11, MUTED);
+        y += 20;
+      }
+      if (log_cache.empty()) { c.text(x, y, "Nothing logged yet.", 12, MUTED); y += 24; }
+      y += 8;
+      button("Clear error log", "setting-clear-log");
       note("I verify a release hash before I offer to install it.");
       break;
     }
@@ -1484,6 +1591,28 @@ struct Browser {
   std::vector<Workspace> workspaces;
   size_t workspace = 0;
   bool panel_workspaces = false;
+  // Ctrl+Shift+P: one box, one filtered command list, Enter or a click runs.
+  bool palette_open = false;
+  std::string palette_text;
+  size_t palette_caret = 0;
+  int palette_index = 0;
+  // The crash marker said the last run did not exit cleanly; I say so once and
+  // the banner below lets me keep or bin the restored tabs.
+  bool crashed_last = false, recovery_dismissed = false;
+  // Update flow state: what the check found, what the install thread is doing.
+  struct PreparedUpdate {
+    std::string version, url, sha256;
+    uint64_t size = 0;
+    bool installing = false, ready = false;
+  };
+  PreparedUpdate next_update;
+  bool update_snoozed = false;
+  std::vector<std::string> log_cache;
+  void reload_log_cache() { log_cache = profile.read_error_log(10); }
+  void log_line(const std::string &subsystem, const std::string &message) {
+    profile.append_error_log(subsystem + ": " + message);
+    reload_log_cache();
+  }
   void begin_setting_edit(const std::string &key, const std::string &current_value) {
     editing_setting = key;
     address = current_value;
@@ -1563,6 +1692,15 @@ struct Browser {
         confinement = confinement_status();
         save_profile();
       }
+    } else if (key == "panicUrl") {
+      if (value.empty() || starts(value, "http://") || starts(value, "https://")) {
+        profile.panic_url = value;
+        save_profile();
+        status = value.empty() ? "Panic opens my home page" : "Panic opens " + value;
+      } else {
+        status = "A panic URL must start with http:// or https://";
+      }
+      return;
     } else if (key == "workspaceNew") {
       workspace_new(value);
       status = "Workspace created: " + workspaces[workspace].name;
@@ -1591,27 +1729,192 @@ struct Browser {
     save_profile();
     sync_address();
   }
-  void check_for_update() {
-    update_status = "Checking my releases...";
-    auto url = parse_url("https://api.github.com/repos/Psycho-Core/PsychoVault/releases/latest");
-    if (!url) { update_status = "I could not build the release URL"; return; }
-    auto response = fetch_url(*url, policy(), 15000, 1024 * 1024);
-    if (!response.ok) { update_status = "Update check failed: " + response.error; return; }
-    auto json = Json::parse(response.text);
-    if (!json) { update_status = "The release response was not valid JSON"; return; }
-    auto tag = json->str("tag_name");
-    if (tag.empty()) { update_status = "I have not published a release yet"; return; }
-    bool has_manifest = false, has_exe = false;
-    const Json *assets = json->find("assets");
-    if (assets && assets->type == Json::Type::Array)
-      for (const auto &asset : assets->array) {
-        auto name = asset.str("name");
-        if (name == "PsychoVault-update.json") has_manifest = true;
-        if (name == "PsychoVault.exe") has_exe = true;
-      }
-    update_status = "Latest release " + tag + (has_exe ? " (exe present" : " (no exe");
-    update_status += has_manifest ? ", manifest present)" : ", no manifest)";
+  static std::vector<int> version_parts(std::string text) {
+    if (!text.empty() && (text[0] == 'v' || text[0] == 'V'))
+      text.erase(text.begin());
+    std::vector<int> out;
+    std::string part;
+    for (char ch : text) {
+      if (ch == '.') {
+        out.push_back(std::atoi(part.c_str()));
+        part.clear();
+      } else if (ch >= '0' && ch <= '9')
+        part += ch;
+    }
+    out.push_back(std::atoi(part.c_str()));
+    while (out.size() < 3)
+      out.push_back(0);
+    return out;
   }
+  static bool version_newer(const std::string &candidate, const std::string &current) {
+    auto a = version_parts(candidate), b = version_parts(current);
+    for (size_t i = 0; i < 3; ++i) {
+      if (a[i] != b[i])
+        return a[i] > b[i];
+    }
+    return false;
+  }
+  // My update check runs off the message thread now: it asks GitHub for the
+  // latest release, compares the version against the one baked into this exe,
+  // and reads my manifest for the asset hash I will verify on install.
+  void check_for_update() {
+    {
+      std::lock_guard lock(update_mutex);
+      if (next_update.installing)
+        return;
+      update_status = "Checking my releases...";
+    }
+    NetworkPolicy probe_policy = policy();
+    HWND window = hwnd;
+    std::thread([this, probe_policy, window] {
+      auto report = [this, window](const std::string &text) {
+        {
+          std::lock_guard lock(update_mutex);
+          update_status = text;
+        }
+        if (window)
+          InvalidateRect(window, nullptr, FALSE);
+      };
+      auto release_url =
+          parse_url("https://api.github.com/repos/Psycho-Core/PsychoVault/releases/latest");
+      if (!release_url) { report("I could not build the release URL"); return; }
+      auto response = fetch_url(*release_url, probe_policy, 15000, 1024 * 1024);
+      if (!response.ok) { report("Update check failed: " + response.error); return; }
+      auto json = Json::parse(response.text);
+      if (!json) { report("The release response was not valid JSON"); return; }
+      std::string tag = json->str("tag_name");
+      std::string manifest_url;
+      if (const Json *assets = json->find("assets"))
+        if (assets->type == Json::Type::Array)
+          for (const auto &asset : assets->array)
+            if (asset.str("name") == "PsychoVault-update.json")
+              manifest_url = asset.str("browser_download_url");
+      std::string version = tag;
+      if (!version.empty() && (version[0] == 'v' || version[0] == 'V'))
+        version.erase(version.begin());
+      if (version.empty() || !version_newer(version, PSYCHO_VAULT_VERSION)) {
+        report("You are on the latest release (" + std::string(PSYCHO_VAULT_VERSION) + ")");
+        return;
+      }
+      if (manifest_url.empty()) {
+        report("Release " + tag + " has no manifest, so I will not touch it");
+        return;
+      }
+      auto manifest_link = parse_url(manifest_url);
+      if (!manifest_link) { report("The manifest URL is not valid"); return; }
+      auto manifest_response = fetch_url(*manifest_link, probe_policy, 15000, 1024 * 1024);
+      if (!manifest_response.ok) {
+        report("Manifest fetch failed: " + manifest_response.error);
+        return;
+      }
+      auto manifest = Json::parse(manifest_response.text);
+      if (!manifest || manifest->str("product") != "PsychoVault") {
+        report("The manifest is not mine");
+        return;
+      }
+      PreparedUpdate found;
+      found.version = manifest->str("version", version);
+      if (const Json *assets = manifest->find("assets"))
+        if (assets->type == Json::Type::Array)
+          for (const auto &asset : assets->array)
+            if (asset.str("name") == "PsychoVault.exe") {
+              found.url = asset.str("url");
+              found.sha256 = lower(asset.str("sha256"));
+              found.size = uint64_t(asset.num("size", 0));
+            }
+      if (found.url.empty() || found.sha256.empty()) {
+        report("The manifest does not name my exe");
+        return;
+      }
+      {
+        std::lock_guard lock(update_mutex);
+        next_update = found;
+        update_status = "Update " + found.version + " is available";
+      }
+      if (window)
+        InvalidateRect(window, nullptr, FALSE);
+    }).detach();
+  }
+  // Download the exe, SHA-256 it against the manifest, stage it beside the
+  // running exe. A mismatch means the file is deleted and nothing is staged.
+  void install_update() {
+    PreparedUpdate wanted;
+    HWND window = hwnd;
+    {
+      std::lock_guard lock(update_mutex);
+      if (next_update.installing || next_update.ready || next_update.url.empty())
+        return;
+      next_update.installing = true;
+      wanted = next_update;
+      update_status = "Downloading update " + wanted.version + " ...";
+    }
+    NetworkPolicy probe_policy = policy();
+    std::string directory = profile.directory;
+    wchar_t self_wide[MAX_PATH * 2] = {0};
+    GetModuleFileNameW(nullptr, self_wide, DWORD((sizeof(self_wide) / sizeof(wchar_t))));
+    int n = WideCharToMultiByte(CP_UTF8, 0, self_wide, -1, nullptr, 0, nullptr, nullptr);
+    std::string self(size_t(n > 0 ? n - 1 : 0), 0);
+    if (n > 0)
+      WideCharToMultiByte(CP_UTF8, 0, self_wide, -1, self.data(), n, nullptr, nullptr);
+    std::thread([this, probe_policy, window, wanted, self] {
+      auto finish = [this, window](const std::string &text, bool ready) {
+        {
+          std::lock_guard lock(update_mutex);
+          update_status = text;
+          next_update.installing = false;
+          next_update.ready = ready;
+        }
+        if (window)
+          InvalidateRect(window, nullptr, FALSE);
+      };
+      auto parsed = parse_url(wanted.url);
+      if (!parsed) { finish("The update URL is not valid", false); return; }
+      auto response = fetch_url(*parsed, probe_policy, 120000, 384u * 1024u * 1024u);
+      if (!response.ok) { finish("Update download failed: " + response.error, false); return; }
+      if (wanted.size && response.text.size() != wanted.size) {
+        finish("The download size does not match my manifest", false);
+        return;
+      }
+      auto digest = sha256(Bytes(response.text.begin(), response.text.end()));
+      static const char digits[] = "0123456789abcdef";
+      std::string hex;
+      for (uint8_t b : digest) {
+        hex += digits[b >> 4];
+        hex += digits[b & 15];
+      }
+      if (hex != wanted.sha256) {
+        finish("Update verification failed - I refuse to install it", false);
+        return;
+      }
+      // Only a hash-verified exe gets staged next to the running one.
+      std::string staged = self + ".staged";
+      std::ofstream out(shell_path(staged), std::ios::binary | std::ios::trunc);
+      out.write(response.text.data(), std::streamsize(response.text.size()));
+      out.close();
+      if (!out) {
+        finish("I could not stage the update on disk", false);
+        return;
+      }
+      finish("Update " + wanted.version + " verified - restart to install", true);
+    }).detach();
+  }
+  // Hand off to a freshly spawned copy of myself in --apply-update mode.
+  void apply_ready_update() {
+    bool ready;
+    {
+      std::lock_guard lock(update_mutex);
+      ready = next_update.ready;
+    }
+    if (!ready)
+      return;
+    wchar_t self[MAX_PATH * 2] = {0};
+    GetModuleFileNameW(nullptr, self, DWORD((sizeof(self) / sizeof(wchar_t))));
+    std::wstring params = L"--apply-update " + std::to_wstring(GetCurrentProcessId()) +
+                          L" \"" + self + L"\"";
+    ShellExecuteW(nullptr, L"open", self, params.c_str(), nullptr, SW_SHOWNORMAL);
+    PostMessageW(hwnd, WM_CLOSE, 0, 0);
+  }
+  std::mutex update_mutex;
   void draw_panel(Canvas &c) {
     bool bm = panel_bookmarks;
     c.text(content.x + 40, content.y + 30, bm ? "Bookmarks" : "History", 24, TEXT, true);
@@ -1850,6 +2153,19 @@ struct Browser {
     c.clip = old;
   }
   void click(int x, int y) {
+    if (palette_open) {
+      bool ran = false;
+      for (auto it = hits.rbegin(); it != hits.rend(); ++it)
+        if (it->rect.contains(x, y) && it->action == "palette-run") {
+          run_command(it->value);
+          ran = true;
+          break;
+        }
+      if (!ran)
+        palette_open = false;
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
     if (menu_click(x, y)) {
       InvalidateRect(hwnd, nullptr, FALSE);
       return;
@@ -2068,7 +2384,39 @@ struct Browser {
           address_focus = home_focus = false;
         else if (h.action == "find-close")
           close_find();
-        else if (h.action == "workspaces") {
+        } else if (h.action == "recovery-keep") {
+          recovery_dismissed = true;
+        } else if (h.action == "recovery-fresh") {
+          // Start fresh means exactly that: everything open goes to the reopen
+          // stack, my saved session is cleared, and I land on a clean tab.
+          for (auto &tab : tabs)
+            stop_session(tab);
+          tabs.clear();
+          closed_tabs.clear();
+          profile.session_tabs.clear();
+          save_session();
+          crashed_last = recovery_dismissed = false;
+          new_tab();
+        } else if (h.action == "update-install") {
+          install_update();
+        } else if (h.action == "update-restart") {
+          apply_ready_update();
+        } else if (h.action == "update-later") {
+          update_snoozed = true;
+        } else if (h.action == "update-dismiss") {
+          profile.dismissed_update = next_update.version;
+          save_profile();
+        } else if (h.action == "setting-clear-log") {
+          profile.append_error_log("log cleared by the owner");
+          std::error_code ec;
+          std::filesystem::remove(profile.directory + "/owned-errors.log", ec);
+          reload_log_cache();
+        } else if (h.action == "setting-panic") {
+          profile.panic_enabled = !profile.panic_enabled;
+          save_profile();
+        } else if (h.action == "setting-panic-url") {
+          begin_setting_edit("panicUrl", profile.panic_url);
+        } else if (h.action == "workspaces") {
           panel_workspaces = !panel_workspaces;
           panel_bookmarks = panel_history = panel_downloads = false;
         } else if (h.action == "workspace-new") {
@@ -2105,12 +2453,13 @@ struct Browser {
           } else
             status = "Type an address in my search box first";
         } else if (h.action == "download-reveal") {
-          if (!h.value.empty())
+          if (!h.value.empty()) {
             // Explorer selects the file for a /select switch with a quoted
             // path, built as a named string so the call itself stays simple.
             std::wstring select = L"/select,\"" + utf16_of(h.value) + L"\"";
             ShellExecuteW(hwnd, L"open", L"explorer.exe", select.c_str(),
                           nullptr, SW_SHOWNORMAL);
+          }
         } else if (h.action == "downloads-folder") {
           ShellExecuteW(hwnd, L"open", utf16_of(downloads.directory()).c_str(),
                         nullptr, nullptr, SW_SHOWNORMAL);
@@ -2143,6 +2492,46 @@ struct Browser {
     bool shift = GetKeyState(VK_SHIFT) < 0;
     if (menu_open && wp == VK_ESCAPE) {
       close_menu();
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
+    if (ctrl && shift && wp == 'P') {
+      palette_open = !palette_open;
+      palette_text.clear();
+      palette_caret = 0;
+      palette_index = 0;
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
+    if (ctrl && shift && wp == 'Q') {
+      panic();
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
+    if (palette_open) {
+      auto matches = palette_matches();
+      if (wp == VK_ESCAPE) {
+        palette_open = false;
+      } else if (wp == VK_RETURN) {
+        if (palette_index >= 0 && palette_index < int(matches.size()))
+          run_command(matches[size_t(palette_index)]->id);
+      } else if (wp == VK_UP) {
+        palette_index = std::max(0, palette_index - 1);
+      } else if (wp == VK_DOWN) {
+        palette_index = std::min(int(matches.size()) - 1, palette_index + 1);
+      } else if (wp == VK_BACK) {
+        size_t previous = previous_cp(palette_text, palette_caret);
+        palette_text.erase(previous, palette_caret - previous);
+        palette_caret = previous;
+        palette_index = 0;
+      } else if (wp == VK_LEFT) {
+        palette_caret = previous_cp(palette_text, palette_caret);
+      } else if (wp == VK_RIGHT) {
+        palette_caret = next_cp(palette_text, palette_caret);
+      } else {
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return;
+      }
       InvalidateRect(hwnd, nullptr, FALSE);
       return;
     }
@@ -2349,6 +2738,15 @@ struct Browser {
   void insert_text(const std::string &text) {
     if (text.empty())
       return;
+    if (palette_open) {
+      if (palette_text.size() + text.size() <= 120) {
+        palette_text.insert(palette_caret, text);
+        palette_caret += text.size();
+        palette_index = 0;
+      }
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
     if (panel_focus) {
       if (panel_search.size() + text.size() <= 200) {
         panel_search.insert(panel_search_caret, text);
@@ -2420,8 +2818,10 @@ struct Browser {
               for (auto &t : tabs_json->array) {
                 if (w.tabs.size() >= 64)
                   break;
-                if (t.type == Json::Type::String && valid_browser_url(t.string))
-                  w.tabs.push_back(t.string);
+                if (t.type == Json::Type::String)
+                  if (auto parsed = parse_url(t.string))
+                    if (parsed->network())
+                      w.tabs.push_back(t.string);
               }
           workspaces.push_back(std::move(w));
         }
@@ -2522,6 +2922,121 @@ struct Browser {
       load_workspace_tabs(workspaces[workspace]);
     }
     save_session();
+  }
+  // The panic button is my one-way escape hatch: every tab goes onto the
+  // reopen stack, a harmless page opens, and Ctrl+Shift+T still brings things
+  // back if I pressed it by mistake.
+  void panic() {
+    if (!profile.panic_enabled) {
+      status = "Panic is off - turn it on in settings first";
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
+    for (auto &tab : tabs) {
+      if (!tab.url.empty()) {
+        ClosedTab closed;
+        closed.url = tab.url;
+        closed.title = tab.title;
+        closed.history = tab.history;
+        closed.index = tab.index;
+        closed.pinned = tab.pinned;
+        closed.muted = tab.muted;
+        closed_tabs.push_back(std::move(closed));
+      }
+      stop_session(tab);
+    }
+    while (closed_tabs.size() > 20)
+      closed_tabs.erase(closed_tabs.begin());
+    tabs.clear();
+    std::string target = profile.panic_url.empty() ? profile.home_page : profile.panic_url;
+    new_tab(target.empty() ? "psychovault://newtab" : target);
+    status = "Panic - Ctrl+Shift+T brings my tabs back";
+  }
+  // The command palette is a box that runs named chrome actions. Each row
+  // lists its chord when there is one, so the palette doubles as a cheat sheet.
+  struct PaletteCommand {
+    const char *label;
+    const char *chord;
+    const char *id;
+  };
+  static const std::vector<PaletteCommand> &palette_commands() {
+    static const std::vector<PaletteCommand> commands = {
+        {"New tab", "Ctrl+T", "palette-new-tab"},
+        {"Close this tab", "Ctrl+W", "palette-close-tab"},
+        {"Reopen closed tab", "Ctrl+Shift+T", "palette-reopen"},
+        {"Duplicate tab", "", "palette-duplicate"},
+        {"Pin or unpin tab", "", "palette-pin"},
+        {"Mute or unmute tab", "Ctrl+M", "palette-mute"},
+        {"Back", "", "palette-back"},
+        {"Forward", "", "palette-forward"},
+        {"Reload", "Ctrl+R", "palette-reload"},
+        {"Stop loading", "Esc", "palette-stop"},
+        {"Go home", "", "palette-home"},
+        {"Bookmarks", "", "palette-bookmarks"},
+        {"History", "", "palette-history"},
+        {"Downloads", "Ctrl+J", "palette-downloads"},
+        {"Workspaces", "", "palette-workspaces"},
+        {"Settings", "", "palette-settings"},
+        {"Find in page", "Ctrl+F", "palette-find"},
+        {"Zoom in", "Ctrl +", "palette-zoom-in"},
+        {"Zoom out", "Ctrl -", "palette-zoom-out"},
+        {"Reset zoom", "Ctrl+0", "palette-zoom-reset"},
+        {"Toggle ad blocker", "", "palette-adblock"},
+        {"Clear browsing history", "", "palette-clear-history"},
+        {"Check for an update", "", "palette-update"},
+        {"Panic", "Ctrl+Shift+Q", "palette-panic"},
+    };
+    return commands;
+  }
+  std::vector<const PaletteCommand *> palette_matches() const {
+    std::vector<const PaletteCommand *> out;
+    std::string needle = ascii_lower(palette_text);
+    for (auto &command : palette_commands())
+      if (needle.empty() || ascii_lower(command.label).find(needle) != std::string::npos)
+        out.push_back(&command);
+    return out;
+  }
+  void run_command(const std::string &id) {
+    palette_open = false;
+    if (id == "palette-new-tab") new_tab();
+    else if (id == "palette-close-tab") close_tab(active);
+    else if (id == "palette-reopen") reopen_tab();
+    else if (id == "palette-duplicate") {
+      Tab t;
+      t.id = next_id++;
+      t.url = current().url;
+      t.title = current().title;
+      t.history.push_back(t.url);
+      t.started = false;
+      tabs.insert(tabs.begin() + active + 1, std::move(t));
+      select_tab(active + 1);
+    } else if (id == "palette-pin") tab_set_pinned(active, !current().pinned);
+    else if (id == "palette-mute") tab_set_muted(active, !current().muted);
+    else if (id == "palette-back") back();
+    else if (id == "palette-forward") forward();
+    else if (id == "palette-reload") navigate(current().url, false);
+    else if (id == "palette-stop") stop();
+    else if (id == "palette-home") navigate(profile.home_page);
+    else if (id == "palette-bookmarks") { panel_bookmarks = true; panel_history = panel_downloads = panel_workspaces = false; }
+    else if (id == "palette-history") { panel_history = true; panel_bookmarks = panel_downloads = panel_workspaces = false; }
+    else if (id == "palette-downloads") { panel_downloads = true; panel_bookmarks = panel_history = panel_workspaces = false; }
+    else if (id == "palette-workspaces") { panel_workspaces = true; panel_bookmarks = panel_history = panel_downloads = false; }
+    else if (id == "palette-settings") navigate("psychovault://settings");
+    else if (id == "palette-find") open_find();
+    else if (id == "palette-zoom-in") set_zoom(current().zoom * 1.1);
+    else if (id == "palette-zoom-out") set_zoom(current().zoom / 1.1);
+    else if (id == "palette-zoom-reset") set_zoom(1.0);
+    else if (id == "palette-adblock") {
+      profile.block_ads = !profile.block_ads;
+      save_profile();
+      status = profile.block_ads ? "Ad blocker on" : "Ad blocker off";
+    } else if (id == "palette-clear-history") {
+      profile.clear_history();
+      save_profile();
+      status = "I cleared my browsing history";
+    } else if (id == "palette-update") check_for_update();
+    else if (id == "palette-panic") panic();
+    InvalidateRect(hwnd, nullptr, FALSE);
   }
   void write_clipboard(const std::string &text) {
     int n = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()),
@@ -3043,6 +3558,31 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
   if (argv)
     LocalFree(argv);
   for (size_t i = 0; i < args.size(); ++i) {
+    if (args[i] == "--apply-update" && i + 2 < args.size()) {
+      // I am the small bootstrapper copy my updater spawns: wait for the main
+      // process to exit, drop the verified exe into place, relaunch it, done.
+      DWORD pid = DWORD(std::atoi(args[i + 1].c_str()));
+      std::string target = args[i + 2];
+      HANDLE parent = OpenProcess(SYNCHRONIZE, FALSE, pid);
+      if (parent) {
+        WaitForSingleObject(parent, 30000);
+        CloseHandle(parent);
+      }
+      Sleep(400);
+      // The staged exe went through my SHA-256 check before this flag ran.
+      std::string staged = target + ".staged";
+      std::wstring wide_target = utf16_of(target);
+      std::wstring wide_staged = utf16_of(staged);
+      for (int attempt = 0; attempt < 20; ++attempt) {
+        if (CopyFileW(wide_staged.c_str(), wide_target.c_str(), FALSE))
+          break;
+        Sleep(500);
+      }
+      DeleteFileW(wide_staged.c_str());
+      ShellExecuteW(nullptr, L"open", wide_target.c_str(), L"", nullptr,
+                    SW_SHOWNORMAL);
+      return 0;
+    }
     if (args[i] == "--smoke")
       smoke = true;
     else if (args[i] == "--private")
