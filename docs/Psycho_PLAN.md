@@ -52,7 +52,9 @@ and what each later stage adds.
 6. My engine grows the CSS those pages need: flexbox, grid, positioning,
    stacking order, rounded corners, shadows, form controls, hover and focus.
 7. Every inventoried control (109 settings controls, 59 defaults, 125
-   interactive controls) wired to real persisted behaviour, not pixels alone.
+   interactive controls) wired to real persisted behaviour, not pixels alone -
+   including the full fifteen-thousand-word spelling list my old app carried,
+   which my checker adopts when this surface returns.
 8. The new tab page with my logo and speed dials, rendered the same way.
 
 Stage C exit: my engine captures diff against the reference PNGs inside a
@@ -72,18 +74,22 @@ tolerance suite, with keyboard, focus and DPI checks - the R2 gate for real.
 12. My WebExtensions API surface grows in the order Proton needs it (already
     mapped from the pinned source in my research), then one user-requested
     extension at a time, each with a test before I say it works; a public
-    compatibility list stays truthful about every extension's status.
+    compatibility list stays truthful about every extension's status. The old
+    app's bundled set returns from my reference source: Proton VPN first, then
+    Dark Reader and my proxy switcher.
 13. The Proton live gate stays exactly as section 8 defines it. Nothing in this
     re-ordering weakens it.
 
 ### Stage F - the product floor
 
-14. My own installer: a real setup exe. It installs per-user under
-    %LOCALAPPDATA%\\Programs like the major browsers do (no admin prompt),
+14. My own installer, written by me: one setup file named
+    PsychoVault-Setup-<version>.exe, just like the old app shipped. It installs
+    per-user into %LOCALAPPDATA%\\PsychoVault exactly where the old program
+    lived (no admin prompt), records itself under HKCU\\Software\\PsychoVault,
     writes a Start Menu shortcut, registers in Apps & Features with a working
-    uninstaller, registers my protocol and file associations where Windows
-    allows, preserves the profile across installs and updates, and leaves my
-    signed updater in charge of upgrades.
+    uninstaller of my own, registers my protocol where Windows allows, finds
+    and keeps an existing old-profile so nothing is lost, and leaves my signed
+    updater in charge of every upgrade after install.
 15. Feel polish: smooth scrolling, hover states, and animated surfaces as my
     engine grows them - measured against the old app, per section 11.
 
