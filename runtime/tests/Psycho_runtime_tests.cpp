@@ -1,6 +1,4 @@
-// PsychoVault original source. The runtime's own checks: bus framing, schema
-// validation, capabilities, back-pressure, broker routing and refusal. I run
-// inside pv-tests; a failure here fails the whole build, like every other check.
+#include "../app/Psycho_instance.hpp"
 #include "../ipc/Psycho_bus.hpp"
 #include "../broker/Psycho_broker.hpp"
 #include "../process/Psycho_process.hpp"
@@ -279,6 +277,91 @@ int run_runtime_bus_tests(int &shared) {
     std::string platform_error;
     RT_CHECK(!spawn_child_platform("probe", "pv-renderer.exe", fake, platform_error));
     RT_CHECK(platform_error == "process.spawn.unsupported");
+  }
+
+  // S023 the singleton: primary takes the lock, a second launch forwards and
+  // exits, quitting saves the session exactly once and hands the lock back.
+  {
+    bool lock_held = false, released = false;
+    int saves = 0;
+    std::vector<std::string> delivered;
+    auto make = [&](std::optional<bool> forced) {
+      AppInstance::Seams seams;
+      seams.acquire_lock = [&, forced](std::string &error) -> std::optional<bool> {
+        (void)error;
+        if (forced)
+          return forced;
+        if (lock_held)
+          return false;
+        lock_held = true;
+        return true;
+      };
+      seams.release_lock = [&] {
+        lock_held = false;
+        released = true;
+      };
+      seams.forward = [&](const LaunchRequest &request, std::string &error) {
+        (void)error;
+        delivered.insert(delivered.end(), request.args.begin(), request.args.end());
+        return true;
+      };
+      seams.save_session = [&](std::string &error) {
+        (void)error;
+        ++saves;
+        return true;
+      };
+      seams.on_forwarded = [&](const LaunchRequest &request) {
+        delivered.insert(delivered.end(), request.args.begin(), request.args.end());
+      };
+      return seams;
+    };
+
+    // First launch is primary.
+    LaunchRequest first{{"--private", "https://example.com/"}};
+    AppInstance a(make(std::nullopt));
+    std::string error;
+    RT_CHECK(a.start(first, error) == AppInstance::Start::Primary && a.running());
+
+    // Second launch: arguments go to the primary, and I exit.
+    LaunchRequest second{{"https://example.org/"}};
+    AppInstance b(make(std::nullopt));
+    RT_CHECK(b.start(second, error) == AppInstance::Start::ForwardedAndExit);
+    RT_CHECK(delivered.size() == 1 && delivered[0] == "https://example.org/");
+
+    // The primary's inbox receives the forwarded request.
+    a.receive_forwarded(second);
+    RT_CHECK(delivered.size() == 2 && delivered.back() == "https://example.org/");
+
+    // Start on a running instance is a no-op primary, not a second process.
+    RT_CHECK(a.start(first, error) == AppInstance::Start::Primary);
+
+    // Graceful quit: one save, lock released, quitting again is already true.
+    RT_CHECK(a.quit(error) && saves == 1 && released);
+    RT_CHECK(a.quit(error) && saves == 1);
+
+    // After the quit, the next start is primary again.
+    AppInstance c(make(std::nullopt));
+    RT_CHECK(c.start(first, error) == AppInstance::Start::Primary);
+    c.quit(error);
+
+    // A lock that cannot even be evaluated is a structured failure, not a guess.
+    AppInstance::Seams broken = make(std::nullopt);
+    broken.acquire_lock = [](std::string &error) -> std::optional<bool> {
+      error = "mutex denied";
+      return std::nullopt;
+    };
+    AppInstance d(broken);
+    RT_CHECK(d.start(first, error) == AppInstance::Start::LockFailed && error == "mutex denied");
+
+    // Quit refusing rollback: a failed save keeps the instance running.
+    AppInstance::Seams stubborn = make(std::nullopt);
+    stubborn.save_session = [](std::string &error) {
+      error = "disk full";
+      return false;
+    };
+    AppInstance e(stubborn);
+    RT_CHECK(e.start(first, error) == AppInstance::Start::Primary);
+    RT_CHECK(!e.quit(error) && error == "disk full" && e.running());
   }
 
   shared += rt_passed;
