@@ -36,7 +36,15 @@ What exists now (P1 in progress):
   the S021 wire runs over. It compiles on Windows only and is proven on the
   first authorized manual Windows build.
 
-Next in P1: S023 (single-instance model: second-launch argument forwarding,
-graceful quit, session save), then S024-S027 (window/tab surfaces on real
-windows), then wiring the supervisor underneath the renderer hosts S022
-introduced.
+- `app/Psycho_instance.*` (S023, decision core done): the singleton model as an
+  auditable state machine - primary takes the lock, a second launch forwards
+  its arguments and exits, quitting saves the session exactly once and hands
+  the lock back; a failed session save refuses the quit and keeps the app
+  running. 11 new checks, 871 total. `Psycho_instance_win32.cpp` is the real
+  Windows side: named mutex per profile, named pipe forwarding on the S021 wire
+  shape, listener thread with a clean quit path - proven on the first
+  authorized manual Windows build.
+
+Next in P1: S024-S027 (window/tab surfaces on real windows), then wiring the
+supervisor underneath the renderer hosts S022 introduced, then S028 internal
+schemes and the preload bridge work.
