@@ -23,18 +23,6 @@ bool has_digit(const std::string &word) {
   return false;
 }
 
-bool all_upper(const std::string &word) {
-  bool any = false;
-  for (char c : word) {
-    if (!std::isalpha(static_cast<unsigned char>(c)))
-      return false;
-    if (std::islower(static_cast<unsigned char>(c)))
-      return false;
-    any = true;
-  }
-  return any && word.size() >= 2;
-}
-
 // The common contractions my vocabulary cannot cover by mining prose, kept
 // explicitly so the behaviour does not drift with my documents.
 const char *kContractions[] = {
@@ -175,7 +163,6 @@ bool Spell::correct(const std::string &word) const {
     if (tail.empty() && known(head))
       return true;
   }
-  (void)all_upper; // case relaxation happens through lower_copy
   return false;
 }
 

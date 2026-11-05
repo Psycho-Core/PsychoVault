@@ -57,9 +57,13 @@ def main():
     # file as one raw string, so a portable build has no loose assets.
     words=(ROOT/"platform/Psycho_words.txt").read_text(encoding="utf-8")
     assert ")PVWORDS" not in words
+    # MSVC refuses a single string literal past its size cap, so the words go in
+    # as adjacent chunks - plain string concatenation, one token per line run.
+    pieces=[words[i:i+12000] for i in range(0,len(words),12000)]
+    body="\n".join('R"PVWORDS('+piece+')PVWORDS"' for piece in pieces)
     (out/"Psycho_embedded_words.hpp").write_text(
-        "#pragma once\nnamespace pv {\ninline const char kPVEmbeddedWords[] = R\"PVWORDS("
-        + words + ")PVWORDS\";\n} // namespace pv\n", encoding="utf-8")
+        "#pragma once\nnamespace pv {\ninline const char kPVEmbeddedWords[] =\n"
+        + body + ";\n} // namespace pv\n", encoding="utf-8")
     windows=os.name=="nt";compiler=args.compiler
     if compiler=="auto":compiler="msvc" if windows else "gcc"
     env=msvc_env() if compiler=="msvc" else os.environ.copy()
