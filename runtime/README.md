@@ -151,5 +151,17 @@ What exists now (P1 in progress):
   the same menu law (my own test caught the validator skipping dup-checks on
   that path; it checks now, unconditionally). 81 new checks (1943 total).
 
-Next in P1: S032 (keyboard shortcut resolution at the broker with a single
-registry), S033 (IME and dead keys end to end), S034 (focus and activation).
+- `keys/Psycho_keys.*` (S032, rules done): one broker-side shortcut registry,
+  so a key means the same thing on every surface. It shares ONE canonical
+  accelerator language with my menu service (labels and behaviour cannot
+  drift even by case). Bind law refuses unknown key tokens, bare printable
+  characters (typing is not a shortcut) and same-scope duplicates. Scopes do
+  the honest work: app bindings fire everywhere, editable bindings only while
+  a field owns focus - and an editable binding deliberately shadows an app
+  binding on the same chord, proven both directions. Resolution is a lookup
+  the broker runs first: a claimed chord never reaches page code; an
+  unclaimed key always propagates. Unbinding a command wipes every scope.
+  33 new checks (1976 total).
+
+Next in P1: S033 (IME and dead-key handling end to end), then S034 (focus
+and activation rules at the broker).
