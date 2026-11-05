@@ -28,6 +28,7 @@ std::string channel_name(Channel channel) {
   case Channel::Perf: return "perf";
   case Channel::Vault: return "vault";
   case Channel::Translate: return "translate";
+  case Channel::Internal: return "internal";
   case Channel::Diagnostics: return "diagnostics";
   case Channel::Lifecycle: return "lifecycle";
   }
@@ -87,6 +88,11 @@ Schemas Schemas::stock() {
   s.add("diagnostics:stage",
         fields({{"stage", T::String, true}, {"ok", T::Bool, true}, {"result", T::String, true}}));
   s.add("history:list", fields({{"query", T::String, false}}));
+  // S028: the internal scheme's two conversations - listing my registered
+  // pages and requesting one of their resources. Both are Internal-channel
+  // only, which by default no renderer capability mask contains.
+  s.add("internal:list", fields({}));
+  s.add("internal:fetch", fields({{"url", T::String, true}}));
   s.add("settings:get", fields({{"key", T::String, true}}));
   s.add("settings:set", fields({{"key", T::String, true}, {"value", T::Number, true}}));
   s.add("vault:status", fields({}));

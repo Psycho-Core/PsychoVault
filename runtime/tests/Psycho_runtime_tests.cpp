@@ -1,6 +1,7 @@
 #include "../app/Psycho_instance.hpp"
 #include "../tabs/Psycho_tabs.hpp"
 #include "../content/Psycho_content.hpp"
+#include "../internal/Psycho_internal.hpp"
 #include "../surface/Psycho_surface.hpp"
 #include "../window/Psycho_window.hpp"
 #include "../ipc/Psycho_bus.hpp"
@@ -798,6 +799,134 @@ int run_runtime_bus_tests(int &shared) {
     RT_CHECK(deep.can_go_back() && !deep.can_go_forward());
     RT_CHECK(deep.go_back(e) > 0 && deep.commit("", "", e));
     RT_CHECK(deep.index() == 98 && deep.current()->url == "https://cap.example/298");
+  }
+
+
+  // S028 internal scheme: the registry, canonicalisation, the three rules -
+  // registry-only pages, one-origin-per-page, web gets nothing by default -
+  // and the widened admission seam for broker-driven navigation.
+  {
+    InternalRegistry registry = InternalRegistry::stock();
+    InternalGate gate(registry);
+    const Schemas schemas = Schemas::stock();
+    Error e;
+
+    // The channel exists with a stable wire number and the two conversations
+    // validate - and no renderer-role mask holds the Internal bit by default.
+    RT_CHECK(channel_name(Channel::Internal) == "internal");
+    RT_CHECK(static_cast<int>(Channel::Internal) == 22);
+    RT_CHECK(!capabilities_for(Role::Renderer).allows(Channel::Internal));
+    RT_CHECK(!capabilities_for(Role::Network).allows(Channel::Internal));
+    RT_CHECK(capabilities_for(Role::Broker).allows(Channel::Internal));
+    RT_CHECK(schemas.validate("internal:list", Json::make_object(), e));
+    Json fetch = Json::make_object();
+    fetch.set("url", Json("psychovault://newtab/"));
+    RT_CHECK(schemas.validate("internal:fetch", fetch, e));
+    Json fetchless = Json::make_object();
+    RT_CHECK(!schemas.validate("internal:fetch", fetchless, e) &&
+             e.code == "schema.missing");
+
+    // The stock registry: my nine pages, fixed address space, all web-sealed.
+    const char *names[] = {"newtab",  "settings", "history", "downloads",
+                           "extensions", "apps",  "version", "nettest", "crash"};
+    RT_CHECK(registry.pages().size() == 9);
+    for (const char *name : names) RT_CHECK(registry.find(name) != nullptr);
+    RT_CHECK(registry.find("newtab")->category == "shell");
+    RT_CHECK(registry.find("nettest")->category == "diagnostics");
+    for (const InternalPage &page : registry.pages()) RT_CHECK(!page.web_reachable);
+
+    // Canonicalisation: case folds, a lone root slash vanishes, query and
+    // fragment ride along, and every refusal names its law.
+    InternalUrl url;
+    RT_CHECK(registry.parse("  PSYCHOVAULT://NewTab/  ", url, e));
+    RT_CHECK(url.page == "newtab" && url.path.empty() &&
+             url.canon == "psychovault://newtab");
+    RT_CHECK(registry.parse("psychovault://settings/app.css", url, e) &&
+             url.path == "/app.css" &&
+             url.canon == "psychovault://settings/app.css");
+    RT_CHECK(registry.parse("psychovault://version?full#build", url, e) &&
+             url.canon == "psychovault://version?full#build");
+    RT_CHECK(!registry.parse("psychovault://", url, e) &&
+             e.code == "internal.page-required");
+    RT_CHECK(!registry.parse("psychovault://Set Tings", url, e) &&
+             e.code == "internal.page-name");
+    RT_CHECK(!registry.parse("psychovault://-dash", url, e) &&
+             e.code == "internal.page-name");
+    RT_CHECK(!registry.parse("psychovault://nope", url, e) &&
+             e.code == "internal.unknown-page");
+    RT_CHECK(!registry.parse("https://example.com/", url, e) &&
+             e.code == "internal.scheme");
+    RT_CHECK(!registry.parse("psychovault://settings/../history", url, e) &&
+             e.code == "internal.traversal");
+    RT_CHECK(!registry.parse("psychovault://settings/..", url, e) &&
+             e.code == "internal.traversal");
+    RT_CHECK(!registry.parse("psychovault://settings/%2e%2e/", url, e) &&
+             e.code == "internal.escape");
+    RT_CHECK(!registry.parse("psychovault://settings/a\\b", url, e) &&
+             e.code == "internal.escape");
+
+    // The gate: capability first, existence second - a right-less probe learns
+    // nothing about what exists. No stock page is web-embeddable even WITH
+    // the capability. Web top-level navigation into my scheme: refused always.
+    RT_CHECK(registry.parse("psychovault://newtab", url, e));
+    RT_CHECK(!gate.web_fetch(url, Capability{}, e) && e.code == "internal.rights");
+    RT_CHECK(!gate.web_fetch(url, Capability::all(), e) && e.code == "internal.embed");
+    RT_CHECK(!gate.web_navigate(url, e) && e.code == "internal.web-navigate");
+    RT_CHECK(gate.broker_navigate(url, e));
+    InternalUrl ghost;
+    registry.parse("psychovault://newtab", ghost, e);
+    ghost.page = "ghost"; // parse never yields this; the gate still defends it
+    RT_CHECK(!gate.web_fetch(ghost, Capability::all(), e) &&
+             e.code == "internal.unknown-page");
+    RT_CHECK(!gate.broker_navigate(ghost, e) && e.code == "internal.unknown-page");
+
+    // The AND-law both ways, proven on a page that opted in: reachable with
+    // the capability, still refused without it.
+    InternalRegistry custom;
+    custom.add({"badge", "shell", "an opted-in embeddable", true});
+    InternalGate custom_gate(custom);
+    InternalUrl badge;
+    RT_CHECK(custom.parse("psychovault://badge/icon.png", badge, e));
+    RT_CHECK(custom_gate.web_fetch(badge, Capability::all(), e));
+    RT_CHECK(!custom_gate.web_fetch(badge, Capability{}, e) &&
+             e.code == "internal.rights");
+
+    // One origin per page: intra-page fetches fine, cross-origin refused, and
+    // an origin that is not registered is nobody.
+    InternalUrl settings_css, history_page;
+    registry.parse("psychovault://settings/app.css", settings_css, e);
+    registry.parse("psychovault://history", history_page, e);
+    RT_CHECK(gate.internal_fetch("settings", settings_css, e));
+    RT_CHECK(!gate.internal_fetch("settings", history_page, e) &&
+             e.code == "internal.origin-cross");
+    RT_CHECK(!gate.internal_fetch("nope", settings_css, e) &&
+             e.code == "internal.origin-unknown");
+
+    // The S027 seam, widened for my broker: my pages admit, my pages only -
+    // and the stock web policy keeps refusing the scheme for a web renderer.
+    WebContents web(21, 51, {}); // default stock admit: my scheme stays shut
+    RT_CHECK(web.go("psychovault://newtab", e) == -1 && e.code == "nav.scheme");
+    std::vector<Envelope> told;
+    WebContents ui(22, 52, {[&told](const Envelope &env) { told.push_back(env); },
+                            [&registry](const std::string &raw, std::string &canon,
+                                        Error &err) {
+                              return admit_browser_url(raw, registry, canon, err);
+                            }});
+    RT_CHECK(ui.go("PSYCHOVAULT://NewTab", e) == 1);
+    RT_CHECK(ui.pending()->url == "psychovault://newtab");
+    RT_CHECK(ui.go("psychovault://nope", e) == -1 &&
+             e.code == "internal.unknown-page");
+    RT_CHECK(ui.pending() && ui.pending()->url == "psychovault://newtab");
+    RT_CHECK(ui.commit("New Tab", "fav:nt", e));
+    RT_CHECK(ui.current()->url == "psychovault://newtab" &&
+             ui.current()->title == "New Tab");
+    RT_CHECK(ui.go("https://web.example/", e) == 2 && ui.commit("Web", "", e));
+    RT_CHECK(ui.history().size() == 2 && ui.current()->url == "https://web.example/");
+    // The refused nav left the pending one alone, and every envelope validates.
+    for (const Envelope &env : told) {
+      RT_CHECK(env.channel == Channel::Tab);
+      RT_CHECK(schemas.validate(env.method, env.payload, e));
+    }
   }
 
   shared += rt_passed;
