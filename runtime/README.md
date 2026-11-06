@@ -11,11 +11,12 @@ Nothing here yet. This directory is created by P1 of `docs/Psycho_MASTER-PLAN.md
 
 What exists now (P1 in progress):
 
-**Integration status:** S035-S039 are tested runtime contract/model slices, not
-claims that the current shell is already driven by this broker runtime. Their
-transport, profile, private-tab/storage, diagnostic-probe/version and
-renderer/process adapters still need a production caller. Tests prove the
-service laws and failure behavior; the P1 exit gate remains outstanding.
+**Integration status:** S035-S040 are tested runtime contract/service slices,
+not claims that the current shell is already driven by this broker runtime.
+Their transport, profile, private-tab/storage, diagnostic-probe/version,
+renderer/process and logger/export adapters still need production callers.
+Tests prove the service laws and failure behavior; the P1 exit gate remains
+outstanding.
 
 - `ipc/Psycho_bus.*` (S021, done): the framed length-prefixed message bus with
   the 21 legacy channel groups plus runtime channels, capability masks per
@@ -283,4 +284,15 @@ service laws and failure behavior; the P1 exit gate remains outstanding.
   Storage, crash-page navigation and tab recreation are explicit adapters and
   still require the broker's production wiring. 36 new checks (2386 total).
 
-Next in P1: S040 (structured logging).
+- `logging/Psycho_logging.*` (S040, structured log contract): one JSONL file
+  per validated service token, with writes serialized across threads and
+  redacted before disk. Sensitive field names,
+  URL userinfo and secret query parameters, and inline Basic/Bearer or
+  `token=`-style values are masked. The active log defaults to 1 MiB with
+  three numbered backups (at most ten); rotation is per service. Support export
+  packages only regular logger-owned log files and rotations in a store-only
+  ZIP with a manifest, capped at 8 MiB. The logger and export are tested, but
+  the runtime services still need production callers. 29 new checks
+  (2415 total).
+
+Next in P1: S041 (command line).
