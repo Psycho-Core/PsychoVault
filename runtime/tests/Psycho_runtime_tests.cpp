@@ -691,11 +691,14 @@ int run_runtime_bus_tests(int &shared) {
     sup.heartbeat(999);
     RT_CHECK(!sup.request_kill(999, "ghost", error));
 
-    // The platform seam answers honestly here: no process table on Linux.
+#ifndef _WIN32
+    // The portable platform seam has no process table; the Windows branch above
+    // already exercised real process creation and recovery.
     WinChildHandle fake;
     std::string platform_error;
     RT_CHECK(!spawn_child_platform("probe", "pv-renderer.exe", fake, platform_error));
     RT_CHECK(platform_error == "process.spawn.unsupported");
+#endif
   }
 
   // S023 the singleton: primary takes the lock, a second launch forwards and
