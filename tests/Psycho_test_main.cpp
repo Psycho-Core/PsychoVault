@@ -24,6 +24,7 @@ using namespace pv;
 int run_runtime_bus_tests(int &shared);
 int run_runtime_integration_tests(int &shared);
 int run_renderer_harness_tests(int &shared);
+int run_renderer_process_tests(int &shared);
 static int passed = 0;
 // One line per check that has started, when the runner asks for it. A stack overflow
 // on a hosted Windows runner ends the process before a failure message can be
@@ -848,6 +849,15 @@ int main() {
     auto visible = jar.document_string(site, 1001);
     CHECK(visible.find("theme=dark") != std::string::npos &&
           visible.find("sid=abc") == std::string::npos);
+    Json renderer_state = jar.renderer_state_for(site, 1001);
+    CHECK(renderer_state.array.size() == 1 &&
+          renderer_state.array.front().str("name") == "theme" &&
+          !renderer_state.array.front().flag("httpOnly"));
+    renderer_state.array.front().set("value", Json("light"));
+    jar.merge_renderer_state(site, renderer_state, 1001);
+    auto merged_header = jar.header_for(site, 1001);
+    CHECK(merged_header.find("sid=abc") != std::string::npos &&
+          merged_header.find("theme=light") != std::string::npos);
     CHECK(jar.header_for(*parse_url("https://other.test/"), 1001).empty());
     jar.set_from_header(*parse_url("https://example.com/"), "tls=1; Secure", 1000);
     CHECK(jar.header_for(*parse_url("http://example.com/"), 1001).find("tls=1") ==
@@ -876,6 +886,15 @@ int main() {
     CHECK(store.remove(origin, "a") && store.length(origin) == 1);
     CHECK(!store.set(origin, "big", std::string(Storage::kQuota, 'x')));
     CHECK(store.set(origin, "b", "22") && store.get(origin, "b") == "22");
+    const std::string other_origin = "https://other.store.test";
+    CHECK(store.set(other_origin, "keep", "other-tab"));
+    Json scoped = store.origin_state(origin);
+    CHECK(scoped.find(origin) && scoped.find(origin)->str("b") == "22" &&
+          !scoped.find(other_origin));
+    scoped.at(origin).set("b", Json("renderer-value"));
+    store.replace_origin_state(origin, scoped);
+    CHECK(store.get(origin, "b") == "renderer-value" &&
+          store.get(other_origin, "keep") == "other-tab");
   }
   {
     // Two tabs share local storage but never each other's session storage.
@@ -3206,6 +3225,8 @@ int main() {
     runtime_ok = run_runtime_integration_tests(passed);
   if (runtime_ok == 0)
     runtime_ok = run_renderer_harness_tests(passed);
+  if (runtime_ok == 0)
+    runtime_ok = run_renderer_process_tests(passed);
   std::cout << passed << " total checks passed\n";
   return runtime_ok;
 }

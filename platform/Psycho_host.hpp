@@ -51,6 +51,7 @@ public:
   void use_cookies(CookieJar *jar);
   void use_local_storage(Storage *storage);
   void set_poster(Poster poster);
+  void set_page_bootstrap(std::function<void(js::Runtime &)> bootstrap);
   CookieJar &cookies() { return page_->cookies(); }
   Storage &local_storage() { return page_->local_storage(); }
   void set_autoplay_blocked(bool blocked) { page_->block_autoplay = blocked; }

@@ -102,6 +102,10 @@ struct Resource {
   // mistake a refusal for a connection that failed and quietly retry it.
   bool refused = false;
   std::string error;
+  // Process-renderer network replies may carry the broker's refreshed cookie
+  // snapshot so document.cookie sees Set-Cookie effects without local sockets.
+  Json broker_cookie_state;
+  Json broker_storage_state;
 };
 struct Diagnostic {
   std::string subsystem, message;

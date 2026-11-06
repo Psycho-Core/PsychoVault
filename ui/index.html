@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PsychoVault — App UI Slice</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: #080d16; color: #e6edf3; }
+    body { font-family: "Segoe UI", Arial, sans-serif; }
+    .page { width: 720px; margin: 116px auto 0; }
+    .brand { color: #38bdf8; font-size: 14px; font-weight: 700; letter-spacing: 3px; }
+    h1 { margin: 26px 0 8px; font-size: 38px; font-weight: 600; }
+    .intro { margin: 0 0 34px; color: #9aa9bb; font-size: 16px; }
+    .address { padding: 22px; border: 1px solid #253449; border-radius: 12px; background: #101927; }
+    label { display: block; margin-bottom: 10px; color: #c8d4e2; font-size: 13px; }
+    .row { height: 46px; }
+    input { width: 510px; height: 42px; padding: 0 13px; border: 1px solid #34465d; border-radius: 6px; background: #080d16; color: #e6edf3; font-size: 14px; }
+    button { height: 42px; margin-left: 8px; padding: 0 16px; border: 0; border-radius: 6px; background: #0ea5e9; color: #06111b; font-size: 14px; font-weight: 700; }
+    button.secondary { margin-left: 0; border: 1px solid #34465d; background: #162334; color: #dce7f3; }
+    .actions { margin-top: 14px; }
+    .status { min-height: 22px; margin: 12px 0 0; color: #91a2b7; font-size: 12px; }
+    .proof { margin-top: 36px; padding-top: 18px; border-top: 1px solid #1c2939; color: #8292a6; font-size: 12px; }
+    .proof strong { color: #b7c6d7; font-weight: 600; }
+  </style>
+  <script src="app.js"></script>
+</head>
+<body>
+  <div class="page">
+    <div class="brand">PSYCHOVAULT</div>
+    <h1>Your browser, built from the inside.</h1>
+    <div class="intro">A small app surface rendered by the PsychoVault engine.</div>
+    <div class="address">
+      <div id="address-form">
+        <div class="field-label">Open a web address</div>
+        <div class="row">
+          <input id="address" name="address" type="text" value="https://example.com/" aria-label="Web address">
+          <button id="open-address" type="submit">Open in tab</button>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="new-tab" class="secondary" type="button">Create a new tab</button>
+      </div>
+      <div id="status" class="status">App UI preview · waiting for the broker bridge</div>
+    </div>
+    <div class="proof"><strong>Vertical slice</strong> &nbsp; HTML + CSS + JavaScript &nbsp;·&nbsp; owned layout, script and paint pipeline</div>
+  </div>
+</body>
+</html>

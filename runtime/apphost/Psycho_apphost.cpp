@@ -34,6 +34,14 @@ const ExposedEntry kPrivateShellProfile[] = {
     {Channel::Lifecycle, "lifecycle:ping"},
 };
 
+// The new-tab app surface gets only the calls its address and tab controls need.
+// It has no settings, history, diagnostics, extension, vault or network facade.
+const ExposedEntry kNewTabProfile[] = {
+    {Channel::Tab, "tab:new"},
+    {Channel::Tab, "tab:activate"},
+    {Channel::Lifecycle, "lifecycle:ping"},
+};
+
 const ExposedEntry kPrivateDiagnosticsProfile[] = {
     {Channel::Internal, "internal:list"},
     {Channel::Diagnostics, "diagnostics:stage"},
@@ -68,7 +76,10 @@ AppHost::AppHost(int tab_id, const InternalPage *page, Seams seams,
       count = sizeof(kCrashProfile) / sizeof(kCrashProfile[0]);
     } else if (page->category == "shell") {
       kind_ = PageKind::Shell;
-      if (policy_ == RendererPolicy::Private) {
+      if (page->name == "newtab") {
+        profile = kNewTabProfile;
+        count = sizeof(kNewTabProfile) / sizeof(kNewTabProfile[0]);
+      } else if (policy_ == RendererPolicy::Private) {
         profile = kPrivateShellProfile;
         count = sizeof(kPrivateShellProfile) / sizeof(kPrivateShellProfile[0]);
       } else {

@@ -110,7 +110,34 @@ Schemas Schemas::stock() {
   s.add("renderer:navigate", fields({{"url", T::String, true},
                                      {"ok", T::Bool, false},
                                      {"frame", T::Object, false},
+                                     {"cookie_state", T::Array, false},
+                                     {"storage_state", T::Object, false},
+                                     {"images", T::Array, false},
                                      {"detail", T::String, false}}));
+  // A renderer keeps its page alive after navigation. Input and resize commands
+  // return the latest frame through this same typed process boundary.
+  s.add("renderer:input", fields({{"tag", T::String, true},
+                                  {"x", T::Number, false}, {"y", T::Number, false},
+                                  {"width", T::Number, false}, {"height", T::Number, false},
+                                  {"key", T::String, false}, {"text", T::String, false},
+                                  {"cookie_state", T::Array, false},
+                                  {"storage_state", T::Object, false},
+                                  {"images", T::Array, false},
+                                  {"ok", T::Bool, false}, {"frame", T::Object, false},
+                                  {"url", T::String, false},
+                                  {"navigation", T::String, false},
+                                  {"url_change", T::String, false},
+                                  {"detail", T::String, false}}));
+  s.add("renderer:bridgeInvoke",
+        fields({{"channel", T::Number, true}, {"method", T::String, true},
+                {"payload", T::Object, true}, {"ok", T::Bool, false},
+                {"reply", T::Object, false}, {"detail", T::String, false}}));
+  s.add("renderer:imageChunk", fields({{"url", T::String, true},
+                                       {"width", T::Number, true},
+                                       {"height", T::Number, true},
+                                       {"index", T::Number, true},
+                                       {"total", T::Number, true},
+                                       {"pixels_b64", T::String, true}}));
   s.add("renderer:isolationProbe", fields({{"path", T::String, true},
                                            {"host", T::String, true},
                                            {"port", T::Number, true},
@@ -126,6 +153,21 @@ Schemas Schemas::stock() {
                                        {"status", T::Number, true},
                                        {"ok", T::Bool, true},
                                        {"refused", T::Bool, true},
+                                       {"cookie_state", T::Array, false},
+                                       {"storage_state", T::Object, false},
+                                       {"detail", T::String, false}}));
+  s.add("network:post", fields({{"url", T::String, true},
+                                {"body", T::String, true},
+                                {"content_type", T::String, true}}));
+  s.add("network:postResult", fields({{"url", T::String, true},
+                                       {"mime", T::String, true},
+                                       {"text", T::String, true},
+                                       {"bytes_b64", T::String, true},
+                                       {"status", T::Number, true},
+                                       {"ok", T::Bool, true},
+                                       {"refused", T::Bool, true},
+                                       {"cookie_state", T::Array, false},
+                                       {"storage_state", T::Object, false},
                                        {"detail", T::String, false}}));
   s.add("diagnostics:stage",
         fields({{"stage", T::String, true}, {"ok", T::Bool, true}, {"result", T::String, true}}));

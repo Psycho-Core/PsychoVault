@@ -542,7 +542,25 @@ int run_runtime_bus_tests(int &shared) {
           std::chrono::steady_clock::now() - began).count();
       RT_CHECK(reply.payload.flag("ok") && reply.payload.find("frame") && elapsed > 0);
       std::cout << "REAL_PROCESS_IPC_US[" << i << "]=" << elapsed << "\n";
+      Json resize = Json::make_object();
+      resize.set("tag", Json("resize"));
+      resize.set("width", Json(640));
+      resize.set("height", Json(480));
+      RT_CHECK(farm.input(i, resize, fetch, reply, error));
+      RT_CHECK(reply.payload.flag("ok") && reply.payload.find("frame"));
     }
+    size_t lease_a = 0, lease_b = 0, lease_c = 0, lease_reused = 0;
+    RT_CHECK(farm.acquire(lease_a, error));
+    RT_CHECK(farm.acquire(lease_b, error));
+    RT_CHECK(farm.acquire(lease_c, error));
+    RT_CHECK(lease_a != lease_b && lease_b != lease_c && lease_a != lease_c &&
+             farm.size() == 3);
+    farm.release(lease_a);
+    RT_CHECK(farm.acquire(lease_reused, error) && lease_reused == lease_a &&
+             farm.process_id(lease_reused) != 0);
+    Envelope leased_reply;
+    RT_CHECK(farm.navigate(lease_reused, "about:blank", fetch, leased_reply, error) &&
+             leased_reply.payload.flag("ok"));
 
     const auto profile_file = std::filesystem::temp_directory_path() /
         ("PsychoVault-renderer-profile-" + std::to_string(GetCurrentProcessId()) +
@@ -2541,6 +2559,29 @@ int run_runtime_bus_tests(int &shared) {
     RT_CHECK(regular_shell.policy() == RendererPolicy::Regular &&
              regular_shell.page_world().run("typeof psycho.settings.get").string ==
                  "function");
+
+    // S045's address and tab actions stay behind the shell page's curated bridge.
+    std::vector<std::pair<std::string, Json>> ui_calls;
+    auto ui_bus = [&ui_calls](Channel, const std::string &method, Json payload,
+                              Json &reply, Error &) {
+      ui_calls.emplace_back(method, std::move(payload));
+      reply = Json::make_object();
+      reply.set("ok", Json(true));
+      return true;
+    };
+    AppHost ui_bridge(79, registry.find("newtab"), {ui_bus, {}});
+    RT_CHECK(ui_bridge.page_world().run("typeof psycho.tab.new").string == "function");
+    RT_CHECK(ui_bridge.page_world().run("typeof psycho.tab.activate").string == "function");
+    RT_CHECK(ui_bridge.page_world().run("typeof psycho.settings").string == "undefined");
+    RT_CHECK(ui_bridge.page_world().run("typeof psycho.internal").string == "undefined");
+    ui_bridge.page_world().run("psycho.tab.new({url: 'https://local.test/'})");
+    RT_CHECK(ui_calls.size() == 1 && ui_calls.back().first == "tab:new");
+    RT_CHECK(ui_calls.back().second.str("url") == "https://local.test/");
+    ui_bridge.page_world().run("psycho.tab.activate({id: 4})");
+    RT_CHECK(ui_calls.size() == 2 && ui_calls.back().first == "tab:activate");
+    RT_CHECK(ui_calls.back().second.num("id") == 4);
+    RT_CHECK(ui_bridge.page_world().run("typeof psycho.tab.close").string == "undefined");
+
   }
 
   // S038 diagnostics: every nettest stage is named and reported, failures do

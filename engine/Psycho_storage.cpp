@@ -109,4 +109,23 @@ void Storage::from_json(const Json &json) {
         items.emplace_back(name, value.string);
   }
 }
+
+Json Storage::origin_state(const std::string &origin) const {
+  Json state = Json::make_object();
+  auto found = data_.find(origin);
+  if (found == data_.end()) return state;
+  Json items = Json::make_object();
+  for (const auto &[name, value] : found->second) items.set(name, value);
+  state.set(origin, std::move(items));
+  return state;
+}
+
+void Storage::replace_origin_state(const std::string &origin, const Json &json) {
+  data_.erase(origin);
+  if (origin.empty() || json.type != Json::Type::Object) return;
+  const Json *items = json.find(origin);
+  if (!items || items->type != Json::Type::Object) return;
+  for (const auto &[name, value] : items->object)
+    if (value.type == Json::Type::String) set(origin, name, value.string);
+}
 } // namespace pv

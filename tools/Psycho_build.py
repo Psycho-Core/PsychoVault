@@ -23,7 +23,7 @@ PLATFORM=["platform/Psycho_host.cpp","platform/Psycho_network.cpp","platform/Psy
           "platform/Psycho_spell.cpp","platform/Psycho_sandbox.cpp"]
 # P1 of my master plan: my runtime (broker + typed IPC bus + broker-side tests).
 RUNTIME=["runtime/app/Psycho_instance.cpp","runtime/app/Psycho_instance_win32.cpp","runtime/ipc/Psycho_bus.cpp","runtime/broker/Psycho_broker.cpp","runtime/broker/Psycho_renderer_harness.cpp","runtime/broker/Psycho_renderer_process.cpp","runtime/broker/Psycho_renderer_farm.cpp","runtime/process/Psycho_process.cpp","runtime/process/Psycho_process_win32.cpp","runtime/process/Psycho_process_transport.cpp","runtime/renderer/Psycho_renderer_worker.cpp","runtime/renderer/Psycho_renderer_main.cpp","runtime/window/Psycho_window.cpp","runtime/window/Psycho_window_win32.cpp","runtime/surface/Psycho_surface.cpp","runtime/surface/Psycho_surface_win32.cpp","runtime/tabs/Psycho_tabs.cpp","runtime/content/Psycho_content.cpp","runtime/internal/Psycho_internal.cpp","runtime/bridge/Psycho_bridge.cpp","runtime/apphost/Psycho_apphost.cpp","runtime/services/Psycho_services.cpp","runtime/keys/Psycho_keys.cpp","runtime/ime/Psycho_ime.cpp","runtime/focus/Psycho_focus.cpp","runtime/downloads/Psycho_downloads.cpp","runtime/permissions/Psycho_permissions.cpp","runtime/private/Psycho_private.cpp","runtime/diagnostics/Psycho_diagnostics.cpp","runtime/crash/Psycho_crash.cpp","runtime/logging/Psycho_logging.cpp","runtime/commandline/Psycho_commandline.cpp"]
-RUNTIME_TESTS=["runtime/tests/Psycho_runtime_tests.cpp","runtime/tests/Psycho_runtime_integration_tests.cpp","runtime/tests/Psycho_renderer_harness_tests.cpp"]
+RUNTIME_TESTS=["runtime/tests/Psycho_runtime_tests.cpp","runtime/tests/Psycho_runtime_integration_tests.cpp","runtime/tests/Psycho_renderer_harness_tests.cpp","runtime/tests/Psycho_renderer_process_tests.cpp"]
 def run(cmd,env=None):
     print("+",subprocess.list2cmdline([str(x) for x in cmd]),flush=True)
     subprocess.run([str(x) for x in cmd],cwd=ROOT,env=env,check=True)
@@ -67,6 +67,18 @@ def main():
     (out/"Psycho_embedded_words.hpp").write_text(
         "#pragma once\nnamespace pv {\ninline const char kPVEmbeddedWords[] =\n"
         + body + ";\n} // namespace pv\n", encoding="utf-8")
+    # My browser UI is part of the one executable, not a loose file that a
+    # renderer could resolve from an arbitrary working directory.
+    ui_html=(ROOT/"ui/index.html").read_text(encoding="utf-8")
+    ui_js=(ROOT/"ui/app.js").read_text(encoding="utf-8")
+    assert ")PVUIHTML\"" not in ui_html and ")PVUIJS\"" not in ui_js
+    ui_body=(
+        "#pragma once\nnamespace pv {\n"
+        + 'inline const char kPVAppUiHtml[] = R"PVUIHTML(' + ui_html + ')PVUIHTML";\n'
+        + 'inline const char kPVAppUiJs[] = R"PVUIJS(' + ui_js + ')PVUIJS";\n'
+        + "} // namespace pv\n"
+    )
+    (out/"Psycho_embedded_ui.hpp").write_text(ui_body, encoding="utf-8")
     windows=os.name=="nt";compiler=args.compiler
     if compiler=="auto":compiler="msvc" if windows else "gcc"
     env=msvc_env() if compiler=="msvc" else os.environ.copy()
@@ -74,7 +86,7 @@ def main():
     def target(name,sources,libs=(),subsystem=None,entry=None):
         obj=out/"obj"/name;obj.parent.mkdir(parents=True,exist_ok=True);obj.mkdir(exist_ok=True)
         if compiler=="msvc":
-            cmd=[cxx,"/nologo","/std:c++20","/EHsc","/O2","/MT","/W3","/WX","/permissive-","/DUNICODE","/D_UNICODE","/D_CRT_SECURE_NO_WARNINGS","/sdl","/GS","/guard:cf","/I"+str(ROOT),"/I"+str(out),"/D"+VERSION_DEFINE,"/Fo"+str(obj)+os.sep]
+            cmd=[cxx,"/nologo","/std:c++20","/utf-8","/EHsc","/O2","/MT","/W3","/WX","/permissive-","/DUNICODE","/D_UNICODE","/D_CRT_SECURE_NO_WARNINGS","/sdl","/GS","/guard:cf","/I"+str(ROOT),"/I"+str(out),"/D"+VERSION_DEFINE,"/Fo"+str(obj)+os.sep]
             cmd+= [str(ROOT/s) for s in sources]
             cmd+=["/link","/DYNAMICBASE","/NXCOMPAT","/HIGHENTROPYVA","/INCREMENTAL:NO"]
             if subsystem:cmd+=[f"/SUBSYSTEM:"+subsystem]

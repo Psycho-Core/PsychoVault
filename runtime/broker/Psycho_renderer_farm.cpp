@@ -1,5 +1,6 @@
 // PsychoVault original source. Real process ownership stays on the broker side.
 #include "Psycho_renderer_farm.hpp"
+#include <utility>
 
 namespace pv::rt {
 
@@ -39,37 +40,155 @@ void RendererProcessFarm::stop(Hosted &renderer) {
 bool RendererProcessFarm::start(const std::string &renderer_executable, size_t count,
                                 Error &error) {
   shutdown();
-  std::lock_guard<std::mutex> lock(mutex_);
   if (count < 2 || count > 32) {
     error = {"renderer.farm.count", "renderer farm requires between two and 32 workers"};
     return false;
   }
+  std::lock_guard<std::mutex> lock(mutex_);
   executable_ = renderer_executable;
   stopped_ = false;
-  renderers_.resize(count);
-  for (Hosted &renderer : renderers_) {
-    if (!spawn(renderer, executable_, error)) {
-      for (Hosted &started : renderers_) stop(started);
+  renderers_.reserve(count);
+  for (size_t i = 0; i < count; ++i) {
+    auto renderer = std::make_shared<Hosted>();
+    std::lock_guard<std::mutex> io_lock(renderer->io_mutex);
+    if (!spawn(*renderer, executable_, error)) {
+      for (const auto &started : renderers_) {
+        std::lock_guard<std::mutex> started_lock(started->io_mutex);
+        stop(*started);
+      }
       renderers_.clear();
       executable_.clear();
       stopped_ = true;
       return false;
     }
+    renderers_.push_back(std::move(renderer));
   }
   error = Error{};
   return true;
 }
 
+bool RendererProcessFarm::acquire(size_t &renderer, Error &error) {
+  std::vector<std::shared_ptr<Hosted>> candidates;
+  std::string executable;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (stopped_ || executable_.empty()) {
+      error = {"renderer.farm.stopped", "renderer farm is not running"};
+      return false;
+    }
+    candidates = renderers_;
+    executable = executable_;
+  }
+  for (size_t i = 0; i < candidates.size(); ++i) {
+    Hosted &candidate = *candidates[i];
+    std::lock_guard<std::mutex> io_lock(candidate.io_mutex);
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (stopped_) {
+        error = {"renderer.farm.stopped", "renderer farm is not running"};
+        return false;
+      }
+    }
+    if (candidate.leased || candidate.retired) continue;
+    candidate.leased = true;
+    if (candidate.process.process &&
+        !child_process_running_platform(candidate.process))
+      stop(candidate);
+    if (!candidate.process.process && !spawn(candidate, executable, error)) {
+      candidate.retired = true;
+      candidate.leased = false;
+      return false;
+    }
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (stopped_) {
+        stop(candidate);
+        candidate.leased = false;
+        error = {"renderer.farm.stopped", "renderer farm stopped during allocation"};
+        return false;
+      }
+    }
+    renderer = i;
+    error = Error{};
+    return true;
+  }
+
+  auto candidate = std::make_shared<Hosted>();
+  candidate->leased = true;
+  size_t index = 0;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (stopped_ || executable_.empty()) {
+      error = {"renderer.farm.stopped", "renderer farm is not running"};
+      return false;
+    }
+    if (renderers_.size() >= 64) {
+      error = {"renderer.farm.limit", "renderer process limit reached"};
+      return false;
+    }
+    index = renderers_.size();
+    renderers_.push_back(candidate);
+    executable = executable_;
+  }
+  std::lock_guard<std::mutex> io_lock(candidate->io_mutex);
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (stopped_) {
+      candidate->leased = false;
+      error = {"renderer.farm.stopped", "renderer farm stopped during allocation"};
+      return false;
+    }
+  }
+  if (!spawn(*candidate, executable, error)) {
+    candidate->retired = true;
+    candidate->leased = false;
+    return false;
+  }
+  renderer = index;
+  error = Error{};
+  return true;
+}
+
+void RendererProcessFarm::release(size_t renderer) {
+  std::shared_ptr<Hosted> released;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (renderer >= renderers_.size()) return;
+    released = renderers_[renderer];
+  }
+  std::lock_guard<std::mutex> io_lock(released->io_mutex);
+  if (!released->leased) return;
+  stop(*released);
+  released->leased = false;
+  released->retired = false;
+  released->restarts = 0;
+}
+
 bool RendererProcessFarm::navigate(size_t renderer, const std::string &url,
                                    const Host::Fetcher &fetcher, Envelope &reply,
-                                   Error &error) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (renderer >= renderers_.size() || !renderers_[renderer].client) {
+                                   Error &error, Json cookie_state,
+                                   Json storage_state, Host::Poster poster,
+                                   RendererProcessClient::BridgeInvoker bridge) {
+  std::shared_ptr<Hosted> hosted;
+  std::string executable;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (renderer >= renderers_.size()) {
+      error = {"renderer.farm.missing", "renderer process is not running"};
+      return false;
+    }
+    hosted = renderers_[renderer];
+    executable = executable_;
+  }
+  std::lock_guard<std::mutex> io_lock(hosted->io_mutex);
+  if (!hosted->client) {
     error = {"renderer.farm.missing", "renderer process is not running"};
     return false;
   }
-  Hosted &hosted = renderers_[renderer];
-  if (hosted.client->navigate(url, fetcher, reply, error)) return true;
+  if (hosted->client->navigate(url, fetcher, reply, error, std::move(cookie_state),
+                               std::move(storage_state), std::move(poster),
+                               std::move(bridge)))
+    return true;
   if (error.code.rfind("process.pipe.", 0) != 0 &&
       error.code.rfind("process.read.", 0) != 0 &&
       error.code != "process.closed" &&
@@ -77,19 +196,24 @@ bool RendererProcessFarm::navigate(size_t renderer, const std::string &url,
     return false;
 
   const Error navigation_error = error;
-  if (hosted.restarts >= 3) {
-    stop(hosted);
-    hosted.retired = true;
+  if (hosted->restarts >= 3) {
+    stop(*hosted);
+    hosted->retired = true;
     error = {"renderer.farm.retired", "renderer " + std::to_string(renderer) +
                                           " exhausted its restart budget after an IPC failure"};
     return false;
   }
-  const size_t attempts = hosted.restarts + 1;
-  stop(hosted);
-  hosted.restarts = attempts;
+  const size_t attempts = hosted->restarts + 1;
+  stop(*hosted);
+  hosted->restarts = attempts;
+  bool is_stopped = false;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    is_stopped = stopped_;
+  }
   Error replacement_error;
-  if (!spawn(hosted, executable_, replacement_error)) {
-    hosted.retired = true;
+  if (is_stopped || !spawn(*hosted, executable, replacement_error)) {
+    hosted->retired = true;
     error = {"renderer.farm.restart", "renderer " + std::to_string(renderer) +
                                           " failed during IPC recovery: " +
                                           replacement_error.message};
@@ -99,23 +223,68 @@ bool RendererProcessFarm::navigate(size_t renderer, const std::string &url,
   return false;
 }
 
+bool RendererProcessFarm::input(size_t renderer, const Json &command,
+                                const Host::Fetcher &fetcher, Envelope &reply,
+                                Error &error, Json cookie_state,
+                                Json storage_state, Host::Poster poster,
+                                RendererProcessClient::BridgeInvoker bridge) {
+  std::shared_ptr<Hosted> hosted;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (renderer >= renderers_.size()) {
+      error = {"renderer.farm.missing", "renderer process is not running"};
+      return false;
+    }
+    hosted = renderers_[renderer];
+  }
+  std::lock_guard<std::mutex> io_lock(hosted->io_mutex);
+  if (!hosted->client) {
+    error = {"renderer.farm.missing", "renderer process is not running"};
+    return false;
+  }
+  return hosted->client->input(command, fetcher, reply, error,
+                               std::move(cookie_state), std::move(storage_state),
+                               std::move(poster), std::move(bridge));
+}
+
 bool RendererProcessFarm::probe_isolation(size_t renderer,
                                            const std::string &path,
                                            const std::string &host,
                                            uint16_t port, Envelope &reply,
                                            Error &error) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (renderer >= renderers_.size() || !renderers_[renderer].client) {
+  std::shared_ptr<Hosted> hosted;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (renderer >= renderers_.size()) {
+      error = {"renderer.farm.missing", "renderer process is not running"};
+      return false;
+    }
+    hosted = renderers_[renderer];
+  }
+  std::lock_guard<std::mutex> io_lock(hosted->io_mutex);
+  if (!hosted->client) {
     error = {"renderer.farm.missing", "renderer process is not running"};
     return false;
   }
-  return renderers_[renderer].client->probe_isolation(path, host, port, reply, error);
+  return hosted->client->probe_isolation(path, host, port, reply, error);
 }
 
 bool RendererProcessFarm::monitor(Error &error) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  for (size_t i = 0; i < renderers_.size(); ++i) {
-    Hosted &renderer = renderers_[i];
+  std::vector<std::shared_ptr<Hosted>> renderers;
+  std::string executable;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (stopped_) {
+      error = {"renderer.farm.stopped", "renderer farm is not running"};
+      return false;
+    }
+    renderers = renderers_;
+    executable = executable_;
+  }
+  for (size_t i = 0; i < renderers.size(); ++i) {
+    Hosted &renderer = *renderers[i];
+    std::unique_lock<std::mutex> io_lock(renderer.io_mutex, std::try_to_lock);
+    if (!io_lock.owns_lock()) continue;
     if (renderer.retired) {
       error = {"renderer.farm.retired", "renderer " + std::to_string(i) +
                                                 " is retired after a failed replacement"};
@@ -133,7 +302,7 @@ bool RendererProcessFarm::monitor(Error &error) {
     const size_t attempts = renderer.restarts + 1;
     stop(renderer);
     renderer.restarts = attempts;
-    if (!spawn(renderer, executable_, error)) {
+    if (!spawn(renderer, executable, error)) {
       renderer.retired = true;
       error = {"renderer.farm.restart", "renderer " + std::to_string(i) +
                                                 " replacement failed: " + error.message};
@@ -150,22 +319,41 @@ size_t RendererProcessFarm::size() const {
 }
 
 size_t RendererProcessFarm::restarts(size_t renderer) const {
-  std::lock_guard<std::mutex> lock(mutex_);
-  return renderer < renderers_.size() ? renderers_[renderer].restarts : 0;
+  std::shared_ptr<Hosted> hosted;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (renderer >= renderers_.size()) return 0;
+    hosted = renderers_[renderer];
+  }
+  std::lock_guard<std::mutex> io_lock(hosted->io_mutex);
+  return hosted->restarts;
 }
 
 unsigned long RendererProcessFarm::process_id(size_t renderer) const {
-  std::lock_guard<std::mutex> lock(mutex_);
-  return renderer < renderers_.size() ? renderers_[renderer].process.pid : 0;
+  std::shared_ptr<Hosted> hosted;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (renderer >= renderers_.size()) return 0;
+    hosted = renderers_[renderer];
+  }
+  std::lock_guard<std::mutex> io_lock(hosted->io_mutex);
+  return hosted->process.pid;
 }
 
 void RendererProcessFarm::shutdown() {
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (stopped_ && renderers_.empty()) return;
-  stopped_ = true;
-  for (Hosted &renderer : renderers_) stop(renderer);
-  renderers_.clear();
-  executable_.clear();
+  std::vector<std::shared_ptr<Hosted>> renderers;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (stopped_ && renderers_.empty()) return;
+    stopped_ = true;
+    renderers.swap(renderers_);
+    executable_.clear();
+  }
+  for (const auto &renderer : renderers) {
+    std::lock_guard<std::mutex> io_lock(renderer->io_mutex);
+    stop(*renderer);
+    renderer->leased = false;
+  }
 }
 
 } // namespace pv::rt
