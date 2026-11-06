@@ -231,10 +231,10 @@ int run_runtime_bus_tests(int &shared) {
     Schemas s = Schemas::stock();
     Link link(Capability::all(), "left", Capability::all(), "right");
     link.set_schemas(&s);
-    Limits small;
-    small.max_queued_bytes = 200;
-    small.max_queued_messages = 64;
-    link.set_limits(small);
+    Limits limits_for_test;
+    limits_for_test.max_queued_bytes = 200;
+    limits_for_test.max_queued_messages = 64;
+    link.set_limits(limits_for_test);
     Error e;
     bool crowded = false;
     for (int i = 0; i < 64; ++i)
