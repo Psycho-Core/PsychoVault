@@ -13,6 +13,7 @@
 #include "../private/Psycho_private.hpp"
 #include "../diagnostics/Psycho_diagnostics.hpp"
 #include "../crash/Psycho_crash.hpp"
+#include "../commandline/Psycho_commandline.hpp"
 #include "../logging/Psycho_logging.hpp"
 #include "../../engine/Psycho_js.hpp"
 #include "../surface/Psycho_surface.hpp"
@@ -2433,6 +2434,78 @@ int run_runtime_bus_tests(int &shared) {
              "undefined");
     RT_CHECK(crash_page.page_world().run("typeof psycho.settings").string ==
              "undefined");
+  }
+
+  // S041 command line: validated argv is kept as data; URLs and options are
+  // canonicalised/typed without ever assembling a shell command.
+  {
+    CommandLineOptions options;
+    Error e;
+    const std::vector<std::string> arguments = {
+        "--private", "--profile", "C:\\Users\\A & B\\Psycho Profile",
+        "--diagnostics", "--language", "en-AU", "--url",
+        "https://example.test/path?q=a&x=1;$(touch%20/tmp/pv-owned)",
+        "https://example.org/", "--smoke", "--capture", "build/capture image.png",
+        "--expect-image"};
+    RT_CHECK(parse_command_line(arguments, options, e) && !e);
+    RT_CHECK(options.private_mode && options.diagnostics && options.smoke &&
+             options.expect_image);
+    RT_CHECK(options.profile_directory == "C:\\Users\\A & B\\Psycho Profile" &&
+             options.language == "en-AU" &&
+             options.capture_path == "build/capture image.png");
+    RT_CHECK(options.urls.size() == 2 &&
+             options.urls[0] == "https://example.test/path?q=a&x=1;$(touch%20/tmp/pv-owned)" &&
+             options.urls[1] == "https://example.org/");
+    const std::vector<std::string> launch_urls = command_line_startup_urls(options);
+    RT_CHECK(launch_urls.size() == 3 &&
+             launch_urls[0] == "psychovault://nettest" &&
+             launch_urls[1] == options.urls[0] && launch_urls[2] == options.urls[1]);
+    RT_CHECK(valid_language_tag("en") && valid_language_tag("en-AU") &&
+             valid_language_tag("zh-Hant-TW") && valid_language_tag("de-CH-1901"));
+    RT_CHECK(!valid_language_tag("") && !valid_language_tag("e") &&
+             !valid_language_tag("en_US") && !valid_language_tag("en--US") &&
+             !valid_language_tag("en-123456789"));
+
+    CommandLineOptions defaults;
+    RT_CHECK(parse_command_line({}, defaults, e) && defaults.urls.empty() &&
+             !defaults.private_mode && !defaults.diagnostics && !e);
+    CommandLineOptions internal;
+    RT_CHECK(parse_command_line({"--", "https://example.test/", "psychovault://version"},
+                                internal, e) &&
+             internal.urls.size() == 2 &&
+             internal.urls[1] == "psychovault://version");
+    CommandLineOptions repeated;
+    RT_CHECK(parse_command_line({"--url", "https://one.test/", "--url",
+                                 "psychovault://nettest"}, repeated, e) &&
+             repeated.urls.size() == 2 && repeated.urls[1] == "psychovault://nettest");
+
+    auto rejected = [&](const std::vector<std::string> &input,
+                        const std::string &code) {
+      CommandLineOptions parsed;
+      Error error;
+      return !parse_command_line(input, parsed, error) && error.code == code;
+    };
+    RT_CHECK(rejected({"example.test"}, "commandline.url"));
+    RT_CHECK(rejected({"javascript:alert(1)"}, "commandline.url"));
+    RT_CHECK(rejected({"file:///etc/passwd"}, "commandline.url"));
+    RT_CHECK(rejected({"https://user:pass@example.test/"}, "commandline.url"));
+    RT_CHECK(rejected({"psychovault://unregistered"}, "commandline.url"));
+    RT_CHECK(rejected({"https://example.test/has space"}, "commandline.url"));
+    RT_CHECK(rejected({"https://example.test/\nheader"}, "commandline.url"));
+    RT_CHECK(rejected({"--unknown"}, "commandline.unknown-option"));
+    RT_CHECK(rejected({"--url"}, "commandline.missing-value"));
+    RT_CHECK(rejected({"--profile", "--private"}, "commandline.missing-value"));
+    RT_CHECK(rejected({"--language", "en_US"}, "commandline.language"));
+    RT_CHECK(rejected({"--language", "fr-FR"}, "commandline.language-unavailable"));
+    RT_CHECK(rejected({"--profile", "bad\npath"}, "commandline.missing-value"));
+    RT_CHECK(rejected({"--private", "--private"}, "commandline.duplicate-option"));
+    RT_CHECK(rejected({"--profile", "one", "--profile", "two"},
+                      "commandline.duplicate-option"));
+    RT_CHECK(rejected({"--", "--private"}, "commandline.url"));
+    std::vector<std::string> too_many_urls(65, "https://example.test/");
+    RT_CHECK(rejected(too_many_urls, "commandline.url-count"));
+    std::vector<std::string> too_many_args(257, "--private");
+    RT_CHECK(rejected(too_many_args, "commandline.argument-count"));
   }
 
   // S040 structured logging: per-service JSONL, redaction before disk, bounded
