@@ -14,6 +14,9 @@
 #include "../platform/Psycho_download.hpp"
 #include "../platform/Psycho_sandbox.hpp"
 #include "../runtime/commandline/Psycho_commandline.hpp"
+#include "../runtime/app/Psycho_instance.hpp"
+#include "../runtime/broker/Psycho_renderer_farm.hpp"
+#include "../runtime/renderer/Psycho_renderer_main.hpp"
 #include <audioclient.h>
 #include <atomic>
 #include <algorithm>
@@ -28,6 +31,7 @@
 #include <filesystem>
 #include <mmdeviceapi.h>
 #include <fstream>
+#include <mutex>
 #include <iostream>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -36,8 +40,18 @@
 #include <windowsx.h>
 
 namespace pv {
+struct ForwardedLaunch {
+  std::vector<std::string> urls;
+  std::string error;
+};
+static std::atomic<HWND> primary_window{nullptr};
+static std::mutex forwarded_mutex;
+static std::deque<ForwardedLaunch *> pending_forwarded;
+static rt::AppInstance *app_instance = nullptr;
+static rt::RendererProcessFarm *renderer_farm = nullptr;
 static constexpr UINT WM_FRAME = WM_APP + 1, WM_NAVIGATE = WM_APP + 2, WM_DIALOG = WM_APP + 3,
-                      WM_DONE = WM_APP + 4, WM_IMAGE = WM_APP + 5, WM_URL = WM_APP + 6;
+                      WM_DONE = WM_APP + 4, WM_IMAGE = WM_APP + 5, WM_URL = WM_APP + 6,
+                      WM_FORWARD_LAUNCH = WM_APP + 7;
 static constexpr uint32_t BG = 0xff05080f, RAIL = 0xff080d16, CHROME = 0xff070b12,
                           PANEL = 0xff0d1420, BORDER = 0xff1c2736, TEXT = 0xffe6edf3,
                           MUTED = 0xff8b98a9, ACCENT = 0xff38bdf8;
@@ -1034,9 +1048,9 @@ struct Browser {
     save_profile();
   }
   DWORD history_flush_tick = 0;
-  void save_session() {
+  bool save_session() {
     if (private_mode)
-      return;
+      return true;
     profile.session_tabs.clear();
     profile.session_pinned.clear();
     profile.session_muted.clear();
@@ -1046,9 +1060,10 @@ struct Browser {
       profile.session_muted.push_back(tab.muted);
     }
     profile.session_active = active;
-    if (!profile.save_session() && profile_error.empty())
-      profile_error = profile.error;
-    save_workspaces();
+    const bool session_saved = profile.save_session();
+    if (!session_saved && profile_error.empty()) profile_error = profile.error;
+    const bool workspaces_saved = save_workspaces();
+    return session_saved && workspaces_saved;
   }
   void back() {
     Tab &t = current();
@@ -2068,6 +2083,16 @@ struct Browser {
       if (!manifest || manifest->str("product") != "PsychoVault") {
         report("The manifest is not mine");
         return;
+      }
+      // My updater can stage one executable only. A multi-file runtime must be
+      // installed from its complete package, never as a shell-only partial update.
+      if (const Json *required = manifest->find("requires")) {
+        if (required->type == Json::Type::Array)
+          for (const Json &name : required->array)
+            if (name.string != "PsychoVault.exe") {
+              report("This update includes a renderer runtime; install its full package");
+              return;
+            }
       }
       PreparedUpdate found;
       found.version = manifest->str("version", version);
@@ -3168,9 +3193,9 @@ struct Browser {
     }
     w.active = active;
   }
-  void save_workspaces() {
+  bool save_workspaces() {
     if (private_mode || !profile.workspaces)
-      return;
+      return true;
     capture_workspace();
     Json list = Json::make_array();
     for (auto &w : workspaces) {
@@ -3188,8 +3213,11 @@ struct Browser {
     Json state = Json::make_object();
     state.set("active", double(workspace));
     state.set("list", list);
-    if (!profile.save_workspaces(state) && profile_error.empty())
-      profile_error = profile.error;
+    if (!profile.save_workspaces(state)) {
+      if (profile_error.empty()) profile_error = profile.error;
+      return false;
+    }
+    return true;
   }
   // A workspace swap stops every live session and rebuilds the strip from the
   // stored list, exactly like my launch restore does.
@@ -3793,6 +3821,11 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   }
   case WM_TIMER: {
     auto b = browser(hwnd);
+    if (renderer_farm) {
+      rt::Error renderer_error;
+      if (!renderer_farm->monitor(renderer_error) && b)
+        b->status = "Renderer process recovery failed: " + renderer_error.message;
+    }
     if (b && !b->smoke) {
       b->extensions.tick();
       b->flush_history();
@@ -3843,6 +3876,42 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       }
       PostQuitMessage(failed ? 1 : 0);
     }
+    return 0;
+  }
+  case WM_FORWARD_LAUNCH: {
+    std::unique_ptr<ForwardedLaunch> launch(reinterpret_cast<ForwardedLaunch *>(lp));
+    auto b = browser(hwnd);
+    if (!b || !launch) return 0;
+    if (!launch->error.empty()) {
+      b->profile_error = launch->error;
+      b->status = "Could not open forwarded launch";
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return 0;
+    }
+    ShowWindow(hwnd, SW_RESTORE);
+    SetForegroundWindow(hwnd);
+    if (!launch->urls.empty()) {
+      b->navigate(launch->urls.front(), false);
+      for (size_t i = 1; i < launch->urls.size(); ++i)
+        b->new_tab(launch->urls[i], false);
+    }
+    return 0;
+  }
+  case WM_CLOSE: {
+    auto b = browser(hwnd);
+    if (app_instance) {
+      std::string error;
+      if (!app_instance->quit(error)) {
+        if (b) {
+          b->profile_error = error.empty() ? "Could not save the profile before closing" : error;
+          b->status = "Close cancelled: profile could not be saved";
+          InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+      }
+      app_instance = nullptr;
+    }
+    DestroyWindow(hwnd);
     return 0;
   }
   case WM_NCHITTEST: {
@@ -3898,6 +3967,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     args.push_back(std::move(value));
   }
   LocalFree(argv);
+
+  // Renderer workers are separate sandboxed processes but reuse this single
+  // installed executable; the private verb never enters the browser UI path.
+  if (args.size() == 1 && args.front() == "--pv-renderer-child")
+    return rt::run_renderer_child();
 
   // The updater's private verb is deliberately separate from ordinary argv.
   // Its target must be this executable, never a caller-selected file path.
@@ -3965,9 +4039,72 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
   const bool smoke = command.smoke;
   const bool private_mode = command.private_mode;
   const bool expect_image = command.expect_image;
-  const std::string profile_dir = command.profile_directory;
+  const std::string profile_dir = command.profile_directory.empty()
+      ? default_profile_directory() : command.profile_directory;
   const std::vector<std::string> startup_urls =
       rt::command_line_startup_urls(command);
+
+  auto dispatch_forwarded = [](const rt::LaunchRequest &request) {
+    auto *launch = new ForwardedLaunch;
+    rt::CommandLineOptions forwarded;
+    rt::Error error;
+    if (rt::parse_command_line(request.args, forwarded, error))
+      launch->urls = rt::command_line_startup_urls(forwarded);
+    else
+      launch->error = error.message;
+    std::lock_guard<std::mutex> lock(forwarded_mutex);
+    HWND target = primary_window.load();
+    if (target) {
+      if (!PostMessageW(target, WM_FORWARD_LAUNCH, 0,
+                        reinterpret_cast<LPARAM>(launch)))
+        delete launch;
+    } else {
+      pending_forwarded.push_back(launch);
+    }
+  };
+  Browser *browser_instance = nullptr;
+  auto save_before_quit = [&browser_instance, private_mode](std::string &error) {
+    if (!browser_instance) return true;
+    if (!private_mode) {
+      const bool session_saved = browser_instance->save_session();
+      const bool profile_saved = browser_instance->save_profile();
+      if (!session_saved || !profile_saved) {
+        error = browser_instance->profile.error.empty()
+            ? browser_instance->profile_error : browser_instance->profile.error;
+        if (error.empty()) error = "profile or session save failed";
+        return false; // a refused close must leave the live pages running
+      }
+    }
+    for (auto &tab : browser_instance->tabs)
+      browser_instance->stop_session(tab);
+    return true;
+  };
+  uint64_t profile_hash = 14695981039346656037ull;
+  for (unsigned char ch : profile_dir) {
+    profile_hash ^= ch;
+    profile_hash *= 1099511628211ull;
+  }
+  const std::string instance_mode = private_mode ? "\\private" : "\\normal";
+  for (unsigned char ch : instance_mode) {
+    profile_hash ^= ch;
+    profile_hash *= 1099511628211ull;
+  }
+  const std::string profile_key = "profile-" + std::to_string(profile_hash);
+  rt::AppInstance instance(rt::windows_instance_seams(
+      profile_key, dispatch_forwarded, save_before_quit));
+  app_instance = &instance;
+  std::string instance_error;
+  const auto instance_start = instance.start(rt::LaunchRequest{args}, instance_error);
+  if (instance_start == rt::AppInstance::Start::ForwardedAndExit) {
+    app_instance = nullptr;
+    return 0;
+  }
+  if (instance_start == rt::AppInstance::Start::LockFailed) {
+    app_instance = nullptr;
+    return report_cli_error(instance_error.empty()
+        ? "could not acquire the profile instance lock" : instance_error);
+  }
+
   WNDCLASSEXW wc{};
   wc.cbSize = sizeof(wc);
   wc.lpfnWndProc = wndproc;
@@ -3978,6 +4115,46 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
   wc.hbrBackground = nullptr;
   RegisterClassExW(&wc);
   Browser b(private_mode, profile_dir);
+  browser_instance = &b;
+  rt::RendererProcessFarm hosted_renderers;
+  rt::Error renderer_start_error;
+  const std::u8string renderer_path_utf8 =
+      (std::filesystem::path(executable_dir()) / "PsychoVault.exe").u8string();
+  const std::string renderer_executable(
+      reinterpret_cast<const char *>(renderer_path_utf8.data()),
+      renderer_path_utf8.size());
+  if (!hosted_renderers.start(renderer_executable, 2, renderer_start_error)) {
+    std::string ignored;
+    instance.quit(ignored);
+    app_instance = nullptr;
+    return report_cli_error("could not start the isolated renderer pool: " +
+                            renderer_start_error.message);
+  }
+  auto startup_fetch = [](const std::string &url, ResourceType) {
+    Resource resource;
+    resource.url = url;
+    resource.mime = "text/html; charset=utf-8";
+    resource.status = 200;
+    resource.ok = true;
+    resource.text = "<!doctype html><html><body><h1>Renderer process ready</h1></body></html>";
+    return resource;
+  };
+  for (size_t i = 0; i < hosted_renderers.size(); ++i) {
+    rt::Envelope probe_reply;
+    rt::Error probe_error;
+    if (!hosted_renderers.navigate(i, "about:blank", startup_fetch,
+                                   probe_reply, probe_error) ||
+        !probe_reply.payload.flag("ok") ||
+        !probe_reply.payload.find("frame")) {
+      hosted_renderers.shutdown();
+      std::string ignored;
+      instance.quit(ignored);
+      app_instance = nullptr;
+      return report_cli_error("isolated renderer startup probe failed: " +
+                              probe_error.message);
+    }
+  }
+  renderer_farm = &hosted_renderers;
   b.smoke = smoke;
   b.expect_image = expect_image;
   b.capture_path = capture;
@@ -4009,8 +4186,25 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
       CreateWindowExW(0, wc.lpszClassName, L"PsychoVault",
                       WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU,
                       CW_USEDEFAULT, CW_USEDEFAULT, 1440, 940, nullptr, nullptr, inst, &b);
-  if (!hwnd)
+  if (!hwnd) {
+    renderer_farm = nullptr;
+    hosted_renderers.shutdown();
+    std::string ignored;
+    instance.quit(ignored);
+    app_instance = nullptr;
     return 1;
+  }
+  {
+    std::lock_guard<std::mutex> lock(forwarded_mutex);
+    primary_window.store(hwnd);
+    while (!pending_forwarded.empty()) {
+      ForwardedLaunch *launch = pending_forwarded.front();
+      pending_forwarded.pop_front();
+      if (!PostMessageW(hwnd, WM_FORWARD_LAUNCH, 0,
+                        reinterpret_cast<LPARAM>(launch)))
+        delete launch;
+    }
+  }
   MARGINS margins{0, 0, 1, 0};
   DwmExtendFrameIntoClientArea(hwnd, &margins);
   ShowWindow(hwnd, show);
@@ -4030,7 +4224,21 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     TranslateMessage(&msg);
     DispatchMessageW(&msg);
   }
+  renderer_farm = nullptr;
+  hosted_renderers.shutdown();
+  std::string quit_error;
+  const bool quit_ok = instance.quit(quit_error);
+  app_instance = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(forwarded_mutex);
+    primary_window.store(nullptr);
+    while (!pending_forwarded.empty()) {
+      delete pending_forwarded.front();
+      pending_forwarded.pop_front();
+    }
+  }
   b.vault_wipe();
-  b.save_session();
+  if (!quit_ok) return report_cli_error(quit_error.empty()
+      ? "could not save the profile before exit" : quit_error);
   return int(msg.wParam);
 }

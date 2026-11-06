@@ -81,17 +81,17 @@ jobs:
           } finally {
             Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
           }
-      - name: Prove my single executable renders with no sibling files
+      - name: Prove my single executable launches an isolated renderer child
         shell: pwsh
         run: |
-          # I copy ONLY PsychoVault.exe into an empty folder. If it cannot render
-          # a fetched page from there, my one-file promise is broken.
+          # The broker re-launches this same executable in a private renderer
+          # mode. Copy only PsychoVault.exe and exercise startup/rendering.
           $solo = Join-Path $env:RUNNER_TEMP 'psychovault-solo'
           Remove-Item -Recurse -Force $solo -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force $solo | Out-Null
           Copy-Item build/PsychoVault.exe $solo/PsychoVault.exe
           $count = (Get-ChildItem $solo -File).Count
-          if ($count -ne 1) { throw "My solo folder has $count files, expected 1" }
+          if ($count -ne 1) { throw "My clean folder has $count files, expected 1" }
           New-Item -ItemType Directory -Force build/captures | Out-Null
           Remove-Item build/captures/standalone.png -ErrorAction SilentlyContinue
           Remove-Item build/captures/standalone.png.failure.json -ErrorAction SilentlyContinue
@@ -108,7 +108,7 @@ jobs:
           }
           # I print my diagnostics before I decide, and I exit outside try/finally
           # so a finally block can never swallow my failure.
-          "## My single-file exe gate" | Add-Content $env:GITHUB_STEP_SUMMARY
+          "## My clean-folder renderer-runtime gate" | Add-Content $env:GITHUB_STEP_SUMMARY
           "render exit=$render" | Add-Content $env:GITHUB_STEP_SUMMARY
           '```json' | Add-Content $env:GITHUB_STEP_SUMMARY
           if (Test-Path build/captures/standalone.png.failure.json) {
@@ -129,16 +129,16 @@ jobs:
             }
             $detail = ($detail -replace "`r", '') -replace "`n", ' '
             Write-Host "::error::SOLO-DIAG exit=$render $detail"
-            Write-Host "::error::My standalone exe failed to render a fetched page (exit $render)"
+            Write-Host "::error::My shell runtime failed to render a fetched page (exit $render)"
             exit 1
           }
-          # A real picture, and still exactly one file in my folder: that is what
-          # my one-file promise means.
+          # A real picture, with only the browser executable in the clean
+          # folder: the renderer is a child process mode of that same image.
           python -c "import pathlib,sys; d=pathlib.Path('build/captures/standalone.png').read_bytes(); sys.exit(0 if d[:8]==bytes([137,80,78,71,13,10,26,10]) and len(d)>1000 else 1)"
           if ($LASTEXITCODE -ne 0) { Write-Host "::error::My standalone capture is not a real PNG"; exit 1 }
           $after = (Get-ChildItem $solo -File).Count
-          if ($after -ne 1) { Write-Host "::error::My lone exe left $after files in my empty folder, so it is not self contained"; exit 1 }
-          "## My single-file exe rendered on its own" | Add-Content $env:GITHUB_STEP_SUMMARY
+          if ($after -ne 1) { Write-Host "::error::My browser folder changed to $after files after execution, expected 1"; exit 1 }
+          "## My single executable hosted a renderer child" | Add-Content $env:GITHUB_STEP_SUMMARY
 
       - name: Package Windows preview ZIP
         shell: pwsh

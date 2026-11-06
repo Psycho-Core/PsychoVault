@@ -10,4 +10,4 @@ Planned content:
 - `Psycho_registry.cpp` - Apps & Features entry, file associations, optional default-browser registration, protocol handling.
 - `README.txt` - the text the installer shows and installs.
 
-The previous portable single-file exe model is retired. The artefact I install from from now on is `PsychoVault-Setup-<version>.exe`.
+The one user-facing install artefact is `PsychoVault-Setup-<version>.exe`; the installed browser has one launchable `PsychoVault.exe`. That executable runs the visible broker and re-launches itself in a private, sandboxed renderer-child mode. Users launch the browser normally; they never launch a separate renderer program.

@@ -6,8 +6,9 @@
 //  - This header plus Psycho_process.cpp are portable: the supervision rules a
 //    broker applies to its children. They are tested here on Linux.
 //  - Psycho_process_win32.cpp is the Windows half: CreateProcess with a job
-//    object that kills the tree on close, a restricted token, pipes for the
-//    message bus, and a resume. It only compiles on Windows and is proven on
+//    object that kills the tree on close, a restricted token plus AppContainer
+//    identity (no network capability), allowlisted stdio pipes, and a resume.
+//    It only compiles on Windows and is proven on
 //    the first authorized manual Windows build; until then the sandbox pid in a
 //    ChildRecord is evidence of intent, not of a running process.
 #pragma once
@@ -21,6 +22,7 @@
 
 namespace pv::rt {
 
+struct Error;
 using Clock = std::chrono::steady_clock;
 
 enum class ChildState { Starting, Live, Hung, Dead, Retired };
@@ -96,5 +98,10 @@ bool spawn_child_platform(const std::string &label, const std::string &command_l
                           WinChildHandle &out, std::string &error);
 bool kill_child_platform(const WinChildHandle &handle, const std::string &reason,
                          std::string &error);
+bool child_process_running_platform(const WinChildHandle &handle);
+bool process_pipe_read(intptr_t pipe, std::string &bytes, Error &error);
+bool process_pipe_read_timeout(intptr_t pipe, std::string &bytes, Error &error,
+                               uint32_t timeout_ms);
+bool process_pipe_write(intptr_t pipe, const std::string &bytes, Error &error);
 
 } // namespace pv::rt

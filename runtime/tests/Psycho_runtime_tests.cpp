@@ -18,17 +18,30 @@
 #include "../../engine/Psycho_js.hpp"
 #include "../surface/Psycho_surface.hpp"
 #include "../window/Psycho_window.hpp"
+#include <limits>
 #include "../ipc/Psycho_bus.hpp"
 #include "../broker/Psycho_broker.hpp"
 #include "../broker/Psycho_renderer_harness.hpp"
+#include "../broker/Psycho_renderer_process.hpp"
+#include "../broker/Psycho_renderer_farm.hpp"
 #include "../process/Psycho_process.hpp"
+#include "../process/Psycho_process_transport.hpp"
+#include "../renderer/Psycho_renderer_worker.hpp"
 #include <algorithm>
 #include <atomic>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#define NOMINMAX
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#endif
 
 using namespace pv;
 using namespace pv::rt;
@@ -164,6 +177,55 @@ int run_runtime_bus_tests(int &shared) {
     RT_CHECK(!tight.b().recv(leak, none) && !none);
   }
 
+  // Request schemas are direction-aware: an error cannot skip required fields,
+  // unknown keys are refused, and only the broker side may send error replies.
+  {
+    Schemas schemas = Schemas::stock();
+    Broker broker;
+    int renderer = broker.spawn_renderer("schema-direction");
+    Error error;
+
+    Envelope bypass;
+    bypass.channel = Channel::Nav;
+    bypass.method = "nav:go";
+    bypass.request_id = 41;
+    bypass.payload = Json::make_object();
+    bypass.payload.set("error", Json("forged"));
+    RT_CHECK(!broker.renderer_side(renderer).send(bypass, error) &&
+             error.code == "schema.error-request");
+
+    Envelope unknown = nav_go("https://example.com/");
+    unknown.payload.set("admin", Json(true));
+    RT_CHECK(!broker.renderer_side(renderer).send(unknown, error) &&
+             error.code == "schema.unknown-field");
+
+    Envelope mismatched = nav_go("https://example.com/");
+    mismatched.channel = Channel::Lifecycle;
+    RT_CHECK(!broker.broker_side(renderer).send(mismatched, error) &&
+             error.code == "schema.channel");
+
+    Envelope forged_reply = bypass;
+    forged_reply.is_response = true;
+    RT_CHECK(!broker.renderer_side(renderer).send(forged_reply, error) &&
+             error.code == "wire.unexpected-response");
+
+    Envelope refusal;
+    refusal.channel = Channel::Nav;
+    refusal.method = "nav:go";
+    refusal.request_id = 41;
+    refusal.is_response = true;
+    refusal.payload = Json::make_object();
+    refusal.payload.set("error", Json("nav.denied: refused"));
+    RT_CHECK(broker.broker_side(renderer).send(refusal, error));
+    Envelope received;
+    RT_CHECK(broker.renderer_side(renderer).recv(received, error) &&
+             received.is_response && received.payload.str("error") == "nav.denied: refused");
+
+    refusal.payload.set("admin", Json(true));
+    RT_CHECK(!broker.broker_side(renderer).send(refusal, error) &&
+             error.code == "schema.error-response");
+  }
+
   // Back-pressure: both budgets bite, with structured errors.
   {
     Schemas s = Schemas::stock();
@@ -243,6 +305,295 @@ int run_runtime_bus_tests(int &shared) {
     RT_CHECK(broker.renderer_side(b).pending() == 0);
     RT_CHECK(!broker.log().empty());
   }
+
+  // S022 stream transport: the same framed bus crosses a fragmented byte
+  // stream, validates both ends, measures the round trip, and refuses a peer
+  // that sends a response in the renderer-to-broker direction.
+  {
+    Schemas schemas = Schemas::stock();
+    std::deque<std::string> renderer_to_broker, broker_to_renderer;
+    auto read_chunk = [](std::deque<std::string> &queue, std::string &bytes, Error &error) {
+      if (queue.empty()) {
+        error = {"test.pipe.empty", "no bytes available"};
+        return false;
+      }
+      bytes = queue.front().substr(0, 3);
+      queue.front().erase(0, bytes.size());
+      if (queue.front().empty()) queue.pop_front();
+      error = Error{};
+      return true;
+    };
+    auto write_chunk = [](std::deque<std::string> &queue, const std::string &bytes,
+                          Error &error) {
+      queue.push_back(bytes);
+      error = Error{};
+      return true;
+    };
+    ProcessTransport renderer(
+        Capability::all(), schemas,
+        [&](std::string &bytes, Error &error) {
+          return read_chunk(broker_to_renderer, bytes, error);
+        },
+        [&](const std::string &bytes, Error &error) {
+          return write_chunk(renderer_to_broker, bytes, error);
+        }, true);
+    ProcessTransport broker(
+        Capability::all(), schemas,
+        [&](std::string &bytes, Error &error) {
+          return read_chunk(renderer_to_broker, bytes, error);
+        },
+        [&](const std::string &bytes, Error &error) {
+          return write_chunk(broker_to_renderer, bytes, error);
+        }, false);
+
+    Envelope request;
+    request.channel = Channel::Lifecycle;
+    request.method = "lifecycle:echo";
+    request.request_id = 73;
+    request.payload = Json::make_object();
+    request.payload.set("nonce", Json("fragmented-process-link"));
+    Error error;
+    const auto sent_at = Clock::now();
+    RT_CHECK(renderer.send(request, error));
+    Envelope received;
+    RT_CHECK(broker.recv(received, error) && received.request_id == 73 &&
+             received.payload.str("nonce") == "fragmented-process-link");
+    Envelope response = received;
+    response.is_response = true;
+    RT_CHECK(broker.send(response, error));
+    Envelope returned;
+    RT_CHECK(renderer.recv(returned, error) && returned.is_response &&
+             returned.request_id == 73);
+    const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+        Clock::now() - sent_at).count();
+    RT_CHECK(elapsed >= 0);
+
+    response.is_response = true;
+    response.request_id = 74;
+    RT_CHECK(renderer.send(response, error));
+    RT_CHECK(!broker.recv(received, error) && error.code == "wire.unexpected-response");
+    request.payload.set("unregistered", Json(true));
+    RT_CHECK(!renderer.send(request, error) && error.code == "schema.unknown-field");
+  }
+
+  // The broker-side worker owns a real engine Host and returns its rendered
+  // frame over the same typed transport; external fetching remains injected.
+  {
+    Schemas schemas = Schemas::stock();
+    std::deque<std::string> to_renderer, to_broker;
+    auto reader = [](std::deque<std::string> &queue, std::string &bytes, Error &error) {
+      if (queue.empty()) {
+        error = {"test.pipe.empty", "no bytes available"};
+        return false;
+      }
+      bytes = queue.front();
+      queue.pop_front();
+      error = Error{};
+      return true;
+    };
+    auto writer = [](std::deque<std::string> &queue, const std::string &bytes, Error &error) {
+      queue.push_back(bytes);
+      error = Error{};
+      return true;
+    };
+    ProcessTransport broker(
+        Capability::all(), schemas,
+        [&](std::string &bytes, Error &error) { return reader(to_broker, bytes, error); },
+        [&](const std::string &bytes, Error &error) { return writer(to_renderer, bytes, error); },
+        true);
+    ProcessTransport child(
+        capabilities_for(Role::Renderer), schemas,
+        [&](std::string &bytes, Error &error) { return reader(to_renderer, bytes, error); },
+        [&](const std::string &bytes, Error &error) { return writer(to_broker, bytes, error); },
+        false);
+    Host::Fetcher fetch = [](const std::string &url, ResourceType) {
+      Resource resource;
+      resource.url = url;
+      resource.mime = "text/html";
+      resource.text = "<html><body><h1>isolated engine render</h1></body></html>";
+      return resource;
+    };
+    RendererWorker worker(child, std::move(fetch));
+    Envelope request;
+    request.channel = Channel::Renderer;
+    request.method = "renderer:navigate";
+    request.request_id = 100;
+    request.payload = Json::make_object();
+    request.payload.set("url", Json("about:blank"));
+    Error error;
+    RT_CHECK(broker.send(request, error));
+    RT_CHECK(worker.serve_one(error));
+    Envelope rendered;
+    RT_CHECK(broker.recv(rendered, error) && rendered.is_response &&
+             rendered.payload.flag("ok") &&
+             rendered.payload.find("frame") != nullptr);
+  }
+
+  // Broker and renderer now exercise nested network IPC: the engine runs in a
+  // worker thread, asks the privileged fetcher for its document, then returns a
+  // composed engine frame over the same framed transport.
+  {
+    struct Pipe {
+      std::mutex mutex;
+      std::condition_variable ready;
+      std::deque<std::string> bytes;
+    } child_to_broker, broker_to_child;
+    auto read = [](Pipe &pipe, std::string &bytes, Error &error) {
+      std::unique_lock lock(pipe.mutex);
+      if (!pipe.ready.wait_for(lock, std::chrono::seconds(2),
+                               [&] { return !pipe.bytes.empty(); })) {
+        error = {"test.pipe.timeout", "timed out waiting for IPC bytes"};
+        return false;
+      }
+      bytes = std::move(pipe.bytes.front());
+      pipe.bytes.pop_front();
+      error = Error{};
+      return true;
+    };
+    auto write = [](Pipe &pipe, const std::string &bytes, Error &error) {
+      {
+        std::lock_guard lock(pipe.mutex);
+        pipe.bytes.push_back(bytes);
+      }
+      pipe.ready.notify_one();
+      error = Error{};
+      return true;
+    };
+    Schemas schemas = Schemas::stock();
+    ProcessTransport child(
+        capabilities_for(Role::Renderer), schemas,
+        [&](std::string &bytes, Error &error) { return read(broker_to_child, bytes, error); },
+        [&](const std::string &bytes, Error &error) {
+          return write(child_to_broker, bytes, error);
+        }, true);
+    ProcessTransport broker(
+        capabilities_for(Role::Broker), schemas,
+        [&](std::string &bytes, Error &error) { return read(child_to_broker, bytes, error); },
+        [&](const std::string &bytes, Error &error) {
+          return write(broker_to_child, bytes, error);
+        }, true);
+    RendererWorker worker(child, broker_fetcher(child));
+    Error worker_error;
+    bool worker_served = false;
+    std::thread child_thread([&] { worker_served = worker.serve_one(worker_error); });
+    RendererProcessClient client(broker);
+    int fetch_calls = 0;
+    Host::Fetcher fetch = [&](const std::string &url, ResourceType) {
+      ++fetch_calls;
+      Resource resource;
+      resource.url = url;
+      resource.mime = "text/html";
+      resource.text = "<html><body><h1>broker fetched document</h1></body></html>";
+      return resource;
+    };
+    Envelope rendered;
+    Error error;
+    const bool navigated = client.navigate("about:blank", fetch, rendered, error);
+    child_thread.join();
+    RT_CHECK(navigated && worker_served && !worker_error && rendered.is_response &&
+             rendered.payload.flag("ok"));
+    RT_CHECK(fetch_calls == 1 && rendered.payload.find("frame") != nullptr);
+  }
+
+#ifndef _WIN32
+  // The production process farm must fail closed on platforms without its
+  // Windows launcher; it must never report fake in-memory workers as children.
+  {
+    RendererProcessFarm farm;
+    Error error;
+    RT_CHECK(!farm.start("unused-renderer", 2, error));
+    RT_CHECK(farm.size() == 0 && error.code == "process.spawn");
+    farm.shutdown();
+    RT_CHECK(farm.size() == 0);
+  }
+#else
+  // Windows acceptance evidence: two real child processes exchange navigation
+  // and broker-fetch IPC, the round-trip is measured, and an externally killed
+  // worker is replaced before it accepts another navigation.
+  {
+    wchar_t module[MAX_PATH * 4] = {};
+    const DWORD module_length = GetModuleFileNameW(
+        nullptr, module, DWORD(std::size(module)));
+    RT_CHECK(module_length > 0 && module_length < std::size(module));
+    const std::filesystem::path renderer_path =
+        std::filesystem::path(std::wstring(module, module_length)).parent_path() /
+        L"PsychoVault.exe";
+    const std::u8string renderer_path_utf8 = renderer_path.u8string();
+    const std::string renderer_path_arg(
+        reinterpret_cast<const char *>(renderer_path_utf8.data()),
+        renderer_path_utf8.size());
+    RendererProcessFarm farm;
+    Error error;
+    RT_CHECK(farm.start(renderer_path_arg, 2, error));
+    auto fetch = [](const std::string &url, ResourceType) {
+      Resource resource;
+      resource.url = url;
+      resource.mime = "text/html; charset=utf-8";
+      resource.status = 200;
+      resource.ok = true;
+      resource.text = "<!doctype html><body><h1>real process</h1></body>";
+      return resource;
+    };
+    for (size_t i = 0; i < 2; ++i) {
+      Envelope reply;
+      const auto began = std::chrono::steady_clock::now();
+      RT_CHECK(farm.navigate(i, "about:blank", fetch, reply, error));
+      const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::steady_clock::now() - began).count();
+      RT_CHECK(reply.payload.flag("ok") && reply.payload.find("frame") && elapsed > 0);
+      std::cout << "REAL_PROCESS_IPC_US[" << i << "]=" << elapsed << "\n";
+    }
+
+    const auto profile_file = std::filesystem::temp_directory_path() /
+        ("PsychoVault-renderer-profile-" + std::to_string(GetCurrentProcessId()) +
+         ".dat");
+    {
+      std::ofstream contents(profile_file, std::ios::binary | std::ios::trunc);
+      contents << "secret-profile-fixture";
+      RT_CHECK(contents.good());
+    }
+    WSADATA winsock{};
+    RT_CHECK(WSAStartup(MAKEWORD(2, 2), &winsock) == 0);
+    SOCKET listener = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    RT_CHECK(listener != INVALID_SOCKET);
+    sockaddr_in loopback{};
+    loopback.sin_family = AF_INET;
+    loopback.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    loopback.sin_port = 0;
+    RT_CHECK(bind(listener, reinterpret_cast<sockaddr *>(&loopback),
+                  sizeof(loopback)) == 0);
+    RT_CHECK(listen(listener, 1) == 0);
+    int loopback_size = int(sizeof(loopback));
+    RT_CHECK(getsockname(listener, reinterpret_cast<sockaddr *>(&loopback),
+                         &loopback_size) == 0);
+    const std::u8string profile_file_utf8 = profile_file.u8string();
+    const std::string profile_file_arg(
+        reinterpret_cast<const char *>(profile_file_utf8.data()),
+        profile_file_utf8.size());
+    Envelope isolation_reply;
+    RT_CHECK(farm.probe_isolation(1, profile_file_arg, "127.0.0.1",
+                                  ntohs(loopback.sin_port), isolation_reply, error));
+    RT_CHECK(!isolation_reply.payload.flag("file_opened") &&
+             !isolation_reply.payload.flag("socket_connected"));
+    std::cout << "ISOLATION_PROFILE_READ=denied SOCKET_CONNECT=denied\n";
+    closesocket(listener);
+    WSACleanup();
+    std::filesystem::remove(profile_file);
+
+    HANDLE victim = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE,
+                                DWORD(farm.process_id(0)));
+    RT_CHECK(victim != nullptr);
+    RT_CHECK(TerminateProcess(victim, 0) != FALSE);
+    RT_CHECK(WaitForSingleObject(victim, 5000) == WAIT_OBJECT_0);
+    CloseHandle(victim);
+    RT_CHECK(farm.monitor(error) && farm.restarts(0) == 1);
+    Envelope replacement_reply;
+    RT_CHECK(farm.navigate(0, "about:blank", fetch, replacement_reply, error));
+    RT_CHECK(replacement_reply.payload.flag("ok") &&
+             replacement_reply.payload.find("frame"));
+    farm.shutdown();
+  }
+#endif
 
   // S022 supervision: the state machine is portable, the world is faked, and
   // every transition is checked: live, hung, restarted, budget spent.
@@ -397,6 +748,25 @@ int run_runtime_bus_tests(int &shared) {
     };
     AppInstance d(broken);
     RT_CHECK(d.start(first, error) == AppInstance::Start::LockFailed && error == "mutex denied");
+
+    // Missing operating-system adapters fail closed instead of throwing or
+    // reporting a successful save that never happened.
+    AppInstance::Seams no_lock_seams;
+    AppInstance no_lock(no_lock_seams);
+    RT_CHECK(no_lock.start(first, error) == AppInstance::Start::LockFailed &&
+             error == "instance.lock.unavailable");
+    AppInstance::Seams no_forward_seams = make(false);
+    no_forward_seams.forward = {};
+    AppInstance no_forward(no_forward_seams);
+    RT_CHECK(no_forward.start(second, error) == AppInstance::Start::LockFailed &&
+             error == "instance.forward.unavailable");
+    AppInstance::Seams no_save_seams = make(std::nullopt);
+    no_save_seams.save_session = {};
+    AppInstance no_save(no_save_seams);
+    RT_CHECK(no_save.start(first, error) == AppInstance::Start::Primary);
+    RT_CHECK(!no_save.quit(error) && error == "instance.save-unavailable" &&
+             no_save.running());
+    lock_held = false; // the failed quit deliberately retained its instance lock
 
     // Quit refusing rollback: a failed save keeps the instance running.
     AppInstance::Seams stubborn = make(std::nullopt);
@@ -566,6 +936,23 @@ int run_runtime_bus_tests(int &shared) {
     RT_CHECK(registry.resize(first, 4, 4, error));
     RT_CHECK(registry.find(first)->width == 4 && registry.find(first)->pixels[3] == 0);
     RT_CHECK(registry.destroy(first) && registry.find(first) == nullptr);
+
+    RT_CHECK(registry.create(8192, 8192, "oversized", error) == -1 &&
+             error.code == "surface.size");
+    bool filled_to_cap = true;
+    for (int i = 0; i < 63; ++i)
+      filled_to_cap = filled_to_cap && registry.create(1, 1, "tiny", error) > 0;
+    RT_CHECK(filled_to_cap);
+    RT_CHECK(registry.create(1, 1, "over-cap", error) == -1 &&
+             error.code == "surface.budget");
+    RT_CHECK(compositor.composite(registry,
+        {{second, std::numeric_limits<int>::max(), std::numeric_limits<int>::min()}},
+        small, composite_error));
+    Surface oversized_target;
+    oversized_target.width = 16385;
+    oversized_target.height = 1;
+    RT_CHECK(!compositor.composite(registry, {}, oversized_target, composite_error) &&
+             composite_error.code == "composite.target");
   }
 
 

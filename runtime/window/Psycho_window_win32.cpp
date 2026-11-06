@@ -18,10 +18,16 @@ namespace {
 std::wstring widen(const std::string &text) {
   if (text.empty())
     return L"";
-  int wide = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
-  std::wstring out(size_t(wide - 1), L'\0');
-  MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, out.data(), wide);
-  return out;
+  const int wide = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.c_str(), -1,
+                                       nullptr, 0);
+  if (wide <= 0)
+    return {};
+  std::wstring buffer(size_t(wide), L'\0');
+  if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.c_str(), -1,
+                          buffer.data(), wide) != wide)
+    return {};
+  buffer.resize(size_t(wide - 1));
+  return buffer;
 }
 
 std::string win_error(const char *what) {

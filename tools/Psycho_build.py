@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """I build PsychoVault with the platform compiler and no browser dependencies.
 
-My engine, my page host and my shell all link into one executable. There is no
-renderer process, no embedded payload and no sibling file: one PsychoVault.exe
-loads a page and draws it.
+My Windows build emits one PsychoVault.exe image for both the visible broker
+and its hidden sandboxed renderer-child mode; portable tests exercise the same
+engine, page host, and broker contracts.
 """
 from __future__ import annotations
 import argparse, os, pathlib, shutil, subprocess, sys
@@ -22,7 +22,8 @@ PLATFORM=["platform/Psycho_host.cpp","platform/Psycho_network.cpp","platform/Psy
           "platform/Psycho_transport.cpp","platform/Psycho_tls.cpp","platform/Psycho_vault.cpp",
           "platform/Psycho_spell.cpp","platform/Psycho_sandbox.cpp"]
 # P1 of my master plan: my runtime (broker + typed IPC bus + broker-side tests).
-RUNTIME=["runtime/app/Psycho_instance.cpp","runtime/app/Psycho_instance_win32.cpp","runtime/ipc/Psycho_bus.cpp","runtime/broker/Psycho_broker.cpp","runtime/broker/Psycho_renderer_harness.cpp","runtime/process/Psycho_process.cpp","runtime/process/Psycho_process_win32.cpp","runtime/window/Psycho_window.cpp","runtime/window/Psycho_window_win32.cpp","runtime/surface/Psycho_surface.cpp","runtime/surface/Psycho_surface_win32.cpp","runtime/tabs/Psycho_tabs.cpp","runtime/content/Psycho_content.cpp","runtime/internal/Psycho_internal.cpp","runtime/bridge/Psycho_bridge.cpp","runtime/apphost/Psycho_apphost.cpp","runtime/services/Psycho_services.cpp","runtime/keys/Psycho_keys.cpp","runtime/ime/Psycho_ime.cpp","runtime/focus/Psycho_focus.cpp","runtime/downloads/Psycho_downloads.cpp","runtime/permissions/Psycho_permissions.cpp","runtime/private/Psycho_private.cpp","runtime/diagnostics/Psycho_diagnostics.cpp","runtime/crash/Psycho_crash.cpp","runtime/logging/Psycho_logging.cpp","runtime/commandline/Psycho_commandline.cpp","runtime/tests/Psycho_runtime_tests.cpp","runtime/tests/Psycho_runtime_integration_tests.cpp","runtime/tests/Psycho_renderer_harness_tests.cpp"]
+RUNTIME=["runtime/app/Psycho_instance.cpp","runtime/app/Psycho_instance_win32.cpp","runtime/ipc/Psycho_bus.cpp","runtime/broker/Psycho_broker.cpp","runtime/broker/Psycho_renderer_harness.cpp","runtime/broker/Psycho_renderer_process.cpp","runtime/broker/Psycho_renderer_farm.cpp","runtime/process/Psycho_process.cpp","runtime/process/Psycho_process_win32.cpp","runtime/process/Psycho_process_transport.cpp","runtime/renderer/Psycho_renderer_worker.cpp","runtime/renderer/Psycho_renderer_main.cpp","runtime/window/Psycho_window.cpp","runtime/window/Psycho_window_win32.cpp","runtime/surface/Psycho_surface.cpp","runtime/surface/Psycho_surface_win32.cpp","runtime/tabs/Psycho_tabs.cpp","runtime/content/Psycho_content.cpp","runtime/internal/Psycho_internal.cpp","runtime/bridge/Psycho_bridge.cpp","runtime/apphost/Psycho_apphost.cpp","runtime/services/Psycho_services.cpp","runtime/keys/Psycho_keys.cpp","runtime/ime/Psycho_ime.cpp","runtime/focus/Psycho_focus.cpp","runtime/downloads/Psycho_downloads.cpp","runtime/permissions/Psycho_permissions.cpp","runtime/private/Psycho_private.cpp","runtime/diagnostics/Psycho_diagnostics.cpp","runtime/crash/Psycho_crash.cpp","runtime/logging/Psycho_logging.cpp","runtime/commandline/Psycho_commandline.cpp"]
+RUNTIME_TESTS=["runtime/tests/Psycho_runtime_tests.cpp","runtime/tests/Psycho_runtime_integration_tests.cpp","runtime/tests/Psycho_renderer_harness_tests.cpp"]
 def run(cmd,env=None):
     print("+",subprocess.list2cmdline([str(x) for x in cmd]),flush=True)
     subprocess.run([str(x) for x in cmd],cwd=ROOT,env=env,check=True)
@@ -99,7 +100,7 @@ def main():
     if args.target in ("all","engine"):
         target("pv-engine",ENGINE+["tools/Psycho_engine_cli.cpp"],winlibs if windows else [])
     if args.target in ("all","tests"):
-        target("pv-tests",ENGINE+PLATFORM+RUNTIME+["tests/Psycho_test_main.cpp"],winlibs if windows else [])
+        target("pv-tests",ENGINE+PLATFORM+RUNTIME+RUNTIME_TESTS+["tests/Psycho_test_main.cpp"],winlibs if windows else [])
     # The conformance runner is its own small target: my parser and interpreter plus
     # the tool that walks a Test262 tree, so a measurement never needs the shell.
     if args.target in ("all","conformance"):
@@ -107,8 +108,8 @@ def main():
                                  "engine/Psycho_js_runtime.cpp","engine/Psycho_regex.cpp",
                                  "tools/Psycho_conformance.cpp"],winlibs if windows else [])
     if windows and args.target in ("all","tests"):
-        # My browser is one file because my page host and my engine are linked
-        # straight into it. Nothing is unpacked and nothing sits beside it.
+        # One visible executable also supplies its private renderer-child mode;
+        # the restricted process receives only the inherited pipe handles.
         target("PsychoVault",ENGINE+PLATFORM+RUNTIME+["shell/Psycho_win_main.cpp"],winlibs,"WINDOWS")
     print("Built",out)
 if __name__=="__main__":

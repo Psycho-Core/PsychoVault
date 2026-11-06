@@ -9,6 +9,10 @@ AppInstance::Start AppInstance::start(const LaunchRequest &request, std::string 
     error.clear();
     return Start::Primary; // Starting the running instance twice is a no-op, not a second me.
   }
+  if (!seams_.acquire_lock) {
+    error = "instance.lock.unavailable";
+    return Start::LockFailed;
+  }
   std::optional<bool> acquired = seams_.acquire_lock(error);
   if (!acquired)
     return Start::LockFailed; // error is filled by the seam
@@ -20,6 +24,10 @@ AppInstance::Start AppInstance::start(const LaunchRequest &request, std::string 
   // Second instance: hand my arguments to the primary and leave. Delivery is
   // synchronous: if the primary cannot take them I fail the handoff and the
   // caller hears why, because dropping a launch silently is worse.
+  if (!seams_.forward) {
+    error = "instance.forward.unavailable";
+    return Start::LockFailed;
+  }
   if (!seams_.forward(request, error))
     return Start::LockFailed;
   error.clear();
@@ -36,9 +44,17 @@ void AppInstance::receive_forwarded(const LaunchRequest &request) {
 bool AppInstance::quit(std::string &error) {
   if (state_ != State::Running)
     return true; // quitting a stopped instance is already true
+  if (!session_saved_ && !seams_.save_session) {
+    error = "instance.save-unavailable";
+    return false;
+  }
+  if (!seams_.release_lock) {
+    error = "instance.unlock.unavailable";
+    return false;
+  }
   state_ = State::Quitting;
   // Session first: if the save fails, I stop quitting and keep the instance.
-  if (!session_saved_ && seams_.save_session) {
+  if (!session_saved_) {
     if (!seams_.save_session(error)) {
       state_ = State::Running;
       return false;
@@ -46,8 +62,7 @@ bool AppInstance::quit(std::string &error) {
     session_saved_ = true;
   }
   state_ = State::Stopped;
-  if (seams_.release_lock)
-    seams_.release_lock();
+  seams_.release_lock();
   error.clear();
   return true;
 }
