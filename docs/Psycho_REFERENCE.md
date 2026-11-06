@@ -6,7 +6,8 @@
 | --- | --- | --- |
 | Old application source (read-only) | `https://github.com/Psycho-Core/PsychoVault---REFERANCE-ONLY` (a working clone is kept outside this repository) | Behaviour, measurements, feature lists, IPC surface, installer behaviour. Never code to copy. |
 | Legacy UI screenshots | `docs/reference/legacy-ui/` in this repository | The visual contract: new tab, browser chrome, all ten settings categories, single-window captures |
-| Legacy inventory | `docs/reference/legacy-inventory.json` and `docs/Psycho_FEATURE-INVENTORY.md` | The functional contract: 10 categories, 125 interactive controls, 59 default settings, 21 preload namespaces, 105 IPC handlers, 23 screenshots, data stores |
+| Legacy inventory | `docs/reference/legacy-inventory.json` and `docs/Psycho_FEATURE-INVENTORY.md` | Pinned functional baseline: 10 categories, 125 interactive controls, 59 default settings, 21 preload namespaces, 80 invoke channels, 105 IPC handlers, 23 screenshots, data stores |
+| Reference crosswalk | `docs/Psycho_REFERENCE-CROSSWALK.md` | Source-to-plan, current implementation/test gaps, and differences between the pinned inventory commit and the read-only repository's current HEAD |
 | Proton VPN extension build | `extensions/Psycho-VPN-Proton/` (pinned, provenance in `Psycho_PROVENANCE.md`) | The standard bundled extension and the VPN acceptance target |
 | Old installer script | `installer.nsi` in the reference repository | Behaviour to reproduce in my own installer (registry, shortcuts, upgrade, rollback), not code to reuse |
 

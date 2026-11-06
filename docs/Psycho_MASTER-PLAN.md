@@ -22,7 +22,21 @@ The one thing I will not promise is a date for "every website on earth renders p
 4. **Nothing proved real-web behaviour.** Every CI check loaded a fixture on localhost. Real DNS, real TLS, real redirects, real compressed pages, real scripts were never exercised, so "it loads pages" was never true evidence.
 5. **Packaging contradicted the product.** A portable single exe is not an installer, and the extension payload was not inside it, so Proton was invisible.
 
-The fix is architectural, not cosmetic: **build my own Electron first, then hang my browser UI and my engine on it.** That is what this plan does.
+The fix is architectural, not cosmetic: **build my own Electron first, then hang my browser UI and my engine on it.** That is what this plan intends to do.
+
+### Current baseline audit — 2026-11-06
+
+The repository's existing shell and engine are starting material, not proof that the product works like the reference browser. The current evidence is:
+
+- `ui/` contains only its README; there is no HTML/CSS/JS browser interface yet.
+- `shell/Psycho_win_main.cpp` still draws browser chrome with native Canvas calls, and ordinary web tabs still construct an in-process `Session`/`Host` path.
+- The new renderer farm is launched by the shell only for blank-page startup probes. It does not yet own ordinary tabs or their input, resize, navigation, and presentation lifecycle.
+- Runtime state-machine and in-memory tests are useful contracts, but they do not prove Windows production integration. The Windows build and the real-process recovery/isolation tests remain unrun.
+- The engine is a partial starting point, not a Chrome-class engine. `docs/Psycho_CONFORMANCE.md` records 5,009 of 54,058 Test262 tests passing (9.3%), 16 interpreter crashes, 21,845 unsupported tests, and no WPT run. S050's promised file-by-file engine gap table does not exist yet; S008 lists only the UI's initial CSS/DOM needs.
+- `installer/` contains a README only. P10 owns the installer, so the M1 promise of a working installer and the statement that every milestone ends in an installer are not currently schedulable.
+- The M2 UI promise, P2 engine exit gate, and P3 UI implementation are out of order: the P2 gate asks for settings/new-tab markup before P3 creates `ui/`.
+
+Therefore P1 is not complete, and the old shell/engine cannot be counted as reference parity. The first actual source-to-plan audit is recorded in `docs/Psycho_REFERENCE-CROSSWALK.md`: it checks the pinned inventory commit against the read-only reference repository's current HEAD, records where they diverge, maps the reference surfaces to plan steps and current evidence, and identifies the missing acceptance cases. The crosswalk is not implementation evidence. S050's full engine gap table and row-level implementation/test traceability remain outstanding. No P2 gap work should be treated as complete until P1 has a production vertical slice and its Windows exit evidence.
 
 ## 3. What "my own Electron" and "my own Chrome" mean here
 
@@ -60,8 +74,8 @@ Interim rule: while the engine cannot yet render the full chrome UI, I may ship 
 
 | Milestone | Deliverable | Proof I will run |
 | --- | --- | --- |
-| **M1 - Runtime skeleton** | Installer that installs a window hosting my engine, one tab, navigation, diagnostics page | Installer installs/uninstalls cleanly; a local page renders; IPC round-trip log |
-| **M2 - My UI on my engine** | Browser chrome (rail, tab strip, omnibox, status bar) plus new tab rendered from my own HTML/CSS/JS | Pixel diff against `legacy-ui/01-03` at reference sizes |
+| **M1 - Runtime vertical slice** | A runnable Windows development build: one launchable browser executable, an engine-rendered minimal app page, one brokered tab, navigation and diagnostics. This is not an installer. | Build and launch on Windows; app UI and a local web fixture render through the real renderer process; tab input/resize and IPC are exercised; process recovery and isolation evidence is recorded |
+| **M2 - My UI on my engine** | Browser chrome (rail, tab strip, omnibox, status bar) plus new tab rendered from my own HTML/CSS/JS | Pixel diff against `legacy-ui/01-03` at reference sizes; the UI actions use the production runtime bridge |
 | **M3 - Real web** | Real sites load over HTTPS with DNS, redirects, compression, cookies, cache; error pages tell the truth | Site corpus screenshots from a real network run |
 | **M4 - Settings parity** | All ten settings categories, 125 controls, wired to real behaviour | Control-by-control acceptance matrix; visual diff of each category |
 | **M5 - Features parity** | Tabs/workspaces/private/split/palette/bookmarks/history/downloads/find/zoom/rail/performance/recovery/shortcuts | Inventory acceptance matrix, no empty handlers |
@@ -70,7 +84,7 @@ Interim rule: while the engine cannot yet render the full chrome UI, I may ship 
 | **M8 - Product** | Vault migration, updater with signed manifests, installer repair/upgrade, accessibility, performance budgets | Upgrade/rollback tests, migration fixtures, measured budgets |
 | **M9 - Release** | Signed installer on Releases, notes and checksums | Clean-machine install test, then publish |
 
-Each milestone ends with an installer I can install, use and complain about. That is the loop I should have been in from the start.
+Each milestone ends with a runnable build and evidence; milestones after P10 may be packaged as installers. M1 is a developer build, not an installer. I must not describe the product as installable before the installer exists.
 
 ## 6. The steps
 
@@ -86,10 +100,11 @@ Rules for reading this list: an `S` number is one unit of work with one piece of
 - **S006** Record the reference-intake rules and the parity contracts in `docs/Psycho_REFERENCE.md`.
 - **S007** Record build, installer and CI policy in `docs/Psycho_BUILD-AND-RELEASE.md`.
 - **S008** Extract the CSS/DOM feature list my old UI actually uses (flex, grid, custom properties, calc, absolute/sticky/fixed, overflow scrolling, border-radius, box-shadow, transitions, transforms, media queries, form controls) into the engine requirement list.
-- **S009** Extract the runtime API contract: 21 preload namespaces and 105 IPC handlers from the legacy inventory, re-expressed as my runtime's typed channels.
+- **S009** Extract the runtime API contract: map all 21 preload namespaces, 80 invoke channels, 105 main handlers and the reference's event channels individually to typed schemas, owner services, sender/capability checks, errors and tests. The counts alone are not a completed contract.
 - **S010** Pin the reference commits (legacy app, Proton extension, WPT, Test262) in one file so nothing drifts.
 - **S011** Freeze release publishing: no new tags until M9.
 - **S012** Write the decision log's first entries (why runtime-first, why UI-as-HTML, why installer, why no CI yet).
+- **S013** Maintain `docs/Psycho_REFERENCE-CROSSWALK.md`: trace the read-only reference's observable behavior and artifacts to plan steps, implementation evidence and named tests; keep the pinned inventory and current reference-head differences distinct; refresh the gap rows before a milestone is called reference-complete. The initial 2026-11-06 audit is recorded there.
 
 **Exit gate:** repository contains only documents that describe this plan; no automated build can start by accident.
 
@@ -119,14 +134,17 @@ Rules for reading this list: an `S` number is one unit of work with one piece of
 - **S041** Implement the command line: URLs, `--profile`, `--private`, `--diagnostics`, `--language`, no shell injection, argument validation.
 - **S042** Write the runtime's unit and integration tests: IPC schema, process supervision, navigation, session history, permission checks.
 - **S043** Write a broker-side test harness that a renderer must pass before the UI can use it (round-trip echo, navigation, crash/recover).
+- **S044** Route ordinary production tab navigation through the brokered renderer process. Carry input, resize, navigation, loading/error state and rendered output across the same production IPC path; remove the legacy in-process `Session` path as the renderer for ordinary web tabs.
+- **S045** Build a minimum real app-UI vertical slice in `ui/` (HTML/CSS/JS) rendered by the owned engine, with a curated bridge for address entry and tab actions. First verify the engine can render this deliberately small page; pull any required engine capability into P1 rather than assuming it exists. Keep the native shell to OS window/input/presentation duties; prove one screenshot at a reference viewport and a local web page in the same running app. This is an architecture/flow proof, not a claim of visual parity; full parity remains M2/P3.
+- **S046** Run the complete Windows acceptance path and preserve its output: build the one launchable executable, run `pv-tests`, exercise the real app vertical slice, terminate/recover a renderer, measure process IPC, and empirically test profile-file and socket denial. Record unsupported or failed checks honestly; do not close P1 on portable-model tests alone.
 
-**Exit gate:** a broker hosts two renderers, one of them crashes and is replaced, IPC round-trips are measured, and no renderer can read a profile file or open an arbitrary socket.
+**Exit gate:** the browser starts from one user-launchable executable; its visible app UI is an engine-rendered HTML page; ordinary tabs are owned by real brokered renderer processes; browser actions and page output cross the production IPC boundary; two real renderers run and one is killed/replaced; measured IPC and empirical Windows profile-file/socket denial evidence pass. The actual app flow and all evidence must be demonstrated by the Windows acceptance run. This gate is intentionally stronger than a process-farm startup probe.
 
 ### P2 - Engine to a usable rendering baseline (the "Chrome side", part one)
 
 Order matters: my own UI's CSS comes first, then the web's common CSS, then the long tail.
 
-- **S050** Audit the engine against the S008 feature list; write the gap table with file references.
+- **S050** Audit the engine against S008 and the actual reference UI/page use in `app/ui/index.html`, `newtab.html`, `settings.html`, `renderer.js` (at pinned source commit), plus a representative page corpus. For each required HTML/CSS/DOM/JS/API behavior, record the consuming selector/callsite, current engine implementation file, missing behavior, priority and named regression test; do not limit this audit to the initial CSS checklist.
 - **S051** Text: move to DirectWrite for shaping, metrics, line breaking, ellipsis and fallback; kill any bitmap-font fallback path in UI rendering.
 - **S052** CSS values: custom properties (`var()`), `calc()`, `min()/max()/clamp()`, color/units/percentage resolution, shorthand expansion.
 - **S053** Cascade and inheritance: origin/importance ordering, specificity, `!important`, `inherit/initial/unset/revert`, pseudo-classes used by my UI (`:hover`, `:focus`, `:active`, `:checked`, `:disabled`, `:not`, `:nth-child`).
@@ -149,14 +167,14 @@ Order matters: my own UI's CSS comes first, then the web's common CSS, then the 
 - **S070** Rendering test suite: my own golden-image tests for layout primitives, one per S052-S069 item, runnable locally.
 - **S071** Visual diff harness: render reference viewports, compare to `legacy-ui` captures, produce a diff map and a pass/fail report.
 
-**Exit gate:** my settings/new-tab markup renders correctly from files, and the golden-image suite is green on my machine.
+**Exit gate:** the engine golden-image suite covers the S052-S069 feature set and is green on the supported Windows build. Representative test fixtures derived from the reference UI's CSS/DOM contract render correctly. The actual settings/new-tab HTML and full screenshot parity are delivered and tested in P3/M2, not assumed to exist before P3.
 
 ### P3 - My UI on my engine (the interface contract)
 
 - **S080** Author `ui/` as plain HTML/CSS/JS: design tokens (colours, spacing, radii, typography) taken from the screenshots and the legacy stylesheet.
 - **S081** Build the app frame: rail, tab strip, omnibox, status bar, update banner, panel container, resizer, at the reference geometry (84px chrome, 44px rail, 22px status bar, 330px panel).
 - **S082** Build the new-tab page: logo, greeting, search box, speed-dial tiles, service rail icons, empty states.
-- **S083** Build the ten settings categories with the exact control inventory from `docs/Psycho_FEATURE-INVENTORY.md`, grouping and copy from the screenshots.
+- **S083** Build the ten settings categories with all 125 interactive controls, exact defaults/types/labels and persistence from `docs/Psycho_FEATURE-INVENTORY.md`, grouping and copy from the reference. Include the eight dynamic editors and all six clear-data actions; a visible control is not complete until its state, effect, validation, disabled/error state and reset scope are wired.
 - **S084** Build dialogs: confirmations, prompts, file pickers, permission prompts, error dialogs, with focus traps and keyboard control.
 - **S085** Build the panels: downloads, extensions, performance, vault, history, bookmarks, workspaces, command palette, find bar, translate.
 - **S086** Build the tab strip behaviours: drag to reorder, drag out to window, new-tab button, close, pin, mute, context menu.
@@ -224,20 +242,24 @@ Order matters: my own UI's CSS comes first, then the web's common CSS, then the 
 
 ### P7 - Feature parity (all of it, wired)
 
-- **S150** Tabs: new/close/activate/reopen/pin/mute/move/drag, tab previews, recently closed, restore-on-launch.
-- **S151** Workspaces: create/switch/rename/close/menu, per-workspace tab sets, persistence, keyboard shortcuts.
+- **S150** Tabs: new/close/activate/reopen/pin/mute/move/drag, tab previews, recently closed, restore-on-launch; match pinned-tab ordering, middle-click close, double-click pin, context actions and keyboard navigation. Implement tab islands: child tabs join the opener's group and group collapse never hides the active tab; test collapse/expand without requiring collapse state to survive restart.
+- **S151** Workspaces: create/switch/rename/close/menu, per-workspace tab sets, persistence, keyboard shortcuts. Separately implement named containers with per-tab cookie, localStorage and cache isolation; containers are not workspaces and require cross-container leak tests.
 - **S152** Private windows: full flow including downloads policy, no history writes, separate cookie jar.
 - **S153** Split view and panel layout with the reference geometry.
-- **S154** Omnibox: URL detection, search, suggestions from history/bookmarks, custom search shortcuts, tab-to-search.
+- **S154** Omnibox: URL detection, search, suggestions from history/bookmarks, multiple validated custom search shortcuts, keyboard selection and tab-to-search.
 - **S155** Bookmarks and history UIs with import/export.
 - **S156** Downloads UI: list/control/clear/open/reveal/directory picker/save-as dialog.
 - **S157** Find in page, zoom controls, page translation (or an explicit, honest removal if the old provider cannot be used lawfully - decided and documented, not silently dropped).
-- **S158** Rail services: catalogue, add/remove, real favicons, ordering rules.
-- **S159** Performance panel: hot tabs, media/sleep tab exclusions, CPU/RAM/bandwidth limiters, panic button, snapshot capture, data usage table.
+- **S158** Rail services: catalogue and custom URLs, add/remove/reorder, real favicons/brand colours, open as normal tabs, open-in-window/reload/copy/remove actions and ordering rules.
+- **S159** Performance panel: live per-tab CPU/memory, hot tabs, media and sleep exclusions, CPU limiter, download bandwidth cap (do not imply general traffic shaping), battery-saver transitions, media keys/auto-pause, sidebar services, panic button, PNG/PDF capture and data-usage table. Panic must not persist browsing state while active.
 - **S160** Ad and tracker blocker: my 262-domain list, per-site shield with counters, allow-list, custom domains, bundled toggle.
-- **S161** Site permission editor, container list, session recovery, error log, diagnostics view.
-- **S162** Keyboard shortcuts and context menus for every surface, documented in the app.
-- **S163** Legacy parity matrix: every inventory row marked passed/failed/not run with the test that proves it.
+- **S161** Site permission editor (exact-origin camera/microphone/location/notifications, save/remove/default), global denied-permission list, container assignment UI, session recovery (normal windows only; never private), error log, diagnostics, proxy status/self-test and VPN-check entry points.
+- **S162** Keyboard shortcuts and context menus for every surface, documented in the app. Cover tabs, links, images, selections and text fields (including cut/copy/paste/select-all), focus/keyboard journeys, and accessibility names/states.
+- **S163** Legacy parity matrix: every control and behavior row marked passed/failed/blocked/not run with a named test and evidence link. Trace 125 controls, 59 defaults, eight dynamic editors, six clear actions, 21 namespaces/80 invokes/105 handlers plus events, 15 data stores and all 23 visual captures; do not count a present control or API stub as passed.
+- **S164** Reference spelling workflow: page-field underlines, right-click suggestions and add-to-dictionary, bulk word editing, and honest language support; test editable fields and user-word overrides.
+- **S165** Vault workflow parity: generator, entry CRUD, reveal/copy, auto-lock, duplicate-safe CSV import, encrypted backup/restore, and manual HTTPS fill only for the saved host (including the documented `www` equivalence), never HTTP or a different origin. Add same-host/lookalike/cross-origin and secret-redaction tests.
+- **S166** Translation interaction and privacy contract: choose the configured target, ask before an external provider receives page data/URL, disclose the provider, open the translated result separately and retain the source page; if no lawful provider is available, show a truthful unavailable state and document the deviation.
+- **S167** Verify sidebar-service workflows and global media routing: favicon/brand, open/new-window/reload/copy/remove, media keys, and auto-pause when another tab starts audio; include normal/private session and origin checks.
 
 **Exit gate:** the parity matrix has no "empty handler" and no untested control.
 
@@ -259,8 +281,8 @@ then build and test, then extension work.
 - **S177** `proxy` API: settings get/set/clear, level of control, ownership, change/error events, PAC support, rollback semantics.
 - **S178** `privacy` API for WebRTC policy wired to the real RTC policy implementation.
 - **S179** Extension manager UI: list, details, permissions display, toggle, remove, restore, update, error log.
-- **S180** Compatibility rig: my own test extensions per API, a real-world MV3 extension (Dark Reader class), and Proton's own build; record what passes.
-- **S181** Extension isolation tests: an extension cannot reach the profile, the vault, other extensions' storage, or another site's data without permission.
+- **S180** Compatibility rig: my own test extensions per API, a real-world MV3 extension (Dark Reader class), and the reference's bundled Proton VPN, proxy-switch and Dark Reader-class compatibility subjects; record capability-level results without copying their code.
+- **S181** Extension isolation tests: an extension cannot reach the profile, vault, other extensions' storage or another site's data without permission. Also test proxy/privacy/tab permission denial, exclusive proxy ownership, rollback after partial proxy failure, bounded/rejecting CRX archive parsing and download open/reveal path validation.
 
 **Exit gate:** Proton installs, opens its popup, and a third-party extension I add works within its permission set.
 
@@ -288,7 +310,7 @@ then build and test, then extension work.
 - **S213** Uninstaller: removes files and shortcuts, keeps profile unless asked, removes registrations, leaves no orphans.
 - **S214** Silent and repair modes: `/S`, `/repair`, `/uninstall`, exit codes documented.
 - **S215** Upgrade path: in-place upgrade preserving profile, rollback on failure, version stamping, stale-file cleanup.
-- **S216** Updater: signed manifest verification, download with hash check, staged install, backup, rollback, banner flow in the UI.
+- **S216** Updater: signed manifest verification, access-token state for private feeds, no download before explicit consent, hash-checked installer, staged install, backup/rollback, progress, and reference banner actions (Install/Later/dismiss) with accurate failure reasons. Keep updater payload handling separate from ordinary Save As downloads.
 - **S217** Installer tests: clean VM install, upgrade over old version, uninstall, repair, silent install - recorded with screenshots and logs.
 - **S218** First-run experience: profile creation, migration offer, default settings, privacy explanation, no telemetry.
 
@@ -311,7 +333,7 @@ then build and test, then extension work.
 
 - **S230** Pin WPT and Test262 revisions; publish pass/fail/skip by subsystem, updated per engine change.
 - **S231** Publish the site corpus report with screenshots and known failures.
-- **S232** Publish the parity matrix (settings, features, extensions, VPN) with evidence links.
+- **S232** Publish the parity matrix (settings, features, extensions, VPN) with evidence links and a refreshed `Psycho_REFERENCE-CROSSWALK.md`; list reference-only differences and security-preserving deviations explicitly.
 - **S233** Publish performance numbers next to the old app's measured numbers.
 - **S234** Rewrite release notes in my voice: what works, what does not, what was not tested.
 
