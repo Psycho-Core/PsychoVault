@@ -244,5 +244,15 @@ What exists now (P1 in progress):
   law fed by `decide()` keeps the denied denied and the granted heard. 73
   new checks (2293 total).
 
-Next in P1: S037 (private sessions), then S038 (psychovault://nettest and
-psychovault://version diagnostics).
+- `private/Psycho_private.*` (S037, private-session policy): each
+  `PrivateSession` owns independent cookie and local-storage maps, plus its
+  own `PermissionService` built with no profile load/save/drop seams. State is
+  site-scoped and remains in memory only; private permission answers cannot
+  be remembered. A separate `RendererPolicy::Private` gives internal shell
+  renderers private-tab controls but no profile settings or history facade.
+  Private extensions start disabled and can be enabled only through the
+  explicit user-switch API; worker launchers must consult `may_run_extensions()`.
+  There is no profile path or persistence interface on the private-session
+  type. 28 new checks (2321 total).
+
+Next in P1: S038 (psychovault://nettest and psychovault://version diagnostics).

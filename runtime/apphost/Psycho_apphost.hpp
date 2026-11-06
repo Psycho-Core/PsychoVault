@@ -25,6 +25,7 @@
 namespace pv::rt {
 
 enum class PageKind { Web, Shell, Diagnostics };
+enum class RendererPolicy { Regular, Private };
 
 class AppHost {
 public:
@@ -40,9 +41,11 @@ public:
 
   // page == nullptr means a web origin. Any other value must come straight
   // from an InternalRegistry parse; the kind is derived from its category.
-  AppHost(int tab_id, const InternalPage *page, Seams seams);
+  AppHost(int tab_id, const InternalPage *page, Seams seams,
+          RendererPolicy policy = RendererPolicy::Regular);
 
   PageKind kind() const { return kind_; }
+  RendererPolicy policy() const { return policy_; }
   int tab_id() const { return tab_id_; }
 
   // Run one script in the page world. Returns false iff it failed - and the
@@ -56,6 +59,7 @@ public:
 private:
   int tab_id_ = -1;
   PageKind kind_ = PageKind::Web;
+  RendererPolicy policy_ = RendererPolicy::Regular;
   std::string page_name_ = "web"; // for honest log records
   Seams seams_;
   PreloadBridge bridge_;
