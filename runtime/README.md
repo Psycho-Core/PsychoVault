@@ -35,9 +35,10 @@ The AppHost contract tests exercise the exact `tab:new`/`tab:activate` bridge sc
 check that `nav.go` is not exposed; a process-worker test also exercises the
 bridge round trip from an internal page to a broker callback. The Windows shell
 source now embeds and serves the app page through a renderer process and queues
-those broker actions onto the window thread. That Windows-only path has not been
-compiled or exercised here; the headless screenshot run does not prove app/local
-page switching inside one executable. S045 and S046 remain open.
+those broker actions onto the window thread. The Windows workflow now compiles
+and smoke-renders the shell, but those captures launch the app page and local
+fixture separately; it does not prove app/local page switching inside one
+executable. S045 and S046 remain open.
 
 - `ipc/Psycho_bus.*` (S021, done): the framed length-prefixed message bus with
   the 21 legacy channel groups plus runtime channels, capability masks per
