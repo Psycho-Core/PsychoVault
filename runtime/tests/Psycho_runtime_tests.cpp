@@ -20,6 +20,7 @@
 #include "../window/Psycho_window.hpp"
 #include "../ipc/Psycho_bus.hpp"
 #include "../broker/Psycho_broker.hpp"
+#include "../broker/Psycho_renderer_harness.hpp"
 #include "../process/Psycho_process.hpp"
 #include <algorithm>
 #include <atomic>
@@ -193,9 +194,28 @@ int run_runtime_bus_tests(int &shared) {
     Broker broker;
     int a = broker.spawn_renderer("renderer-1");
     int b = broker.spawn_renderer("renderer-2");
+    Error e;
+    RendererHarness::Seams probes;
+    probes.navigation = [](int, std::string &detail, Error &) {
+      detail = "navigation contract probe passed";
+      return true;
+    };
+    probes.crash_recover = [](int, std::string &detail, Error &) {
+      detail = "crash/recover contract probe passed";
+      return true;
+    };
+    RendererHarness harness(broker, std::move(probes));
+    RendererQualification first_qualification, second_qualification;
+    RT_CHECK(!broker.renderer_qualified(a) && !broker.renderer_qualified(b));
+    RT_CHECK(harness.qualify(a, first_qualification, e) && !e &&
+             first_qualification.admitted && first_qualification.probes.size() == 3);
+    RT_CHECK(harness.qualify(b, second_qualification, e) && !e &&
+             second_qualification.admitted && second_qualification.probes.size() == 3);
+    RT_CHECK(first_qualification.probes[0].probe == RendererProbe::Echo &&
+             first_qualification.probes[0].elapsed_us >= 0 &&
+             broker.renderer_qualified(a) && broker.renderer_qualified(b));
 
     // Heartbeat: ping becomes pong with the request id preserved.
-    Error e;
     Envelope ping;
     ping.channel = Channel::Lifecycle;
     ping.method = "lifecycle:ping";

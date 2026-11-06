@@ -45,7 +45,14 @@ void LifecycleService::handle(const Envelope &request, Envelope &response, Error
     response.payload = std::move(payload);
     return;
   }
-  error = {"lifecycle.unknown", "I only speak lifecycle:ping today"};
+  if (request.method == "lifecycle:echo") {
+    response.channel = Channel::Lifecycle;
+    response.method = request.method;
+    response.request_id = request.request_id;
+    response.payload = request.payload;
+    return;
+  }
+  error = {"lifecycle.unknown", "unknown lifecycle request"};
 }
 
 Broker::Broker() {
@@ -67,6 +74,20 @@ int Broker::spawn_renderer(const std::string &label) {
 Endpoint &Broker::renderer_side(int index) { return hosts_[size_t(index)]->link->a(); }
 Endpoint &Broker::broker_side(int index) { return hosts_[size_t(index)]->link->b(); }
 
+bool Broker::has_renderer(int index) const {
+  return index >= 0 && size_t(index) < hosts_.size();
+}
+
+bool Broker::renderer_qualified(int index) const {
+  return has_renderer(index) && hosts_[size_t(index)]->qualified;
+}
+
+bool Broker::set_renderer_qualified(int index, bool qualified) {
+  if (!has_renderer(index)) return false;
+  hosts_[size_t(index)]->qualified = qualified;
+  return true;
+}
+
 void Broker::add_service(Channel channel, std::unique_ptr<Service> service) {
   services_[channel] = std::move(service);
 }
@@ -84,6 +105,27 @@ size_t Broker::pump() {
         break;
       }
       ++delivered;
+      // The only pre-admission conversation is the broker's harmless echo
+      // probe. All renderer UI/service traffic is refused until S043 passes.
+      if (!host->qualified &&
+          !(request.channel == Channel::Lifecycle &&
+            request.method == "lifecycle:echo")) {
+        Error denied{"broker.renderer-unqualified",
+                     "renderer must pass the broker harness before UI traffic"};
+        note(denied);
+        if (request.request_id != 0) {
+          Envelope refusal;
+          refusal.channel = request.channel;
+          refusal.method = request.method;
+          refusal.request_id = request.request_id;
+          Json payload = Json::make_object();
+          payload.set("error", Json(denied.code + ": " + denied.message));
+          refusal.payload = std::move(payload);
+          Error send_error;
+          if (!mine.send(refusal, send_error)) note(send_error);
+        }
+        continue;
+      }
       auto it = services_.find(request.channel);
       if (it == services_.end()) {
         note({"broker.no-service",

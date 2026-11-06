@@ -23,6 +23,7 @@ using namespace pv;
 // declaration is the only thing main knows about it.
 int run_runtime_bus_tests(int &shared);
 int run_runtime_integration_tests(int &shared);
+int run_renderer_harness_tests(int &shared);
 static int passed = 0;
 // One line per check that has started, when the runner asks for it. A stack overflow
 // on a hosted Windows runner ends the process before a failure message can be
@@ -3203,6 +3204,8 @@ int main() {
   int runtime_ok = run_runtime_bus_tests(passed);
   if (runtime_ok == 0)
     runtime_ok = run_runtime_integration_tests(passed);
+  if (runtime_ok == 0)
+    runtime_ok = run_renderer_harness_tests(passed);
   std::cout << passed << " total checks passed\n";
   return runtime_ok;
 }
