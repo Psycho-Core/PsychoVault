@@ -135,7 +135,7 @@ The gap list from S008/S050 is what P2 works through. In priority order, because
 | `platform/` | Network, TLS, proxy, profile, storage, vault, spell, downloads, sandbox | Exists |
 | `shell/` | Win32 window, input, IME, clipboard, DirectWrite/Direct2D surfaces | Exists, trimmed to OS integration |
 | `runtime/` | Broker, IPC, tab model, preload bridge, service layer, extension host | **New** - created at P1 |
-| `ui/` | My HTML/CSS/JS interface | **New** - created at P3 |
+| `ui/` | My HTML/CSS/JS interface | Minimal renderer-backed vertical slice in P1; full interface and reference parity in P3 |
 | `installer/` | Setup and uninstall programs, payload manifest | **New** - created at P10 |
 | `extensions/` | Bundled third-party extensions, separately licensed | Exists |
 | `tools/` | Build, package, audits, conformance runners | Exists, repurposed |
