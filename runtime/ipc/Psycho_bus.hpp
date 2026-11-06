@@ -51,6 +51,8 @@ enum class Channel : uint16_t {
   Internal = 22, // my psychovault:// scheme surface: pages, resources, diagnostics
   Diagnostics = 30,
   Lifecycle = 31,
+  Renderer = 32, // broker-to-renderer control and committed frame replies
+  Network = 33, // renderer requests are serviced by the privileged broker
 };
 
 std::string channel_name(Channel channel);
@@ -66,6 +68,7 @@ struct Envelope {
   Channel channel = Channel::Lifecycle;
   std::string method;      // e.g. "nav:go" - one of the names my schema registry knows.
   uint32_t request_id = 0; // 0 means "notify": no response is expected.
+  bool is_response = false; // explicit direction; an error payload is never a request
   Json payload;            // Always an object; the schema validator enforces it.
   // How many wire bytes this envelope occupied, filled in by the frame parser so
   // my byte budgets measure what is actually resident in a queue.
@@ -93,10 +96,13 @@ class Schemas {
 public:
   using Validator = std::function<bool(const Json &payload, Error &error)>;
   void add(const std::string &name, Validator validate) { table_[name] = std::move(validate); }
-  bool validate(const std::string &name, const Json &payload, Error &error) const;
   // Whether a method name is registered at all - the preload bridge's
   // curation law asks this before any name may exist on window.psycho.
   bool knows(const std::string &name) const { return table_.count(name) != 0; }
+  // Error envelopes are valid only in response direction, never as a request
+  // that skips the method's required payload fields.
+  bool validate(const std::string &name, const Json &payload, Error &error,
+                bool is_response = false) const;
   // My stock registry: the channels that already have a contract today.
   static Schemas stock();
 
@@ -138,6 +144,7 @@ public:
   Capability capability() const { return capability_; }
   void set_schemas(const Schemas *schemas) { schemas_ = schemas; }
   void set_limits(Limits limits) { limits_ = limits; }
+  void set_accept_responses(bool accept) { accept_responses_ = accept; }
 
   bool send(const Envelope &env, Error &error);
   bool recv(Envelope &env, Error &error);
@@ -156,6 +163,7 @@ private:
   FrameStream inbound_;              // byte stream coming to me
   std::deque<Envelope> decoded_;     // complete messages awaiting pickup
   size_t queued_bytes_ = 0;          // wire bytes still resident, decoded or partial
+  bool accept_responses_ = true;      // role-specific links can reject peer responses
   Endpoint *peer_ = nullptr;         // who I am connected to
 };
 

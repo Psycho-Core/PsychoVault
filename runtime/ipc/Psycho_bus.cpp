@@ -1,9 +1,18 @@
 // PsychoVault original source. My runtime message bus implementation. See
 // Psycho_bus.hpp for the guarantees; here is only how I keep them.
 #include "Psycho_bus.hpp"
+#include <algorithm>
 #include <vector>
 
 namespace pv::rt {
+
+namespace {
+bool method_matches_channel(Channel channel, const std::string &method) {
+  const size_t separator = method.find(':');
+  return separator != std::string::npos &&
+         method.compare(0, separator, channel_name(channel)) == 0;
+}
+} // namespace
 
 std::string channel_name(Channel channel) {
   switch (channel) {
@@ -31,13 +40,15 @@ std::string channel_name(Channel channel) {
   case Channel::Internal: return "internal";
   case Channel::Diagnostics: return "diagnostics";
   case Channel::Lifecycle: return "lifecycle";
+  case Channel::Renderer: return "renderer";
+  case Channel::Network: return "network";
   }
   return "unknown";
 }
 
-// Every stock schema is a list of fields: name, JSON type, required-or-not. The
-// checker walks that list; unknown field names today are tolerated (forward
-// compatibility), missing required ones are not.
+// Every stock schema is a list of fields: name, JSON type, required-or-not.
+// Unknown fields and missing required fields are both refused: silent field
+// tolerance made typos and request-shape bypasses indistinguishable.
 using FieldSpec = std::tuple<const char *, Json::Type, bool>;
 
 Schemas Schemas::stock() {
@@ -48,6 +59,15 @@ Schemas Schemas::stock() {
       if (payload.type != Json::Type::Object) {
         error = {"schema.payload", "payload must be an object"};
         return false;
+      }
+      for (const auto &[key, value] : payload.object) {
+        const bool known = std::any_of(table.begin(), table.end(),
+            [&key](const FieldSpec &field) { return key == std::get<0>(field); });
+        if (!known) {
+          error = {"schema.unknown-field", std::string("field '") + key + "' is not allowed"};
+          return false;
+        }
+        (void)value;
       }
       for (const auto &[name, type, required] : table) {
         const Json *found = payload.find(name);
@@ -86,6 +106,27 @@ Schemas Schemas::stock() {
   s.add("lifecycle:ping", fields({}));
   s.add("lifecycle:pong", fields({{"uptime_ms", T::Number, true}}));
   s.add("lifecycle:echo", fields({{"nonce", T::String, true}}));
+  s.add("lifecycle:shutdown", fields({}));
+  s.add("renderer:navigate", fields({{"url", T::String, true},
+                                     {"ok", T::Bool, false},
+                                     {"frame", T::Object, false},
+                                     {"detail", T::String, false}}));
+  s.add("renderer:isolationProbe", fields({{"path", T::String, true},
+                                           {"host", T::String, true},
+                                           {"port", T::Number, true},
+                                           {"file_opened", T::Bool, false},
+                                           {"socket_created", T::Bool, false},
+                                           {"socket_connected", T::Bool, false}}));
+  s.add("network:fetch", fields({{"url", T::String, true},
+                                 {"resource_type", T::Number, true}}));
+  s.add("network:fetchResult", fields({{"url", T::String, true},
+                                       {"mime", T::String, true},
+                                       {"text", T::String, true},
+                                       {"bytes_b64", T::String, true},
+                                       {"status", T::Number, true},
+                                       {"ok", T::Bool, true},
+                                       {"refused", T::Bool, true},
+                                       {"detail", T::String, false}}));
   s.add("diagnostics:stage",
         fields({{"stage", T::String, true}, {"ok", T::Bool, true}, {"result", T::String, true}}));
   s.add("diagnostics:nettest", fields({}));
@@ -103,18 +144,27 @@ Schemas Schemas::stock() {
   return s;
 }
 
-bool Schemas::validate(const std::string &name, const Json &payload, Error &error) const {
+bool Schemas::validate(const std::string &name, const Json &payload, Error &error,
+                       bool is_response) const {
+  error = Error{};
   auto it = table_.find(name);
   if (it == table_.end()) {
     error = {"schema.unknown-method", "no registered schema for " + name};
     return false;
   }
-  // My refusal convention: any method may answer with {error: "code: why"} for
-  // a request id - that is how structured errors travel, so the refusal shape
-  // validates on every channel by design.
-  if (const Json *refusal = payload.find("error"))
-    if (refusal->type == Json::Type::String)
-      return true;
+  if (is_response && payload.type == Json::Type::Object) {
+    const Json *refusal = payload.find("error");
+    if (refusal) {
+      if (refusal->type == Json::Type::String && payload.object.size() == 1)
+        return true;
+      error = {"schema.error-response", "an error response must contain only a string 'error'"};
+      return false;
+    }
+  }
+  if (!is_response && payload.type == Json::Type::Object && payload.find("error")) {
+    error = {"schema.error-request", "error envelopes are only valid in response direction"};
+    return false;
+  }
   return it->second(payload, error);
 }
 
@@ -123,6 +173,7 @@ std::string FrameStream::encode(const Envelope &env) const {
   body.set("c", Json(static_cast<int>(env.channel)));
   body.set("m", Json(env.method));
   body.set("i", Json(static_cast<size_t>(env.request_id)));
+  body.set("r", Json(env.is_response));
   body.set("p", env.payload);
   std::string bytes = body.dump();
   std::string frame(4, '\0');
@@ -157,6 +208,17 @@ void FrameStream::feed(const std::string &bytes, std::vector<Envelope> &out, Err
     env.channel = static_cast<Channel>(static_cast<uint16_t>(parsed->num("c", 0)));
     env.method = parsed->str("m");
     env.request_id = static_cast<uint32_t>(parsed->num("i", 0));
+    if (const Json *response = parsed->find("r")) {
+      if (response->type != Json::Type::Bool) {
+        error = {"wire.kind", "a frame's response marker must be boolean"};
+        return;
+      }
+      env.is_response = response->boolean;
+    }
+    if (env.is_response && env.request_id == 0) {
+      error = {"wire.kind", "a response must carry a nonzero request id"};
+      return;
+    }
     const Json *payload = parsed->find("p");
     env.payload = payload ? *payload : Json();
     env.wire_bytes = 4 + size_t(length);
@@ -181,10 +243,22 @@ bool Endpoint::handoff(const std::string &frame, Error &error) {
     return false;
   }
   for (auto &env : fresh) {
+    if (!method_matches_channel(env.channel, env.method)) {
+      error = {"schema.channel", "method does not belong to channel " + channel_name(env.channel)};
+      return false;
+    }
+    if (env.is_response && !accept_responses_) {
+      error = {"wire.unexpected-response", label_ + " does not accept peer responses"};
+      return false;
+    }
+    if (env.is_response && env.request_id == 0) {
+      error = {"wire.kind", "a response must carry a nonzero request id"};
+      return false;
+    }
     if (schemas_) {
       // The receiving end validates too. A sender whose validation crashed is
       // not an argument for trusting its payload.
-      if (Error e; !schemas_->validate(env.method, env.payload, e)) {
+      if (Error e; !schemas_->validate(env.method, env.payload, e, env.is_response)) {
         error = e;
         return false;
       }
@@ -208,8 +282,16 @@ bool Endpoint::send(const Envelope &env, Error &error) {
              label_ + " has no capability for channel " + channel_name(env.channel)};
     return false;
   }
+  if (!method_matches_channel(env.channel, env.method)) {
+    error = {"schema.channel", "method does not belong to channel " + channel_name(env.channel)};
+    return false;
+  }
+  if (env.is_response && env.request_id == 0) {
+    error = {"wire.kind", "a response must carry a nonzero request id"};
+    return false;
+  }
   if (schemas_) {
-    if (Error e; !schemas_->validate(env.method, env.payload, e)) {
+    if (Error e; !schemas_->validate(env.method, env.payload, e, env.is_response)) {
       error = e;
       return false;
     }

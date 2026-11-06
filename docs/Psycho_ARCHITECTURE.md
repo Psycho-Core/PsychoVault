@@ -7,8 +7,7 @@ This is the map for the rebuild that starts at P1 of `docs/Psycho_MASTER-PLAN.md
 ```
 PsychoVault-Setup-<version>.exe          (my installer, my payload format)
   └── %LOCALAPPDATA%\PsychoVault\
-        PsychoVault.exe                  (broker: my Electron "main process")
-        PsychoVaultRenderer.exe          (renderer: my engine in a sandbox)
+        PsychoVault.exe                  (browser launcher, broker, and sandboxed renderer-child image)
         PsychoVaultProxy.exe             (tunnel + local proxy daemon)
         ui\                              (my HTML/CSS/JS interface)
         extensions\Psycho-VPN-Proton\    (bundled extension, separate licence)
@@ -16,14 +15,14 @@ PsychoVault-Setup-<version>.exe          (my installer, my payload format)
   └── %LOCALAPPDATA%\PsychoVault\profile\...  (my data: settings, history, vault)
 ```
 
-Nothing is portable-only, nothing unpacks to a temp folder and vanishes, and the extension payload is part of the installed product.
+The user-facing install remains one `PsychoVault-Setup-<version>.exe`, and the installed browser has one launchable `PsychoVault.exe`. The broker starts renderer workers by re-launching that same image with a private `--pv-renderer-child` argument; Windows gives each child a separate restricted process and AppContainer. There is no separate renderer executable for the user or installer to manage. Nothing is portable-only, nothing unpacks to a temp folder and vanishes, and the extension payload is part of the installed product. Implementation status: the current Windows shell code launches two same-image renderer children and exercises brokered startup-frame probes; regular page tabs still use the legacy in-process session path. The AppContainer's profile-file/socket denials and real-process crash recovery remain unverified until a Windows run.
 
 ## 2. Process model
 
 | Process | Owns | Trust | Talks to |
 | --- | --- | --- | --- |
 | **Broker** (`PsychoVault.exe`) | Windows, tab model, navigation, sessions, permissions, downloads, extension lifecycle, updates, policy | Highest. Never parses untrusted content. | Everything, over typed IPC |
-| **Renderer** (`PsychoVaultRenderer.exe`) | HTML/CSS/JS/DOM/layout/paint for one site instance, plus my UI pages | Sandboxed: job object, restricted token, no profile path, no arbitrary sockets | Broker only (and the network service through the broker's channel) |
+| **Renderer child** (same `PsychoVault.exe`, `--pv-renderer-child`) | HTML/CSS/JS/DOM/layout/paint for one site instance, plus my UI pages | Intended: job object, restricted token, AppContainer with no network capability, no profile path | Broker only through typed IPC |
 | **Network service** (thread in broker at M1, process at M8) | DNS, connections, TLS, HTTP, cookies, cache, proxy, HSTS | OS access to sockets only | Broker |
 | **Storage service** (thread in broker) | Profile stores, vault, migration, atomic writes | File access to the profile only | Broker |
 | **Extension host** (renderer-adjacent process per extension) | MV3 service worker, event dispatch | Sandboxed, permission-gated | Broker, through extension API surface |

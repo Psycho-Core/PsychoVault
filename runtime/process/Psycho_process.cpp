@@ -1,6 +1,7 @@
 // PsychoVault original source. The supervision rules themselves: portable,
 // injected-clock deterministic so every path is testable here.
 #include "Psycho_process.hpp"
+#include "Psycho_process_transport.hpp"
 
 namespace pv::rt {
 
@@ -121,6 +122,44 @@ bool kill_child_platform(const WinChildHandle &handle, const std::string &reason
   (void)reason;
   error = "process.kill.unsupported";
   return false;
+}
+
+bool child_process_running_platform(const WinChildHandle &handle) {
+  (void)handle;
+  return false;
+}
+
+bool process_pipe_read(intptr_t pipe, std::string &bytes, Error &error) {
+  (void)pipe;
+  bytes.clear();
+  error = {"process.pipe.unsupported", "process pipes are only available on Windows"};
+  return false;
+}
+
+bool process_pipe_read_timeout(intptr_t pipe, std::string &bytes, Error &error,
+                               uint32_t timeout_ms) {
+  (void)timeout_ms;
+  return process_pipe_read(pipe, bytes, error);
+}
+
+bool process_pipe_write(intptr_t pipe, const std::string &bytes, Error &error) {
+  (void)pipe;
+  (void)bytes;
+  error = {"process.pipe.unsupported", "process pipes are only available on Windows"};
+  return false;
+}
+
+std::unique_ptr<ProcessTransport> windows_child_transport(
+    const WinChildHandle &child, Capability local_capability, const Schemas &schemas,
+    bool accept_responses, Error &error, Limits limits, uint32_t read_timeout_ms) {
+  (void)child;
+  (void)local_capability;
+  (void)schemas;
+  (void)accept_responses;
+  (void)limits;
+  (void)read_timeout_ms;
+  error = {"process.transport.unsupported", "Windows child pipes are unavailable here"};
+  return nullptr;
 }
 #endif
 

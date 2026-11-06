@@ -68,7 +68,10 @@ private:
 // The Windows halves of the seams (declared for every platform, defined only in
 // the Windows build). windows_instance_seams owns its OS state internally and
 // tears it down through release_lock inside quit().
-AppInstance::Seams windows_instance_seams(const std::string &profile_key);
+AppInstance::Seams windows_instance_seams(
+    const std::string &profile_key,
+    std::function<void(const LaunchRequest &)> on_forwarded = {},
+    std::function<bool(std::string &)> save_session = {});
 bool windows_forward_launch(const std::string &profile_key, const LaunchRequest &request,
                             std::string &error);
 

@@ -37,6 +37,7 @@ public:
 
 private:
   std::map<int, Surface> surfaces_;
+  size_t allocated_bytes_ = 0;
   int next_id_ = 1;
 };
 

@@ -11,6 +11,7 @@
 
 #include <atomic>
 #include <memory>
+#include <utility>
 #include <windows.h>
 
 namespace pv::rt {
@@ -19,10 +20,16 @@ namespace {
 std::wstring widen(const std::string &text) {
   if (text.empty())
     return L"";
-  int wide = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
-  std::wstring out(size_t(wide - 1), L'\0');
-  MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, out.data(), wide);
-  return out;
+  const int wide = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.c_str(), -1,
+                                       nullptr, 0);
+  if (wide <= 0)
+    return {};
+  std::wstring buffer(size_t(wide), L'\0');
+  if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.c_str(), -1,
+                          buffer.data(), wide) != wide)
+    return {};
+  buffer.resize(size_t(wide - 1));
+  return buffer;
 }
 
 // The named objects are per-profile: two profiles never block each other, two
@@ -36,6 +43,30 @@ std::wstring pipe_name(const std::string &profile_key) {
 
 std::string win_error(const char *what) {
   return std::string(what) + " failed: " + std::to_string(GetLastError());
+}
+
+bool read_exact(HANDLE handle, void *data, DWORD length) {
+  auto *bytes = static_cast<unsigned char *>(data);
+  DWORD offset = 0;
+  while (offset < length) {
+    DWORD got = 0;
+    if (!ReadFile(handle, bytes + offset, length - offset, &got, nullptr) || got == 0)
+      return false;
+    offset += got;
+  }
+  return true;
+}
+
+bool write_exact(HANDLE handle, const void *data, DWORD length) {
+  const auto *bytes = static_cast<const unsigned char *>(data);
+  DWORD offset = 0;
+  while (offset < length) {
+    DWORD wrote = 0;
+    if (!WriteFile(handle, bytes + offset, length - offset, &wrote, nullptr) || wrote == 0)
+      return false;
+    offset += wrote;
+  }
+  return true;
 }
 
 struct PrimaryState {
@@ -63,19 +94,24 @@ DWORD WINAPI forward_listener(LPVOID raw) {
       continue;
     }
     uint32_t length = 0;
-    DWORD got = 0;
-    if (ReadFile(pipe, &length, 4, &got, nullptr) && got == 4 && length <= (1u << 16)) {
+    if (read_exact(pipe, &length, sizeof(length)) && length > 0 && length <= (1u << 16)) {
       std::string body(length, '\0');
-      if (length == 0 || ReadFile(pipe, body.data(), length, &got, nullptr)) {
+      if (read_exact(pipe, body.data(), length)) {
         auto parsed = Json::parse(body);
         if (parsed && parsed->type == Json::Type::Object && state->on_forwarded) {
           LaunchRequest request;
           const Json *args = parsed->find("args");
-          if (args && args->type == Json::Type::Array)
-            for (const Json &arg : args->array)
-              if (arg.type == Json::Type::String)
-                request.args.push_back(arg.string);
-          state->on_forwarded(request);
+          if (args && args->type == Json::Type::Array) {
+            bool valid = true;
+            for (const Json &arg : args->array) {
+              if (arg.type != Json::Type::String) {
+                valid = false;
+                break;
+              }
+              request.args.push_back(arg.string);
+            }
+            if (valid) state->on_forwarded(request);
+          }
         }
       }
     }
@@ -90,9 +126,13 @@ DWORD WINAPI forward_listener(LPVOID raw) {
 // Primary-facing seams: acquire the named mutex; if it is already held I am not
 // primary. On success, my listener thread starts taking forwarded launches. The
 // OS state lives on the heap, owned by the seams themselves.
-AppInstance::Seams windows_instance_seams(const std::string &profile_key) {
+AppInstance::Seams windows_instance_seams(
+    const std::string &profile_key,
+    std::function<void(const LaunchRequest &)> on_forwarded,
+    std::function<bool(std::string &)> save_session) {
   AppInstance::Seams seams;
   auto shared = std::make_shared<PrimaryState>();
+  shared->on_forwarded = on_forwarded;
   seams.acquire_lock = [profile_key, shared](std::string &error) -> std::optional<bool> {
     HANDLE mutex = CreateMutexW(nullptr, TRUE, mutex_name(profile_key).c_str());
     if (!mutex) {
@@ -135,10 +175,14 @@ AppInstance::Seams windows_instance_seams(const std::string &profile_key) {
       shared->mutex = nullptr;
     }
   };
-  seams.on_forwarded = [shared](const LaunchRequest &request) {
-    if (shared->on_forwarded)
-      shared->on_forwarded(request);
+  // A secondary instance uses the same framed named-pipe request shape. The
+  // primary listener invokes the supplied callback on its listener thread; the
+  // shell adapter must marshal UI work onto its window thread.
+  seams.forward = [profile_key](const LaunchRequest &request, std::string &error) {
+    return windows_forward_launch(profile_key, request, error);
   };
+  seams.save_session = std::move(save_session);
+  seams.on_forwarded = std::move(on_forwarded);
   return seams;
 }
 
@@ -152,17 +196,32 @@ bool windows_forward_launch(const std::string &profile_key, const LaunchRequest 
     args.array.push_back(Json(arg));
   body.set("args", std::move(args));
   std::string text = body.dump();
-  HANDLE pipe = CreateFileW(pipe_name(profile_key).c_str(), GENERIC_WRITE, 0, nullptr,
-                            OPEN_EXISTING, 0, nullptr);
-  if (pipe == INVALID_HANDLE_VALUE) {
-    error = win_error("CreateFileW(pipe)");
+  if (text.empty() || text.size() > (1u << 16)) {
+    error = "instance.forward.payload-too-large";
     return false;
   }
-  uint32_t length = static_cast<uint32_t>(text.size());
-  DWORD wrote = 0;
-  bool ok = WriteFile(pipe, &length, 4, &wrote, nullptr) &&
-            WriteFile(pipe, text.data(), length, &wrote, nullptr);
-  DWORD write_error = ok ? 0u : GetLastError();
+  const std::wstring name = pipe_name(profile_key);
+  HANDLE pipe = INVALID_HANDLE_VALUE;
+  for (int attempt = 0; attempt < 50; ++attempt) {
+    pipe = CreateFileW(name.c_str(), GENERIC_WRITE, 0, nullptr,
+                       OPEN_EXISTING, 0, nullptr);
+    if (pipe != INVALID_HANDLE_VALUE) break;
+    const DWORD code = GetLastError();
+    if (code != ERROR_PIPE_BUSY && code != ERROR_FILE_NOT_FOUND) {
+      error = "CreateFileW(pipe) failed: " + std::to_string(code);
+      return false;
+    }
+    if (code == ERROR_PIPE_BUSY) WaitNamedPipeW(name.c_str(), 100);
+    else Sleep(100); // the primary owns the mutex before its listener is ready
+  }
+  if (pipe == INVALID_HANDLE_VALUE) {
+    error = win_error("CreateFileW(pipe) timeout");
+    return false;
+  }
+  const uint32_t length = static_cast<uint32_t>(text.size());
+  const bool ok = write_exact(pipe, &length, sizeof(length)) &&
+                  write_exact(pipe, text.data(), length);
+  const DWORD write_error = ok ? 0u : GetLastError();
   CloseHandle(pipe);
   if (!ok)
     error = "WriteFile(pipe) failed: " + std::to_string(write_error);

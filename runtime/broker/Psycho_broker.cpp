@@ -18,9 +18,11 @@ Capability capabilities_for(Role role) {
   case Role::Renderer:
     return mask_of({Channel::Nav, Channel::Tab, Channel::Find, Channel::Zoom,
                     Channel::View, Channel::Clip, Channel::Spell, Channel::Perf,
-                    Channel::Settings, Channel::Diagnostics, Channel::Lifecycle});
+                    Channel::Settings, Channel::Diagnostics, Channel::Lifecycle,
+                    Channel::Renderer, Channel::Network});
   case Role::Network:
-    return mask_of({Channel::Nav, Channel::Downloads, Channel::Diagnostics, Channel::Lifecycle});
+    return mask_of({Channel::Nav, Channel::Network, Channel::Downloads,
+                    Channel::Diagnostics, Channel::Lifecycle});
   case Role::Storage:
     return mask_of({Channel::History, Channel::Settings, Channel::Bookmarks, Channel::Vault,
                     Channel::Lifecycle});
@@ -38,6 +40,7 @@ void LifecycleService::handle(const Envelope &request, Envelope &response, Error
     response.channel = Channel::Lifecycle;
     response.method = "lifecycle:pong";
     response.request_id = request.request_id;
+    response.is_response = true;
     Json payload = Json::make_object();
     auto elapsed = std::chrono::steady_clock::now() - started_;
     payload.set("uptime_ms", Json(double(
@@ -49,6 +52,7 @@ void LifecycleService::handle(const Envelope &request, Envelope &response, Error
     response.channel = Channel::Lifecycle;
     response.method = request.method;
     response.request_id = request.request_id;
+    response.is_response = true;
     response.payload = request.payload;
     return;
   }
@@ -67,6 +71,10 @@ int Broker::spawn_renderer(const std::string &label) {
   host->link = std::make_unique<Link>(capabilities_for(Role::Renderer), label,
                                       Capability::all(), "broker:" + label);
   host->link->set_schemas(&schemas_);
+  // Renderer-to-broker traffic is request/notification only; otherwise an
+  // untrusted peer could label a malformed request as an error response.
+  host->link->a().set_accept_responses(true);
+  host->link->b().set_accept_responses(false);
   hosts_.push_back(std::move(host));
   return int(hosts_.size()) - 1;
 }
@@ -118,6 +126,7 @@ size_t Broker::pump() {
           refusal.channel = request.channel;
           refusal.method = request.method;
           refusal.request_id = request.request_id;
+          refusal.is_response = true;
           Json payload = Json::make_object();
           payload.set("error", Json(denied.code + ": " + denied.message));
           refusal.payload = std::move(payload);
@@ -137,6 +146,7 @@ size_t Broker::pump() {
           refuse.channel = request.channel;
           refuse.method = request.method;
           refuse.request_id = request.request_id;
+          refuse.is_response = true;
           Json payload = Json::make_object();
           payload.set("error", Json(std::string("no service for ") + request.method));
           refuse.payload = std::move(payload);
@@ -156,6 +166,7 @@ size_t Broker::pump() {
           failure.channel = request.channel;
           failure.method = request.method;
           failure.request_id = request.request_id;
+          failure.is_response = true;
           Json payload = Json::make_object();
           payload.set("error", Json(service_error.code + ": " + service_error.message));
           failure.payload = std::move(payload);
@@ -171,6 +182,7 @@ size_t Broker::pump() {
       }
       if (request.request_id != 0) {
         response.request_id = request.request_id;
+        response.is_response = true;
         Error send_error;
         if (!mine.send(response, send_error))
           note(send_error);

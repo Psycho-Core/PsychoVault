@@ -1,40 +1,56 @@
 # runtime/ - my own my own runtime
 
-Nothing here yet. This directory is created by P1 of `docs/Psycho_MASTER-PLAN.md` and holds the privileged side of the app:
+P1 runtime components now exist here. The shipping shell uses the runtime singleton lifecycle and now launches a broker-owned pool of two isolated renderer processes, probes each through `RendererProcessClient`, and checks/replaces dead workers from its UI timer. Ordinary browser tabs still use the legacy in-process `Session` path; the P1 exit gate remains open until tab routing and empirical Windows process/security checks are completed.
 
 - `broker/` - window host, tab model, navigation, sessions, permissions, downloads, update service, dialogs, tray, menus.
 - `ipc/` - typed channel definitions, schemas, capability handles, the framed message bus.
-- `renderer/` - the sandboxed renderer process entry point that hosts my engine for one site instance.
+- `renderer/` - engine-owning worker and private renderer-child entry point compiled into `PsychoVault.exe`; Windows build and live-shell launch remain unverified, and ordinary page routing remains unwired.
 - `preload/` - the curated `window.psycho` bridge exposed to UI and internal pages.
 - `services/` - network, storage, vault, extension host and proxy service wrappers around `platform/`.
 - `tests/` - integration harnesses: IPC round-trip, process supervision, navigation, crash recovery.
 
 What exists now (P1 in progress):
 
-**Integration status:** S035-S040 are tested runtime contract/service slices,
-not claims that the current shell is already driven by this broker runtime.
-Their transport, profile, private-tab/storage, diagnostic-probe/version,
-renderer/process and logger/export adapters still need production callers.
-S041's validated parser is wired into the existing Windows shell entry point;
-the portable parser is tested here, but the Windows-only executable has not
-been rebuilt in this Linux run. English is the only UI language shipped. The
-P1 exit gate remains outstanding.
+**Integration status:** S035-S040 remain tested runtime contract/service slices,
+not claims that every listed platform service is finished. S041's validated
+parser and S023's singleton lifecycle are wired into the Windows shell. The
+shell now starts two sandboxed `PsychoVault.exe --pv-renderer-child` processes through `RendererProcessFarm`,
+obtains an actual engine frame from each over process IPC before showing the
+window, and checks the child handles on its UI timer to replace exited workers
+(up to three replacements per slot). Page tabs still use the legacy in-process
+`Session` path, so ordinary navigation is not yet routed through the farm. The
+Windows-only tests now exercise two real child processes, report measured IPC
+round-trips, kill/recover a worker, and probe profile-file/socket denial, but
+those tests and the Windows executable have not been built or exercised in this
+Linux run.
+English is the only UI language shipped. The P1 exit gate remains outstanding.
 
 - `ipc/Psycho_bus.*` (S021, done): the framed length-prefixed message bus with
   the 21 legacy channel groups plus runtime channels, capability masks per
-  endpoint, per-channel schema validation with a refusal convention, bounded
-  inbound queues (byte and message back-pressure) and structured errors.
+  endpoint, per-channel and method/channel schema binding, direction-tagged
+  responses, structured error replies that cannot bypass request fields, strict
+  unknown-field refusal, bounded inbound queues (byte and message back-pressure)
+  and structured errors.
 - `broker/Psycho_broker.*` (S020, in-process model done): role registry with
   capability masks per role, the service table, the routing pump with structured
-  refusals, and the built-in lifecycle service (ping/pong heartbeat that S022's
-  supervision will reuse). Process envelopes with job objects are S022 and are
-  honestly not here yet - today a renderer is an in-process endpoint whose mask
-  already blocks privileged channels, which is capability control, not OS
-  isolation.
+  refusals, and the built-in lifecycle service. `Psycho_renderer_farm.*` now
+  owns two real Windows child handles/transports, routes navigation/fetch IPC,
+  and replaces exited workers under a three-restart budget. The shell performs
+  startup frame probes through the farm. Ordinary production tabs still use
+  in-process sessions, and the farm's Windows launch and restart behavior is
+  unverified here.
+- `renderer/Psycho_renderer_worker.*` is an engine-owning worker over
+  `ProcessTransport`: it accepts typed navigation requests, runs a real `Host`
+  and engine page, and requires an injected broker fetcher (no socket API in the
+  worker). A fragmented in-memory end-to-end test covers broker fetch IPC. The
+  Windows shell now launches the standalone child and routes its startup probes
+  through `RendererProcessClient`; ordinary tabs are not yet routed to it.
 - `tests/Psycho_runtime_tests.cpp` (S021-S041 unit contracts): schema and
   wire validation, capability/back-pressure laws, process supervision,
   navigation/session history, permission decisions, and each runtime contract
-  are exercised in `pv-tests`.
+  are exercised in `pv-tests`. On Windows the same target additionally starts
+  two real same-image renderer children, measures navigations, probes file and
+  socket access from the AppContainer, terminates a child, and verifies recovery.
 - `tests/Psycho_runtime_integration_tests.cpp` (S042): cross-component checks
   route renderer IPC through the broker into tab/navigation history, then
   connect process death to crash-page/replacement flow and permission decisions
@@ -52,47 +68,62 @@ P1 exit gate remains outstanding.
   and no production caller wires the qualification adapters or crash
   invalidation. S043 therefore does not prove OS isolation or complete the P1
   exit gate (two real renderers, real replacement, measured production IPC,
-  profile-file denial, and arbitrary-socket denial remain unproven). 57 new
-  checks; 806 engine checks and 2572 total checks pass.
+  profile-file denial, and arbitrary-socket denial remain unproven). S043
+  added 57 checks; S023 fail-closed seam tests added 4 more afterward. The
+  S021's direction/schema hardening added 7 checks; S022 fragmented process
+  transport and engine-worker round trip add 11; S025 resource/overflow hardening
+  added 5. The current suite passes 806 engine checks and 2604 total.
 
 - `process/Psycho_process.*` (S022, supervision core done): the supervisor with
   injected clock - spawn, heartbeat windows, hang detection, kill for cause,
   bounded restarts with a spent-budget retirement, every death attributed with
-  a reason. 17 new checks, 860 total passing. `Psycho_process_win32.cpp` is the
-  real Windows envelope: CreateProcess with suspended launch, a job object that
-  kills the whole tree on close, a maximum-privileges-stripped token, and pipes
-  the S021 wire runs over. It compiles on Windows only and is proven on the
-  first authorized manual Windows build.
+  a reason. 17 original checks, 860 total at S022. `Psycho_process_win32.cpp`
+  is the Windows launch envelope: suspended creation, kill-on-close job,
+  restricted token, explicit stdio handle-inheritance allowlist, and pipe
+  endpoints. `Psycho_process_transport.*` applies S021 framing, direction,
+  capabilities, and schemas across those byte streams; fragmented-stream tests
+  measure its round trip. Launch requests a per-user AppContainer identity with
+  no network capability; the production renderer farm now calls that launcher.
+  Windows-only acceptance code in `Psycho_runtime_tests.cpp` attempts a read of a
+  real profile fixture and connects to a real local listening socket from the
+  child AppContainer, recording measured navigation IPC timings and replacing a
+  terminated process. It is implemented but unrun here; empirical denial and
+  restart results are therefore not yet available.
 
 - `app/Psycho_instance.*` (S023, decision core done): the singleton model as an
   auditable state machine - primary takes the lock, a second launch forwards
   its arguments and exits, quitting saves the session exactly once and hands
   the lock back; a failed session save refuses the quit and keeps the app
   running. 11 new checks, 871 total. `Psycho_instance_win32.cpp` is the real
-  Windows side: named mutex per profile, named pipe forwarding on the S021 wire
-  shape, listener thread with a clean quit path - proven on the first
-  authorized manual Windows build.
+  Windows side: named mutex per profile, bounded named-pipe forwarding on the
+  S021 wire shape, partial-I/O handling, startup-race retries, and a listener
+  thread with a clean quit path. `shell/Psycho_win_main.cpp` now calls this
+  lifecycle before creating the Browser, dispatches forwarded URLs to the
+  primary UI thread, blocks close on failed persistence, and releases the lock
+  during graceful shutdown. Portable contracts pass; Windows compilation and
+  real multi-process behavior remain unverified here.
 
 - `window/Psycho_window.*` (S024, rules done): my BrowserWindow equivalent's
   decisions - creation with clamping into monitor work areas, cross-monitor
   moves (destination monitor resolved first, then clamped), min/max/fullscreen
   with restore geometry kept, single-owner focus with deterministic fallover,
   per-window DPI scale and taskbar identity (`PsychoCore.PsychoVault.Browser`).
-  27 new checks, 898 total. `Psycho_window_win32.cpp` is the real OS half: my
-  own window class, SetWindowPos/ShowWindow application, AppUserModelID, a
-  WM_DPICHANGED path that obeys the rules object; proven on the first
-  authorized manual Windows build. Fullscreen style-swap polish rides S025's
-  presentation work.
+  27 new checks, 898 total. `Psycho_window_win32.cpp` contains the Windows
+  adapter, but it is not production-wired or verified: `WM_DPICHANGED` currently
+  applies the OS suggestion directly, and `Fullscreen` still aliases maximize.
+  Do not count the platform mapping as complete; fullscreen style work must also
+  integrate with S025 presentation.
 
 - `surface/Psycho_surface.*` (S025, rules done): the presentation contract my
   whole runtime obeys - my engine paints bytes, my broker's registry holds the
   only writable copy, my compositor intersects before it copies so writing
   outside the destination is structurally impossible. Shape-lying frames are
-  refused; resize clears instead of smearing stale memory; paint order is list
-  order. 26 new checks (924 total), including a real engine Canvas payload
-  composited pixel-exact and off-edge clipping proven on both sides of the
-  line. `Psycho_surface_win32.cpp` presents the target through a top-down DIB
-  section - proven on the first authorized manual Windows build.
+  refused; allocations are capped per-surface, in aggregate, and by count; resize
+  clears instead of smearing stale memory; placement clipping uses overflow-safe
+  arithmetic; paint order is list order. The original checks covered engine
+  Canvas pixels and clipping; new P1 hardening tests exercise the budgets and
+  extreme signed placements. `Psycho_surface_win32.cpp` presents the target
+  through a top-down DIB section - Windows-only behavior remains unverified here.
 
 - `tabs/Psycho_tabs.*` (S026, rules done): my tab model - ordered tab lists
   per attached window, and the laws are structural, not advisory. Pinned tabs
@@ -337,4 +368,7 @@ P1 exit gate remains outstanding.
   exercise in-process contracts and injected fake platform seams only; they do
   not prove a real OS renderer process, profile-file denial, or socket sandbox.
 
-Next in P1: S043 (broker-side test harness).
+P1 remains in progress. The next required integration is a real renderer
+process connected to the broker's framed IPC, followed by the OS-level crash,
+replacement, profile-file denial, and arbitrary-socket denial proofs in the P1
+exit gate.

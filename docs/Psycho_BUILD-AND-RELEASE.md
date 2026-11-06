@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | Compiler | MSVC (Windows x64, C++20) | `cl.exe` from the Windows SDK toolchain |
 | Local build (engine/tests) | `tools/Psycho_build.py` | Builds and runs the engine test suite on the development machine |
-| Windows build | `tools/Psycho_build.py` (Windows target) | Produces `PsychoVault.exe`, `PsychoVaultRenderer.exe`, `PsychoVaultProxy.exe` |
+| Windows build | `tools/Psycho_build.py --target all` on Windows | Produces one launchable `PsychoVault.exe` (broker and private renderer-child mode) plus engine/test binaries |
 | Installer | `installer/` (built with the same toolchain) | Produces `PsychoVault-Setup-<version>.exe` |
 | Packaging | `tools/Psycho_package.py` | Builds the installer payload manifest with per-file hashes |
 | Test images | my own golden-image and diff tooling in `tests/` | No third-party diff service |
@@ -17,7 +17,7 @@ No third-party runtime library ships inside the product. Build-time tools never 
 
 1. `python tools/Psycho_build.py --target engine` - engine and unit tests, runs on the development machine.
 2. `python tools/Psycho_build.py --target tests` - full unit + golden-image suite.
-3. `python tools/Psycho_build.py --target windows` - broker, renderer, proxy daemon.
+3. On Windows, `python tools/Psycho_build.py --target all` - one shell executable with an internal sandboxed renderer-child mode, plus tests.
 4. `python tools/Psycho_package.py --stage` - payload staging with hashes.
 5. `installer` build - `PsychoVault-Setup-<version>.exe`.
 6. Install it on a clean profile, run the milestone's acceptance script, record the evidence.
