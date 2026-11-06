@@ -6,6 +6,9 @@ name: Build owned engine
 # docs/Psycho_BUILD-AND-RELEASE.md.
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - arena/5fe95615-psychovault
 permissions:
   contents: read
 
@@ -81,6 +84,27 @@ jobs:
           } finally {
             Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
           }
+      - name: Exercise my app address bridge to a fetched page in one running app
+        shell: pwsh
+        run: |
+          $smokeProfile = Join-Path $env:GITHUB_WORKSPACE 'build/s045-app-flow-profile'
+          Remove-Item -Recurse -Force $smokeProfile -ErrorAction SilentlyContinue
+          $server = Start-Process python -ArgumentList '-m','http.server','8767','--directory','tests/fixtures' -PassThru -WindowStyle Hidden
+          try {
+            Start-Sleep -Seconds 1
+            .\build\PsychoVault.exe --smoke --expect-image --smoke-bridge-url http://127.0.0.1:8767/Psycho_browser-smoke.html --capture build/captures/s045-app-flow.png --profile $smokeProfile
+            if ($LASTEXITCODE -ne 0) { throw "S045 same-app bridge smoke exited $LASTEXITCODE" }
+            $report = Get-Content build/captures/s045-app-flow.png.flow.json -Raw | ConvertFrom-Json
+            if ($report.result -ne 'passed') { throw "S045 same-app flow did not pass: $($report.reason)" }
+            if ($report.sourceUrl -ne 'psychovault://newtab' -or -not $report.sourceTabRetained -or $report.tabCount -lt 2) { throw 'S045 app tab was not retained alongside the fetched page' }
+            if ($report.actualUrl -ne 'http://127.0.0.1:8767/Psycho_browser-smoke.html' -or -not $report.targetRendererReady -or $report.targetImageCount -lt 1) { throw 'S045 address bridge did not render the expected page and image' }
+            if (-not (Test-Path build/captures/s045-app-flow.png.app.png)) { throw 'S045 app-page capture is missing' }
+            if (-not (Test-Path build/captures/s045-app-flow.png)) { throw 'S045 fetched-page capture is missing' }
+            Get-Content build/captures/s045-app-flow.png.flow.json
+          } finally {
+            Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
+          }
+
       - name: Prove my single executable launches an isolated renderer child
         shell: pwsh
         run: |
@@ -177,5 +201,6 @@ jobs:
             build/*.json
             build/*.log
             build/captures/*.png
+            build/captures/*.json
           if-no-files-found: warn
           retention-days: 14

@@ -12,6 +12,7 @@ struct CommandLineOptions {
   std::string profile_directory;
   std::string language;
   std::string capture_path; // retained for the shell's conformance harness
+  std::string smoke_bridge_url; // test-only address submitted through the app UI
   bool private_mode = false;
   bool diagnostics = false;
   bool smoke = false;

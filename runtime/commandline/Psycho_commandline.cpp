@@ -156,6 +156,17 @@ bool parse_command_line(const std::vector<std::string> &arguments,
       if (!valid_path_value(*value, 32768))
         return refuse(error, "commandline.capture", "capture path is invalid");
       options.capture_path = *value;
+    } else if (argument == "--smoke-bridge-url") {
+      if (!once(argument)) return false;
+      const std::string *value = option_value(i, "--smoke-bridge-url", 8192);
+      if (!value) return false;
+      std::string canonical;
+      if (!canonical_url(*value, canonical, error)) return false;
+      const auto parsed = parse_url(canonical);
+      if (!parsed || !parsed->network())
+        return refuse(error, "commandline.smoke-bridge-url",
+                      "smoke bridge target must be an HTTP(S) address");
+      options.smoke_bridge_url = std::move(canonical);
     } else if (argument == "--private") {
       if (!once(argument)) return false;
       options.private_mode = true;
@@ -174,6 +185,10 @@ bool parse_command_line(const std::vector<std::string> &arguments,
   }
   if (options.urls.size() + size_t(options.diagnostics) > 64)
     return refuse(error, "commandline.url-count", "diagnostics plus URLs may open at most 64 tabs");
+  if (!options.smoke_bridge_url.empty() &&
+      (!options.smoke || options.capture_path.empty()))
+    return refuse(error, "commandline.smoke-bridge-mode",
+                  "--smoke-bridge-url requires --smoke and --capture");
   return true;
 }
 
