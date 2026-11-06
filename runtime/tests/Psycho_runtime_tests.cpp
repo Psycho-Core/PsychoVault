@@ -965,7 +965,7 @@ int run_runtime_bus_tests(int &shared) {
              error.code == "surface.budget");
     RT_CHECK(compositor.composite(registry,
         {{second, std::numeric_limits<int>::max(), std::numeric_limits<int>::min()}},
-        small, composite_error));
+        small_surface, composite_error));
     Surface oversized_target;
     oversized_target.width = 16385;
     oversized_target.height = 1;
