@@ -524,7 +524,11 @@ int run_runtime_bus_tests(int &shared) {
         renderer_path_utf8.size());
     RendererProcessFarm farm;
     Error error;
-    RT_CHECK(farm.start(renderer_path_arg, 2, error));
+    const bool farm_started = farm.start(renderer_path_arg, 2, error);
+    if (!farm_started)
+      std::cerr << "WINDOWS_RENDERER_FARM_START_FAILED: " << error.code << ": "
+                << error.message << "\n";
+    RT_CHECK(farm_started);
     auto fetch = [](const std::string &url, ResourceType) {
       Resource resource;
       resource.url = url;
