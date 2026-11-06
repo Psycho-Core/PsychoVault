@@ -111,6 +111,16 @@ Schemas Schemas::stock() {
                                      {"ok", T::Bool, false},
                                      {"frame", T::Object, false},
                                      {"detail", T::String, false}}));
+  // A renderer keeps its page alive after navigation. Input and resize commands
+  // return the latest frame through this same typed process boundary.
+  s.add("renderer:input", fields({{"tag", T::String, true},
+                                  {"x", T::Number, false}, {"y", T::Number, false},
+                                  {"width", T::Number, false}, {"height", T::Number, false},
+                                  {"key", T::String, false}, {"text", T::String, false},
+                                  {"ok", T::Bool, false}, {"frame", T::Object, false},
+                                  {"url", T::String, false},
+                                  {"navigation", T::String, false},
+                                  {"detail", T::String, false}}));
   s.add("renderer:isolationProbe", fields({{"path", T::String, true},
                                            {"host", T::String, true},
                                            {"port", T::Number, true},

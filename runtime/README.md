@@ -34,17 +34,20 @@ English is the only UI language shipped. The P1 exit gate remains outstanding.
 - `broker/Psycho_broker.*` (S020, in-process model done): role registry with
   capability masks per role, the service table, the routing pump with structured
   refusals, and the built-in lifecycle service. `Psycho_renderer_farm.*` now
-  owns two real Windows child handles/transports, routes navigation/fetch IPC,
-  and replaces exited workers under a three-restart budget. The shell performs
-  startup frame probes through the farm. Ordinary production tabs still use
+  owns two real Windows child handles/transports, routes navigation/fetch and
+  typed page-input IPC, and replaces exited workers under a three-restart
+  budget. The shell performs startup frame probes through the farm. Ordinary production tabs still use
   in-process sessions, and the farm's Windows launch and restart behavior is
   unverified here.
 - `renderer/Psycho_renderer_worker.*` is an engine-owning worker over
-  `ProcessTransport`: it accepts typed navigation requests, runs a real `Host`
-  and engine page, and requires an injected broker fetcher (no socket API in the
-  worker). A fragmented in-memory end-to-end test covers broker fetch IPC. The
-  Windows shell now launches the standalone child and routes its startup probes
-  through `RendererProcessClient`; ordinary tabs are not yet routed to it.
+  `ProcessTransport`: it retains its `Host` after navigation and accepts typed
+  resize, scroll, click and key commands, returning the latest frame and any
+  page-requested navigation to the broker. Fetches still require the injected
+  broker fetcher (no socket API in the worker). A framed in-memory end-to-end
+  test exercises navigation, click-to-navigate, resize, scroll, key input,
+  malformed-command refusal and a second navigation in one worker. The Windows
+  shell still routes only startup probes through `RendererProcessClient`; normal
+  tabs remain on the legacy in-process `Session` path.
 - `tests/Psycho_runtime_tests.cpp` (S021-S041 unit contracts): schema and
   wire validation, capability/back-pressure laws, process supervision,
   navigation/session history, permission decisions, and each runtime contract
@@ -72,7 +75,8 @@ English is the only UI language shipped. The P1 exit gate remains outstanding.
   added 57 checks; S023 fail-closed seam tests added 4 more afterward. The
   S021's direction/schema hardening added 7 checks; S022 fragmented process
   transport and engine-worker round trip add 11; S025 resource/overflow hardening
-  added 5. The current suite passes 806 engine checks and 2604 total.
+  added 5. The persistent renderer input protocol adds 16 checks; the current suite
+  passes 806 engine checks and 2620 total.
 
 - `process/Psycho_process.*` (S022, supervision core done): the supervisor with
   injected clock - spawn, heartbeat windows, hang detection, kill for cause,

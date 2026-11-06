@@ -76,26 +76,26 @@ bool RendererProcessClient::probe_isolation(const std::string &path,
   return true;
 }
 
-bool RendererProcessClient::navigate(const std::string &url,
+bool RendererProcessClient::exchange(const std::string &method, Json payload,
                                      const Host::Fetcher &fetcher,
                                      Envelope &reply, Error &error) {
   error = Error{};
   if (next_request_id_ == 0) ++next_request_id_;
-  const uint32_t navigation_id = next_request_id_++;
+  const uint32_t request_id = next_request_id_++;
   Envelope request;
   request.channel = Channel::Renderer;
-  request.method = "renderer:navigate";
-  request.request_id = navigation_id;
-  request.payload = Json::make_object();
-  request.payload.set("url", Json(url));
+  request.method = method;
+  request.request_id = request_id;
+  request.payload = std::move(payload);
   if (!transport_.send(request, error)) return false;
 
   for (;;) {
     Envelope incoming;
     if (!transport_.recv(incoming, error)) return false;
-    if (incoming.is_response && incoming.request_id == navigation_id &&
-        incoming.method == "renderer:navigate") {
+    if (incoming.is_response && incoming.request_id == request_id &&
+        incoming.method == method) {
       reply = std::move(incoming);
+      error = Error{};
       return true;
     }
     if (!incoming.is_response && incoming.channel == Channel::Network &&
@@ -117,9 +117,23 @@ bool RendererProcessClient::navigate(const std::string &url,
       continue;
     }
     error = {"renderer.protocol.unexpected",
-             "unexpected process message while navigation was pending"};
+             "unexpected process message while renderer request was pending"};
     return false;
   }
+}
+
+bool RendererProcessClient::navigate(const std::string &url,
+                                     const Host::Fetcher &fetcher,
+                                     Envelope &reply, Error &error) {
+  Json payload = Json::make_object();
+  payload.set("url", Json(url));
+  return exchange("renderer:navigate", std::move(payload), fetcher, reply, error);
+}
+
+bool RendererProcessClient::input(const Json &command,
+                                  const Host::Fetcher &fetcher,
+                                  Envelope &reply, Error &error) {
+  return exchange("renderer:input", command, fetcher, reply, error);
 }
 
 } // namespace pv::rt

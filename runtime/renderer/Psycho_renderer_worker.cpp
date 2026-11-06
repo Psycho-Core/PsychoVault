@@ -2,6 +2,7 @@
 #include "Psycho_renderer_worker.hpp"
 #include "../../engine/Psycho_page.hpp"
 #include <atomic>
+#include <cmath>
 #include <utility>
 #ifdef _WIN32
 #define NOMINMAX
@@ -77,7 +78,10 @@ bool RendererWorker::navigate(const Envelope &request, Envelope &response, Error
   const std::string url = request.payload.str("url");
   Json payload = Json::make_object();
   payload.set("url", Json(url));
+  last_frame_ = Json();
+  navigation_url_.clear();
   if (!renderer_url_allowed(url) || !broker_fetcher_) {
+    host_.reset();
     payload.set("ok", Json(false));
     payload.set("detail", Json(!broker_fetcher_ ? "renderer.fetcher.unavailable"
                                                  : "renderer.navigation.scheme"));
@@ -85,17 +89,89 @@ bool RendererWorker::navigate(const Envelope &request, Envelope &response, Error
     return true;
   }
 
-  Json last_frame;
-  Host host(broker_fetcher_, [&last_frame](HostEvent event) {
-    if (event.tag == "frame") last_frame = std::move(event.frame);
+  host_ = std::make_unique<Host>(broker_fetcher_, [this](HostEvent event) {
+    if (event.tag == "frame") last_frame_ = std::move(event.frame);
+    else if (event.tag == "navigate") navigation_url_ = std::move(event.url);
   });
-  host.resize(1024, 768);
+  host_->resize(1024, 768);
   std::string load_error;
-  const bool loaded = host.load(url, load_error);
-  if (loaded) host.pump();
+  const bool loaded = host_->load(url, load_error);
+  if (loaded) host_->pump();
   payload.set("ok", Json(loaded));
   if (!load_error.empty()) payload.set("detail", Json(load_error));
-  if (last_frame.type == Json::Type::Object) payload.set("frame", std::move(last_frame));
+  if (last_frame_.type == Json::Type::Object) {
+    payload.set("url", Json(last_frame_.str("url", url)));
+    payload.set("frame", last_frame_);
+  }
+  response.payload = std::move(payload);
+  error = Error{};
+  return true;
+}
+
+bool RendererWorker::input(const Envelope &request, Envelope &response, Error &error) {
+  const std::string tag = request.payload.str("tag");
+  Json payload = Json::make_object();
+  payload.set("tag", Json(tag));
+  navigation_url_.clear();
+  if (!host_ || !host_->loaded()) {
+    payload.set("ok", Json(false));
+    payload.set("detail", Json("renderer.page.not-loaded"));
+    response.payload = std::move(payload);
+    error = Error{};
+    return true;
+  }
+
+  auto reject = [&](const std::string &reason) {
+    payload.set("ok", Json(false));
+    payload.set("detail", Json(reason));
+    response.payload = std::move(payload);
+    error = Error{};
+    return true;
+  };
+  auto finite_number = [&](const char *name, double &value) {
+    const Json *field = request.payload.find(name);
+    if (!field || field->type != Json::Type::Number || !std::isfinite(field->number))
+      return false;
+    value = field->number;
+    return true;
+  };
+  if (tag == "resize") {
+    double width = 0, height = 0;
+    if (!finite_number("width", width) || !finite_number("height", height) ||
+        width <= 0 || height <= 0) {
+      return reject("resize requires positive finite width and height");
+    }
+    host_->resize(width, height);
+  } else if (tag == "scroll") {
+    double y = 0;
+    if (!finite_number("y", y) || y < 0) {
+      return reject("scroll requires a finite nonnegative y position");
+    }
+    host_->scroll(y);
+  } else if (tag == "click") {
+    double x = 0, y = 0;
+    if (!finite_number("x", x) || !finite_number("y", y)) {
+      return reject("click requires finite x and y coordinates");
+    }
+    host_->click(x, y);
+  } else if (tag == "key") {
+    const std::string key = request.payload.str("key");
+    const std::string text = request.payload.str("text");
+    if (key.empty() || key.size() > 64 || text.size() > 4096) {
+      return reject("key input is empty or exceeds its size limit");
+    }
+    host_->key(key, text);
+  } else {
+    return reject("renderer input tag is not supported");
+  }
+
+  host_->pump();
+  payload.set("ok", Json(true));
+  if (last_frame_.type == Json::Type::Object) {
+    payload.set("url", Json(last_frame_.str("url")));
+    payload.set("frame", last_frame_);
+  }
+  if (!navigation_url_.empty()) payload.set("navigation", Json(navigation_url_));
   response.payload = std::move(payload);
   error = Error{};
   return true;
@@ -127,6 +203,8 @@ bool RendererWorker::serve_one(Error &error) {
     response.payload = Json::make_object();
   } else if (request.method == "renderer:navigate") {
     if (!navigate(request, response, error)) return false;
+  } else if (request.method == "renderer:input") {
+    if (!input(request, response, error)) return false;
   } else if (request.method == "renderer:isolationProbe") {
 #ifdef _WIN32
     const std::string raw_path = request.payload.str("path");

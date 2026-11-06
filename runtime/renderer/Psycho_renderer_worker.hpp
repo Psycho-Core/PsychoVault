@@ -5,6 +5,7 @@
 #include "../process/Psycho_process_transport.hpp"
 #include "../../platform/Psycho_host.hpp"
 #include <chrono>
+#include <memory>
 #include <string>
 
 namespace pv::rt {
@@ -25,10 +26,14 @@ public:
 
 private:
   bool navigate(const Envelope &request, Envelope &response, Error &error);
+  bool input(const Envelope &request, Envelope &response, Error &error);
 
   ProcessTransport &transport_;
   Host::Fetcher broker_fetcher_;
   std::chrono::steady_clock::time_point started_;
+  std::unique_ptr<Host> host_;
+  Json last_frame_;
+  std::string navigation_url_;
   bool stopping_ = false;
 };
 

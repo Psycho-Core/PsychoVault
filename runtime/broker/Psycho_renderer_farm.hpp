@@ -19,6 +19,8 @@ public:
   bool start(const std::string &renderer_executable, size_t count, Error &error);
   bool navigate(size_t renderer, const std::string &url, const Host::Fetcher &fetcher,
                 Envelope &reply, Error &error);
+  bool input(size_t renderer, const Json &command, const Host::Fetcher &fetcher,
+             Envelope &reply, Error &error);
   bool probe_isolation(size_t renderer, const std::string &path,
                        const std::string &host, uint16_t port,
                        Envelope &reply, Error &error);

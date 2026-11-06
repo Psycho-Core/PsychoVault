@@ -99,6 +99,17 @@ bool RendererProcessFarm::navigate(size_t renderer, const std::string &url,
   return false;
 }
 
+bool RendererProcessFarm::input(size_t renderer, const Json &command,
+                                const Host::Fetcher &fetcher, Envelope &reply,
+                                Error &error) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (renderer >= renderers_.size() || !renderers_[renderer].client) {
+    error = {"renderer.farm.missing", "renderer process is not running"};
+    return false;
+  }
+  return renderers_[renderer].client->input(command, fetcher, reply, error);
+}
+
 bool RendererProcessFarm::probe_isolation(size_t renderer,
                                            const std::string &path,
                                            const std::string &host,
