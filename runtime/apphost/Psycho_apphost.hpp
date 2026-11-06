@@ -24,7 +24,7 @@
 
 namespace pv::rt {
 
-enum class PageKind { Web, Shell, Diagnostics };
+enum class PageKind { Web, Shell, Diagnostics, Crash };
 enum class RendererPolicy { Regular, Private };
 
 class AppHost {

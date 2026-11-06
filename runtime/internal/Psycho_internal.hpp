@@ -19,7 +19,7 @@ namespace pv::rt {
 
 struct InternalPage {
   std::string name;       // canonical host token: "newtab", "settings", ...
-  std::string category;   // "shell" (browser UI) | "diagnostics"
+  std::string category;   // "shell" (browser UI) | "diagnostics" | "crash"
   std::string summary;    // one honest line for the registry listing
   bool web_reachable = false; // may a right-holding web origin embed me at all?
 };
@@ -32,9 +32,8 @@ struct InternalUrl {
 
 class InternalRegistry {
 public:
-  // My pages, known by name. Diagnostics entries that later steps fill in
-  // (nettest: S038, crash: S039) are registered ahead so the address space is
-  // fixed today and web probing can never invent one.
+  // My pages, known by name. The version, nettest and crash tools are
+  // registered in the stock address space; web probing can never invent one.
   static InternalRegistry stock();
 
   const InternalPage *find(const std::string &name) const;

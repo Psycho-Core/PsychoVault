@@ -12,6 +12,7 @@
 #include "../permissions/Psycho_permissions.hpp"
 #include "../private/Psycho_private.hpp"
 #include "../diagnostics/Psycho_diagnostics.hpp"
+#include "../crash/Psycho_crash.hpp"
 #include "../../engine/Psycho_js.hpp"
 #include "../surface/Psycho_surface.hpp"
 #include "../window/Psycho_window.hpp"
@@ -2278,6 +2279,154 @@ int run_runtime_bus_tests(int &shared) {
                  "function");
     AppHost web(77, nullptr, {bus, {}});
     RT_CHECK(web.page_world().run("typeof psycho").string == "undefined");
+  }
+
+  // S039 renderer recovery: persist each attributed crash/hang, replace the
+  // crashed surface with psychovault://crash, and stop tab restart loops.
+  {
+    Error e;
+    int64_t now = 123456789;
+    std::vector<CrashRecord> saved;
+    std::vector<CrashRecord> shown;
+    std::vector<std::pair<int, std::string>> restarted;
+    bool restart_ok = true;
+    CrashService service({
+        [&]() { return now; },
+        [&](const CrashRecord &record, std::string &) {
+          saved.push_back(record);
+          return true;
+        },
+        [&](int tab_id, const CrashRecord &record, std::string &) {
+          RT_CHECK(tab_id == record.tab_id);
+          shown.push_back(record);
+          return true;
+        },
+        [&](int tab_id, const std::string &url, std::string &error) {
+          restarted.push_back({tab_id, url});
+          if (!restart_ok) error = "renderer launch failed";
+          return restart_ok;
+        }});
+    CrashRecord crash;
+    RT_CHECK(service.renderer_failed(4, 10, RendererFailureKind::Crash,
+                                     "https://shop.example/", "access violation",
+                                     crash, e));
+    RT_CHECK(crash.id == 1 && crash.renderer_id == 4 && crash.tab_id == 10 &&
+             crash.kind == RendererFailureKind::Crash &&
+             crash.timestamp_ms == now && crash.state == CrashRecordState::CrashPage);
+    RT_CHECK(saved.size() == 1 && shown.size() == 1 &&
+             service.record(crash.id) != nullptr);
+    RT_CHECK(std::string(CrashService::crash_page_url()) == "psychovault://crash");
+    RT_CHECK(service.restart(crash.id, e) && restarted.size() == 1 &&
+             restarted.back() == std::make_pair(10, std::string("https://shop.example/")));
+    RT_CHECK(service.record(crash.id)->state == CrashRecordState::Restarted &&
+             service.record(crash.id)->restart_attempts == 1 &&
+             service.restarts_for_tab(10) == 1);
+
+    // A hang arrives from S022's heartbeat supervisor through the same path;
+    // a failed relaunch is attributed and consumes one bounded attempt.
+    now += 1000;
+    CrashRecord hung;
+    RT_CHECK(service.renderer_failed(5, 10, RendererFailureKind::Hang,
+                                     "https://shop.example/next", "heartbeat timeout",
+                                     hung, e));
+    RT_CHECK(hung.kind == RendererFailureKind::Hang && hung.id == 2 &&
+             service.record(hung.id)->timestamp_ms == now);
+    restart_ok = false;
+    RT_CHECK(!service.restart(hung.id, e) && e.code == "crash.restart-failed");
+    RT_CHECK(service.record(hung.id)->state == CrashRecordState::RestartFailed &&
+             service.record(hung.id)->restart_attempts == 2 &&
+             service.restarts_for_tab(10) == 2);
+
+    // A third attempt is allowed; the fourth is retired, not retried forever.
+    restart_ok = true;
+    CrashRecord third;
+    RT_CHECK(service.renderer_failed(6, 10, RendererFailureKind::Crash,
+                                     "https://shop.example/next", "second crash",
+                                     third, e));
+    RT_CHECK(service.restart(third.id, e) && service.restarts_for_tab(10) == 3);
+    CrashRecord fourth;
+    RT_CHECK(service.renderer_failed(7, 10, RendererFailureKind::Crash,
+                                     "https://shop.example/next", "third crash",
+                                     fourth, e));
+    RT_CHECK(!service.restart(fourth.id, e) && e.code == "crash.restart-limit" &&
+             service.record(fourth.id)->state == CrashRecordState::Retired);
+    service.renderer_stable(10);
+    RT_CHECK(service.restarts_for_tab(10) == 0);
+    CrashRecord after_stable;
+    RT_CHECK(service.renderer_failed(8, 10, RendererFailureKind::Crash,
+                                     "https://shop.example/next", "later crash",
+                                     after_stable, e));
+    RT_CHECK(service.restart(after_stable.id, e) &&
+             service.restarts_for_tab(10) == 1);
+
+    // Identity and kind errors refuse before they allocate or persist records.
+    const size_t saved_before_invalid = saved.size();
+    RT_CHECK(!service.renderer_failed(0, 10, RendererFailureKind::Crash, "u", "r",
+                                      crash, e) && e.code == "crash.identity");
+    RT_CHECK(!service.renderer_failed(4, 10, static_cast<RendererFailureKind>(99),
+                                      "u", "r", crash, e) && e.code == "crash.kind");
+    RT_CHECK(saved.size() == saved_before_invalid);
+    RT_CHECK(!service.restart(9999, e) && e.code == "crash.record-unknown");
+
+    // If durable storage is not wired, the page still appears but restart is
+    // refused rather than risking an unrecorded loop. The missing page adapter
+    // also names its failure.
+    int visible_without_store = 0;
+    CrashService memory_only({
+        [&]() { return now; }, {},
+        [&](int, const CrashRecord &, std::string &) {
+          ++visible_without_store;
+          return true;
+        },
+        [](int, const std::string &, std::string &) { return true; }});
+    CrashRecord volatile_record;
+    RT_CHECK(!memory_only.renderer_failed(1, 20, RendererFailureKind::Crash,
+                                          "https://x.example/", "lost renderer",
+                                          volatile_record, e) &&
+             e.code == "crash.persist-unavailable");
+    RT_CHECK(visible_without_store == 1 &&
+             memory_only.record(volatile_record.id) != nullptr);
+    RT_CHECK(!memory_only.restart(volatile_record.id, e) &&
+             e.code == "crash.persist-unavailable");
+    CrashService no_page({
+        [&]() { return now; },
+        [](const CrashRecord &, std::string &) { return true; }, {}, {}});
+    RT_CHECK(!no_page.renderer_failed(2, 21, RendererFailureKind::Hang,
+                                      "https://x.example/", "hung",
+                                      volatile_record, e) &&
+             e.code == "crash.page-unavailable");
+
+    // Runtime memory stays bounded even if many renderer failures are recorded.
+    CrashService bounded({
+        [&]() { return now; },
+        [](const CrashRecord &, std::string &) { return true; },
+        [](int, const CrashRecord &, std::string &) { return true; }, {}});
+    for (int i = 0; i < 105; ++i) {
+      CrashRecord row;
+      Error row_error;
+      if (!bounded.renderer_failed(1, i + 1, RendererFailureKind::Crash,
+                                   "https://bound.example/", "test", row, row_error))
+        throw std::runtime_error("bounded crash record setup failed");
+    }
+    RT_CHECK(bounded.records().size() == CrashService::kHistoryLimit &&
+             bounded.records().front().id == 6 && bounded.records().back().id == 105);
+    RT_CHECK(bounded.record(1) == nullptr && bounded.record(105) != nullptr);
+
+    // The registered crash page is not accidentally granted diagnostics or
+    // settings powers merely because it is an internal page.
+    InternalRegistry registry = InternalRegistry::stock();
+    RT_CHECK(registry.find("crash")->category == "crash");
+    auto fake_bus = [](Channel, const std::string &, Json, Json &reply, Error &) {
+      reply = Json::make_object();
+      return true;
+    };
+    AppHost crash_page(78, registry.find("crash"), {fake_bus, {}});
+    RT_CHECK(crash_page.kind() == PageKind::Crash &&
+             crash_page.page_world().run("typeof psycho").string == "object");
+    RT_CHECK(crash_page.page_world().run("typeof psycho.diagnostics").string ==
+             "undefined");
+    RT_CHECK(crash_page.page_world().run("typeof psycho.settings").string ==
+             "undefined");
   }
 
   shared += rt_passed;
