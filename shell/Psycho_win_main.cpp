@@ -13,9 +13,11 @@
 #include "../platform/Psycho_extension.hpp"
 #include "../platform/Psycho_download.hpp"
 #include "../platform/Psycho_sandbox.hpp"
+#include "../runtime/commandline/Psycho_commandline.hpp"
 #include <audioclient.h>
 #include <atomic>
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <iterator>
 #include <condition_variable>
@@ -3869,69 +3871,103 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 } // namespace pv
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
   using namespace pv;
-  std::string capture, url = "psychovault://newtab", profile_dir;
-  bool smoke = false, private_mode = false, expect_image = false;
+  auto report_cli_error = [](const std::string &message) {
+    const std::string line = "PsychoVault: " + message + "\n";
+    fwrite(line.data(), 1, line.size(), stderr);
+    fflush(stderr);
+    return 2;
+  };
   std::vector<std::string> args;
   int argc = 0;
   LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+  if (!argv) return report_cli_error("cannot parse the Windows command line");
   for (int i = 1; i < argc; ++i) {
-    int n = WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, nullptr, 0, nullptr, nullptr);
-    std::string a(n ? n - 1 : 0, 0);
-    if (n)
-      WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, a.data(), n, nullptr, nullptr);
-    args.push_back(a);
-  }
-  if (argv)
-    LocalFree(argv);
-  for (size_t i = 0; i < args.size(); ++i) {
-    if (args[i] == "--apply-update" && i + 2 < args.size()) {
-      // I am the small bootstrapper copy my updater spawns: wait for the main
-      // process to exit, drop the verified exe into place, relaunch it, done.
-      DWORD pid = DWORD(std::atoi(args[i + 1].c_str()));
-      std::string target = args[i + 2];
-      HANDLE parent = OpenProcess(SYNCHRONIZE, FALSE, pid);
-      if (parent) {
-        WaitForSingleObject(parent, 30000);
-        CloseHandle(parent);
-      }
-      Sleep(400);
-      // The staged exe went through my SHA-256 check before this flag ran.
-      std::string staged = target + ".staged";
-      std::wstring wide_target = utf16_of(target);
-      std::wstring wide_staged = utf16_of(staged);
-      for (int attempt = 0; attempt < 20; ++attempt) {
-        if (CopyFileW(wide_staged.c_str(), wide_target.c_str(), FALSE))
-          break;
-        Sleep(500);
-      }
-      DeleteFileW(wide_staged.c_str());
-      ShellExecuteW(nullptr, L"open", wide_target.c_str(), L"", nullptr,
-                    SW_SHOWNORMAL);
-      return 0;
+    const int n = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, argv[i], -1,
+                                      nullptr, 0, nullptr, nullptr);
+    if (n <= 0) {
+      LocalFree(argv);
+      return report_cli_error("an argument is not valid Unicode");
     }
-    if (args[i] == "--smoke")
-      smoke = true;
-    else if (args[i] == "--private")
-      private_mode = true;
-    else if (args[i] == "--capture" && i + 1 < args.size())
-      capture = args[++i];
-    else if (args[i] == "--url" && i + 1 < args.size())
-      url = args[++i];
-    else if (args[i] == "--profile" && i + 1 < args.size())
-      profile_dir = args[++i];
-    else if (args[i] == "--expect-image")
-      expect_image = true;
-    else if (starts(args[i], "--")) {
-      // I refuse an option I do not understand. A silently ignored flag turns a
-      // required gate into a pass that proves nothing.
-      // I must not show a modal dialog here: a blocked runner would hang the
-      // gate instead of failing it. My exit code is the signal.
-      std::string message = "I do not understand the option " + args[i] + "\n";
-      fwrite(message.data(), 1, message.size(), stderr);
-      fflush(stderr);
-      return 2;
+    std::string value(size_t(n), '\0'); // include the terminator in capacity
+    if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, argv[i], -1,
+                            value.data(), n, nullptr, nullptr) != n) {
+      LocalFree(argv);
+      return report_cli_error("cannot convert an argument to UTF-8");
     }
+    value.resize(size_t(n - 1));
+    args.push_back(std::move(value));
   }
+  LocalFree(argv);
+
+  // The updater's private verb is deliberately separate from ordinary argv.
+  // Its target must be this executable, never a caller-selected file path.
+  if (!args.empty() && args.front() == "--apply-update") {
+    if (args.size() != 3)
+      return report_cli_error("invalid internal update arguments");
+    uint32_t parent_pid = 0;
+    const auto parsed_pid = std::from_chars(args[1].data(),
+                                            args[1].data() + args[1].size(),
+                                            parent_pid);
+    if (parsed_pid.ec != std::errc{} ||
+        parsed_pid.ptr != args[1].data() + args[1].size() || parent_pid == 0)
+      return report_cli_error("invalid internal update process id");
+    wchar_t module_path[32768] = {};
+    const DWORD module_length = GetModuleFileNameW(
+        nullptr, module_path, DWORD(std::size(module_path)));
+    if (module_length == 0 || module_length >= std::size(module_path))
+      return report_cli_error("cannot identify the running executable");
+    const std::wstring requested_target = utf16_of(args[2]);
+    auto absolute_path = [](const std::wstring &path) {
+      std::vector<wchar_t> buffer(32768);
+      const DWORD length = GetFullPathNameW(path.c_str(), DWORD(buffer.size()),
+                                            buffer.data(), nullptr);
+      if (length == 0 || length >= buffer.size()) return std::wstring{};
+      return std::wstring(buffer.data(), length);
+    };
+    const std::wstring current_target = absolute_path(module_path);
+    const std::wstring supplied_target = absolute_path(requested_target);
+    if (current_target.empty() || supplied_target.empty() ||
+        CompareStringOrdinal(current_target.data(), int(current_target.size()),
+                             supplied_target.data(), int(supplied_target.size()),
+                             TRUE) != CSTR_EQUAL)
+      return report_cli_error("update target must be the running executable");
+
+    HANDLE parent = OpenProcess(SYNCHRONIZE, FALSE, DWORD(parent_pid));
+    if (!parent) return report_cli_error("cannot wait for the update parent");
+    const DWORD wait = WaitForSingleObject(parent, 30000);
+    CloseHandle(parent);
+    if (wait != WAIT_OBJECT_0)
+      return report_cli_error("update parent did not exit before the timeout");
+    Sleep(400);
+    const std::wstring staged = current_target + L".staged";
+    bool installed = false;
+    for (int attempt = 0; attempt < 20; ++attempt) {
+      if (CopyFileW(staged.c_str(), current_target.c_str(), FALSE)) {
+        installed = true;
+        break;
+      }
+      Sleep(500);
+    }
+    if (!installed) return report_cli_error("could not install the verified update");
+    DeleteFileW(staged.c_str());
+    const HINSTANCE launched = ShellExecuteW(nullptr, L"open", current_target.c_str(),
+                                              L"", nullptr, SW_SHOWNORMAL);
+    if (reinterpret_cast<INT_PTR>(launched) <= 32)
+      return report_cli_error("could not relaunch the updated executable");
+    return 0;
+  }
+
+  rt::CommandLineOptions command;
+  rt::Error command_error;
+  if (!rt::parse_command_line(args, command, command_error))
+    return report_cli_error(command_error.message);
+  const std::string capture = command.capture_path;
+  const bool smoke = command.smoke;
+  const bool private_mode = command.private_mode;
+  const bool expect_image = command.expect_image;
+  const std::string profile_dir = command.profile_directory;
+  const std::vector<std::string> startup_urls =
+      rt::command_line_startup_urls(command);
   WNDCLASSEXW wc{};
   wc.cbSize = sizeof(wc);
   wc.lpfnWndProc = wndproc;
@@ -3941,10 +3977,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
   wc.lpszClassName = L"PsychoVaultOwnedWindow";
   wc.hbrBackground = nullptr;
   RegisterClassExW(&wc);
-  bool explicit_url = false;
-  for (size_t i = 0; i < args.size(); ++i)
-    if (args[i] == "--url")
-      explicit_url = true;
   Browser b(private_mode, profile_dir);
   b.smoke = smoke;
   b.expect_image = expect_image;
@@ -3984,10 +4016,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
   ShowWindow(hwnd, show);
   UpdateWindow(hwnd);
   b.resize(1440, 940);
-  if (explicit_url || smoke)
-    b.navigate(url, false);
-  else if (!b.current().started)
+  if (!startup_urls.empty()) {
+    b.navigate(startup_urls.front(), false);
+    for (size_t i = 1; i < startup_urls.size(); ++i)
+      b.new_tab(startup_urls[i], false);
+  } else if (smoke) {
+    b.navigate("psychovault://newtab", false);
+  } else if (!b.current().started) {
     b.navigate(b.current().url, false);
+  }
   MSG msg;
   while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
     TranslateMessage(&msg);

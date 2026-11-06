@@ -15,8 +15,10 @@ What exists now (P1 in progress):
 not claims that the current shell is already driven by this broker runtime.
 Their transport, profile, private-tab/storage, diagnostic-probe/version,
 renderer/process and logger/export adapters still need production callers.
-Tests prove the service laws and failure behavior; the P1 exit gate remains
-outstanding.
+S041's validated parser is wired into the existing Windows shell entry point;
+the portable parser is tested here, but the Windows-only executable has not
+been rebuilt in this Linux run. English is the only UI language shipped. The
+P1 exit gate remains outstanding.
 
 - `ipc/Psycho_bus.*` (S021, done): the framed length-prefixed message bus with
   the 21 legacy channel groups plus runtime channels, capability masks per
@@ -295,4 +297,17 @@ outstanding.
   the runtime services still need production callers. 29 new checks
   (2415 total).
 
-Next in P1: S041 (command line).
+- `commandline/Psycho_commandline.*` (S041): a portable argv parser wired to
+  the Windows shell. It accepts up to 64 ordered positional/repeated `--url`
+  values, `--profile`, `--private`, `--diagnostics`, and validated English
+  `--language` tags, plus the existing smoke/capture harness flags. URLs must be
+  HTTP(S), `about:blank`, or registered `psychovault://` pages; controls,
+  credentials, whitespace, unregistered schemes/pages, unknown options,
+  duplicate singleton options, and missing/oversized values refuse with named
+  errors. `--diagnostics` opens the built-in nettest page. The update-only verb
+  is separate, validates its PID and can only replace/relaunch this executable;
+  ordinary argv is never assembled into a process command. Non-English UI
+  languages refuse because no such language pack ships yet. 28 new checks
+  (2443 total).
+
+Next in P1: S042 (runtime unit and integration tests).
