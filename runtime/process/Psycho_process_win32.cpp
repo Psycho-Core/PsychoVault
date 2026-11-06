@@ -9,6 +9,9 @@
 
 #ifdef _WIN32
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #include <userenv.h>
 #include <algorithm>
@@ -98,15 +101,26 @@ bool spawn_child_platform(const std::string &label, const std::string &command_l
   // the actual OS boundary. No network capability is granted, so renderers
   // must request network work through the broker service. The profile SID is
   // stable across launches and only the SID allocation is process-local.
-  HANDLE restricted = nullptr;
-  if (!CreateRestrictedToken(GetCurrentProcessToken(),
-                             DISABLE_MAX_PRIVILEGE | LUA_TOKEN, 0, nullptr, 0, nullptr, 0,
-                             nullptr, &restricted)) {
-    error = last_error_text("CreateRestrictedToken");
+  HANDLE current_token = nullptr;
+  const DWORD token_access = TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY | TOKEN_QUERY |
+                             TOKEN_ADJUST_DEFAULT | TOKEN_ADJUST_SESSIONID;
+  if (!OpenProcessToken(GetCurrentProcess(), token_access, &current_token)) {
+    error = last_error_text("OpenProcessToken");
     CloseHandle(job);
     close_pipe_handles();
     return false;
   }
+  HANDLE restricted = nullptr;
+  if (!CreateRestrictedToken(current_token,
+                             DISABLE_MAX_PRIVILEGE | LUA_TOKEN, 0, nullptr, 0, nullptr, 0,
+                             nullptr, &restricted)) {
+    error = last_error_text("CreateRestrictedToken");
+    CloseHandle(current_token);
+    CloseHandle(job);
+    close_pipe_handles();
+    return false;
+  }
+  CloseHandle(current_token);
   constexpr wchar_t kRendererAppContainer[] = L"PsychoVault.Renderer";
   PSID app_container_sid = nullptr;
   HRESULT app_container_result = CreateAppContainerProfile(

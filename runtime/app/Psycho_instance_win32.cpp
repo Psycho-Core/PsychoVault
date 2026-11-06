@@ -146,7 +146,7 @@ AppInstance::Seams windows_instance_seams(
     shared->mutex = mutex;
     shared->profile_key = profile_key;
     shared->stop.store(false);
-    shared->listener_thread = CreateThread(nullptr, 0, forward_listener, shared, 0, nullptr);
+    shared->listener_thread = CreateThread(nullptr, 0, forward_listener, shared.get(), 0, nullptr);
     if (!shared->listener_thread) {
       error = win_error("CreateThread(listener)");
       ReleaseMutex(mutex);

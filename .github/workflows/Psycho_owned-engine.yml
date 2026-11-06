@@ -54,7 +54,7 @@ jobs:
         shell: pwsh
         run: |
           if (Test-Path build/engine-tests.txt) {
-            $lines = Get-Content build/engine-tests.txt | Select-Object -Last 15
+            $lines = Get-Content build/engine-tests.txt | Select-Object -Last 5
             foreach ($line in $lines) { Write-Host "::error::$line" }
           }
       - name: Render headless engine fixture

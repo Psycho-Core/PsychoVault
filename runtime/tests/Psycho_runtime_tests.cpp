@@ -231,10 +231,10 @@ int run_runtime_bus_tests(int &shared) {
     Schemas s = Schemas::stock();
     Link link(Capability::all(), "left", Capability::all(), "right");
     link.set_schemas(&s);
-    Limits small;
-    small.max_queued_bytes = 200;
-    small.max_queued_messages = 64;
-    link.set_limits(small);
+    Limits limits_for_test;
+    limits_for_test.max_queued_bytes = 200;
+    limits_for_test.max_queued_messages = 64;
+    link.set_limits(limits_for_test);
     Error e;
     bool crowded = false;
     for (int i = 0; i < 64; ++i)
@@ -524,7 +524,12 @@ int run_runtime_bus_tests(int &shared) {
         renderer_path_utf8.size());
     RendererProcessFarm farm;
     Error error;
-    RT_CHECK(farm.start(renderer_path_arg, 2, error));
+    const bool farm_started = farm.start(renderer_path_arg, 2, error);
+    if (!farm_started) {
+      const std::string detail = "farm.start failed: " + error.code + ": " + error.message;
+      rt_check(false, detail.c_str(), __LINE__);
+    }
+    RT_CHECK(farm_started);
     auto fetch = [](const std::string &url, ResourceType) {
       Resource resource;
       resource.url = url;
@@ -686,11 +691,14 @@ int run_runtime_bus_tests(int &shared) {
     sup.heartbeat(999);
     RT_CHECK(!sup.request_kill(999, "ghost", error));
 
-    // The platform seam answers honestly here: no process table on Linux.
+#ifndef _WIN32
+    // The portable platform seam has no process table; the Windows branch above
+    // already exercised real process creation and recovery.
     WinChildHandle fake;
     std::string platform_error;
     RT_CHECK(!spawn_child_platform("probe", "pv-renderer.exe", fake, platform_error));
     RT_CHECK(platform_error == "process.spawn.unsupported");
+#endif
   }
 
   // S023 the singleton: primary takes the lock, a second launch forwards and
@@ -928,17 +936,17 @@ int run_runtime_bus_tests(int &shared) {
     RT_CHECK(px_at(target, 6, 6) == 0xff3355ee);
 
     // Clipping: an off-edge placement writes nothing outside the destination.
-    Surface small;
-    small.width = 10;
-    small.height = 10;
-    small.pixels.assign(10 * 10 * 4, 0);
-    RT_CHECK(compositor.composite(registry, {{second, -15, 6}}, small, composite_error));
+    Surface small_surface;
+    small_surface.width = 10;
+    small_surface.height = 10;
+    small_surface.pixels.assign(10 * 10 * 4, 0);
+    RT_CHECK(compositor.composite(registry, {{second, -15, 6}}, small_surface, composite_error));
     // Source columns 15-19 land in target columns 0-4: that sliver paints, the
     // rest of the target is untouched - proven both ways.
-    RT_CHECK(px_at(small, 2, 8) == 0xff010203);
-    RT_CHECK(px_at(small, 4, 9) == 0xff010203);
-    RT_CHECK(px_at(small, 5, 9) == 0); // one pixel past the intersection: mine, not his
-    RT_CHECK(px_at(small, 9, 5) == 0);
+    RT_CHECK(px_at(small_surface, 2, 8) == 0xff010203);
+    RT_CHECK(px_at(small_surface, 4, 9) == 0xff010203);
+    RT_CHECK(px_at(small_surface, 5, 9) == 0); // one pixel past the intersection: mine, not his
+    RT_CHECK(px_at(small_surface, 9, 5) == 0);
 
     // Missing surfaces and malformed targets are structured refusals.
     RT_CHECK(!compositor.composite(registry, {{999, 0, 0}}, target, composite_error) &&
@@ -965,7 +973,7 @@ int run_runtime_bus_tests(int &shared) {
              error.code == "surface.budget");
     RT_CHECK(compositor.composite(registry,
         {{second, std::numeric_limits<int>::max(), std::numeric_limits<int>::min()}},
-        small, composite_error));
+        small_surface, composite_error));
     Surface oversized_target;
     oversized_target.width = 16385;
     oversized_target.height = 1;

@@ -414,14 +414,14 @@ bool RendererWorker::serve_one(Error &error) {
 #ifdef _WIN32
     const std::string raw_path = request.payload.str("path");
     const int wide_count = raw_path.size() <= 32767 &&
-                                   raw_path.find('\\0') == std::string::npos
+                                   raw_path.find('\0') == std::string::npos
                                ? MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
                                                      raw_path.data(),
                                                      int(raw_path.size()), nullptr, 0)
                                : 0;
     bool file_readable = false;
     if (wide_count > 0) {
-      std::wstring path(size_t(wide_count), L'\\0');
+      std::wstring path(size_t(wide_count), L'\0');
       if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
                               raw_path.data(), int(raw_path.size()), path.data(),
                               wide_count) == wide_count) {

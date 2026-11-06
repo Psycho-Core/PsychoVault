@@ -57,8 +57,9 @@ const ExposedEntry kCrashProfile[] = {
     {Channel::Lifecycle, "lifecycle:ping"},
 };
 
-// Web pages get no facade. There are deliberately no entries here.
-const ExposedEntry kWebProfile[] = {};
+// Web pages get no facade. The unused sentinel keeps MSVC from rejecting an
+// empty C array; the constructor deliberately exposes zero entries for web.
+const ExposedEntry kWebProfile[] = {{Channel::Internal, ""}};
 
 } // namespace
 

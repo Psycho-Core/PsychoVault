@@ -3188,13 +3188,16 @@ int main() {
     // Suggestions come one edit away, best shapes first.
     auto to_the = spell.suggest("teh");
     CHECK(std::find(to_the.begin(), to_the.end(), "the") != to_the.end());
-    CHECK(std::find(spell.suggest("helllo").begin(), spell.suggest("helllo").end(), "hello") !=
-          spell.suggest("helllo").end());
-    CHECK(std::find(spell.suggest("hxuse").begin(), spell.suggest("hxuse").end(), "house") !=
-          spell.suggest("hxuse").end());
+    auto hello_suggestions = spell.suggest("helllo");
+    CHECK(std::find(hello_suggestions.begin(), hello_suggestions.end(), "hello") !=
+          hello_suggestions.end());
+    auto house_suggestions = spell.suggest("hxuse");
+    CHECK(std::find(house_suggestions.begin(), house_suggestions.end(), "house") !=
+          house_suggestions.end());
     // Longer unknowns get a second edit of reach.
-    CHECK(std::find(spell.suggest("dictionarry").begin(), spell.suggest("dictionarry").end(),
-                    "dictionary") != spell.suggest("dictionarry").end());
+    auto dictionary_suggestions = spell.suggest("dictionarry");
+    CHECK(std::find(dictionary_suggestions.begin(), dictionary_suggestions.end(),
+                    "dictionary") != dictionary_suggestions.end());
     // My own words count even with the built-in dictionary switched off.
     spell.builtin_enabled = false;
     CHECK(!spell.correct("hello"));
@@ -3218,15 +3221,29 @@ int main() {
     marks = pv::spell_check_text(spell, "visit duckduckgo.com now");
     CHECK(marks.empty() || marks.back().length != 13);
   }
+  std::cerr << "ENGINE_CHECKS_COMPLETE\n";
   std::cout << passed << " engine checks passed\n";
   std::cout.flush();
-  int runtime_ok = run_runtime_bus_tests(passed);
-  if (runtime_ok == 0)
-    runtime_ok = run_runtime_integration_tests(passed);
-  if (runtime_ok == 0)
-    runtime_ok = run_renderer_harness_tests(passed);
-  if (runtime_ok == 0)
-    runtime_ok = run_renderer_process_tests(passed);
+  int runtime_ok = 0;
+  try {
+    std::cerr << "RUNTIME_BUS_TESTS_START\n";
+    runtime_ok = run_runtime_bus_tests(passed);
+    if (runtime_ok == 0) {
+      std::cerr << "RUNTIME_INTEGRATION_TESTS_START\n";
+      runtime_ok = run_runtime_integration_tests(passed);
+    }
+    if (runtime_ok == 0) {
+      std::cerr << "RENDERER_HARNESS_TESTS_START\n";
+      runtime_ok = run_renderer_harness_tests(passed);
+    }
+    if (runtime_ok == 0) {
+      std::cerr << "RENDERER_PROCESS_TESTS_START\n";
+      runtime_ok = run_renderer_process_tests(passed);
+    }
+  } catch (const std::exception &error) {
+    std::cerr << "RUNTIME_TEST_EXCEPTION: " << error.what() << "\n";
+    return 1;
+  }
   std::cout << passed << " total checks passed\n";
   return runtime_ok;
 }

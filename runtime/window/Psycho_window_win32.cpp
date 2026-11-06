@@ -9,8 +9,9 @@
 
 #ifdef _WIN32
 
-#include <shellscalingapi.h>
 #include <windows.h>
+#include <shobjidl.h>
+#include <shellscalingapi.h>
 
 namespace pv::rt {
 namespace {

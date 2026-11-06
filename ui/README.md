@@ -18,12 +18,12 @@ It renders both the app page (`psychovault://newtab`) and a local web fixture
 selected output directory. The generated screenshots are evidence artefacts,
 not checked-in files.
 
-**Current limitation:** the Windows shell source now serves this embedded page
-through the renderer farm and routes its curated tab bridge back to the broker,
-but that Windows-only integration has not been compiled or exercised here. The
-headless smoke does not prove that the app page and local fixture switch in one
-running executable. Its screenshot is an engine proof, not the S045 Windows
-app-flow screenshot; the production-flow evidence is still outstanding.
+**Current limitation:** the Windows owned-engine workflow now builds the shell,
+passes `pv-tests`, and captures the app page and a fetched local page. Those are
+separate smoke launches; they do not prove that address entry or the bridge
+switches from the app page to the local fixture in one running executable. That
+same-app S045 flow remains unverified, and these results are not a visual-parity
+claim.
 
 The later UI remains planned: full chrome, new tab, settings, panels, dialogs,
 shared tokens/components, and the complete `window.psycho` contract. Nothing in
