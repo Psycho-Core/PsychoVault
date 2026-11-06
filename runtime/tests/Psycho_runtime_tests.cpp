@@ -928,17 +928,17 @@ int run_runtime_bus_tests(int &shared) {
     RT_CHECK(px_at(target, 6, 6) == 0xff3355ee);
 
     // Clipping: an off-edge placement writes nothing outside the destination.
-    Surface small;
-    small.width = 10;
-    small.height = 10;
-    small.pixels.assign(10 * 10 * 4, 0);
-    RT_CHECK(compositor.composite(registry, {{second, -15, 6}}, small, composite_error));
+    Surface small_surface;
+    small_surface.width = 10;
+    small_surface.height = 10;
+    small_surface.pixels.assign(10 * 10 * 4, 0);
+    RT_CHECK(compositor.composite(registry, {{second, -15, 6}}, small_surface, composite_error));
     // Source columns 15-19 land in target columns 0-4: that sliver paints, the
     // rest of the target is untouched - proven both ways.
-    RT_CHECK(px_at(small, 2, 8) == 0xff010203);
-    RT_CHECK(px_at(small, 4, 9) == 0xff010203);
-    RT_CHECK(px_at(small, 5, 9) == 0); // one pixel past the intersection: mine, not his
-    RT_CHECK(px_at(small, 9, 5) == 0);
+    RT_CHECK(px_at(small_surface, 2, 8) == 0xff010203);
+    RT_CHECK(px_at(small_surface, 4, 9) == 0xff010203);
+    RT_CHECK(px_at(small_surface, 5, 9) == 0); // one pixel past the intersection: mine, not his
+    RT_CHECK(px_at(small_surface, 9, 5) == 0);
 
     // Missing surfaces and malformed targets are structured refusals.
     RT_CHECK(!compositor.composite(registry, {{999, 0, 0}}, target, composite_error) &&
