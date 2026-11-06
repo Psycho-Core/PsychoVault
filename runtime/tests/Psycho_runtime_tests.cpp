@@ -13,6 +13,7 @@
 #include "../private/Psycho_private.hpp"
 #include "../diagnostics/Psycho_diagnostics.hpp"
 #include "../crash/Psycho_crash.hpp"
+#include "../logging/Psycho_logging.hpp"
 #include "../../engine/Psycho_js.hpp"
 #include "../surface/Psycho_surface.hpp"
 #include "../window/Psycho_window.hpp"
@@ -20,7 +21,12 @@
 #include "../broker/Psycho_broker.hpp"
 #include "../process/Psycho_process.hpp"
 #include <algorithm>
+#include <atomic>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <thread>
+#include <vector>
 
 using namespace pv;
 using namespace pv::rt;
@@ -2427,6 +2433,149 @@ int run_runtime_bus_tests(int &shared) {
              "undefined");
     RT_CHECK(crash_page.page_world().run("typeof psycho.settings").string ==
              "undefined");
+  }
+
+  // S040 structured logging: per-service JSONL, redaction before disk, bounded
+  // rotation and a portable ZIP containing only logger-owned files.
+  {
+    namespace fs = std::filesystem;
+    struct TempTree {
+      fs::path path;
+      ~TempTree() {
+        std::error_code ignored;
+        fs::remove_all(path, ignored);
+      }
+    };
+    std::string suffix;
+    for (uint8_t byte : random_bytes(8)) {
+      const char *hex = "0123456789abcdef";
+      suffix += hex[byte >> 4];
+      suffix += hex[byte & 15];
+    }
+    TempTree temp{fs::temp_directory_path() / ("PsychoVault-log-" + suffix)};
+    fs::create_directories(temp.path);
+    const std::string root = temp.path.string();
+    Error e;
+    RT_CHECK(StructuredLog::valid_service("network"));
+    RT_CHECK(StructuredLog::valid_service("extension.vpn"));
+    RT_CHECK(!StructuredLog::valid_service("../network"));
+    RT_CHECK(!StructuredLog::valid_service("network/subsystem"));
+    RT_CHECK(StructuredLog::redact_value("password", "hunter2") == "[REDACTED]");
+    const std::string redacted_url = StructuredLog::redact_value(
+        "url", "https://alice:pass@example.test/a?access_token=secret&%70ass%77ord=hidden&view=full");
+    RT_CHECK(redacted_url.find("alice:pass") == std::string::npos &&
+             redacted_url.find("access_token=secret") == std::string::npos &&
+             redacted_url.find("hidden") == std::string::npos &&
+             redacted_url.find("view=full") != std::string::npos);
+    const std::string embedded_url = StructuredLog::redact_value(
+        "detail", "target=https://bob:pw@example.test/?session_token=hidden");
+    RT_CHECK(embedded_url.find("bob:pw") == std::string::npos &&
+             embedded_url.find("session_token=hidden") == std::string::npos);
+    RT_CHECK(StructuredLog::redact_value("message",
+                                         "Authorization: BEARER inline-secret")
+                 .find("inline-secret") == std::string::npos);
+    RT_CHECK(StructuredLog::redact_value("message", "BASIC base64-secret")
+                 .find("base64-secret") == std::string::npos);
+
+    int64_t now = 1700000000123;
+    StructuredLog logs(root, LogOptions{420, 2}, [&]() { return now; });
+    StructuredLog::Fields fields = {
+        {"password", "hunter2"},
+        {"url", "https://alice:pass@example.test/a?access_token=secret&view=full"},
+        {"Authorization", "Bearer header-secret"},
+        {"message", "BEARER inline-secret token=inline-token"},
+        {"payload", std::string(96, 'x')},
+    };
+    for (int i = 0; i < 7; ++i) {
+      fields["sequence"] = std::to_string(i);
+      RT_CHECK(logs.write("network", LogLevel::Info, "request.complete", fields, e));
+      now += 1;
+    }
+    RT_CHECK(logs.write("storage", LogLevel::Warn, "profile.read",
+                        {{"result", "ok"}}, e));
+    RT_CHECK(fs::exists(logs.log_path("network")) &&
+             fs::exists(logs.log_path("network") + ".1") &&
+             fs::exists(logs.log_path("network") + ".2") &&
+             !fs::exists(logs.log_path("network") + ".3"));
+    RT_CHECK(fs::exists(logs.log_path("storage")) &&
+             logs.log_path("network") != logs.log_path("storage"));
+
+    bool no_secrets_on_disk = true;
+    for (const auto &entry : fs::directory_iterator(temp.path)) {
+      if (!entry.is_regular_file()) continue;
+      const std::string name = entry.path().filename().string();
+      if (name.rfind("network.log", 0) != 0) continue;
+      const std::string bytes = read_text_file(entry.path().string());
+      for (const char *secret : {"hunter2", "alice:pass", "access_token=secret",
+                                 "header-secret", "inline-secret", "inline-token"})
+        if (bytes.find(secret) != std::string::npos) no_secrets_on_disk = false;
+      const size_t newline = bytes.find('\n');
+      if (newline != std::string::npos) {
+        const auto row = Json::parse(bytes.substr(0, newline));
+        if (!row || row->str("service") != "network" ||
+            row->num("timestamp_ms") < 1700000000123.0)
+          no_secrets_on_disk = false;
+      }
+    }
+    RT_CHECK(no_secrets_on_disk);
+    RT_CHECK(!logs.write("../outside", LogLevel::Info, "event", {}, e) &&
+             e.code == "logging.service");
+    RT_CHECK(!logs.write("network", LogLevel::Info, "bad event", {}, e) &&
+             e.code == "logging.event");
+    RT_CHECK(!logs.write("network", static_cast<LogLevel>(99), "event", {}, e) &&
+             e.code == "logging.level");
+    StructuredLog tiny(root + "/tiny", LogOptions{64, 1}, [&]() { return now; });
+    RT_CHECK(!tiny.write("tiny", LogLevel::Info, "too.large",
+                         {{"large", std::string(200, 'z')}}, e) &&
+             e.code == "logging.record-too-large");
+
+    StructuredLog concurrent(root + "/parallel", LogOptions{1u << 20, 2},
+                             [&]() { return now; });
+    std::atomic<bool> writes_ok{true};
+    std::vector<std::thread> writers;
+    for (int worker = 0; worker < 4; ++worker) {
+      writers.emplace_back([&, worker]() {
+        for (int sequence = 0; sequence < 24; ++sequence) {
+          Error local_error;
+          if (!concurrent.write("parallel", LogLevel::Debug, "thread.record",
+                                {{"worker", std::to_string(worker)},
+                                 {"sequence", std::to_string(sequence)}},
+                                local_error))
+            writes_ok = false;
+        }
+      });
+    }
+    for (std::thread &writer : writers) writer.join();
+    const std::string parallel_log = read_text_file(concurrent.log_path("parallel"));
+    size_t line_count = 0;
+    bool all_rows_valid = true;
+    size_t line_start = 0;
+    while (line_start < parallel_log.size()) {
+      const size_t line_end = parallel_log.find('\n', line_start);
+      if (line_end == std::string::npos ||
+          !Json::parse(parallel_log.substr(line_start, line_end - line_start))) {
+        all_rows_valid = false;
+        break;
+      }
+      ++line_count;
+      line_start = line_end + 1;
+    }
+    RT_CHECK(writes_ok && all_rows_valid && line_count == 96);
+
+    const std::string bundle = (temp.path / "support.zip").string();
+    RT_CHECK(logs.export_support_bundle(bundle, e));
+    std::ifstream zip_stream(bundle, std::ios::binary);
+    const std::string zip_bytes((std::istreambuf_iterator<char>(zip_stream)),
+                                std::istreambuf_iterator<char>());
+    RT_CHECK(zip_bytes.size() > 22 && zip_bytes.substr(0, 4) == "PK\003\004" &&
+             zip_bytes.find("manifest.json") != std::string::npos &&
+             zip_bytes.find("logs/network.log") != std::string::npos &&
+             zip_bytes.find("logs/storage.log") != std::string::npos);
+    RT_CHECK(zip_bytes.find("inline-secret") == std::string::npos &&
+             zip_bytes.find("header-secret") == std::string::npos &&
+             zip_bytes.find("hunter2") == std::string::npos);
+    RT_CHECK(!logs.export_support_bundle("", e) &&
+             e.code == "logging.bundle-path");
   }
 
   shared += rt_passed;
