@@ -85,6 +85,7 @@ Schemas Schemas::stock() {
   s.add("win:focus", fields({{"id", T::Number, true}}));
   s.add("lifecycle:ping", fields({}));
   s.add("lifecycle:pong", fields({{"uptime_ms", T::Number, true}}));
+  s.add("lifecycle:echo", fields({{"nonce", T::String, true}}));
   s.add("diagnostics:stage",
         fields({{"stage", T::String, true}, {"ok", T::Bool, true}, {"result", T::String, true}}));
   s.add("diagnostics:nettest", fields({}));

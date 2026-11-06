@@ -2,6 +2,7 @@
 // fake, but the bus, broker, tabs, navigation, process state, crash policy, and
 // permission decisions are exercised together. P1/S042.
 #include "../broker/Psycho_broker.hpp"
+#include "../broker/Psycho_renderer_harness.hpp"
 #include "../content/Psycho_content.hpp"
 #include "../crash/Psycho_crash.hpp"
 #include "../internal/Psycho_internal.hpp"
@@ -86,6 +87,25 @@ int run_runtime_integration_tests(int &shared) {
        }});
   broker.add_service(Channel::Nav,
                      std::make_unique<CommitNavigationService>(contents));
+  RendererHarness::Seams admission_probes;
+  admission_probes.navigation = [&](int id, std::string &detail,
+                                    Error &probe_error) {
+    if (id != renderer) {
+      probe_error = {"test.navigation-renderer", "wrong renderer"};
+      return false;
+    }
+    return admit_browser_url("https://harness.example/", registry, detail,
+                             probe_error);
+  };
+  admission_probes.crash_recover = [](int, std::string &detail, Error &) {
+    detail = "S042 crash adapter is exercised below";
+    return true;
+  };
+  RendererHarness admission_harness(broker, std::move(admission_probes));
+  RendererQualification qualification;
+  INTEGRATION_CHECK(admission_harness.qualify(renderer, qualification, error) &&
+                    qualification.admitted && qualification.probes.size() == 3);
+  INTEGRATION_CHECK(!admission_harness.admitted(observer));
 
   auto send_navigation = [&](const std::string &url, uint32_t request_id,
                              std::vector<Envelope> &received) {

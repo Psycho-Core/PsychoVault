@@ -40,6 +40,20 @@ P1 exit gate remains outstanding.
   connect process death to crash-page/replacement flow and permission decisions
   to notification delivery. Platform/process seams are faked; this is not the
   real-process P1 exit gate.
+- `broker/Psycho_renderer_harness.*` and
+  `tests/Psycho_renderer_harness_tests.cpp` (S043): every broker renderer starts
+  quarantined. Before admission, only the lifecycle echo probe is routable;
+  `RendererHarness` reports timed echo, navigation, and crash/recovery checks,
+  then admits the endpoint only if all three succeed. Requalification closes
+  the gate first, and `invalidate()` closes it after a reported renderer
+  failure. Tests exercise a real in-process `WebContents`, `Supervisor`, and
+  `CrashService` path, including failed and throwing probes. The process seam is
+  still fake: the shell does not currently create renderers through this broker,
+  and no production caller wires the qualification adapters or crash
+  invalidation. S043 therefore does not prove OS isolation or complete the P1
+  exit gate (two real renderers, real replacement, measured production IPC,
+  profile-file denial, and arbitrary-socket denial remain unproven). 57 new
+  checks; 806 engine checks and 2572 total checks pass.
 
 - `process/Psycho_process.*` (S022, supervision core done): the supervisor with
   injected clock - spawn, heartbeat windows, hang detection, kill for cause,

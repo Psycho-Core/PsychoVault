@@ -35,6 +35,8 @@ public:
   virtual void handle(const Envelope &request, Envelope &response, Error &error) = 0;
 };
 
+class RendererHarness;
+
 class Broker {
 public:
   Broker();
@@ -42,7 +44,9 @@ public:
   Endpoint &broker_side(int index);
 
   // S026 arrives in slices; the ordered tab list is the first slice to exist.
-  int spawn_renderer(const std::string &label);
+  int spawn_renderer(const std::string &label); // quarantined until the harness passes
+  bool has_renderer(int index) const;
+  bool renderer_qualified(int index) const;
 
   void add_service(Channel channel, std::unique_ptr<Service> service);
 
@@ -55,9 +59,13 @@ public:
   void note(Error error) { log_.push_back(std::move(error)); }
 
 private:
+  friend class RendererHarness;
+  bool set_renderer_qualified(int index, bool qualified);
+
   struct Host {
     std::string label;
     Role role = Role::Renderer;
+    bool qualified = false;
     std::unique_ptr<Link> link;
   };
   std::vector<std::unique_ptr<Host>> hosts_;
