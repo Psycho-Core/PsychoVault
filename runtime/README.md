@@ -31,10 +31,15 @@ P1 exit gate remains outstanding.
   honestly not here yet - today a renderer is an in-process endpoint whose mask
   already blocks privileged channels, which is capability control, not OS
   isolation.
-- `tests/Psycho_runtime_tests.cpp` (S042 started): 37 runtime checks covering
-  framing, partial frames, oversize frames, schema rejections, capability
-  denial both directions, both back-pressure budgets, lifecycle round-trip,
-  structured refusals and two-renderer isolation. They run inside pv-tests.
+- `tests/Psycho_runtime_tests.cpp` (S021-S041 unit contracts): schema and
+  wire validation, capability/back-pressure laws, process supervision,
+  navigation/session history, permission decisions, and each runtime contract
+  are exercised in `pv-tests`.
+- `tests/Psycho_runtime_integration_tests.cpp` (S042): cross-component checks
+  route renderer IPC through the broker into tab/navigation history, then
+  connect process death to crash-page/replacement flow and permission decisions
+  to notification delivery. Platform/process seams are faked; this is not the
+  real-process P1 exit gate.
 
 - `process/Psycho_process.*` (S022, supervision core done): the supervisor with
   injected clock - spawn, heartbeat windows, hang detection, kill for cause,
@@ -310,4 +315,12 @@ P1 exit gate remains outstanding.
   languages refuse because no such language pack ships yet. 28 new checks
   (2443 total).
 
-Next in P1: S042 (runtime unit and integration tests).
+- `tests/Psycho_runtime_integration_tests.cpp` (S042, complete): IPC schema
+  rejection and correlated replies, two-renderer isolation, WebContents commits
+  with back/forward session history, supervisor kill plus durable crash-page
+  and tab-replacement flow, and deny-by-default permission decisions feeding
+  notification delivery. 72 new cross-component checks (2515 total). These
+  exercise in-process contracts and injected fake platform seams only; they do
+  not prove a real OS renderer process, profile-file denial, or socket sandbox.
+
+Next in P1: S043 (broker-side test harness).
