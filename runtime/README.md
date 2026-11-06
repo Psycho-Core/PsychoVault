@@ -224,5 +224,25 @@ What exists now (P1 in progress):
   trusts it (".." and "(1)" become "download" and "report_1_.pdf"). 105 new
   checks (2220 total).
 
-Next in P1: S036 (site permissions by origin), then S037 (private
-sessions).
+- `permissions/Psycho_permissions.*` (S036, rules done): my permission
+  service. *The legacy defaults are the floor:* the seven kinds of the
+  legacy inventory's `defaultSettings.denyPerms` - geolocation, media,
+  clipboard-read, midi, sync-xhr, wake-lock, notifications - are exactly the
+  known kinds and each defaults to Deny; nothing defaults to Allow; unknown
+  kinds refuse `perm.kind`. *Honest origins:* decisions key on normalized
+  scheme://host[:port] - uppercase, paths, trailing slashes, bad ports and
+  non-http(s) schemes all refuse `perm.origin`; internal pages hold no site
+  permissions at all. *The prompt is the only path:* one visible prompt per
+  (origin, kind) - re-asking coalesces to the live token instead of stacking
+  dialogs; 16 pending is the ceiling; "ask" is not an answer; a remembered
+  answer with no profile seam refuses and STAYS pending for the retry
+  without remember. *Persistence is exactly what the profile heard:* saves
+  and drops cross their seams only for remembered rows; the profile loads
+  once, merges last-wins, drops malformed rows. *Private mode is a build
+  without the seams:* law 5's proof constructs exactly S037's session store
+  and prompts through it. The floor reaches consumers: S031's notification
+  law fed by `decide()` keeps the denied denied and the granted heard. 73
+  new checks (2293 total).
+
+Next in P1: S037 (private sessions), then S038 (psychovault://nettest and
+psychovault://version diagnostics).

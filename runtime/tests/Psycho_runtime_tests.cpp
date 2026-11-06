@@ -9,6 +9,7 @@
 #include "../ime/Psycho_ime.hpp"
 #include "../focus/Psycho_focus.hpp"
 #include "../downloads/Psycho_downloads.hpp"
+#include "../permissions/Psycho_permissions.hpp"
 #include "../../engine/Psycho_js.hpp"
 #include "../surface/Psycho_surface.hpp"
 #include "../window/Psycho_window.hpp"
@@ -1861,6 +1862,180 @@ int run_runtime_bus_tests(int &shared) {
     RT_CHECK(!dl.set_target(999, "/x", e) && e.code == "download.unknown");
     RT_CHECK(!dl.remove_record(999, e) && e.code == "download.unknown");
     RT_CHECK(std::string(download_state_name(DownloadState::Paused)) == "paused");
+  }
+
+  // S036 permission service: the legacy deny list is the floor, prompts are
+  // the only path from default to answer, and persistence is exactly what
+  // the profile heard.
+  {
+    std::vector<PermissionGrant> profile_rows;
+    profile_rows.push_back({"https://a.example", "geolocation", true});
+    profile_rows.push_back({"https://a.example", "media", false});
+    profile_rows.push_back({"https://a.example", "geolocation", false}); // last wins
+    profile_rows.push_back({"not-an-origin", "midi", true});  // malformed row
+    profile_rows.push_back({"https://b.example", "bluetooth", true}); // unknown kind
+    std::vector<PermissionGrant> saved;
+    std::vector<std::pair<std::string, std::string>> dropped;
+    std::vector<std::string> shown;
+    PermissionService::Seams pseams;
+    pseams.load = [&]() { return profile_rows; };
+    pseams.save = [&](const PermissionGrant &g) { saved.push_back(g); };
+    pseams.drop = [&](const std::string &o, const std::string &k) {
+      dropped.push_back({o, k});
+    };
+    pseams.show_prompt = [&](const std::string &o, const std::string &k) {
+      shown.push_back(o + "|" + k);
+    };
+    PermissionService perms(pseams);
+    Error e;
+    Decision d = Decision::Deny;
+
+    // The profile loads once: last-wins merge, malformed and unknown-kind
+    // rows dropped, not trusted.
+    RT_CHECK(perms.load_profile(e) && perms.stored() == 2);
+    RT_CHECK(perms.decide("https://a.example", "geolocation", d, e) &&
+             d == Decision::Deny); // the block row landed last
+    RT_CHECK(perms.decide("https://a.example", "media", d, e) &&
+             d == Decision::Deny);
+    RT_CHECK(!perms.load_profile(e) && e.code == "perm.state");
+
+    // Law 1: the legacy seven default to Deny - all of them, nowhere Allow.
+    RT_CHECK(PermissionService::known_kinds().size() == 7);
+    for (const std::string &kind : PermissionService::known_kinds()) {
+      RT_CHECK(perms.decide("https://never.example", kind, d, e) &&
+               d == Decision::Deny);
+    }
+    RT_CHECK(!perms.decide("https://never.example", "bluetooth", d, e) &&
+             e.code == "perm.kind");
+
+    // Law 2: origins are normalized scheme://host[:port], or refused.
+    RT_CHECK(PermissionService::valid_origin("https://example.com"));
+    RT_CHECK(PermissionService::valid_origin("http://a.b:8080"));
+    RT_CHECK(!perms.decide("https://EXAMPLE.com", "midi", d, e) &&
+             e.code == "perm.origin"); // uppercase is not normalized
+    RT_CHECK(!perms.decide("https://example.com/", "midi", d, e) &&
+             e.code == "perm.origin"); // trailing slash is a path
+    RT_CHECK(!perms.decide("https://example.com/x", "midi", d, e) &&
+             e.code == "perm.origin");
+    RT_CHECK(!perms.decide("example.com", "midi", d, e) && e.code == "perm.origin");
+    RT_CHECK(!PermissionService::valid_origin("https://example.com:0"));
+    RT_CHECK(!PermissionService::valid_origin("psychovault://newtab"));
+
+    // The verbs: grant and block remember honestly; reset returns to the
+    // floor and tells the profile exactly what died.
+    RT_CHECK(perms.grant("https://c.example", "notifications", e));
+    RT_CHECK(perms.decide("https://c.example", "notifications", d, e) &&
+             d == Decision::Allow);
+    const size_t saved_before_block = saved.size();
+    RT_CHECK(perms.block("https://c.example", "notifications", e) &&
+             saved.size() == saved_before_block + 1 && !saved.back().allow);
+    RT_CHECK(perms.reset("https://c.example", "notifications", e) &&
+             dropped.size() == 1 &&
+             dropped[0] == std::make_pair(std::string("https://c.example"),
+                                          std::string("notifications")));
+    RT_CHECK(perms.decide("https://c.example", "notifications", d, e) &&
+             d == Decision::Deny); // back to the floor
+    const size_t dropped_before = dropped.size();
+    RT_CHECK(perms.reset("https://c.example", "notifications", e) &&
+             dropped.size() == dropped_before); // resetting nothing is quiet
+
+    // reset_origin clears every kind the origin held, and names its count.
+    const size_t stored_before_site = perms.stored();
+    RT_CHECK(perms.grant("https://c.example", "media", e) &&
+             perms.grant("https://c.example", "wake-lock", e));
+    RT_CHECK(perms.reset_origin("https://c.example", e) == 2 &&
+             perms.stored() == stored_before_site);
+    RT_CHECK(perms.reset_origin("HTTPS://BAD", e) == 0 && e.code == "perm.origin");
+
+    // Law 3: prompts coalesce per (origin, kind), stay bounded, and
+    // persistence of an answer is exactly the remember flag.
+    const uint64_t t1 = perms.ask("https://d.example", "geolocation", e);
+    RT_CHECK(t1 > 0 && shown.size() == 1 && perms.pending() == 1);
+    const uint64_t t1_again = perms.ask("https://d.example", "geolocation", e);
+    RT_CHECK(t1_again == t1 && shown.size() == 1); // no dialog stacking
+    const uint64_t t2 = perms.ask("https://d.example", "media", e);
+    RT_CHECK(t2 > 0 && t2 != t1 && shown.size() == 2 && perms.pending() == 2);
+    RT_CHECK(!perms.answer(t1, Decision::Ask, false, e) &&
+             e.code == "perm.decision" && perms.pending() == 2);
+    const size_t saved_before_answer = saved.size();
+    RT_CHECK(perms.answer(t1, Decision::Allow, true, e)); // remember
+    RT_CHECK(saved.size() == saved_before_answer + 1 && saved.back().allow &&
+             saved.back().origin == "https://d.example");
+    RT_CHECK(perms.decide("https://d.example", "geolocation", d, e) &&
+             d == Decision::Allow && perms.pending() == 1);
+    RT_CHECK(!perms.answer(t1, Decision::Deny, false, e) &&
+             e.code == "perm.unknown"); // a dead token stays dead
+    RT_CHECK(perms.answer(t2, Decision::Deny, false, e)); // session answer
+    RT_CHECK(saved.size() == saved_before_answer + 1);      // nothing crossed
+    RT_CHECK(perms.decide("https://d.example", "media", d, e) &&
+             d == Decision::Deny);
+    // A dead tab owes no record: dropping the prompt is not an answer.
+    const uint64_t t3 = perms.ask("https://f.example", "midi", e);
+    RT_CHECK(t3 > 0 && perms.drop_prompt(t3) && !perms.drop_prompt(t3));
+    RT_CHECK(!perms.answer(t3, Decision::Allow, false, e) &&
+             e.code == "perm.unknown");
+    // The pending bound refuses by name.
+    for (int i = 0; i < 16; ++i) {
+      RT_CHECK(perms.ask("https://p" + std::to_string(i) + ".example", "midi",
+                         e) > 0);
+    }
+    RT_CHECK(perms.pending() == PermissionService::kPendingLimit);
+    RT_CHECK(perms.ask("https://p16.example", "midi", e) == 0 &&
+             e.code == "perm.too-many");
+    // A build that cannot show prompts says so instead of hanging.
+    {
+      PermissionService::Seams nop;
+      nop.save = pseams.save;
+      nop.load = pseams.load;
+      nop.drop = pseams.drop;
+      PermissionService voiceless(nop);
+      RT_CHECK(voiceless.ask("https://g.example", "midi", e) == 0 &&
+               e.code == "perm.unavailable");
+    }
+
+    // Law 5: a seamles-profile build is the session store S037 will build.
+    {
+      PermissionService::Seams sess;
+      sess.show_prompt = pseams.show_prompt;
+      PermissionService session(sess);
+      RT_CHECK(!session.persistence_enabled());
+      RT_CHECK(session.load_profile(e)); // nothing to load, honestly so
+      // Remembered answers impossible, session answers fine, both named.
+      RT_CHECK(!session.grant("https://h.example", "midi", e) &&
+               e.code == "perm.unavailable");
+      const uint64_t ts = session.ask("https://h.example", "midi", e);
+      RT_CHECK(ts > 0 && session.answer(ts, Decision::Allow, false, e));
+      RT_CHECK(session.decide("https://h.example", "midi", d, e) &&
+               d == Decision::Allow && session.stored() == 1);
+      const uint64_t ts2 = session.ask("https://h.example", "wake-lock", e);
+      RT_CHECK(ts2 > 0);
+      RT_CHECK(!session.answer(ts2, Decision::Deny, true, e) &&
+               e.code == "perm.unavailable" && session.pending() == 1);
+      RT_CHECK(session.answer(ts2, Decision::Deny, false, e) &&
+               session.pending() == 0);
+    }
+
+    // The floor reaches the services that consume it: S031's notification
+    // law, fed by decide(), keeps the denied denied and the granted heard.
+    {
+      std::vector<std::string> posted;
+      NotificationService notes(
+          NotificationService::Seams{[&](const Notice &n) {
+            posted.push_back(n.title);
+          }});
+      auto allows = [&](const std::string &origin, const std::string &kind) {
+        Decision dd = Decision::Deny;
+        Error ee;
+        return perms.decide(origin, kind, dd, ee) && dd == Decision::Allow;
+      };
+      RT_CHECK(perms.grant("https://n.example", "notifications", e));
+      RT_CHECK(notes.notify("https://n.example", "hello", "",
+                            allows("https://n.example", "notifications"), e) &&
+               posted.size() == 1);
+      RT_CHECK(!notes.notify("https://d.example", "hello", "",
+                             allows("https://d.example", "notifications"), e) &&
+               e.code == "notify.permission");
+    }
   }
 
   shared += rt_passed;
