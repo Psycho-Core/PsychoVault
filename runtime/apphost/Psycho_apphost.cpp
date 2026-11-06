@@ -22,13 +22,30 @@ const ExposedEntry kDiagnosticsProfile[] = {
     {Channel::Lifecycle, "lifecycle:ping"},
 };
 
+// A private renderer has a distinct shell policy: no profile settings or
+// history surface, even read-only. Its shell can manage private tabs and
+// resolve its own internal pages. Extensions remain absent in both policies.
+const ExposedEntry kPrivateShellProfile[] = {
+    {Channel::Tab, "tab:new"},
+    {Channel::Tab, "tab:activate"},
+    {Channel::Internal, "internal:list"},
+    {Channel::Lifecycle, "lifecycle:ping"},
+};
+
+const ExposedEntry kPrivateDiagnosticsProfile[] = {
+    {Channel::Internal, "internal:list"},
+    {Channel::Diagnostics, "diagnostics:stage"},
+    {Channel::Lifecycle, "lifecycle:ping"},
+};
+
 // Web pages get no facade. There are deliberately no entries here.
 const ExposedEntry kWebProfile[] = {};
 
 } // namespace
 
-AppHost::AppHost(int tab_id, const InternalPage *page, Seams seams)
-    : tab_id_(tab_id), seams_(std::move(seams)),
+AppHost::AppHost(int tab_id, const InternalPage *page, Seams seams,
+                 RendererPolicy policy)
+    : tab_id_(tab_id), policy_(policy), seams_(std::move(seams)),
       bridge_(PreloadBridge::Seams{seams_.invoke}) {
   const ExposedEntry *profile = kWebProfile;
   size_t count = 0;
@@ -36,12 +53,22 @@ AppHost::AppHost(int tab_id, const InternalPage *page, Seams seams)
     page_name_ = page->name;
     if (page->category == "shell") {
       kind_ = PageKind::Shell;
-      profile = kShellProfile;
-      count = sizeof(kShellProfile) / sizeof(kShellProfile[0]);
+      if (policy_ == RendererPolicy::Private) {
+        profile = kPrivateShellProfile;
+        count = sizeof(kPrivateShellProfile) / sizeof(kPrivateShellProfile[0]);
+      } else {
+        profile = kShellProfile;
+        count = sizeof(kShellProfile) / sizeof(kShellProfile[0]);
+      }
     } else {
       kind_ = PageKind::Diagnostics;
-      profile = kDiagnosticsProfile;
-      count = sizeof(kDiagnosticsProfile) / sizeof(kDiagnosticsProfile[0]);
+      if (policy_ == RendererPolicy::Private) {
+        profile = kPrivateDiagnosticsProfile;
+        count = sizeof(kPrivateDiagnosticsProfile) / sizeof(kPrivateDiagnosticsProfile[0]);
+      } else {
+        profile = kDiagnosticsProfile;
+        count = sizeof(kDiagnosticsProfile) / sizeof(kDiagnosticsProfile[0]);
+      }
     }
   }
   for (size_t i = 0; i < count; ++i) {

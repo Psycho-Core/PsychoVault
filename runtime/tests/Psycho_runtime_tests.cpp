@@ -10,6 +10,7 @@
 #include "../focus/Psycho_focus.hpp"
 #include "../downloads/Psycho_downloads.hpp"
 #include "../permissions/Psycho_permissions.hpp"
+#include "../private/Psycho_private.hpp"
 #include "../../engine/Psycho_js.hpp"
 #include "../surface/Psycho_surface.hpp"
 #include "../window/Psycho_window.hpp"
@@ -2036,6 +2037,94 @@ int run_runtime_bus_tests(int &shared) {
                              allows("https://d.example", "notifications"), e) &&
                e.code == "notify.permission");
     }
+  }
+
+  // S037 private sessions: independent memory-only stores, a separate
+  // renderer policy, and extensions disabled until the explicit user switch.
+  {
+    Error e;
+    std::vector<std::string> prompts;
+    PrivateSession first({[&](const std::string &origin, const std::string &kind) {
+      prompts.push_back(origin + "|" + kind);
+    }});
+    PrivateSession second;
+    bool found = false;
+    std::string value;
+
+    // Each store is session-owned, site-scoped and separated by data class.
+    RT_CHECK(first.set(PrivateStore::Cookies, "https://a.example", "sid",
+                       "private-cookie", e));
+    RT_CHECK(first.set(PrivateStore::LocalStorage, "https://a.example", "sid",
+                       "private-local", e));
+    RT_CHECK(first.get(PrivateStore::Cookies, "https://a.example", "sid",
+                       value, found, e) && found && value == "private-cookie");
+    RT_CHECK(first.get(PrivateStore::LocalStorage, "https://a.example", "sid",
+                       value, found, e) && found && value == "private-local");
+    RT_CHECK(first.get(PrivateStore::Cookies, "https://b.example", "sid",
+                       value, found, e) && !found && value.empty());
+    RT_CHECK(second.get(PrivateStore::Cookies, "https://a.example", "sid",
+                        value, found, e) && !found); // another session, no leak
+    RT_CHECK(first.size(PrivateStore::Cookies) == 1 &&
+             first.size(PrivateStore::LocalStorage) == 1 &&
+             second.size(PrivateStore::Cookies) == 0);
+    RT_CHECK(!first.set(PrivateStore::Cookies, "https://a.example/", "sid",
+                        "bad", e) && e.code == "private.origin");
+    RT_CHECK(!first.set(PrivateStore::LocalStorage, "https://a.example", "",
+                        "bad", e) && e.code == "private.key");
+    RT_CHECK(first.erase(PrivateStore::Cookies, "https://a.example", "sid", e));
+    RT_CHECK(first.get(PrivateStore::Cookies, "https://a.example", "sid",
+                       value, found, e) && !found);
+
+    // No load/save/drop seam exists on a private session's permission service.
+    // Session answers work; remembered answers are refused without disk I/O.
+    RT_CHECK(!first.permissions().persistence_enabled());
+    RT_CHECK(first.permissions().load_profile(e));
+    RT_CHECK(!first.permissions().grant("https://a.example", "midi", e) &&
+             e.code == "perm.unavailable");
+    const uint64_t token = first.permissions().ask("https://a.example",
+                                                    "midi", e);
+    RT_CHECK(token > 0 && prompts.size() == 1);
+    RT_CHECK(first.permissions().answer(token, Decision::Allow, false, e));
+    Decision decision = Decision::Deny;
+    RT_CHECK(first.permissions().decide("https://a.example", "midi", decision,
+                                        e) && decision == Decision::Allow);
+    RT_CHECK(second.permissions().decide("https://a.example", "midi", decision,
+                                         e) && decision == Decision::Deny);
+
+    // Extensions are not implicitly inherited by private sessions.
+    RT_CHECK(!first.extensions_enabled() && !first.may_run_extensions());
+    first.set_extensions_enabled_by_user(true);
+    RT_CHECK(first.extensions_enabled() && first.may_run_extensions());
+    first.set_extensions_enabled_by_user(false);
+    RT_CHECK(!first.may_run_extensions());
+    first.clear_stores();
+    RT_CHECK(first.size(PrivateStore::Cookies) == 0 &&
+             first.size(PrivateStore::LocalStorage) == 0);
+
+    // Private internal renderers get their own narrower bridge policy: no
+    // profile settings or history, while private tab controls remain available.
+    InternalRegistry registry = InternalRegistry::stock();
+    auto private_bus = [](Channel, const std::string &, Json, Json &reply,
+                          Error &) {
+      reply = Json::make_object();
+      return true;
+    };
+    AppHost private_shell(73, registry.find("settings"), {private_bus, {}},
+                          RendererPolicy::Private);
+    RT_CHECK(private_shell.kind() == PageKind::Shell &&
+             private_shell.policy() == RendererPolicy::Private);
+    RT_CHECK(private_shell.page_world().run("typeof psycho.settings").string ==
+             "undefined");
+    RT_CHECK(private_shell.page_world().run("typeof psycho.history").string ==
+             "undefined");
+    RT_CHECK(private_shell.page_world().run("typeof psycho.tab.new").string ==
+             "function");
+    RT_CHECK(private_shell.page_world().run("typeof psycho.extensions").string ==
+             "undefined");
+    AppHost regular_shell(74, registry.find("settings"), {private_bus, {}});
+    RT_CHECK(regular_shell.policy() == RendererPolicy::Regular &&
+             regular_shell.page_world().run("typeof psycho.settings.get").string ==
+                 "function");
   }
 
   shared += rt_passed;
