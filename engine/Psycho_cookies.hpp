@@ -37,6 +37,11 @@ public:
   size_t size() const;
   Json to_json() const;
   void from_json(const Json &json);
+  // The renderer sees only cookies document.cookie may read for this URL.
+  Json renderer_state_for(const Url &url, double now) const;
+  // Merge a renderer-visible snapshot back without ever replacing HttpOnly or
+  // cookies belonging to another host.
+  void merge_renderer_state(const Url &url, const Json &json, double now);
   std::vector<StoredCookie> cookies() const;
 
 private:

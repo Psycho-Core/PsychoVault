@@ -31,6 +31,10 @@ void Host::set_poster(Poster poster) {
   poster_ = std::move(poster);
 }
 
+void Host::set_page_bootstrap(std::function<void(js::Runtime &)> bootstrap) {
+  page_->set_script_bootstrap(std::move(bootstrap));
+}
+
 Resource Host::fetch(const std::string &url, ResourceType type) const {
   Resource failure;
   failure.url = url;

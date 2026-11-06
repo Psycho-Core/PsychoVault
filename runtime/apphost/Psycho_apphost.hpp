@@ -55,6 +55,9 @@ public:
 
   js::Runtime &page_world() { return page_; }
   PreloadBridge &bridge() { return bridge_; }
+  bool install_into(js::Runtime &page_world, Error &error) {
+    return bridge_.install(page_world, error);
+  }
 
 private:
   int tab_id_ = -1;

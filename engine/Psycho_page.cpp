@@ -1329,6 +1329,14 @@ void Page::load(const Url &url, const std::string &html, const std::string &mime
       dialogs.push_back(a.empty() ? "" : a[0].to_string());
     return js::Value();
   });
+  if (script_bootstrap_) {
+    try {
+      script_bootstrap_(*js_);
+    } catch (const std::exception &error) {
+      if (diagnostics.size() < 200)
+        diagnostics.push_back({"app-bootstrap", error.what()});
+    }
+  }
   int base = doc.query_one("base[href]");
   if (base >= 0) {
     auto u = resolve_url(url, doc.nodes[base].attribute("href"));

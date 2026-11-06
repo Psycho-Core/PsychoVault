@@ -329,4 +329,59 @@ void CookieJar::from_json(const Json &json) {
     jar_[key_for(cookie)] = cookie;
   }
 }
+
+Json CookieJar::renderer_state_for(const Url &url, double now) const {
+  Json list = Json::make_array();
+  std::lock_guard<std::mutex> lock(mutex_);
+  for (const auto &entry : jar_) {
+    const StoredCookie &cookie = entry.second;
+    if (cookie.http_only || !fresh(cookie, now) ||
+        !domain_matches(cookie, url.host) || !path_matches(cookie, url.path) ||
+        (cookie.secure && url.scheme != "https"))
+      continue;
+    Json item = Json::make_object();
+    item.set("name", cookie.name);
+    item.set("value", cookie.value);
+    item.set("domain", cookie.domain);
+    item.set("path", cookie.path);
+    item.set("expires", cookie.expires);
+    item.set("secure", cookie.secure);
+    item.set("httpOnly", false);
+    item.set("hostOnly", cookie.host_only);
+    list.array.push_back(std::move(item));
+  }
+  return list;
+}
+
+void CookieJar::merge_renderer_state(const Url &url, const Json &json, double now) {
+  if (json.type != Json::Type::Array) return;
+  std::lock_guard<std::mutex> lock(mutex_);
+  for (auto it = jar_.begin(); it != jar_.end();) {
+    const StoredCookie &cookie = it->second;
+    if (!cookie.http_only && domain_matches(cookie, url.host) &&
+        path_matches(cookie, url.path) &&
+        (!cookie.secure || url.scheme == "https"))
+      it = jar_.erase(it);
+    else
+      ++it;
+  }
+  for (const Json &item : json.array) {
+    if (item.type != Json::Type::Object || item.flag("httpOnly")) continue;
+    StoredCookie cookie;
+    cookie.name = item.str("name");
+    cookie.value = item.str("value");
+    cookie.domain = item.str("domain");
+    cookie.path = normalize_path(item.str("path", "/"));
+    cookie.expires = item.num("expires", -1);
+    cookie.secure = item.flag("secure");
+    cookie.http_only = false;
+    cookie.host_only = item.flag("hostOnly", true);
+    if (cookie.name.empty() || cookie.domain.empty() ||
+        !domain_matches(cookie, url.host) ||
+        (cookie.secure && url.scheme != "https") ||
+        (cookie.expires >= 0 && cookie.expires <= now))
+      continue;
+    jar_[key_for(cookie)] = std::move(cookie);
+  }
+}
 } // namespace pv

@@ -17,11 +17,13 @@
 #include "../runtime/app/Psycho_instance.hpp"
 #include "../runtime/broker/Psycho_renderer_farm.hpp"
 #include "../runtime/renderer/Psycho_renderer_main.hpp"
+#include "Psycho_embedded_ui.hpp"
 #include <audioclient.h>
 #include <atomic>
 #include <algorithm>
 #include <charconv>
 #include <chrono>
+#include <cmath>
 #include <iterator>
 #include <condition_variable>
 #include <deque>
@@ -33,6 +35,7 @@
 #include <fstream>
 #include <mutex>
 #include <iostream>
+#include <limits>
 #include <shellapi.h>
 #include <shlobj.h>
 #include <thread>
@@ -51,7 +54,7 @@ static rt::AppInstance *app_instance = nullptr;
 static rt::RendererProcessFarm *renderer_farm = nullptr;
 static constexpr UINT WM_FRAME = WM_APP + 1, WM_NAVIGATE = WM_APP + 2, WM_DIALOG = WM_APP + 3,
                       WM_DONE = WM_APP + 4, WM_IMAGE = WM_APP + 5, WM_URL = WM_APP + 6,
-                      WM_FORWARD_LAUNCH = WM_APP + 7;
+                      WM_FORWARD_LAUNCH = WM_APP + 7, WM_BRIDGE = WM_APP + 8;
 static constexpr uint32_t BG = 0xff05080f, RAIL = 0xff080d16, CHROME = 0xff070b12,
                           PANEL = 0xff0d1420, BORDER = 0xff1c2736, TEXT = 0xffe6edf3,
                           MUTED = 0xff8b98a9, ACCENT = 0xff38bdf8;
@@ -60,9 +63,13 @@ struct Update {
   uint64_t generation;
   Json frame;
   std::string error, url, title;
-  // I hand page images over directly instead of encoding them, because my page
-  // now lives in this same process.
+  // Renderer pixels arrive over bounded IPC chunks and are reconstructed here.
   std::shared_ptr<const Image> image;
+};
+struct BridgeTask {
+  int tab = -1;
+  std::string method;
+  Json payload;
 };
 struct Session;
 struct Tab {
@@ -92,6 +99,12 @@ struct Hit {
 struct MenuLine {
   std::string label, action;
 };
+static bool app_ui_url(const std::string &text) {
+  auto parsed = parse_url(text);
+  return parsed && parsed->scheme == "psychovault" && parsed->host == "newtab" &&
+         (parsed->path.empty() || parsed->path == "/") && parsed->query.empty() &&
+         parsed->fragment.empty();
+}
 static std::filesystem::path shell_path(const std::string &text) {
   int n = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()),
                               nullptr, 0);
@@ -286,12 +299,17 @@ struct Session {
   std::string last_block;
   CookieJar *jar = nullptr;
   Storage *storage = nullptr;
+  std::mutex *profile_state_mutex = nullptr;
+  rt::RendererProcessFarm *farm = nullptr;
+  rt::RendererProcessClient::BridgeInvoker bridge_invoke;
+  size_t renderer_slot = std::numeric_limits<size_t>::max();
   double width = 1000, height = 700;
   std::mutex mutex;
   std::condition_variable changed;
   std::deque<Json> outgoing;
   std::atomic<bool> stopping{false};
   std::atomic<bool> ready{false};
+  std::atomic<bool> finished{false};
   std::atomic<bool> muted{false};
   std::vector<std::string> diagnostics;
   AudioOut audio;
@@ -338,7 +356,7 @@ struct Session {
     return diagnostics;
   }
   void deliver(HostEvent event);
-  void apply(Host &host, const Json &command);
+  void deliver_renderer_reply(const rt::Envelope &reply);
   void run();
   // One fetch, then a note about it. The deltas are exact because only this thread
   // writes the counters, and the total lives in a block the window can read.
@@ -388,20 +406,58 @@ void Session::deliver(HostEvent event) {
       note(event.subsystem, event.text);
   }
 }
-void Session::apply(Host &host, const Json &command) {
-  auto tag = command.str("tag");
-  if (tag == "resize") {
-    width = command.num("width", width);
-    height = command.num("height", height);
-    host.resize(width, height);
-  } else if (tag == "scroll") {
-    host.scroll(command.num("y"));
-  } else if (tag == "click") {
-    host.click(command.num("x"), command.num("y"));
-  } else if (tag == "key") {
-    host.key(command.str("key"), command.str("text"));
+void Session::deliver_renderer_reply(const rt::Envelope &reply) {
+  if (const Json *images = reply.payload.find("images");
+      images && images->type == Json::Type::Array) {
+    for (const Json &item : images->array) {
+      const double width = item.num("width", 0), height = item.num("height", 0);
+      if (width <= 0 || height <= 0 || width > 16384 || height > 16384 ||
+          width != double(int(width)) || height != double(int(height)))
+        continue;
+      try {
+        auto image = std::make_shared<Image>();
+        image->width = int(width);
+        image->height = int(height);
+        image->pixels = base64_decode(item.str("pixels_b64"), kMaxImageRawBytes);
+        if (!image->valid()) continue;
+        HostEvent event;
+        event.tag = "image";
+        event.url = item.str("url");
+        event.image = std::move(image);
+        deliver(std::move(event));
+      } catch (const std::exception &) {
+        note("renderer", "discarded malformed image data from process IPC");
+      }
+    }
+  }
+  if (const Json *frame = reply.payload.find("frame");
+      frame && frame->type == Json::Type::Object) {
+    HostEvent event;
+    event.tag = "frame";
+    event.frame = *frame;
+    deliver(std::move(event));
+  }
+  const std::string navigation = reply.payload.str("navigation");
+  if (!navigation.empty()) {
+    auto target = parse_url(navigation);
+    if (!target || !target->network()) {
+      note("renderer.security", "refused renderer-directed navigation outside HTTP(S)");
+    } else {
+      HostEvent event;
+      event.tag = "navigate";
+      event.url = navigation;
+      deliver(std::move(event));
+    }
+  }
+  const std::string url_change = reply.payload.str("url_change");
+  if (!url_change.empty()) {
+    HostEvent event;
+    event.tag = "url";
+    event.url = url_change;
+    deliver(std::move(event));
   }
 }
+
 void Session::note(const FilterCounters &before, const Resource &result) {
   uint64_t blocked = counts.blocked - before.blocked;
   uint64_t allowed = counts.allowed_by_exception - before.allowed_by_exception;
@@ -426,53 +482,131 @@ void Session::note(const FilterCounters &before, const Resource &result) {
   }
 }
 void Session::run() {
+  struct Finished {
+    Session *session;
+    ~Finished() { session->finished = true; }
+  } finished_guard{this};
+  bool done_posted = false;
   auto fail = [&](const std::string &error) {
     start_error = error;
+    ready = false;
     auto *update = make_update(tab, generation);
     update->error = error;
     post_update(hwnd, WM_FRAME, update);
     post_update(hwnd, WM_DONE, make_update(tab, generation));
+    done_posted = true;
   };
-  if (!parse_url(url)) {
+  if (stopping) {
+    post_update(hwnd, WM_DONE, make_update(tab, generation));
+    done_posted = true;
+    return;
+  }
+  auto initial_url = parse_url(url);
+  const bool app_page = app_ui_url(url);
+  if (!initial_url || (!initial_url->network() && !app_page)) {
     fail("Invalid URL");
     return;
   }
-  // My page host fetches through the same policy my downloads and tabs use, and
-  // reports straight back to this thread.
-  Host host(
-      [this](const std::string &link, ResourceType type) {
-        auto parsed = parse_url(link);
-        if (!parsed) {
-          Resource resource;
-          resource.url = link;
-          resource.ok = false;
-          resource.error = "Invalid resource URL";
-          return resource;
-        }
-        // The kind of resource decides which filter rules apply and whether this is
-        // a mixed-content request, so it travels with the fetch.
-        policy.type = type;
-        FilterCounters before = counts;
-        Resource result = fetch_url(*parsed, policy);
-        note(before, result);
-        return result;
-      },
-      [this](HostEvent event) { deliver(std::move(event)); });
-  if (jar) {
-    host.use_cookies(jar);
-    policy.cookies = jar;
+  if (!farm || !jar || !storage || !profile_state_mutex) {
+    fail("Brokered renderer services are not available");
+    return;
   }
-  if (storage) host.use_local_storage(storage);
-  // A form post goes out through the same network stack as everything else.
-  host.set_poster([this](const std::string &link, const std::string &body,
-                         const std::string &content_type) {
-    Resource resource;
+  rt::Error renderer_error;
+  if (!farm->acquire(renderer_slot, renderer_error)) {
+    fail("Could not start tab renderer: " + renderer_error.message);
+    return;
+  }
+  struct RendererLease {
+    rt::RendererProcessFarm *farm;
+    size_t slot;
+    ~RendererLease() {
+      if (farm && slot != std::numeric_limits<size_t>::max()) farm->release(slot);
+    }
+  } lease{farm, renderer_slot};
+  if (stopping) {
+    post_update(hwnd, WM_DONE, make_update(tab, generation));
+    done_posted = true;
+    return;
+  }
+
+  Url document_url = *initial_url;
+  auto profile_now = [] {
+    return std::chrono::duration<double>(
+               std::chrono::system_clock::now().time_since_epoch()).count();
+  };
+  auto update_policy_origin = [&] {
+    policy.top_level_host = document_url.host;
+    policy.top_level_scheme = document_url.scheme;
+  };
+  auto attach_profile_state = [&](Resource &resource) {
+    if (!resource.url.empty()) {
+      auto response_url = parse_url(resource.url);
+      if (response_url && response_url->network()) document_url = *response_url;
+    }
+    update_policy_origin();
+    const double now = profile_now();
+    if (jar) resource.broker_cookie_state = jar->renderer_state_for(document_url, now);
+    if (storage) resource.broker_storage_state = storage->origin_state(document_url.origin());
+  };
+  Host::Fetcher fetcher = [&](const std::string &link, ResourceType type) {
     auto parsed = parse_url(link);
-    if (!parsed) {
+    if (parsed && parsed->scheme == "psychovault" && parsed->host == "newtab" &&
+        parsed->query.empty() && parsed->fragment.empty()) {
+      Resource resource;
+      resource.url = parsed->href();
+      resource.ok = true;
+      resource.status = 200;
+      if (parsed->path.empty() || parsed->path == "/") {
+        resource.mime = "text/html; charset=utf-8";
+        resource.text = kPVAppUiHtml;
+      } else if (parsed->path == "/app.js") {
+        resource.mime = "text/javascript; charset=utf-8";
+        resource.text = kPVAppUiJs;
+      } else {
+        resource.ok = false;
+        resource.refused = true;
+        resource.status = 404;
+        resource.error = "internal.resource.unregistered";
+      }
+      resource.broker_cookie_state = jar->renderer_state_for(document_url, profile_now());
+      resource.broker_storage_state = storage->origin_state(document_url.origin());
+      return resource;
+    }
+    if (!parsed || !parsed->network()) {
+      Resource resource;
       resource.url = link;
       resource.ok = false;
-      resource.error = "Invalid form URL";
+      resource.refused = true;
+      resource.error = "Invalid resource URL";
       return resource;
+    }
+    policy.type = type;
+    FilterCounters before = counts;
+    Resource result = fetch_url(*parsed, policy);
+    note(before, result);
+    if (type == ResourceType::Document)
+      attach_profile_state(result);
+    else {
+      // All renderer snapshots are scoped to the current document origin, not
+      // the origin of a cross-site subresource.
+      update_policy_origin();
+      if (jar) result.broker_cookie_state = jar->renderer_state_for(document_url,
+                                                                     profile_now());
+      if (storage)
+        result.broker_storage_state = storage->origin_state(document_url.origin());
+    }
+    return result;
+  };
+  Host::Poster poster = [&](const std::string &link, const std::string &body,
+                            const std::string &content_type) {
+    Resource result;
+    auto parsed = parse_url(link);
+    if (!parsed || !parsed->network()) {
+      result.url = link;
+      result.ok = false;
+      result.refused = true;
+      result.error = "Invalid form URL";
+      return result;
     }
     RequestOptions options;
     options.method = "POST";
@@ -480,52 +614,117 @@ void Session::run() {
     options.content_type = content_type;
     policy.type = ResourceType::Document;
     FilterCounters before = counts;
-    Resource result = fetch_url(*parsed, policy, options, 20000, 8u * 1024u * 1024u);
+    result = fetch_url(*parsed, policy, options, 20000, 8u * 1024u * 1024u);
     note(before, result);
+    attach_profile_state(result);
     return result;
-  });
-  host.set_autoplay_blocked(policy.block_autoplay);
-  std::string error;
-  if (!host.load(url, error)) {
-    if (!stopping)
-      fail(error);
+  };
+
+  auto exchange = [&](const Json *command, rt::Envelope &reply) {
+    std::unique_lock<std::mutex> state_lock;
+    if (profile_state_mutex) state_lock = std::unique_lock<std::mutex>(*profile_state_mutex);
+    const double now = profile_now();
+    Json cookies = jar->renderer_state_for(document_url, now);
+    Json local = storage->origin_state(document_url.origin());
+    bool ok = false;
+    if (command)
+      ok = farm->input(renderer_slot, *command, fetcher, reply, renderer_error,
+                       std::move(cookies), std::move(local), poster, bridge_invoke);
+    else
+      ok = farm->navigate(renderer_slot, url, fetcher, reply, renderer_error,
+                          std::move(cookies), std::move(local), poster, bridge_invoke);
+    if (!ok) return false;
+    if (const Json *frame = reply.payload.find("frame");
+        frame && frame->type == Json::Type::Object) {
+      auto frame_url = parse_url(frame->str("url"));
+      if (frame_url && frame_url->network() &&
+          frame_url->origin() == document_url.origin())
+        document_url = *frame_url;
+    }
+    if (const Json *state = reply.payload.find("cookie_state"))
+      jar->merge_renderer_state(document_url, *state, profile_now());
+    if (const Json *state = reply.payload.find("storage_state"))
+      storage->replace_origin_state(document_url.origin(), *state);
+    return true;
+  };
+
+  rt::Envelope reply;
+  if (!exchange(nullptr, reply)) {
+    fail("Renderer navigation IPC failed: " + renderer_error.message);
     return;
   }
-  ready = true;
+  if (!reply.payload.flag("ok")) {
+    fail(reply.payload.str("detail", "Navigation failed"));
+    return;
+  }
+  ready = reply.payload.find("frame") != nullptr;
+  if (!ready) {
+    fail("Renderer returned no page frame");
+    return;
+  }
+  deliver_renderer_reply(reply);
+
+  // Match the browser viewport before dispatching page input. Resize remains a
+  // normal typed renderer message, not a direct call into an engine object.
+  Json resize = Json::make_object();
+  resize.set("tag", Json("resize"));
+  resize.set("width", Json(width));
+  resize.set("height", Json(height));
+  if (!exchange(&resize, reply)) {
+    fail("Renderer resize IPC failed: " + renderer_error.message);
+    return;
+  }
+  if (!reply.payload.flag("ok")) {
+    fail("Renderer refused initial resize: " +
+         reply.payload.str("detail", "unknown renderer resize error"));
+    return;
+  }
+  deliver_renderer_reply(reply);
+
   std::unique_lock lock(mutex);
+  auto next_pump = std::chrono::steady_clock::now() + std::chrono::milliseconds(50);
   while (!stopping) {
-    while (!outgoing.empty() && !stopping) {
-      Json command = std::move(outgoing.front());
+    if (outgoing.empty())
+      changed.wait_until(lock, next_pump,
+                         [this] { return stopping.load() || !outgoing.empty(); });
+    if (stopping) break;
+    Json command;
+    if (!outgoing.empty()) {
+      command = std::move(outgoing.front());
       outgoing.pop_front();
-      lock.unlock();
-      apply(host, command);
-      lock.lock();
+    } else {
+      command = Json::make_object();
+      command.set("tag", Json("pump"));
+      next_pump = std::chrono::steady_clock::now() + std::chrono::milliseconds(50);
+    }
+    if (command.str("tag") == "resize") {
+      width = command.num("width", width);
+      height = command.num("height", height);
     }
     lock.unlock();
-    bool worked = !stopping && host.pump();
-    // The device is opened the first time a page actually plays something, and from
-    // then on it is topped up on this same thread. A muted tab simply skips the
-    // feed, so the page keeps playing in silence until I unmute it.
-    if (!muted.load()) {
-      if (host.media_playing() && !audio.ready()) {
-        std::string why;
-        if (!audio.open(why) && !why.empty())
-          note("media", why);
-      }
-      audio.pump(host);
+    if (!exchange(&command, reply)) {
+      fail("Renderer input IPC failed: " + renderer_error.message);
+      break;
+    }
+    if (!reply.payload.flag("ok")) {
+      fail("Renderer refused page input: " +
+           reply.payload.str("detail", "unknown renderer input error"));
+      break;
+    }
+    deliver_renderer_reply(reply);
+    if (!reply.payload.str("navigation").empty()) {
+      stopping = true;
+      changed.notify_all();
     }
     lock.lock();
-    if (worked)
-      continue;
-    changed.wait_for(lock, std::chrono::milliseconds(16),
-                     [this] { return stopping.load() || !outgoing.empty(); });
   }
-  post_update(hwnd, WM_DONE, make_update(tab, generation));
+  if (!done_posted) post_update(hwnd, WM_DONE, make_update(tab, generation));
 }
 struct Browser {
   HWND hwnd = nullptr;
   Profile profile;
   std::vector<Tab> tabs;
+  std::vector<std::shared_ptr<Session>> retired_sessions;
   int active = 0, next_id = 1;
   uint64_t generation = 0;
   std::string address, home_search, status = "Ready", profile_error;
@@ -537,6 +736,7 @@ struct Browser {
   // and both survive a restart with my settings.
   CookieJar cookies;
   Storage local_storage;
+  std::mutex profile_state_mutex;
   // The HTTPS policy, the filter rules and the running totals. A tab holds a share
   // of each, so a tab worker can never outlive what it points at.
   std::shared_ptr<HttpsPolicy> https = std::make_shared<HttpsPolicy>();
@@ -562,8 +762,11 @@ struct Browser {
   wchar_t high_surrogate = 0;
   int settings_category = 0;
   std::vector<Hit> hits;
-  Rect content{44, 84, 1000, 600};
+  Rect content{0, 0, 1000, 700};
   int width = 1440, height = 940;
+  // S045 architecture slice: the browser's page surface is the only drawn
+  // interface; the native shell keeps windowing, input dispatch and presentation.
+  bool app_ui_slice = true;
   bool private_mode = false;
   std::string capture_path;
   bool smoke = false, expect_image = false;
@@ -685,7 +888,10 @@ struct Browser {
 
   bool save_profile() {
     profile.cookies = cookies.to_json();
-    profile.local_storage = local_storage.to_json();
+    {
+      std::lock_guard<std::mutex> state_lock(profile_state_mutex);
+      profile.local_storage = local_storage.to_json();
+    }
     profile.hsts = https->to_json().dump();
     return profile.save();
   }
@@ -834,6 +1040,7 @@ struct Browser {
     return "VPN " + profile.proxy.mode_name() + " via " + server.authority();
   }
   ~Browser() {
+    stop_all_sessions();
     profile.clear_running_marker();
     if (profile.clear_on_exit && !private_mode) {
       profile.clear_history();
@@ -856,16 +1063,41 @@ struct Browser {
     return nullptr;
   }
   void stop_session(Tab &tab) {
-    if (tab.session) {
-      tab.session->request_stop();
-      tab.session.reset();
+    if (!tab.session) return;
+    tab.session->request_stop();
+    retired_sessions.push_back(std::move(tab.session));
+  }
+  void reap_sessions() {
+    for (auto it = retired_sessions.begin(); it != retired_sessions.end();) {
+      const auto &session = *it;
+      if (!session->finished.load()) {
+        ++it;
+        continue;
+      }
+      if (session->worker.joinable() &&
+          session->worker.get_id() != std::this_thread::get_id())
+        session->worker.join();
+      it = retired_sessions.erase(it);
     }
+  }
+  void stop_all_sessions() {
+    for (auto &tab : tabs)
+      if (tab.session) tab.session->request_stop();
+    for (auto &session : retired_sessions) session->request_stop();
+    auto join = [](const std::shared_ptr<Session> &session) {
+      if (session && session->worker.joinable() &&
+          session->worker.get_id() != std::this_thread::get_id())
+        session->worker.join();
+    };
+    for (auto &tab : tabs) join(tab.session);
+    for (auto &session : retired_sessions) join(session);
+    retired_sessions.clear();
   }
   void new_tab(std::string url = "psychovault://newtab", bool focus = true) {
     Tab t;
     t.id = next_id++;
     t.url = url;
-    t.title = url == "psychovault://newtab" ? "New Tab" : url;
+    t.title = app_ui_url(url) ? "New Tab" : url;
     t.history.push_back(url);
     t.started = !starts(url, "http://") && !starts(url, "https://");
     tabs.push_back(std::move(t));
@@ -921,7 +1153,8 @@ struct Browser {
     settings = starts(tab.url, "psychovault://settings");
     status = !tab.error.empty() ? tab.error : tab.loading ? "Loading " + tab.url : tab.url;
     update_find();
-    if (!tab.started && (starts(tab.url, "http://") || starts(tab.url, "https://"))) {
+    if ((!tab.started && (starts(tab.url, "http://") || starts(tab.url, "https://"))) ||
+        (app_ui_url(tab.url) && !tab.session && tab.frame.type == Json::Type::Null)) {
       navigate(tab.url, false);
     } else if (tab.session) {
       Json j = Json::make_object();
@@ -934,7 +1167,7 @@ struct Browser {
     InvalidateRect(hwnd, nullptr, FALSE);
   }
   void sync_address() {
-    address = current().url == "psychovault://newtab" ? "" : current().url;
+    address = app_ui_url(current().url) ? "" : current().url;
     address_caret = address.size();
     address_focus = false;
     home_focus = false;
@@ -990,7 +1223,8 @@ struct Browser {
       settings = starts(target, "psychovault://settings");
       sync_address();
     }
-    if (starts(target, "psychovault://") || target == "about:blank") {
+    const bool app_page = app_ui_url(target);
+    if ((starts(target, "psychovault://") && !app_page) || target == "about:blank") {
       tab.loading = false;
       tab.recorded = true;
       tab.title = starts(target, "psychovault://settings") ? "Settings" : "New Tab";
@@ -1000,7 +1234,7 @@ struct Browser {
       InvalidateRect(hwnd, nullptr, FALSE);
       return;
     }
-    if (!u || !u->network()) {
+    if (!u || (!u->network() && !app_page)) {
       tab.loading = false;
       tab.error = "Unsupported URL";
       if (index == active)
@@ -1018,6 +1252,49 @@ struct Browser {
     session->report = report;
     session->jar = &cookies;
     session->storage = &local_storage;
+    session->profile_state_mutex = &profile_state_mutex;
+    session->farm = renderer_farm;
+    session->bridge_invoke = [window = hwnd, source_tab = tab.id](
+        rt::Channel channel, const std::string &method, const Json &payload,
+        Json &reply, rt::Error &bridge_error) {
+      static const rt::Schemas schemas = rt::Schemas::stock();
+      bridge_error = rt::Error{};
+      if (channel != rt::Channel::Tab ||
+          (method != "tab:new" && method != "tab:activate") ||
+          !schemas.validate(method, payload, bridge_error))
+        return false;
+      if (method == "tab:new") {
+        std::string target = payload.str("url", "psychovault://newtab");
+        if (target.empty()) target = "psychovault://newtab";
+        auto parsed_target = parse_url(target);
+        if (target.size() > 32768 ||
+            (parsed_target && !parsed_target->network() && !app_ui_url(target))) {
+          bridge_error = {"bridge.tab.url", "new-tab address uses an unsupported scheme or is too long"};
+          return false;
+        }
+      } else {
+        const double raw_id = payload.num("id", 0);
+        if (!std::isfinite(raw_id) || raw_id <= 0 ||
+            raw_id > double(std::numeric_limits<int>::max()) ||
+            raw_id != double(int(raw_id))) {
+          bridge_error = {"bridge.tab.id", "tab activation requires a positive integer id"};
+          return false;
+        }
+      }
+      auto task = std::make_unique<BridgeTask>();
+      task->tab = source_tab;
+      task->method = method;
+      task->payload = payload;
+      if (!PostMessageW(window, WM_BRIDGE, 0,
+                        reinterpret_cast<LPARAM>(task.get()))) {
+        bridge_error = {"bridge.queue.failed", "the browser window refused the app action"};
+        return false;
+      }
+      task.release();
+      reply = Json::make_object();
+      reply.set("queued", Json(true));
+      return true;
+    };
     session->muted.store(tab.muted);
     if (auto host_url = parse_url(target)) {
       session->policy.top_level_host = host_url->host;
@@ -1082,7 +1359,8 @@ struct Browser {
   void resize(int w, int h) {
     width = w;
     height = h;
-    content = {44, 84, double(w - 44), double(h - 106)};
+    content = app_ui_slice ? Rect{0, 0, double(w), double(h)}
+                           : Rect{44, 84, double(w - 44), double(h - 106)};
     if (current().session) {
       Json j = Json::make_object();
       j.set("tag", "resize");
@@ -1095,6 +1373,15 @@ struct Browser {
   }
   void draw(Canvas &c) {
     hits.clear();
+    if (app_ui_slice) {
+      // Do not paint the legacy GDI browser controls in the app-page slice.
+      // Until an engine frame exists, leave the OS client surface clear rather
+      // than drawing shell-owned loading/error UI over the page.
+      c.fill({0, 0, double(width), double(height)}, BG);
+      if (current().frame.type == Json::Type::Object && current().error.empty())
+        draw_content(c);
+      return;
+    }
     c.fill({0, 0, double(width), double(height)}, BG);
     c.fill({0, 0, 44, double(height)}, RAIL);
     c.line(43, 0, 43, height, BORDER);
@@ -1212,7 +1499,8 @@ struct Browser {
       draw_panel(c);
     else if (settings)
       draw_settings(c);
-    else if (current().url == "psychovault://newtab" || current().url == "about:blank")
+    else if ((app_ui_url(current().url) && !current().session) ||
+             current().url == "about:blank")
       draw_home(c);
     else
       draw_content(c);
@@ -3768,8 +4056,8 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     std::unique_ptr<Update> up(reinterpret_cast<Update *>(lp));
     auto b = browser(hwnd);
     Tab *tab = b ? b->find_tab(int(wp)) : nullptr;
-    // My page host already decoded this image in this process, so I only copy
-    // the pixels I have not shown yet.
+    // The broker reconstructed renderer pixels from the chunked process reply;
+    // keep the per-tab cache bounded before presenting them in the shell.
     if (tab && up->generation == tab->generation && up->image && up->image->valid()) {
       const size_t bytes = up->image->pixels.size();
       // A canvas sends a fresh bitmap whenever it is redrawn, so I give the old
@@ -3789,10 +4077,18 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   case WM_NAVIGATE: {
     std::unique_ptr<Update> up(reinterpret_cast<Update *>(lp));
     auto b = browser(hwnd);
+    auto target = parse_url(up->url);
     if (b) {
       for (size_t i = 0; i < b->tabs.size(); ++i)
         if (b->tabs[i].id == int(wp) && b->tabs[i].generation == up->generation) {
-          b->navigate_in(int(i), up->url);
+          if (target && target->network())
+            b->navigate_in(int(i), up->url);
+          else {
+            b->tabs[i].error = "Renderer navigation was refused";
+            b->tabs[i].loading = false;
+            b->status = b->tabs[i].error;
+            InvalidateRect(hwnd, nullptr, FALSE);
+          }
           break;
         }
     }
@@ -3826,6 +4122,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       if (!renderer_farm->monitor(renderer_error) && b)
         b->status = "Renderer process recovery failed: " + renderer_error.message;
     }
+    if (b) b->reap_sessions();
     if (b && !b->smoke) {
       b->extensions.tick();
       b->flush_history();
@@ -3894,6 +4191,25 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       b->navigate(launch->urls.front(), false);
       for (size_t i = 1; i < launch->urls.size(); ++i)
         b->new_tab(launch->urls[i], false);
+    }
+    return 0;
+  }
+  case WM_BRIDGE: {
+    std::unique_ptr<BridgeTask> task(reinterpret_cast<BridgeTask *>(lp));
+    auto b = browser(hwnd);
+    if (!b || !task || !b->find_tab(task->tab)) return 0;
+    if (task->method == "tab:new") {
+      std::string target = task->payload.str("url", "psychovault://newtab");
+      if (target.empty()) target = "psychovault://newtab";
+      b->new_tab(std::move(target));
+    } else if (task->method == "tab:activate") {
+      const int id = int(task->payload.num("id", 0));
+      for (size_t i = 0; i < b->tabs.size(); ++i) {
+        if (b->tabs[i].id == id) {
+          b->select_tab(int(i));
+          break;
+        }
+      }
     }
     return 0;
   }
@@ -4216,7 +4532,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
       b.new_tab(startup_urls[i], false);
   } else if (smoke) {
     b.navigate("psychovault://newtab", false);
-  } else if (!b.current().started) {
+  } else if (!b.current().started || app_ui_url(b.current().url)) {
     b.navigate(b.current().url, false);
   }
   MSG msg;
@@ -4224,6 +4540,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     TranslateMessage(&msg);
     DispatchMessageW(&msg);
   }
+  b.stop_all_sessions();
   renderer_farm = nullptr;
   hosted_renderers.shutdown();
   std::string quit_error;

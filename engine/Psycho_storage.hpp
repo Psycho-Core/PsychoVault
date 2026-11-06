@@ -30,6 +30,8 @@ public:
   }
   Json to_json() const;
   void from_json(const Json &json);
+  Json origin_state(const std::string &origin) const;
+  void replace_origin_state(const std::string &origin, const Json &json);
 
 private:
   using Entry = std::pair<std::string, std::string>;

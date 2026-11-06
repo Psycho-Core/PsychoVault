@@ -54,6 +54,11 @@ public:
   Page();
   ~Page();
   void load(const Url &url, const std::string &html, const std::string &mime = "text/html");
+  // The embedder may install an origin-specific, curated surface after the
+  // document runtime exists but before any page script executes.
+  void set_script_bootstrap(std::function<void(js::Runtime &)> bootstrap) {
+    script_bootstrap_ = std::move(bootstrap);
+  }
   void resource(const Resource &res);
   Json render(double width, double height, double scroll);
   void click(double x, double y);
@@ -113,6 +118,7 @@ private:
     js::Value fn;
   };
   std::unique_ptr<js::Runtime> js_;
+  std::function<void(js::Runtime &)> script_bootstrap_;
   std::vector<Listener> listeners_;
   std::map<std::string, Resource> resources_;
   std::map<std::string, Image> images_;
