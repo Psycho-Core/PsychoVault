@@ -3221,15 +3221,29 @@ int main() {
     marks = pv::spell_check_text(spell, "visit duckduckgo.com now");
     CHECK(marks.empty() || marks.back().length != 13);
   }
+  std::cerr << "ENGINE_CHECKS_COMPLETE\n";
   std::cout << passed << " engine checks passed\n";
   std::cout.flush();
-  int runtime_ok = run_runtime_bus_tests(passed);
-  if (runtime_ok == 0)
-    runtime_ok = run_runtime_integration_tests(passed);
-  if (runtime_ok == 0)
-    runtime_ok = run_renderer_harness_tests(passed);
-  if (runtime_ok == 0)
-    runtime_ok = run_renderer_process_tests(passed);
+  int runtime_ok = 0;
+  try {
+    std::cerr << "RUNTIME_BUS_TESTS_START\n";
+    runtime_ok = run_runtime_bus_tests(passed);
+    if (runtime_ok == 0) {
+      std::cerr << "RUNTIME_INTEGRATION_TESTS_START\n";
+      runtime_ok = run_runtime_integration_tests(passed);
+    }
+    if (runtime_ok == 0) {
+      std::cerr << "RENDERER_HARNESS_TESTS_START\n";
+      runtime_ok = run_renderer_harness_tests(passed);
+    }
+    if (runtime_ok == 0) {
+      std::cerr << "RENDERER_PROCESS_TESTS_START\n";
+      runtime_ok = run_renderer_process_tests(passed);
+    }
+  } catch (const std::exception &error) {
+    std::cerr << "RUNTIME_TEST_EXCEPTION: " << error.what() << "\n";
+    return 1;
+  }
   std::cout << passed << " total checks passed\n";
   return runtime_ok;
 }
