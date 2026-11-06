@@ -19,6 +19,8 @@ const ExposedEntry kShellProfile[] = {
 const ExposedEntry kDiagnosticsProfile[] = {
     {Channel::Internal, "internal:list"},
     {Channel::Diagnostics, "diagnostics:stage"},
+    {Channel::Diagnostics, "diagnostics:nettest"},
+    {Channel::Diagnostics, "diagnostics:version"},
     {Channel::Lifecycle, "lifecycle:ping"},
 };
 
@@ -35,6 +37,8 @@ const ExposedEntry kPrivateShellProfile[] = {
 const ExposedEntry kPrivateDiagnosticsProfile[] = {
     {Channel::Internal, "internal:list"},
     {Channel::Diagnostics, "diagnostics:stage"},
+    {Channel::Diagnostics, "diagnostics:nettest"},
+    {Channel::Diagnostics, "diagnostics:version"},
     {Channel::Lifecycle, "lifecycle:ping"},
 };
 

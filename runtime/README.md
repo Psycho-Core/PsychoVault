@@ -255,4 +255,16 @@ What exists now (P1 in progress):
   There is no profile path or persistence interface on the private-session
   type. 28 new checks (2321 total).
 
-Next in P1: S038 (psychovault://nettest and psychovault://version diagnostics).
+- `diagnostics/Psycho_diagnostics.*` (S038, diagnostics contract):
+  `psychovault://nettest` reports DNS, TCP, TLS, HTTP, proxy and DNS-leak
+  checks in that fixed named order. A failed or throwing probe stays attached
+  to its stage and never suppresses the later checks; an unwired adapter is a
+  visible `diagnostics.unavailable` result, not a green guess. The
+  `psychovault://version` contract returns broker-supplied runtime, engine,
+  profile, flags and hash facts verbatim, or a named refusal if no provider is
+  wired - I never invent a version or hash. Both calls are schema-registered
+  and broker-service-backed, exposed only to the diagnostics renderer bridge;
+  web and shell pages still receive no diagnostics facade. 29 new checks
+  (2350 total).
+
+Next in P1: S039 (crash and hang handling).

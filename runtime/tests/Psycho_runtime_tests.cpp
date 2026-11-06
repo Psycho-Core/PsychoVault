@@ -11,6 +11,7 @@
 #include "../downloads/Psycho_downloads.hpp"
 #include "../permissions/Psycho_permissions.hpp"
 #include "../private/Psycho_private.hpp"
+#include "../diagnostics/Psycho_diagnostics.hpp"
 #include "../../engine/Psycho_js.hpp"
 #include "../surface/Psycho_surface.hpp"
 #include "../window/Psycho_window.hpp"
@@ -2125,6 +2126,158 @@ int run_runtime_bus_tests(int &shared) {
     RT_CHECK(regular_shell.policy() == RendererPolicy::Regular &&
              regular_shell.page_world().run("typeof psycho.settings.get").string ==
                  "function");
+  }
+
+  // S038 diagnostics: every nettest stage is named and reported, failures do
+  // not hide later checks, and version facts are supplied without invention.
+  {
+    Error e;
+    std::vector<std::string> called;
+    DiagnosticsService::Seams seams;
+    seams.dns = [&]() {
+      called.push_back("dns");
+      return DiagnosticProbeResult{false, "resolver refused the lookup"};
+    };
+    seams.tcp = [&]() {
+      called.push_back("tcp");
+      return DiagnosticProbeResult{true, "connected to test endpoint"};
+    };
+    seams.tls = [&]() -> DiagnosticProbeResult {
+      called.push_back("tls");
+      throw std::runtime_error("certificate probe failed");
+    };
+    seams.http = [&]() {
+      called.push_back("http");
+      return DiagnosticProbeResult{true, "HTTP 204"};
+    };
+    seams.proxy = [&]() {
+      called.push_back("proxy");
+      return DiagnosticProbeResult{false, "no proxy configured"};
+    };
+    seams.dns_leak = [&]() {
+      called.push_back("dns-leak");
+      return DiagnosticProbeResult{true, "resolver path stayed within policy"};
+    };
+    seams.version_info = [](VersionInfo &info, Error &) {
+      info.runtime_version = "0.12.0";
+      info.engine_version = "engine-test-7";
+      info.profile = "work";
+      info.flags = {"--diagnostics", "--private"};
+      info.hashes = {{"runtime", "sha256:runtime-test"},
+                     {"engine", "sha256:engine-test"}};
+      return true;
+    };
+    DiagnosticsService diagnostics(std::move(seams));
+    const std::vector<DiagnosticStageResult> stages = diagnostics.run_nettest();
+    const std::vector<std::string> expected = {
+        "dns", "tcp", "tls", "http", "proxy", "dns-leak"};
+    RT_CHECK(DiagnosticsService::stage_names() == expected);
+    RT_CHECK(stages.size() == expected.size() && called == expected);
+    RT_CHECK(stages[0].name == "dns" && !stages[0].ok &&
+             stages[0].detail == "resolver refused the lookup" &&
+             stages[0].error.empty());
+    RT_CHECK(stages[1].name == "tcp" && stages[1].ok);
+    RT_CHECK(stages[2].name == "tls" && !stages[2].ok &&
+             stages[2].detail == "certificate probe failed" &&
+             stages[2].error == "diagnostics.probe-failed");
+    RT_CHECK(stages[3].name == "http" && stages[3].ok &&
+             stages[3].detail == "HTTP 204");
+    RT_CHECK(stages[4].name == "proxy" && !stages[4].ok &&
+             stages[4].detail == "no proxy configured");
+    RT_CHECK(stages[5].name == "dns-leak" && stages[5].ok);
+
+    VersionInfo info;
+    RT_CHECK(diagnostics.version(info, e) && !e);
+    RT_CHECK(info.runtime_version == "0.12.0" &&
+             info.engine_version == "engine-test-7" && info.profile == "work");
+    RT_CHECK(info.flags.size() == 2 && info.flags[0] == "--diagnostics" &&
+             info.flags[1] == "--private");
+    RT_CHECK(info.hashes.size() == 2 &&
+             info.hashes.at("runtime") == "sha256:runtime-test" &&
+             info.hashes.at("engine") == "sha256:engine-test");
+
+    // The registered broker service serializes the same contracts for its
+    // renderer: named stage rows and all supplied version facts.
+    RT_CHECK(diagnostics.name() == "diagnostics");
+    Envelope request;
+    request.channel = Channel::Diagnostics;
+    request.method = "diagnostics:nettest";
+    request.request_id = 91;
+    Envelope response;
+    diagnostics.handle(request, response, e);
+    const Json *stage_rows = response.payload.find("stages");
+    RT_CHECK(!e && response.channel == Channel::Diagnostics &&
+             response.method == request.method && stage_rows &&
+             stage_rows->type == Json::Type::Array && stage_rows->array.size() == 6);
+    RT_CHECK(stage_rows->array[0].find("stage")->string == "dns" &&
+             stage_rows->array[5].find("stage")->string == "dns-leak");
+    request.method = "diagnostics:version";
+    diagnostics.handle(request, response, e);
+    const Json *wire_flags = response.payload.find("flags");
+    const Json *wire_hashes = response.payload.find("hashes");
+    RT_CHECK(!e && response.method == request.method &&
+             response.payload.find("runtime")->string == "0.12.0" &&
+             response.payload.find("profile")->string == "work");
+    RT_CHECK(wire_flags && wire_flags->array.size() == 2 && wire_hashes &&
+             wire_hashes->find("engine")->string == "sha256:engine-test");
+    request.method = "diagnostics:unknown";
+    diagnostics.handle(request, response, e);
+    RT_CHECK(e.code == "diagnostics.method");
+
+    // Unwired stages remain visible by name; the version endpoint never
+    // fabricates profile, build or hash values when its provider is absent.
+    DiagnosticsService unavailable({});
+    const auto absent = unavailable.run_nettest();
+    RT_CHECK(absent.size() == expected.size());
+    bool all_named_unavailable = true;
+    for (size_t i = 0; i < absent.size(); ++i) {
+      if (absent[i].name != expected[i] || absent[i].ok ||
+          absent[i].error != "diagnostics.unavailable")
+        all_named_unavailable = false;
+    }
+    RT_CHECK(all_named_unavailable);
+    RT_CHECK(!unavailable.version(info, e) &&
+             e.code == "diagnostics.version-unavailable");
+
+    DiagnosticsService::Seams failing_version;
+    failing_version.version_info = [](VersionInfo &, Error &error) {
+      error = {"version.source", "broker metadata source failed"};
+      return false;
+    };
+    DiagnosticsService version_failure(std::move(failing_version));
+    RT_CHECK(!version_failure.version(info, e) && e.code == "version.source" &&
+             e.message == "broker metadata source failed");
+    DiagnosticsService::Seams throwing_version;
+    throwing_version.version_info = [](VersionInfo &, Error &) -> bool {
+      throw std::runtime_error("version source threw");
+    };
+    DiagnosticsService version_throw(std::move(throwing_version));
+    RT_CHECK(!version_throw.version(info, e) &&
+             e.code == "diagnostics.version-failed" &&
+             e.message == "version source threw");
+
+    // The two internal diagnostics endpoints are schema-registered and only
+    // diagnostics renderers receive them through their curated bridge.
+    Schemas schemas = Schemas::stock();
+    RT_CHECK(schemas.validate("diagnostics:nettest", Json::make_object(), e));
+    RT_CHECK(schemas.validate("diagnostics:version", Json::make_object(), e));
+    InternalRegistry registry = InternalRegistry::stock();
+    auto bus = [](Channel, const std::string &, Json, Json &reply, Error &) {
+      reply = Json::make_object();
+      return true;
+    };
+    AppHost nettest(75, registry.find("nettest"), {bus, {}});
+    AppHost version_page(76, registry.find("version"), {bus, {}});
+    RT_CHECK(nettest.kind() == PageKind::Diagnostics &&
+             nettest.page_world().run("typeof psycho.diagnostics.nettest").string ==
+                 "function");
+    RT_CHECK(nettest.page_world().run("typeof psycho.diagnostics.version").string ==
+             "function");
+    RT_CHECK(version_page.kind() == PageKind::Diagnostics &&
+             version_page.page_world().run("typeof psycho.diagnostics.version").string ==
+                 "function");
+    AppHost web(77, nullptr, {bus, {}});
+    RT_CHECK(web.page_world().run("typeof psycho").string == "undefined");
   }
 
   shared += rt_passed;
