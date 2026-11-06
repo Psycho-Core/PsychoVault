@@ -3188,13 +3188,16 @@ int main() {
     // Suggestions come one edit away, best shapes first.
     auto to_the = spell.suggest("teh");
     CHECK(std::find(to_the.begin(), to_the.end(), "the") != to_the.end());
-    CHECK(std::find(spell.suggest("helllo").begin(), spell.suggest("helllo").end(), "hello") !=
-          spell.suggest("helllo").end());
-    CHECK(std::find(spell.suggest("hxuse").begin(), spell.suggest("hxuse").end(), "house") !=
-          spell.suggest("hxuse").end());
+    auto hello_suggestions = spell.suggest("helllo");
+    CHECK(std::find(hello_suggestions.begin(), hello_suggestions.end(), "hello") !=
+          hello_suggestions.end());
+    auto house_suggestions = spell.suggest("hxuse");
+    CHECK(std::find(house_suggestions.begin(), house_suggestions.end(), "house") !=
+          house_suggestions.end());
     // Longer unknowns get a second edit of reach.
-    CHECK(std::find(spell.suggest("dictionarry").begin(), spell.suggest("dictionarry").end(),
-                    "dictionary") != spell.suggest("dictionarry").end());
+    auto dictionary_suggestions = spell.suggest("dictionarry");
+    CHECK(std::find(dictionary_suggestions.begin(), dictionary_suggestions.end(),
+                    "dictionary") != dictionary_suggestions.end());
     // My own words count even with the built-in dictionary switched off.
     spell.builtin_enabled = false;
     CHECK(!spell.correct("hello"));
