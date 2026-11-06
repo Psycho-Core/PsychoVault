@@ -87,6 +87,8 @@ Schemas Schemas::stock() {
   s.add("lifecycle:pong", fields({{"uptime_ms", T::Number, true}}));
   s.add("diagnostics:stage",
         fields({{"stage", T::String, true}, {"ok", T::Bool, true}, {"result", T::String, true}}));
+  s.add("diagnostics:nettest", fields({}));
+  s.add("diagnostics:version", fields({}));
   s.add("history:list", fields({{"query", T::String, false}}));
   // S028: the internal scheme's two conversations - listing my registered
   // pages and requesting one of their resources. Both are Internal-channel

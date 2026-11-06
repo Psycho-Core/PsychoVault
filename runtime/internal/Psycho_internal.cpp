@@ -41,8 +41,8 @@ InternalRegistry InternalRegistry::stock() {
   shell("downloads", "my downloads manager");
   shell("extensions", "my extension manager");
   shell("apps", "the services rail's app view");
-  diagnostics("version", "build, version and revision honesty");
-  diagnostics("nettest", "S038's network diagnostics page - registered ahead");
+  diagnostics("version", "runtime, engine, profile, flags and build hashes");
+  diagnostics("nettest", "named DNS, TCP, TLS, HTTP, proxy and DNS-leak checks");
   diagnostics("crash", "S039's renderer crash record page - registered ahead");
   return registry;
 }
