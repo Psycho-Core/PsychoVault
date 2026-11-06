@@ -11,6 +11,12 @@ Nothing here yet. This directory is created by P1 of `docs/Psycho_MASTER-PLAN.md
 
 What exists now (P1 in progress):
 
+**Integration status:** S035-S039 are tested runtime contract/model slices, not
+claims that the current shell is already driven by this broker runtime. Their
+transport, profile, private-tab/storage, diagnostic-probe/version and
+renderer/process adapters still need a production caller. Tests prove the
+service laws and failure behavior; the P1 exit gate remains outstanding.
+
 - `ipc/Psycho_bus.*` (S021, done): the framed length-prefixed message bus with
   the 21 legacy channel groups plus runtime channels, capability masks per
   endpoint, per-channel schema validation with a refusal convention, bounded
@@ -267,4 +273,14 @@ What exists now (P1 in progress):
   web and shell pages still receive no diagnostics facade. 29 new checks
   (2350 total).
 
-Next in P1: S039 (crash and hang handling).
+- `crash/Psycho_crash.*` (S039, crash recovery contract): renderer crashes
+  and S022-attributed hangs create bounded, timestamped records; durable
+  persistence is attempted before retry, while the dedicated
+  `psychovault://crash` page is still shown if writing fails. The crash page has
+  its own minimal renderer policy. A retry recreates the tab at its last URL,
+  records each state change, and stops after three attempts per tab until the
+  replacement is reported stable. Crash history is bounded to 100 records.
+  Storage, crash-page navigation and tab recreation are explicit adapters and
+  still require the broker's production wiring. 36 new checks (2386 total).
+
+Next in P1: S040 (structured logging).

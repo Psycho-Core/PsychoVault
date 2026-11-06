@@ -43,7 +43,7 @@ InternalRegistry InternalRegistry::stock() {
   shell("apps", "the services rail's app view");
   diagnostics("version", "runtime, engine, profile, flags and build hashes");
   diagnostics("nettest", "named DNS, TCP, TLS, HTTP, proxy and DNS-leak checks");
-  diagnostics("crash", "S039's renderer crash record page - registered ahead");
+  registry.add({"crash", "crash", "renderer crash details and tab recovery", false});
   return registry;
 }
 

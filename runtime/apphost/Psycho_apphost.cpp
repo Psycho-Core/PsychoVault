@@ -42,6 +42,13 @@ const ExposedEntry kPrivateDiagnosticsProfile[] = {
     {Channel::Lifecycle, "lifecycle:ping"},
 };
 
+// The crash page shows only broker-owned failure state; it gets neither the
+// general diagnostics controls nor profile/settings surfaces.
+const ExposedEntry kCrashProfile[] = {
+    {Channel::Internal, "internal:list"},
+    {Channel::Lifecycle, "lifecycle:ping"},
+};
+
 // Web pages get no facade. There are deliberately no entries here.
 const ExposedEntry kWebProfile[] = {};
 
@@ -55,7 +62,11 @@ AppHost::AppHost(int tab_id, const InternalPage *page, Seams seams,
   size_t count = 0;
   if (page) {
     page_name_ = page->name;
-    if (page->category == "shell") {
+    if (page->category == "crash") {
+      kind_ = PageKind::Crash;
+      profile = kCrashProfile;
+      count = sizeof(kCrashProfile) / sizeof(kCrashProfile[0]);
+    } else if (page->category == "shell") {
       kind_ = PageKind::Shell;
       if (policy_ == RendererPolicy::Private) {
         profile = kPrivateShellProfile;
