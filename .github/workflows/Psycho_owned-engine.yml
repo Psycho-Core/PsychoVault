@@ -101,22 +101,22 @@ jobs:
                 $failedReport = Get-Content build/captures/s045-app-flow.png.flow.json -Raw | ConvertFrom-Json
                 $detail += ' ' + ($failedReport | ConvertTo-Json -Compress)
               }
-              Write-Host "::error file=.github/workflows/Psycho_owned-engine.yml,line=90,title=S045 flow failure::$detail"
+              Write-Host "::error file=.github/workflows/Psycho_owned-engine.yml,line=90,title=S045FlowFailure::$detail"
               throw "S045 same-app bridge smoke exited $flowExit"
             }
             if (-not (Test-Path build/captures/s045-app-flow.png.flow.json)) {
               $detail = ($flowOutput -join ' ') -replace '::', ':'
-              Write-Host "::error file=.github/workflows/Psycho_owned-engine.yml,line=90,title=S045 flow report missing::$detail"
+              Write-Host "::error file=.github/workflows/Psycho_owned-engine.yml,line=90,title=S045FlowReportMissing::$detail"
               throw 'S045 same-app flow report was not written'
             }
             $report = Get-Content build/captures/s045-app-flow.png.flow.json -Raw | ConvertFrom-Json
             $detail = $report | ConvertTo-Json -Compress
-            Write-Host "::warning file=.github/workflows/Psycho_owned-engine.yml,line=90,title=S045 flow report::$detail"
-            if ($report.result -ne 'passed') { Write-Host "::error file=.github/workflows/Psycho_owned-engine.yml,line=90,title=S045 flow result::$detail"; throw "S045 same-app flow did not pass: $($report.reason)" }
-            if ($report.sourceUrl -ne 'psychovault://newtab' -or -not $report.sourceTabRetained -or $report.tabCount -lt 2) { Write-Host "::error file=.github/workflows/Psycho_owned-engine.yml,line=90,title=S045 source gate::$detail"; throw 'S045 app tab was not retained alongside the fetched page' }
-            if ($report.actualUrl -ne 'http://127.0.0.1:8767/Psycho_browser-smoke.html' -or -not $report.targetRendererReady -or $report.targetImageCount -lt 1) { Write-Host "::error file=.github/workflows/Psycho_owned-engine.yml,line=90,title=S045 render gate::$detail"; throw 'S045 address bridge did not render the expected page and image' }
-            if (-not (Test-Path build/captures/s045-app-flow.png.app.png)) { Write-Host '::error file=.github/workflows/Psycho_owned-engine.yml,line=90,title=S045 app capture missing::'; throw 'S045 app-page capture is missing' }
-            if (-not (Test-Path build/captures/s045-app-flow.png)) { Write-Host '::error file=.github/workflows/Psycho_owned-engine.yml,line=90,title=S045 fixture capture missing::'; throw 'S045 fetched-page capture is missing' }
+            Write-Host "::warning file=.github/workflows/Psycho_owned-engine.yml,line=90,title=S045FlowReport::$detail"
+            if ($report.result -ne 'passed') { Write-Host "::error file=.github/workflows/Psycho_owned-engine.yml,line=90,title=S045FlowResult::$detail"; throw "S045 same-app flow did not pass: $($report.reason)" }
+            if ($report.sourceUrl -ne 'psychovault://newtab' -or -not $report.sourceTabRetained -or $report.tabCount -lt 2) { Write-Host "::error file=.github/workflows/Psycho_owned-engine.yml,line=90,title=S045SourceGate::$detail"; throw 'S045 app tab was not retained alongside the fetched page' }
+            if ($report.actualUrl -ne 'http://127.0.0.1:8767/Psycho_browser-smoke.html' -or -not $report.targetRendererReady -or $report.targetImageCount -lt 1) { Write-Host "::error file=.github/workflows/Psycho_owned-engine.yml,line=90,title=S045RenderGate::$detail"; throw 'S045 address bridge did not render the expected page and image' }
+            if (-not (Test-Path build/captures/s045-app-flow.png.app.png)) { Write-Host '::error file=.github/workflows/Psycho_owned-engine.yml,line=90,title=S045AppCaptureMissing::'; throw 'S045 app-page capture is missing' }
+            if (-not (Test-Path build/captures/s045-app-flow.png)) { Write-Host '::error file=.github/workflows/Psycho_owned-engine.yml,line=90,title=S045FixtureCaptureMissing::'; throw 'S045 fetched-page capture is missing' }
             Get-Content build/captures/s045-app-flow.png.flow.json
           } finally {
             Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
