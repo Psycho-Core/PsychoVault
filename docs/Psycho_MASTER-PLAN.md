@@ -36,7 +36,7 @@ The repository's existing shell and engine are starting material, not proof that
 - `installer/` contains a README only. P10 owns the installer, so the M1 promise of a working installer and the statement that every milestone ends in an installer are not currently schedulable.
 - The M2 UI promise, P2 engine exit gate, and P3 UI implementation are out of order: the P2 gate asks for settings/new-tab markup before P3 creates `ui/`.
 
-At this 2026-11-06 starting point, P1 was not complete, and the old shell/engine could not be counted as reference parity. The first actual source-to-plan audit is recorded in `docs/Psycho_REFERENCE-CROSSWALK.md`: it checks the pinned inventory commit against the read-only reference repository's current HEAD, records where they diverge, maps the reference surfaces to plan steps and current evidence, and identifies the missing acceptance cases. The crosswalk is not implementation evidence. S050's full engine gap table and row-level implementation/test traceability remain outstanding.
+At this 2026-11-06 starting point, P1 was not complete, and the old shell/engine could not be counted as reference parity. The first actual source-to-plan audit is recorded in `docs/Psycho_REFERENCE-CROSSWALK.md`: it checks the pinned inventory commit against the read-only reference repository's current HEAD, records where they diverge, maps the reference surfaces to plan steps and current evidence, and identifies the missing acceptance cases. The crosswalk is not implementation evidence. At that initial audit point, S050's full engine gap table and row-level implementation/test traceability were still outstanding; they are now completed as an audit below, not as engine implementation.
 
 ### P1 acceptance update — 2026-11-07
 
@@ -44,11 +44,11 @@ The P1 exit gate passed in Windows Actions run [42334940299](https://github.com/
 
 S045's same-app acceptance passed in that run: address entry in the engine-rendered `psychovault://newtab/` page invoked the curated bridge, retained the source tab, opened the local fixture as a second tab, and verified that its renderer completed loading and painted an image. The run preserved the flow report and app/fixture captures as artifacts. The final branch cleanup commit `94f896d` only removed the temporary branch-scoped workflow trigger after this successful run; it did not change the acceptance implementation.
 
-**P1 runtime acceptance is complete.** This does not claim reference parity or completion of P2/P3, and S050's full engine gap table and other later-milestone work remain outstanding.
+**P1 runtime acceptance is complete.** This does not claim reference parity or completion of P2/P3; later-milestone implementation and parity work remain outstanding.
 
-### P2 kickoff — 2026-11-07
+### P2 status — 2026-11-07
 
-P2 has started with S050. The first-pass source-to-engine matrix is in `docs/Psycho_ENGINE-GAPS.md`; it identifies the reference selectors/callsites, current engine owners, known gaps, priorities, and proposed named tests. S050 is not closed yet: the existing smoke fixtures are too small for a representative corpus, and every P0/P1 row still needs fixture-backed regression coverage or an explicit deferral. The planned first implementation after that audit is S051 DirectWrite text shaping and metrics.
+S050 is complete as an audit, not as engine implementation. `docs/Psycho_ENGINE-GAPS.md` now maps every P0/P1 requirement to exact pinned-reference and engine/test line anchors, five license-safe HTML/CSS/JS/raster/SVG fixtures, a passing `pv-engine` corpus smoke, and an explicit owned/ordered semantic regression deferral. The preserved harness output is `docs/results/Psycho_S050_CORPUS-AUDIT.json`; the refreshed implementation-status crosswalk is `docs/Psycho_REFERENCE-CROSSWALK.md`. This does not claim CSS/DOM/JS conformance, reference screenshot parity, or P2 completion. Continue with S051 DirectWrite text shaping and metrics.
 
 ## 3. What "my own Electron" and "my own Chrome" mean here
 

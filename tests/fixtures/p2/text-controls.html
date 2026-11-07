@@ -1,0 +1,17 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>P2 audit — text and controls</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; padding: 20px; font: 16px/1.5 "Segoe UI", sans-serif; color: #172033; }
+main { max-width: 760px; }
+.label-row { display: flex; gap: 12px; align-items: center; margin: 8px 0; }
+button, input { padding: 6px 10px; border: 1px solid #667085; border-radius: 5px; }
+button:disabled { opacity: .5; }
+</style></head>
+<body><main>
+<h1>Reference text and controls</h1>
+<p>Latin: Café déjà vu. Greek: Ωμέγα. Cyrillic: Привет. CJK: 中文.</p>
+<div class="label-row"><label for="address">Web address</label><input id="address" value="https://example.test/"><button id="open">Open tab</button></div>
+<div class="label-row"><label><input type="checkbox" checked> Remember workspace</label><button disabled>Unavailable action</button></div>
+<p>Ellipsis candidate: <span>Long unbroken address https://example.test/a/very/long/path/that/needs/truncation</span></p>
+</main></body></html>

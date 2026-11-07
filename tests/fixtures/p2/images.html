@@ -1,0 +1,12 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>P2 audit — images and SVG</title>
+<style>
+body { margin: 0; padding: 16px; font: 14px sans-serif; }
+img { width: 64px; height: 48px; border: 1px solid #334155; object-fit: contain; }
+svg.inline-mark { width: 72px; height: 48px; }
+</style></head>
+<body><h1>Image, sizing, and SVG audit</h1>
+<p>External raster marker and SVG vector marker.</p>
+<img src="https://s050.test/pixel.png" alt="raster marker" width="64" height="48"><img src="https://s050.test/mark.svg" alt="SVG marker" width="64" height="48">
+<svg class="inline-mark" viewBox="0 0 72 48" aria-label="inline svg marker"><rect x="2" y="2" width="68" height="44" rx="8" fill="#bae6fd"/><circle cx="36" cy="24" r="12" fill="#0369a1"/></svg>
+</body></html>
