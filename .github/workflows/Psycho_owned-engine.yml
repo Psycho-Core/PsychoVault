@@ -103,11 +103,13 @@ jobs:
               throw "S045 same-app bridge smoke exited $flowExit"
             }
             $report = Get-Content build/captures/s045-app-flow.png.flow.json -Raw | ConvertFrom-Json
-            if ($report.result -ne 'passed') { throw "S045 same-app flow did not pass: $($report.reason)" }
-            if ($report.sourceUrl -ne 'psychovault://newtab' -or -not $report.sourceTabRetained -or $report.tabCount -lt 2) { throw 'S045 app tab was not retained alongside the fetched page' }
-            if ($report.actualUrl -ne 'http://127.0.0.1:8767/Psycho_browser-smoke.html' -or -not $report.targetRendererReady -or $report.targetImageCount -lt 1) { throw 'S045 address bridge did not render the expected page and image' }
-            if (-not (Test-Path build/captures/s045-app-flow.png.app.png)) { throw 'S045 app-page capture is missing' }
-            if (-not (Test-Path build/captures/s045-app-flow.png)) { throw 'S045 fetched-page capture is missing' }
+            $detail = $report | ConvertTo-Json -Compress
+            Write-Host "::warning::S045_FLOW_REPORT $detail"
+            if ($report.result -ne 'passed') { Write-Host "::error::S045_FLOW_RESULT $detail"; throw "S045 same-app flow did not pass: $($report.reason)" }
+            if ($report.sourceUrl -ne 'psychovault://newtab' -or -not $report.sourceTabRetained -or $report.tabCount -lt 2) { Write-Host "::error::S045_SOURCE_GATE $detail"; throw 'S045 app tab was not retained alongside the fetched page' }
+            if ($report.actualUrl -ne 'http://127.0.0.1:8767/Psycho_browser-smoke.html' -or -not $report.targetRendererReady -or $report.targetImageCount -lt 1) { Write-Host "::error::S045_RENDER_GATE $detail"; throw 'S045 address bridge did not render the expected page and image' }
+            if (-not (Test-Path build/captures/s045-app-flow.png.app.png)) { Write-Host '::error::S045_APP_CAPTURE_MISSING'; throw 'S045 app-page capture is missing' }
+            if (-not (Test-Path build/captures/s045-app-flow.png)) { Write-Host '::error::S045_FIXTURE_CAPTURE_MISSING'; throw 'S045 fetched-page capture is missing' }
             Get-Content build/captures/s045-app-flow.png.flow.json
           } finally {
             Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
