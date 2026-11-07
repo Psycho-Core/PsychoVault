@@ -1,10 +1,10 @@
 name: Build owned engine
 
-# PARKED on purpose (P0/S003). No push, tag or pull-request trigger may start a
-# build until the runtime milestone is real. Run this workflow by hand when the
-# gates in docs/Psycho_MASTER-PLAN.md say an output is worth building; see
-# docs/Psycho_BUILD-AND-RELEASE.md.
+# TEMPORARY validation trigger for the blank-window recovery fix; remove after
+# this one Windows run. The workflow remains parked otherwise.
 on:
+  push:
+    branches: [arena/f99582b8-psychovault]
   workflow_dispatch:
 permissions:
   contents: read
