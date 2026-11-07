@@ -4129,6 +4129,19 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (b) b->reap_sessions();
     if (b && b->smoke && !b->smoke_bridge_url.empty()) {
       const DWORD now = GetTickCount();
+      auto frame_text = [](const Tab *tab) {
+        std::string text;
+        if (!tab) return text;
+        const Json *paint = tab->frame.find("paint");
+        if (!paint || paint->type != Json::Type::Array) return text;
+        for (const Json &command : paint->array) {
+          const std::string part = command.str("text");
+          if (part.empty() || text.size() + part.size() + 3 > 4096) continue;
+          if (!text.empty()) text += " | ";
+          text += part;
+        }
+        return text;
+      };
       auto write_flow_report = [&](bool passed, const std::string &reason) {
         const Tab *source = b->find_tab(b->smoke_bridge_source_tab);
         const Tab &target = b->current();
@@ -4142,6 +4155,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         report.set("sourceUrl", source ? source->url : std::string());
         report.set("sourceTabRetained", source != nullptr);
         report.set("sourceRendererReady", source && source->session && source->session->ready);
+        report.set("sourcePaintText", frame_text(source));
         report.set("targetUrl", b->smoke_bridge_url);
         report.set("actualUrl", target.url);
         report.set("targetTabId", double(target.id));
