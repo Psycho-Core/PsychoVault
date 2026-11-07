@@ -945,12 +945,14 @@ int main() {
     // Renderer keyboard input dispatches keydown before the input's default
     // action, so app-page handlers can react to Enter just like the browser UI.
     Page page;
-    auto origin = *parse_url("https://events.test/");
+    auto origin = *parse_url("psychovault://newtab/");
     page.load(origin,
               "<input id=q><script src='/app.js'></script>");
-    CHECK(!page.requests.empty() && page.requests.back().type == ResourceType::Script);
+    CHECK(!page.requests.empty() &&
+          page.requests.back().url == "psychovault://newtab/app.js" &&
+          page.requests.back().type == ResourceType::Script);
     Resource script;
-    script.url = "https://events.test/app.js";
+    script.url = "psychovault://newtab/app.js";
     script.mime = "text/javascript";
     script.text = "document.getElementById('q').addEventListener("
                   "'keydown',function(e){document.title=e.key;});";

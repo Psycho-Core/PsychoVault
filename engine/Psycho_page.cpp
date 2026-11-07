@@ -1538,7 +1538,8 @@ void Page::install_media() {
 }
 void Page::request(std::string input, ResourceType type) {
   auto u = resolve_url(doc.url, input);
-  if (!u || !u->network())
+  const bool internal = u && u->scheme == "psychovault" && !u->host.empty();
+  if (!u || (!u->network() && !internal))
     return;
   auto href = u->href();
   if (requested_.count(href) || requested_.size() >= kMaxResources)

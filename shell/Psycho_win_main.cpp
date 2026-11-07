@@ -4155,6 +4155,11 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         report.set("sourceUrl", source ? source->url : std::string());
         report.set("sourceTabRetained", source != nullptr);
         report.set("sourceRendererReady", source && source->session && source->session->ready);
+        Json source_diagnostics = Json::make_array();
+        if (source && source->session)
+          for (const std::string &line : source->session->recent_diagnostics())
+            source_diagnostics.array.emplace_back(line);
+        report.set("sourceDiagnostics", std::move(source_diagnostics));
         report.set("sourcePaintText", frame_text(source));
         report.set("targetUrl", b->smoke_bridge_url);
         report.set("actualUrl", target.url);
