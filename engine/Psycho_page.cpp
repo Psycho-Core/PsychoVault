@@ -1931,6 +1931,17 @@ void Page::key(const std::string &key, const std::string &text) {
   }
   if (focused_ < 0 || focused_ >= int(doc.nodes.size()))
     return;
+  if (!key.empty() || !text.empty()) {
+    std::string event_key = key.empty() ? text : key;
+    if (event_key == "Space") event_key = " ";
+    js::Value event = js_->make_object();
+    event.object->properties["type"] = js::Value("keydown");
+    event.object->properties["key"] = js::Value(event_key);
+    event.object->properties["target"] = js_->host_value(focused_);
+    dispatch(focused_, "keydown", event);
+    if (focused_ < 0 || focused_ >= int(doc.nodes.size()))
+      return;
+  }
   auto &n = doc.nodes[focused_];
   if (n.name == "input" || n.name == "textarea") {
     auto type = lower(n.attribute("type"));
