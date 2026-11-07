@@ -592,8 +592,8 @@ int main() {
     }
     CHECK(bad);
   }
-  // S052: custom properties inherit through the tree, participate in the
-  // cascade, expand shorthand values, and are recomputed after style mutation.
+  // UiCustomPropertiesCascadeAndMutation (S052): custom properties inherit
+  // through the tree, participate in the cascade, expand shorthands, and update.
   {
     const auto declarations = parse_css_declarations(
         "color:rgb(1, 2, 3);--Label:'x;y';width:calc(100% - 2px) !important");
@@ -634,7 +634,8 @@ int main() {
     auto hsl = parse_color("hsl(210 50% 40%)");
     CHECK(hsl.r == 51 && hsl.g == 102 && hsl.b == 153);
   }
-  // S052: CSS math and mixed units use the parent/font/root/viewport bases.
+  // UiCssMathFunctionsAndMixedUnits (S052): math and mixed units use the
+  // parent/font/root/viewport bases, including deferred containing-block percentages.
   {
     CHECK(close_to(css_length("calc(50% - 2em)", 200, 10, 16, 800, "width", -1), 80));
     CHECK(close_to(css_length("min(20px, 2em)", 200, 10, 16, 800, "width", -1), 20));
