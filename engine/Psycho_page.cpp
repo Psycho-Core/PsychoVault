@@ -1620,8 +1620,17 @@ void Page::execute_script(int id) {
     diagnostics.push_back({"js", "ES modules are not implemented; script was not executed"});
     return;
   }
+  std::string source = doc.text_content(id);
+  const std::string external_source = n.attribute("src");
+  if (!external_source.empty()) {
+    auto url = resolve_url(doc.url, external_source);
+    if (!url) return;
+    auto resource = resources_.find(url->href());
+    if (resource == resources_.end() || !resource->second.ok) return;
+    source = resource->second.text;
+  }
   try {
-    js_->run(doc.text_content(id));
+    js_->run(source);
   } catch (js::JsError &e) {
     diagnostics.push_back({"js", e.value.to_string().substr(0, 2048)});
   } catch (std::exception &e) {

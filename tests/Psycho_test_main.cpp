@@ -945,9 +945,17 @@ int main() {
     // Renderer keyboard input dispatches keydown before the input's default
     // action, so app-page handlers can react to Enter just like the browser UI.
     Page page;
-    page.load(*parse_url("https://events.test/"),
-              "<input id=q><script>document.getElementById('q').addEventListener("
-              "'keydown',function(e){document.title=e.key;});</script>");
+    auto origin = *parse_url("https://events.test/");
+    page.load(origin,
+              "<input id=q><script src='/app.js'></script>");
+    CHECK(!page.requests.empty() && page.requests.back().type == ResourceType::Script);
+    Resource script;
+    script.url = "https://events.test/app.js";
+    script.mime = "text/javascript";
+    script.text = "document.getElementById('q').addEventListener("
+                  "'keydown',function(e){document.title=e.key;});";
+    script.ok = true;
+    page.resource(script);
     page.render(800, 600, 0);
     Rect input = node_box(page, "q");
     page.click(input.x + 4, input.y + input.h / 2);
