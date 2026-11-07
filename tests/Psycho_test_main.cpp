@@ -615,14 +615,16 @@ int main() {
     CHECK(close_to(item.x, 12) && close_to(item.y, 5));
     CHECK(close_to(item.w, 114) && close_to(item.h, 54));
     bool accent_applied = false;
-    for (const auto &command : page.render(800, 600, 0).at("paint").array)
+    const Json accent_frame = page.render(800, 600, 0);
+    for (const auto &command : accent_frame.at("paint").array)
       if (int(command.num("node")) == page.doc.by_id("item") &&
           int(command.num("kind")) == int(PaintCommand::Kind::Rect) &&
           uint32_t(command.num("color")) == 0xff112233u)
         accent_applied = true;
     CHECK(accent_applied);
     bool font_shorthand_applied = false;
-    for (const auto &command : page.render(800, 600, 0).at("paint").array)
+    const Json font_frame = page.render(800, 600, 0);
+    for (const auto &command : font_frame.at("paint").array)
       if (command.str("text") == "Styled" && close_to(command.num("size"), 18) &&
           command.flag("bold"))
         font_shorthand_applied = true;
