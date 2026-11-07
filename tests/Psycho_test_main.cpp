@@ -941,6 +941,29 @@ int main() {
     }
     CHECK(page.navigations.empty());
   }
+  {
+    // Renderer keyboard input dispatches keydown before the input's default
+    // action, so app-page handlers can react to Enter just like the browser UI.
+    Page page;
+    auto origin = *parse_url("psychovault://newtab/");
+    page.load(origin,
+              "<input id=q><script src='/app.js'></script>");
+    CHECK(!page.requests.empty() &&
+          page.requests.back().url == "psychovault://newtab/app.js" &&
+          page.requests.back().type == ResourceType::Script);
+    Resource script;
+    script.url = "psychovault://newtab/app.js";
+    script.mime = "text/javascript";
+    script.text = "document.getElementById('q').addEventListener("
+                  "'keydown',function(e){document.title=e.key;});";
+    script.ok = true;
+    page.resource(script);
+    page.render(800, 600, 0);
+    Rect input = node_box(page, "q");
+    page.click(input.x + 4, input.y + input.h / 2);
+    page.key("Enter", "");
+    CHECK(page.title() == "Enter");
+  }
   // Audit of steps 3 to 5: the fixes I made after measuring real pages.
   {
     // An absolute child starts at the padding box of its positioned ancestor,

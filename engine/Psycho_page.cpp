@@ -1538,7 +1538,8 @@ void Page::install_media() {
 }
 void Page::request(std::string input, ResourceType type) {
   auto u = resolve_url(doc.url, input);
-  if (!u || !u->network())
+  const bool internal = u && u->scheme == "psychovault" && !u->host.empty();
+  if (!u || (!u->network() && !internal))
     return;
   auto href = u->href();
   if (requested_.count(href) || requested_.size() >= kMaxResources)
@@ -1620,8 +1621,17 @@ void Page::execute_script(int id) {
     diagnostics.push_back({"js", "ES modules are not implemented; script was not executed"});
     return;
   }
+  std::string source = doc.text_content(id);
+  const std::string external_source = n.attribute("src");
+  if (!external_source.empty()) {
+    auto url = resolve_url(doc.url, external_source);
+    if (!url) return;
+    auto resource = resources_.find(url->href());
+    if (resource == resources_.end() || !resource->second.ok) return;
+    source = resource->second.text;
+  }
   try {
-    js_->run(doc.text_content(id));
+    js_->run(source);
   } catch (js::JsError &e) {
     diagnostics.push_back({"js", e.value.to_string().substr(0, 2048)});
   } catch (std::exception &e) {
@@ -1931,6 +1941,17 @@ void Page::key(const std::string &key, const std::string &text) {
   }
   if (focused_ < 0 || focused_ >= int(doc.nodes.size()))
     return;
+  if (!key.empty() || !text.empty()) {
+    std::string event_key = key.empty() ? text : key;
+    if (event_key == "Space") event_key = " ";
+    js::Value event = js_->make_object();
+    event.object->properties["type"] = js::Value("keydown");
+    event.object->properties["key"] = js::Value(event_key);
+    event.object->properties["target"] = js_->host_value(focused_);
+    dispatch(focused_, "keydown", event);
+    if (focused_ < 0 || focused_ >= int(doc.nodes.size()))
+      return;
+  }
   auto &n = doc.nodes[focused_];
   if (n.name == "input" || n.name == "textarea") {
     auto type = lower(n.attribute("type"));

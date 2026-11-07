@@ -81,6 +81,52 @@ jobs:
           } finally {
             Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
           }
+      - name: Exercise my app address bridge to a fetched page in one running app
+        id: s045_flow
+        shell: pwsh
+        run: |
+          $smokeProfile = Join-Path $env:GITHUB_WORKSPACE 'build/s045-app-flow-profile'
+          Remove-Item -Recurse -Force $smokeProfile -ErrorAction SilentlyContinue
+          $server = Start-Process python -ArgumentList '-m','http.server','8767','--directory','tests/fixtures' -PassThru -WindowStyle Hidden
+          try {
+            Start-Sleep -Seconds 1
+            New-Item -ItemType Directory -Force build/captures | Out-Null
+            $appProcess = Start-Process -FilePath '.\build\PsychoVault.exe' -ArgumentList @('--smoke','--expect-image','--smoke-bridge-url','http://127.0.0.1:8767/Psycho_browser-smoke.html','--capture','build/captures/s045-app-flow.png','--profile',$smokeProfile) -PassThru
+            if (-not $appProcess.WaitForExit(120000)) {
+              try { $appProcess.Kill($true) } catch {}
+              $appProcess.WaitForExit()
+              $flowExit = 99
+            } else { $flowExit = $appProcess.ExitCode }
+            $consoleDetail = "S045 app exit code: $flowExit"
+            $consoleDetail | Set-Content build/captures/s045-app-flow-console.txt -Encoding utf8
+            Write-Host $consoleDetail
+            if ($flowExit -ne 0) {
+              $detail = $consoleDetail
+              if (Test-Path build/captures/s045-app-flow.png.flow.json) {
+                $failedReport = Get-Content build/captures/s045-app-flow.png.flow.json -Raw | ConvertFrom-Json
+                $detail += ' ' + ($failedReport | ConvertTo-Json -Compress)
+              }
+              Write-Host "::error file=.github/workflows/Psycho_owned-engine.yml,line=90,title=S045FlowFailure::$detail"
+              throw "S045 same-app bridge smoke exited $flowExit"
+            }
+            if (-not (Test-Path build/captures/s045-app-flow.png.flow.json)) {
+              $detail = $consoleDetail
+              Write-Host "::error file=.github/workflows/Psycho_owned-engine.yml,line=90,title=S045FlowReportMissing::$detail"
+              throw 'S045 same-app flow report was not written'
+            }
+            $report = Get-Content build/captures/s045-app-flow.png.flow.json -Raw | ConvertFrom-Json
+            $detail = $report | ConvertTo-Json -Compress
+            Write-Host "::warning file=.github/workflows/Psycho_owned-engine.yml,line=90,title=S045FlowReport::$detail"
+            if ($report.result -ne 'passed') { Write-Host "::error file=.github/workflows/Psycho_owned-engine.yml,line=90,title=S045FlowResult::$detail"; throw "S045 same-app flow did not pass: $($report.reason)" }
+            if (($report.sourceUrl -ne 'psychovault://newtab' -and $report.sourceUrl -ne 'psychovault://newtab/') -or -not $report.sourceTabRetained -or $report.tabCount -lt 2) { Write-Host "::error file=.github/workflows/Psycho_owned-engine.yml,line=90,title=S045SourceGate::$detail"; throw 'S045 app tab was not retained alongside the fetched page' }
+            if ($report.actualUrl -ne 'http://127.0.0.1:8767/Psycho_browser-smoke.html' -or -not $report.targetRendererReady -or $report.targetImageCount -lt 1) { Write-Host "::error file=.github/workflows/Psycho_owned-engine.yml,line=90,title=S045RenderGate::$detail"; throw 'S045 address bridge did not render the expected page and image' }
+            if (-not (Test-Path build/captures/s045-app-flow.png.app.png)) { Write-Host '::error file=.github/workflows/Psycho_owned-engine.yml,line=90,title=S045AppCaptureMissing::'; throw 'S045 app-page capture is missing' }
+            if (-not (Test-Path build/captures/s045-app-flow.png)) { Write-Host '::error file=.github/workflows/Psycho_owned-engine.yml,line=90,title=S045FixtureCaptureMissing::'; throw 'S045 fetched-page capture is missing' }
+            Get-Content build/captures/s045-app-flow.png.flow.json
+          } finally {
+            Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
+          }
+
       - name: Prove my single executable launches an isolated renderer child
         shell: pwsh
         run: |
@@ -177,5 +223,7 @@ jobs:
             build/*.json
             build/*.log
             build/captures/*.png
+            build/captures/*.json
+            build/captures/*.txt
           if-no-files-found: warn
           retention-days: 14

@@ -273,6 +273,14 @@ int run_renderer_process_tests(int &shared) {
   PROCESS_CHECK(send_input(key));
   PROCESS_CHECK(!error && reply.payload.flag("ok") && reply.payload.find("frame"));
 
+  // Shell text entry sends Unicode text without a physical key name; it must
+  // cross process IPC rather than being rejected as an empty key.
+  Json typed_text = input_command("key");
+  typed_text.set("key", Json(""));
+  typed_text.set("text", Json("address entry"));
+  PROCESS_CHECK(send_input(typed_text));
+  PROCESS_CHECK(!error && reply.payload.flag("ok") && reply.payload.find("frame"));
+
   Json invalid = input_command("not-an-input");
   PROCESS_CHECK(send_input(invalid));
   PROCESS_CHECK(!error && !reply.payload.flag("ok") &&

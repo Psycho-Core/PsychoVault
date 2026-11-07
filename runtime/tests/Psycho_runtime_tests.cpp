@@ -2902,10 +2902,13 @@ int run_runtime_bus_tests(int &shared) {
         "--diagnostics", "--language", "en-AU", "--url",
         "https://example.test/path?q=a&x=1;$(touch%20/tmp/pv-owned)",
         "https://example.org/", "--smoke", "--capture", "build/capture image.png",
+        "--smoke-bridge-url", "http://127.0.0.1:8765/Psycho_browser-smoke.html",
         "--expect-image"};
     RT_CHECK(parse_command_line(arguments, options, e) && !e);
     RT_CHECK(options.private_mode && options.diagnostics && options.smoke &&
-             options.expect_image);
+             options.expect_image &&
+             options.smoke_bridge_url ==
+                 "http://127.0.0.1:8765/Psycho_browser-smoke.html");
     RT_CHECK(options.profile_directory == "C:\\Users\\A & B\\Psycho Profile" &&
              options.language == "en-AU" &&
              options.capture_path == "build/capture image.png");
@@ -2954,6 +2957,13 @@ int run_runtime_bus_tests(int &shared) {
     RT_CHECK(rejected({"--language", "en_US"}, "commandline.language"));
     RT_CHECK(rejected({"--language", "fr-FR"}, "commandline.language-unavailable"));
     RT_CHECK(rejected({"--profile", "bad\npath"}, "commandline.missing-value"));
+    RT_CHECK(rejected({"--smoke-bridge-url", "https://example.test/"},
+                      "commandline.smoke-bridge-mode"));
+    RT_CHECK(rejected({"--smoke", "--capture", "out.png", "--smoke-bridge-url",
+                       "psychovault://newtab"}, "commandline.smoke-bridge-url"));
+    RT_CHECK(rejected({"--smoke", "--capture", "out.png", "--smoke-bridge-url",
+                       "https://example.test/", "--smoke-bridge-url",
+                       "https://example.org/"}, "commandline.duplicate-option"));
     RT_CHECK(rejected({"--private", "--private"}, "commandline.duplicate-option"));
     RT_CHECK(rejected({"--profile", "one", "--profile", "two"},
                       "commandline.duplicate-option"));

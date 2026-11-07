@@ -313,7 +313,7 @@ bool RendererWorker::input(const Envelope &request, Envelope &response, Error &e
   } else if (tag == "key") {
     const std::string key = request.payload.str("key");
     const std::string text = request.payload.str("text");
-    if (key.empty() || key.size() > 64 || text.size() > 4096) {
+    if ((key.empty() && text.empty()) || key.size() > 64 || text.size() > 4096) {
       return reject("key input is empty or exceeds its size limit");
     }
     host_->key(key, text);

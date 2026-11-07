@@ -769,6 +769,10 @@ struct Browser {
   bool app_ui_slice = true;
   bool private_mode = false;
   std::string capture_path;
+  std::string smoke_bridge_url;
+  int smoke_bridge_stage = 0;
+  int smoke_bridge_source_tab = -1;
+  DWORD smoke_bridge_stage_tick = 0;
   bool smoke = false, expect_image = false;
   DWORD start_tick = 0;
   explicit Browser(bool private_mode = false, const std::string &directory = {})
@@ -4123,6 +4127,107 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         b->status = "Renderer process recovery failed: " + renderer_error.message;
     }
     if (b) b->reap_sessions();
+    if (b && b->smoke && !b->smoke_bridge_url.empty()) {
+      const DWORD now = GetTickCount();
+      auto write_flow_report = [&](bool passed, const std::string &reason) {
+        const Tab *source = b->find_tab(b->smoke_bridge_source_tab);
+        const Tab &target = b->current();
+        Json report = Json::make_object();
+        report.set("result", passed ? "passed" : "failed");
+        report.set("reason", reason);
+        report.set("stage", double(b->smoke_bridge_stage));
+        report.set("elapsedMs", double(GetTickCount() - b->start_tick));
+        report.set("processId", double(GetCurrentProcessId()));
+        report.set("sourceTabId", double(b->smoke_bridge_source_tab));
+        report.set("sourceUrl", source ? source->url : std::string());
+        report.set("sourceTabRetained", source != nullptr);
+        report.set("sourceRendererReady", source && source->session && source->session->ready);
+        report.set("targetUrl", b->smoke_bridge_url);
+        report.set("actualUrl", target.url);
+        report.set("targetTabId", double(target.id));
+        report.set("tabCount", double(b->tabs.size()));
+        report.set("targetRendererReady", target.session && target.session->ready);
+        report.set("targetLoading", target.loading);
+        report.set("targetError", target.error);
+        report.set("targetTitle", target.frame.str("title"));
+        report.set("targetImageCount", double(target.images.size()));
+        report.set("appScreenshot", b->capture_path + ".app.png");
+        report.set("fixtureScreenshot", b->capture_path);
+        std::string report_error;
+        write_file_atomic(b->capture_path + ".flow.json", report.dump() + "\n",
+                          report_error);
+        if (!report_error.empty())
+          OutputDebugStringA(("S045 smoke flow report failed: " + report_error + "\n").c_str());
+      };
+      auto fail_flow = [&](const std::string &reason) {
+        if (!b->capture_path.empty()) capture(hwnd, b->capture_path);
+        write_flow_report(false, reason);
+        b->smoke_bridge_stage = 3;
+        PostQuitMessage(1);
+      };
+
+      if (b->smoke_bridge_stage == 0) {
+        const Tab &home = b->current();
+        const bool app_ready = app_ui_url(home.url) && !home.loading &&
+            home.error.empty() && home.frame.type == Json::Type::Object &&
+            home.session && home.session->ready;
+        if (app_ready && now - b->start_tick >= 1500) {
+          b->smoke_bridge_source_tab = home.id;
+          const std::string app_capture = b->capture_path + ".app.png";
+          capture(hwnd, app_capture);
+          // Locate the input from its visible placeholder paint command instead
+          // of assuming a viewport-specific coordinate. The click, text and
+          // Enter all traverse the renderer event/IPC route as a user would.
+          double address_x = 0, address_y = 0;
+          bool address_found = false;
+          if (const Json *paint = home.frame.find("paint");
+              paint && paint->type == Json::Type::Array) {
+            for (const Json &command : paint->array) {
+              if (command.str("text") != "Type a web address") continue;
+              address_x = command.num("x") + 2.0;
+              address_y = command.num("y") + command.num("h") / 2.0;
+              address_found = true;
+              break;
+            }
+          }
+          if (!address_found) {
+            fail_flow("the app page did not paint its address input placeholder");
+          } else {
+            b->click(int(std::lround(address_x)), int(std::lround(address_y)));
+            b->smoke_bridge_stage = 1;
+            b->smoke_bridge_stage_tick = now;
+          }
+        } else if (now - b->start_tick >= 20000) {
+          fail_flow("the app UI did not become ready for address entry");
+        }
+      } else if (b->smoke_bridge_stage == 1 &&
+                 now - b->smoke_bridge_stage_tick >= 150) {
+        for (unsigned char ch : b->smoke_bridge_url)
+          b->character(wchar_t(ch));
+        b->key(WM_KEYDOWN, VK_RETURN, 0);
+        b->smoke_bridge_stage = 2;
+        b->smoke_bridge_stage_tick = now;
+      } else if (b->smoke_bridge_stage == 2) {
+        Tab *source = b->find_tab(b->smoke_bridge_source_tab);
+        Tab &target = b->current();
+        const bool target_loaded = target.url == b->smoke_bridge_url &&
+            !target.loading && target.error.empty() &&
+            target.frame.type == Json::Type::Object && target.session &&
+            target.session->ready && (!b->expect_image || !target.images.empty());
+        if (target_loaded && source && app_ui_url(source->url) &&
+            source->session && source->session->ready && b->tabs.size() >= 2) {
+          capture(hwnd, b->capture_path);
+          write_flow_report(true, "address entry used psycho.tab.new in the running app");
+          b->smoke_bridge_stage = 3;
+          PostQuitMessage(0);
+        } else if (target.url == b->smoke_bridge_url && !target.error.empty()) {
+          fail_flow("the address bridge opened a page with an error: " + target.error);
+        } else if (now - b->smoke_bridge_stage_tick >= 30000) {
+          fail_flow("the app address bridge did not open and render the local fixture");
+        }
+      }
+      return 0;
+    }
     if (b && !b->smoke) {
       b->extensions.tick();
       b->flush_history();
@@ -4355,6 +4460,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
   const bool smoke = command.smoke;
   const bool private_mode = command.private_mode;
   const bool expect_image = command.expect_image;
+  const std::string smoke_bridge_url = command.smoke_bridge_url;
   const std::string profile_dir = command.profile_directory.empty()
       ? default_profile_directory() : command.profile_directory;
   const std::vector<std::string> startup_urls =
@@ -4474,6 +4580,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
   b.smoke = smoke;
   b.expect_image = expect_image;
   b.capture_path = capture;
+  b.smoke_bridge_url = smoke_bridge_url;
   b.start_tick = GetTickCount();
   if (private_mode) {
     b.tabs.clear();
