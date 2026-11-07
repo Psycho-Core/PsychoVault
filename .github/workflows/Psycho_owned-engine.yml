@@ -6,9 +6,6 @@ name: Build owned engine
 # docs/Psycho_BUILD-AND-RELEASE.md.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - arena/f99582b8-psychovault
 permissions:
   contents: read
 
