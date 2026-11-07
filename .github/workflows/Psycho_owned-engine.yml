@@ -94,6 +94,9 @@ jobs:
           $server = Start-Process python -ArgumentList '-m','http.server','8767','--directory','tests/fixtures' -PassThru -WindowStyle Hidden
           try {
             Start-Sleep -Seconds 1
+            New-Item -ItemType Directory -Force build/captures | Out-Null
+            '{"result":"PowerShell reached the S045 app launch","stage":"pre-launch"}' | Set-Content build/captures/s045-app-flow.png.flow.json -Encoding utf8
+            'PowerShell reached the S045 app launch' | Set-Content build/captures/s045-app-flow-console.txt -Encoding utf8
             $flowOutput = & .\build\PsychoVault.exe --smoke --expect-image --smoke-bridge-url http://127.0.0.1:8767/Psycho_browser-smoke.html --capture build/captures/s045-app-flow.png --profile $smokeProfile 2>&1
             $flowExit = $LASTEXITCODE
             $flowOutput | Tee-Object -FilePath build/captures/s045-app-flow-console.txt
