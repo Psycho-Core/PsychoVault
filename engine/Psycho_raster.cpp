@@ -1,10 +1,13 @@
 #include "Psycho_image.hpp"
 #include "Psycho_raster.hpp"
-#include "Psycho_font5x7.hpp"
 #include <cstring>
 #ifdef _WIN32
 #define NOMINMAX
 #include <windows.h>
+#include <d2d1.h>
+#include <d2d1helper.h>
+#include <dwrite.h>
+#include <wrl/client.h>
 #endif
 namespace pv {
 uint32_t blend(uint32_t d, uint32_t s) {
@@ -201,131 +204,286 @@ void Canvas::line(double x1, double y1, double x2, double y2, uint32_t c, double
 }
 #ifdef _WIN32
 namespace {
-struct WinFont {
-  HDC dc = nullptr;
-  HFONT font = nullptr;
-  std::wstring key;
-  ~WinFont() {
-    if (font) {
-      SelectObject(dc, old);
-      DeleteObject(font);
+using Microsoft::WRL::ComPtr;
+
+static std::wstring wide_text(std::string_view text) {
+  std::wstring result;
+  for (uint32_t cp : utf8_decode(text)) {
+    if (cp <= 0xffff && !(cp >= 0xd800 && cp <= 0xdfff))
+      result.push_back(wchar_t(cp));
+    else if (cp <= 0x10ffff) {
+      cp -= 0x10000;
+      result.push_back(wchar_t(0xd800 + (cp >> 10)));
+      result.push_back(wchar_t(0xdc00 + (cp & 0x3ff)));
+    } else
+      result.push_back(wchar_t(0xfffd));
+  }
+  return result;
+}
+
+static std::wstring first_installed_family(std::string_view css_stack,
+                                           IDWriteFontCollection *collection) {
+  std::wstring stack = wide_text(css_stack.empty() ? "Segoe UI" : css_stack);
+  size_t start = 0;
+  while (start < stack.size()) {
+    size_t end = stack.find(L',', start);
+    if (end == std::wstring::npos)
+      end = stack.size();
+    std::wstring candidate = stack.substr(start, end - start);
+    auto first = candidate.find_first_not_of(L" \t\r\n\"'");
+    auto last = candidate.find_last_not_of(L" \t\r\n\"'");
+    if (first != std::wstring::npos)
+      candidate = candidate.substr(first, last - first + 1);
+    else
+      candidate.clear();
+    if (candidate == L"system-ui" || candidate == L"-apple-system")
+      candidate = L"Segoe UI";
+    if (!candidate.empty()) {
+      UINT32 index = 0;
+      BOOL exists = FALSE;
+      if (SUCCEEDED(collection->FindFamilyName(candidate.c_str(), &index, &exists)) && exists) {
+        ComPtr<IDWriteFontFamily> family;
+        ComPtr<IDWriteLocalizedStrings> names;
+        WCHAR locale[LOCALE_NAME_MAX_LENGTH]{};
+        int locale_length = GetUserDefaultLocaleName(locale, LOCALE_NAME_MAX_LENGTH);
+        if (SUCCEEDED(collection->GetFontFamily(index, &family)) &&
+            SUCCEEDED(family->GetFamilyNames(&names)) && names && names->GetCount() > 0) {
+          UINT32 name_index = 0;
+          BOOL locale_exists = FALSE;
+          if (locale_length > 0)
+            names->FindLocaleName(locale, &name_index, &locale_exists);
+          if (!locale_exists)
+            name_index = 0;
+          UINT32 length = 0;
+          if (SUCCEEDED(names->GetStringLength(name_index, &length))) {
+            std::wstring canonical(size_t(length) + 1, L'\0');
+            if (SUCCEEDED(names->GetString(name_index, canonical.data(), length + 1))) {
+              canonical.resize(length);
+              return canonical;
+            }
+          }
+        }
+        return candidate;
+      }
     }
+    start = end + 1;
+  }
+  return L"Segoe UI";
+}
+
+struct DirectWriteContext {
+  ComPtr<IDWriteFactory> write_factory;
+  ComPtr<ID2D1Factory> d2d_factory;
+  ComPtr<IDWriteFontCollection> font_collection;
+  ComPtr<ID2D1DCRenderTarget> render_target;
+  std::map<std::wstring, ComPtr<IDWriteTextFormat>> formats;
+
+  bool ready() {
+    if (!write_factory && FAILED(DWriteCreateFactory(
+                                DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
+                                reinterpret_cast<IUnknown **>(write_factory.GetAddressOf()))))
+      return false;
+    if (!font_collection && FAILED(write_factory->GetSystemFontCollection(&font_collection, FALSE)))
+      return false;
+    if (!d2d_factory && FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+                                                 d2d_factory.GetAddressOf())))
+      return false;
+    if (!render_target) {
+      D2D1_RENDER_TARGET_PROPERTIES properties{};
+      properties.type = D2D1_RENDER_TARGET_TYPE_DEFAULT;
+      properties.pixelFormat.format = DXGI_FORMAT_B8G8R8A8_UNORM;
+      properties.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
+      properties.dpiX = 96.0f;
+      properties.dpiY = 96.0f;
+      if (FAILED(d2d_factory->CreateDCRenderTarget(&properties, &render_target)))
+        return false;
+    }
+    return true;
+  }
+
+  IDWriteTextFormat *format(std::string_view family, double size, bool bold) {
+    if (!ready())
+      return nullptr;
+    double clamped_size = std::clamp(size, 1.0, 512.0);
+    std::wstring selected = first_installed_family(family, font_collection.Get());
+    std::wstring key = selected + L"|" + std::to_wstring(int(std::lround(clamped_size * 64))) +
+                       (bold ? L"|bold" : L"|regular");
+    auto found = formats.find(key);
+    if (found != formats.end())
+      return found->second.Get();
+    if (formats.size() >= 128)
+      formats.clear();
+    ComPtr<IDWriteTextFormat> created;
+    HRESULT hr = write_factory->CreateTextFormat(
+        selected.c_str(), font_collection.Get(), bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, FLOAT(clamped_size), L"en-us", &created);
+    if (FAILED(hr) || !created)
+      return nullptr;
+    created->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    auto [it, inserted] = formats.emplace(std::move(key), std::move(created));
+    (void)inserted;
+    return it->second.Get();
+  }
+
+  bool layout(std::string_view text, std::string_view family, double size, bool bold,
+              ComPtr<IDWriteTextLayout> &out, DWRITE_TEXT_METRICS *metrics = nullptr,
+              DWRITE_OVERHANG_METRICS *overhang = nullptr) {
+    if (!ready() || text.size() > UINT32_MAX)
+      return false;
+    std::wstring wide = wide_text(text);
+    ComPtr<IDWriteTextFormat> text_format;
+    IDWriteTextFormat *cached = format(family, size, bold);
+    if (!cached)
+      return false;
+    // The format cache is thread-local and is not cleared while a call is using it.
+    text_format = cached;
+    HRESULT hr = write_factory->CreateTextLayout(wide.data(), UINT32(wide.size()), text_format.Get(),
+                                                  32768.0f, 32768.0f, &out);
+    if (FAILED(hr) || !out)
+      return false;
+    if (metrics && FAILED(out->GetMetrics(metrics)))
+      return false;
+    if (overhang && FAILED(out->GetOverhangMetrics(overhang)))
+      *overhang = {};
+    return true;
+  }
+};
+
+static DirectWriteContext &direct_write() {
+  thread_local DirectWriteContext context;
+  return context;
+}
+
+struct DibTarget {
+  HDC dc = nullptr;
+  HBITMAP bitmap = nullptr;
+  HGDIOBJ previous = nullptr;
+  void *bits = nullptr;
+  ~DibTarget() {
+    if (dc && previous)
+      SelectObject(dc, previous);
+    if (bitmap)
+      DeleteObject(bitmap);
     if (dc)
       DeleteDC(dc);
   }
-  HGDIOBJ old = nullptr;
-  void select(double size, bool bold, std::string_view family) {
-    std::wstring fam;
-    for (auto c : utf8_decode(family))
-      fam += wchar_t(c);
-    std::wstring k = fam + L"|" + std::to_wstring(int(size * 10)) + L"|" + (bold ? L"1" : L"0");
-    if (!dc)
-      dc = CreateCompatibleDC(nullptr);
-    if (k == key && font)
-      return;
-    HFONT f = CreateFontW(-int(size), 0, 0, 0, bold ? FW_BOLD : FW_NORMAL, FALSE, FALSE, FALSE,
-                          DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                          CLEARTYPE_QUALITY, DEFAULT_PITCH, fam.c_str());
-    if (!font) {
-      old = SelectObject(dc, f);
-      font = f;
-    } else {
-      SelectObject(dc, f);
-      DeleteObject(font);
-      font = f;
-    }
-    key = k;
-  }
 };
-static std::wstring wide_text(std::string_view s) {
-  std::wstring w;
-  for (auto c : utf8_decode(s))
-    w += wchar_t(c);
-  return w;
-}
+
 } // namespace
 #endif
-double Canvas::text_width(std::string_view s, double size, bool bold,
-                          std::string_view family) const {
+
+#ifndef _WIN32
+static double portable_text_width(std::string_view text, double size) {
+  double em = std::clamp(size, 1.0, 512.0), width = 0;
+  for (uint32_t cp : utf8_decode(text)) {
+    if (cp == '\n' || cp == '\r')
+      continue;
+    if ((cp >= 0x0300 && cp <= 0x036f) || (cp >= 0x1ab0 && cp <= 0x1aff))
+      continue;
+    if (cp == ' ' || cp == '\t')
+      width += em * 0.33;
+    else if (cp == 'i' || cp == 'l' || cp == '!' || cp == '|' || cp == '.' || cp == ',' ||
+             cp == ':' || cp == ';' || cp == '\'' || cp == '`')
+      width += em * 0.30;
+    else if (cp == 'W' || cp == 'M' || cp == '@' || cp == '%' || cp == '&')
+      width += em * 0.88;
+    else if (cp >= 0x2e80)
+      width += em;
+    else
+      width += em * 0.55;
+  }
+  return width;
+}
+#endif
+
+double Canvas::text_width(std::string_view text, double size, bool bold, std::string_view family) const {
 #ifdef _WIN32
-  thread_local WinFont cache;
-  cache.select(size, bold, family);
-  auto w = wide_text(s);
-  SIZE sz{};
-  GetTextExtentPoint32W(cache.dc, w.c_str(), int(w.size()), &sz);
-  return sz.cx;
+  auto &context = direct_write();
+  ComPtr<IDWriteTextLayout> layout;
+  DWRITE_TEXT_METRICS metrics{};
+  if (context.layout(text, family, size, bold, layout, &metrics))
+    return metrics.widthIncludingTrailingWhitespace;
+  return 0;
 #else
   (void)bold;
   (void)family;
-  return utf8_decode(s).size() * size * 0.6;
+  // Portable advances support layout/unit tests only; this build does not ship
+  // or rasterize a substitute font. Windows UI text uses DirectWrite metrics.
+  return portable_text_width(text, size);
 #endif
 }
+
 void Canvas::text(double x, double y, std::string_view text, double size, uint32_t color, bool bold,
                   std::string_view family) {
 #ifdef _WIN32
-  auto w = wide_text(text);
-  if (w.empty())
+  if (text.empty())
     return;
-  thread_local WinFont measure;
-  measure.select(size, bold, family);
-  SIZE sz{};
-  GetTextExtentPoint32W(measure.dc, w.c_str(), int(w.size()), &sz);
-  int tw = std::max(1, int(sz.cx) + 4), th = std::max(1, int(size * 2) + 4);
-  HDC dc = CreateCompatibleDC(nullptr);
-  BITMAPINFO bi{};
-  bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-  bi.bmiHeader.biWidth = tw;
-  bi.bmiHeader.biHeight = -th;
-  bi.bmiHeader.biPlanes = 1;
-  bi.bmiHeader.biBitCount = 32;
-  bi.bmiHeader.biCompression = BI_RGB;
-  void *bits = nullptr;
-  HBITMAP bmp = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
-  if (!bmp || !bits) {
-    if (bmp)
-      DeleteObject(bmp);
-    DeleteDC(dc);
+  auto &context = direct_write();
+  ComPtr<IDWriteTextLayout> layout;
+  DWRITE_TEXT_METRICS metrics{};
+  DWRITE_OVERHANG_METRICS overhang{};
+  if (!context.layout(text, family, size, bold, layout, &metrics, &overhang) || !context.render_target)
+    return;
+  int left = std::max(0, int(std::ceil(overhang.left))) + 2;
+  int top = std::max(0, int(std::ceil(overhang.top))) + 2;
+  int width = std::clamp(int(std::ceil(metrics.widthIncludingTrailingWhitespace +
+                                      std::max(0.0f, overhang.left) +
+                                      std::max(0.0f, overhang.right))) + left + 2,
+                         1, 8192);
+  int height = std::clamp(int(std::ceil(metrics.height + std::max(0.0f, overhang.top) +
+                                       std::max(0.0f, overhang.bottom))) + top + 2,
+                          1, 8192);
+  DibTarget dib;
+  dib.dc = CreateCompatibleDC(nullptr);
+  if (!dib.dc)
+    return;
+  BITMAPINFO info{};
+  info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+  info.bmiHeader.biWidth = width;
+  info.bmiHeader.biHeight = -height;
+  info.bmiHeader.biPlanes = 1;
+  info.bmiHeader.biBitCount = 32;
+  info.bmiHeader.biCompression = BI_RGB;
+  dib.bitmap = CreateDIBSection(dib.dc, &info, DIB_RGB_COLORS, &dib.bits, nullptr, 0);
+  if (!dib.bitmap || !dib.bits)
+    return;
+  dib.previous = SelectObject(dib.dc, dib.bitmap);
+  RECT bounds{0, 0, width, height};
+  if (FAILED(context.render_target->BindDC(dib.dc, &bounds)))
+    return;
+  ComPtr<ID2D1SolidColorBrush> brush;
+  if (FAILED(context.render_target->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brush)))
+    return;
+  context.render_target->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+  context.render_target->BeginDraw();
+  context.render_target->Clear(D2D1::ColorF(0, 0.0f));
+  context.render_target->DrawTextLayout(D2D1::Point2F(FLOAT(left), FLOAT(top)), layout.Get(), brush.Get(),
+                                        D2D1_DRAW_TEXT_OPTIONS_NONE);
+  HRESULT draw_result = context.render_target->EndDraw();
+  if (draw_result == D2DERR_RECREATE_TARGET) {
+    context.render_target.Reset();
     return;
   }
-  std::memset(bits, 0, size_t(tw) * th * 4);
-  HGDIOBJ oldbmp = SelectObject(dc, bmp);
-  HFONT font = CreateFontW(-int(size), 0, 0, 0, bold ? FW_BOLD : FW_NORMAL, FALSE, FALSE, FALSE,
-                           DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                           CLEARTYPE_QUALITY, DEFAULT_PITCH, wide_text(family).c_str());
-  HGDIOBJ oldfont = SelectObject(dc, font);
-  SetBkMode(dc, TRANSPARENT);
-  SetTextColor(dc, RGB(255, 255, 255));
-  TextOutW(dc, 0, 0, w.c_str(), int(w.size()));
-  GdiFlush();
-  uint8_t *p = static_cast<uint8_t *>(bits);
-  for (int row = 0; row < th; ++row)
-    for (int col = 0; col < tw; ++col) {
-      uint8_t intensity = p[(size_t(row) * tw + col) * 4];
-      if (intensity)
-        pixel(int(x) + col, int(y) + row, (uint32_t(intensity) << 24) | (color & 0x00ffffff));
+  if (FAILED(draw_result))
+    return;
+  const auto *pixels = static_cast<const uint8_t *>(dib.bits);
+  for (int row = 0; row < height; ++row)
+    for (int col = 0; col < width; ++col) {
+      uint8_t coverage = pixels[(size_t(row) * size_t(width) + size_t(col)) * 4 + 3];
+      if (coverage)
+        pixel(int(x) + col - left, int(y) + row - top,
+              (uint32_t(coverage) << 24) | (color & 0x00ffffff));
     }
-  SelectObject(dc, oldfont);
-  DeleteObject(font);
-  SelectObject(dc, oldbmp);
-  DeleteObject(bmp);
-  DeleteDC(dc);
 #else
+  // A non-Windows build deliberately has no bitmap-font fallback: it retains
+  // approximate advances for layout tests but does not rasterize UI glyphs.
+  (void)x;
+  (void)y;
+  (void)text;
+  (void)size;
+  (void)color;
+  (void)bold;
   (void)family;
-  auto cps = utf8_decode(text);
-  double scale = std::max(0.5, size / 10.0), advance = scale * 6, start = x;
-  for (auto c : cps) {
-    if (c == '\n') {
-      y += size * 1.3;
-      x = start;
-      continue;
-    }
-    auto g = glyph5x7(c);
-    for (int row = 0; row < 7; ++row)
-      for (int col = 0; col < 5; ++col)
-        if (g[row] & (1 << (4 - col)))
-          fill({x + col * scale, y + row * scale, scale + (bold ? 0.5 : 0), scale}, color);
-    x += advance;
-  }
 #endif
 }
 static void be32(Bytes &out, uint32_t n) {

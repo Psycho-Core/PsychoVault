@@ -430,6 +430,8 @@ static void apply(Style &s, const std::map<std::string, std::string> &d, double 
     s.box_sizing = *v;
   if (auto v = get("white-space"))
     s.white_space = *v;
+  if (auto v = get("text-overflow"))
+    s.text_overflow = *v;
   if (auto v = get("position"))
     s.position = *v;
   if (auto v = get("overflow"))

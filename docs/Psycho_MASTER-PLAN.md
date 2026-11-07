@@ -48,7 +48,9 @@ S045's same-app acceptance passed in that run: address entry in the engine-rende
 
 ### P2 status — 2026-11-07
 
-S050 is complete as an audit, not as engine implementation. `docs/Psycho_ENGINE-GAPS.md` now maps every P0/P1 requirement to exact pinned-reference and engine/test line anchors, five license-safe HTML/CSS/JS/raster/SVG fixtures, a passing `pv-engine` corpus smoke, and an explicit owned/ordered semantic regression deferral. The preserved harness output is `docs/results/Psycho_S050_CORPUS-AUDIT.json`; the refreshed implementation-status crosswalk is `docs/Psycho_REFERENCE-CROSSWALK.md`. This does not claim CSS/DOM/JS conformance, reference screenshot parity, or P2 completion. Continue with S051 DirectWrite text shaping and metrics.
+S050 is complete as an audit, not as engine implementation. `docs/Psycho_ENGINE-GAPS.md` maps every P0/P1 requirement to exact pinned-reference and engine/test line anchors, five license-safe HTML/CSS/JS/raster/SVG fixtures, a passing `pv-engine` corpus smoke, and an explicit owned/ordered semantic regression deferral. The preserved harness output is `docs/results/Psycho_S050_CORPUS-AUDIT.json`; the refreshed implementation-status crosswalk is `docs/Psycho_REFERENCE-CROSSWALK.md`. This does not claim CSS/DOM/JS conformance, reference screenshot parity, or P2 completion.
+
+S051 implementation has started: `Canvas::text_width` and Windows text rasterization now use DirectWrite shaping/metrics with Direct2D drawing, the 5×7 bitmap glyph fallback was removed, and nowrap/ellipsis handling plus text metric/ellipsis regressions were added. The portable Linux test suite passes, but the Windows DirectWrite build and acceptance run are pending; S051 must not be marked complete until Windows Actions validates the implementation.
 
 ## 3. What "my own Electron" and "my own Chrome" mean here
 
