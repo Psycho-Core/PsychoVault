@@ -46,6 +46,10 @@ S045's same-app acceptance passed in that run: address entry in the engine-rende
 
 **P1 runtime acceptance is complete.** This does not claim reference parity or completion of P2/P3, and S050's full engine gap table and other later-milestone work remain outstanding.
 
+### P2 kickoff — 2026-11-07
+
+P2 has started with S050. The first-pass source-to-engine matrix is in `docs/Psycho_ENGINE-GAPS.md`; it identifies the reference selectors/callsites, current engine owners, known gaps, priorities, and proposed named tests. S050 is not closed yet: the existing smoke fixtures are too small for a representative corpus, and every P0/P1 row still needs fixture-backed regression coverage or an explicit deferral. The planned first implementation after that audit is S051 DirectWrite text shaping and metrics.
+
 ## 3. What "my own Electron" and "my own Chrome" mean here
 
 Electron = (a) a rendering engine, (b) an app runtime that owns windows, processes, IPC, sessions, menus, extensions and updates, (c) the app's UI written as HTML/CSS/JS and rendered by (a).
