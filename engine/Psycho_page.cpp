@@ -1200,11 +1200,9 @@ public:
   }
   static std::map<std::string, std::string> parse_inline(const std::string &s) {
     std::map<std::string, std::string> out;
-    for (auto &p : split(s, ';')) {
-      auto c = p.find(':');
-      if (c != std::string::npos)
-        out[lower(trim(std::string_view(p).substr(0, c)))] =
-            trim(std::string_view(p).substr(c + 1));
+    for (const CssDeclaration &declaration : parse_css_declarations(s)) {
+      out[declaration.property] = declaration.value +
+          (declaration.important ? " !important" : "");
     }
     return out;
   }
@@ -1703,7 +1701,7 @@ void Page::rebuild() {
         }
       }
     }
-  auto styles = compute_styles(doc, sheets, width_);
+  auto styles = compute_styles(doc, sheets, width_, height_);
   Canvas measure{int(width_), int(height_)};
   layout_ = layout_document(doc, styles, width_, height_, resources_, measure);
   content_height_ = layout_.height;

@@ -26,6 +26,10 @@ struct Style {
   bool auto_left = false, auto_right = false;
   double width = -1, height = -1, min_width = 0, max_width = -1, min_height = 0, max_height = -1,
          radius = 0;
+  // Width percentages and calc() expressions resolve against the containing
+  // block, which is known in layout rather than during style cascade.
+  std::string width_expression, height_expression;
+  double root_font_size = 16, viewport_width = 0, viewport_height = 0;
   double top = 0, left = 0, right = 0, bottom = 0;
   // Auto offsets stay absent so I can tell "not set" from zero.
   bool has_top = false, has_left = false, has_right = false, has_bottom = false;
@@ -36,10 +40,18 @@ struct Style {
   double height_percent = -1, row_gap = -1;
   bool bold = false, italic = false, underline = false, list_item = false;
   std::map<std::string, std::string> raw;
+  // Custom properties inherit, preserve case-sensitive names, and are resolved
+  // only when a consuming property is computed.
+  std::map<std::string, std::string> custom_properties;
+};
+struct CssDeclaration {
+  std::string property, value;
+  bool important = false;
 };
 struct CssRule {
   std::string selector, media;
   std::map<std::string, std::string> declarations;
+  std::vector<CssDeclaration> declaration_order;
   std::set<std::string> important;
   int order = 0;
 };
@@ -48,9 +60,11 @@ struct Stylesheet {
   std::vector<Diagnostic> diagnostics;
   void parse(std::string_view text, int &order);
 };
+std::vector<CssDeclaration> parse_css_declarations(std::string_view text);
 std::vector<Style> compute_styles(const Document &doc, const std::vector<Stylesheet> &sheets,
-                                  double viewport_width);
+                                  double viewport_width, double viewport_height = -1);
 double css_length(const std::string &value, double parent, double font_size, double root_font,
-                  double viewport, const std::string &property, double fallback);
+                  double viewport_width, const std::string &property, double fallback,
+                  double viewport_height = -1);
 int specificity(std::string_view selector);
 } // namespace pv

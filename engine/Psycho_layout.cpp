@@ -55,6 +55,16 @@ struct Layout {
   double outer_extra(const Style &s) {
     return s.margin[1] + s.margin[3] + s.padding[1] + s.padding[3] + s.border[1] + s.border[3];
   }
+  double resolved_width(const Style &s, double containing_width) const {
+    if (s.width_expression.empty()) return s.width;
+    return css_length(s.width_expression, containing_width, s.font_size, s.root_font_size,
+                      s.viewport_width, "width", -1, s.viewport_height);
+  }
+  double resolved_height(const Style &s, double containing_height) const {
+    if (s.height_expression.empty() || containing_height <= 0) return s.height;
+    return css_length(s.height_expression, containing_height, s.font_size, s.root_font_size,
+                      s.viewport_width, "height", -1, s.viewport_height);
+  }
 
   // ---- geometry helpers -------------------------------------------------
   bool positioned(const Style &s) const {
@@ -236,8 +246,9 @@ struct Layout {
       double base = 0;
       if (row) {
         double extra = outer_extra(cs);
-        if (cs.width >= 0)
-          base = cs.width + extra;
+        const double specified_width = resolved_width(cs, inner_w);
+        if (specified_width >= 0)
+          base = specified_width + extra;
         else if (cs.flex_basis >= 0)
           base = cs.flex_basis + extra;
         else if (cs.flex_grow > 0)
@@ -457,12 +468,14 @@ struct Layout {
       double x = used.x + (cs.has_left ? cs.left : 0);
       double y = used.y + (cs.has_top ? cs.top : 0);
       double extra_w = outer_extra(cs);
+      const double specified_width = resolved_width(cs, used.w);
       if (cs.has_right && !cs.has_left)
-        x = used.x + used.w - cs.right - (cs.width >= 0 ? cs.width + extra_w : 0);
+        x = used.x + used.w - cs.right - (specified_width >= 0 ? specified_width + extra_w : 0);
       double extra_h = cs.margin[0] + cs.margin[2] + cs.padding[0] + cs.padding[2] +
                        cs.border[0] + cs.border[2];
+      const double specified_height = resolved_height(cs, used.h);
       if (cs.has_bottom && !cs.has_top)
-        y = used.y + used.h - cs.bottom - (cs.height >= 0 ? cs.height + extra_h : 0);
+        y = used.y + used.h - cs.bottom - (specified_height >= 0 ? specified_height + extra_h : 0);
       size_t from = out.paint.size();
       block(c, x, y, std::max(0.0, used.w - (cs.has_left ? cs.left : 0.0)), depth + 1, &used, -1,
             -1, used.h);
@@ -547,12 +560,13 @@ struct Layout {
   // In a column the cross axis is horizontal, so align-items only moves the box
   // when it has a width of its own.
   double cross_offset(const std::string &align, const Style &cs, double inner_w) {
-    if (cs.width < 0 || inner_w <= 0)
+    const double child_width = resolved_width(cs, inner_w);
+    if (child_width < 0 || inner_w <= 0)
       return 0;
     if (align == "center")
-      return std::max(0.0, (inner_w - cs.width) / 2);
+      return std::max(0.0, (inner_w - child_width) / 2);
     if (align == "flex-end" || align == "end")
-      return std::max(0.0, inner_w - cs.width);
+      return std::max(0.0, inner_w - child_width);
     return 0;
   }
   double block(int id, double x, double y, double available, int depth = 0,
@@ -570,12 +584,14 @@ struct Layout {
       return 0;
     double mw = std::max(0.0, available - s.margin[1] - s.margin[3]);
     double sideways = s.padding[1] + s.padding[3] + s.border[1] + s.border[3];
+    const double specified_width = resolved_width(s, available);
+    const double specified_height = resolved_height(s, avail_h);
     double w = 0;
     if (forced_w >= 0) {
       // Flex and grid have already decided this one.
       w = forced_w;
-    } else if (s.width >= 0) {
-      w = s.width;
+    } else if (specified_width >= 0) {
+      w = specified_width;
       if (s.box_sizing == "border-box")
         w -= sideways;
     } else {
@@ -584,7 +600,7 @@ struct Layout {
       w = std::max(0.0, mw - sideways);
     }
     if (s.max_width >= 0)
-      w = std::min(w, s.width >= 0 ? s.max_width : std::max(0.0, s.max_width - sideways));
+      w = std::min(w, specified_width >= 0 ? s.max_width : std::max(0.0, s.max_width - sideways));
     w = std::max({w, s.min_width, 0.0});
     double left = x + s.margin[3];
     // An auto margin takes the free space, so two of them centre the box.
@@ -816,7 +832,8 @@ struct Layout {
           bool moving = child.name == "video";
           double natural_w = attr_length("width", 300);
           double natural_h = attr_length("height", moving ? 150 : 32);
-          double vw = cs.width >= 0 ? cs.width : natural_w;
+          const double specified_width = resolved_width(cs, inner_w);
+          double vw = specified_width >= 0 ? specified_width : natural_w;
           double vh = cs.height >= 0 ? cs.height : natural_h;
           Rect box{inner_x + cs.margin[3], cursor + cs.margin[0], vw, std::max(1.0, vh)};
           // The element owns a dark box before its picture arrives, which is what
@@ -859,13 +876,14 @@ struct Layout {
             return -1;
           };
           double aw = attr_length("width"), ah = attr_length("height");
-          double iw = cs.width >= 0 ? cs.width : aw >= 0 ? aw : natural_w > 0 ? natural_w : 120;
+          const double specified_width = resolved_width(cs, inner_w);
+          double iw = specified_width >= 0 ? specified_width : aw >= 0 ? aw : natural_w > 0 ? natural_w : 120;
           double ih = cs.height >= 0                   ? cs.height
                       : ah >= 0                        ? ah
                       : natural_w > 0 && natural_h > 0 ? iw * natural_h / natural_w
                       : aw >= 0 && natural_w > 0       ? aw * natural_h / natural_w
                                                        : 80;
-          if (cs.width < 0 && cs.height >= 0 && natural_w > 0 && natural_h > 0)
+          if (specified_width < 0 && cs.height >= 0 && natural_w > 0 && natural_h > 0)
             iw = ih * natural_w / natural_h;
           iw = std::clamp(iw, 0.0, 16384.0);
           ih = std::clamp(ih, 0.0, 16384.0);
@@ -899,7 +917,9 @@ struct Layout {
           };
           // The width and height attributes set the bitmap; CSS sets the box.
           double bw = attr_length("width", 300), bh = attr_length("height", 150);
-          double cw = cs.width >= 0 ? cs.width : bw, ch = cs.height >= 0 ? cs.height : bh;
+          const double specified_width = resolved_width(cs, inner_w);
+          double cw = specified_width >= 0 ? specified_width : bw;
+          double ch = cs.height >= 0 ? cs.height : bh;
           out.paint.push_back({PaintCommand::Kind::Canvas,
                                {inner_x + cs.margin[3], cursor + cs.margin[0], cw, ch},
                                0,
@@ -919,7 +939,8 @@ struct Layout {
         bool control = child.name == "input" || child.name == "button" ||
                        child.name == "select" || child.name == "textarea";
         if (cs.display == "inline-block" && !control) {
-          double bw = cs.width >= 0 ? cs.width : std::max(0.0, inner_w - line_width);
+          const double specified_width = resolved_width(cs, inner_w);
+          double bw = specified_width >= 0 ? specified_width : std::max(0.0, inner_w - line_width);
           // A box that no longer fits starts a new line.
           if (line_width > 0 && line_width + bw > inner_w + 0.5)
             flush();
@@ -949,9 +970,11 @@ struct Layout {
           }
           if (label.empty())
             label = child.attribute("placeholder");
-          double cw = cs.width >= 0 ? cs.width
-                                    : std::max(80.0, measure.text_width(label, cs.font_size) +
-                                                         cs.padding[1] + cs.padding[3] + 16),
+          const double specified_width = resolved_width(cs, inner_w);
+          double cw = specified_width >= 0
+                          ? specified_width
+                          : std::max(80.0, measure.text_width(label, cs.font_size) +
+                                                cs.padding[1] + cs.padding[3] + 16),
                  ch = cs.height >= 0             ? cs.height
                       : child.name == "textarea" ? 80
                                                  : cs.font_size + cs.padding[0] + cs.padding[2] +
@@ -995,7 +1018,7 @@ struct Layout {
       double last_margin = 0;
       // A percentage height resolves against the containing block, never the
       // width, so I pass the height a child may use.
-      double child_height = s.height >= 0 ? s.height
+      double child_height = specified_height >= 0 ? specified_height
                             : (s.height_percent >= 0 && avail_h > 0 ? avail_h * s.height_percent
                                                                     : -1);
       for (int c : n.children) {
@@ -1019,11 +1042,11 @@ struct Layout {
       flush();
     }
     double content_h = cursor - inner_y;
-    double h = forced_h >= 0 ? forced_h : (s.height >= 0 ? s.height : content_h);
-    if (forced_h < 0 && s.height < 0 && s.height_percent >= 0 && avail_h > 0)
+    double h = forced_h >= 0 ? forced_h : (specified_height >= 0 ? specified_height : content_h);
+    if (forced_h < 0 && specified_height < 0 && s.height_percent >= 0 && avail_h > 0)
       h = avail_h * s.height_percent;
     // In border-box the height I was given already contains padding and border.
-    if (forced_h < 0 && s.height >= 0 && s.box_sizing == "border-box")
+    if (forced_h < 0 && specified_height >= 0 && s.box_sizing == "border-box")
       h -= s.padding[0] + s.padding[2] + s.border[0] + s.border[2];
     if (s.max_height >= 0)
       h = std::min(h, s.max_height);
@@ -1100,7 +1123,7 @@ LayoutResult layout_document(const Document &doc, const std::vector<Style> &styl
                          {}, {}, {}});
   l.viewport_height = height;
   Rect viewport{0, 0, width, height};
-  double used = l.block(doc.body, 0, 0, width, 0, &viewport);
+  double used = l.block(doc.body, 0, 0, width, 0, &viewport, -1, -1, height);
   l.out.height = std::max(height, used);
   l.out.paint[0].rect.h = l.out.height;
   return l.out;

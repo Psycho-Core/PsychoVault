@@ -592,6 +592,72 @@ int main() {
     }
     CHECK(bad);
   }
+  // S052: custom properties inherit through the tree, participate in the
+  // cascade, expand shorthand values, and are recomputed after style mutation.
+  {
+    const auto declarations = parse_css_declarations(
+        "color:rgb(1, 2, 3);--Label:'x;y';width:calc(100% - 2px) !important");
+    CHECK(declarations.size() == 3);
+    CHECK(declarations[0].value == "rgb(1, 2, 3)" && declarations[1].property == "--Label");
+    CHECK(declarations[2].important && declarations[2].value == "calc(100% - 2px)");
+    Page page;
+    page.load(*parse_url("https://css-values.test/"),
+              "<!doctype html><style>body{margin:0}#scope{--Space:8px;--accent:#123;"
+              "--forced:5px !important;--cycle:var(--cycle)}"
+              "#item{margin:var(--Space);margin-top:var(--forced);"
+              "padding:var(--Space) var(--cycle,2px);"
+              "width:calc(100px + 10px);height:clamp(10px,5vh,30px);"
+              "background-color:var(--accent)}#font{font:italic bold 18px/1.2 Arial,sans-serif}</style>"
+              "<div id=scope><div id=item></div><span id=font>Styled</span></div>"
+              "<script>var s=document.getElementById('scope').style;"
+              "s.setProperty('--Space','12px');s.setProperty('--forced','9px');</script>");
+    Rect item = node_box(page, "item");
+    CHECK(close_to(item.x, 12) && close_to(item.y, 5));
+    CHECK(close_to(item.w, 114) && close_to(item.h, 54));
+    bool accent_applied = false;
+    for (const auto &command : page.render(800, 600, 0).at("paint").array)
+      if (int(command.num("node")) == page.doc.by_id("item") &&
+          int(command.num("kind")) == int(PaintCommand::Kind::Rect) &&
+          uint32_t(command.num("color")) == 0xff112233u)
+        accent_applied = true;
+    CHECK(accent_applied);
+    bool font_shorthand_applied = false;
+    for (const auto &command : page.render(800, 600, 0).at("paint").array)
+      if (command.str("text") == "Styled" && close_to(command.num("size"), 18) &&
+          command.flag("bold"))
+        font_shorthand_applied = true;
+    CHECK(font_shorthand_applied);
+    auto color = parse_color("rgb(10 20 30 / 50%)");
+    CHECK(color.r == 10 && color.g == 20 && color.b == 30 && color.a >= 127 && color.a <= 128);
+    auto hsl = parse_color("hsl(210 50% 40%)");
+    CHECK(hsl.r == 51 && hsl.g == 102 && hsl.b == 153);
+  }
+  // S052: CSS math and mixed units use the parent/font/root/viewport bases.
+  {
+    CHECK(close_to(css_length("calc(50% - 2em)", 200, 10, 16, 800, "width", -1), 80));
+    CHECK(close_to(css_length("min(20px, 2em)", 200, 10, 16, 800, "width", -1), 20));
+    CHECK(close_to(css_length("max(10px, calc(1em + 3px))", 200, 10, 16, 800,
+                              "width", -1), 13));
+    CHECK(close_to(css_length("clamp(12px, 5vh, 40px)", 200, 10, 16, 800,
+                              "height", -1, 600), 30));
+    CHECK(close_to(css_length("2.54cm", 200, 10, 16, 800, "width", -1), 96));
+    CHECK(close_to(css_length("10vw", 200, 10, 16, 800, "width", -1, 600), 80));
+    CHECK(close_to(css_length("25vh", 200, 10, 16, 800, "height", -1, 600), 150));
+    Page percentages;
+    percentages.load(*parse_url("https://css-percent.test/"),
+                     "<!doctype html><style>body{margin:0}#outer{width:200px;height:200px}"
+                     "#inner{width:calc(50% - 10px);height:calc(50% - 10px)}</style>"
+                     "<div id=outer><div id=inner></div></div>");
+    Rect inner = node_box(percentages, "inner");
+    CHECK(close_to(inner.w, 90) && close_to(inner.h, 90));
+    Page gaps;
+    gaps.load(*parse_url("https://css-gap.test/"),
+              "<!doctype html><style>body{margin:0}#row{display:flex;gap:3px 7px}"
+              "#a,#b{width:20px;height:10px}</style>"
+              "<div id=row><div id=a></div><div id=b></div></div>");
+    Rect a = node_box(gaps, "a"), b = node_box(gaps, "b");
+    CHECK(close_to(b.x - a.x - a.w, 7));
+  }
   // Positioning, flex, grid and transforms, measured from my own paint list.
   {
     Page page;
