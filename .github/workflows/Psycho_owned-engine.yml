@@ -97,13 +97,17 @@ jobs:
             New-Item -ItemType Directory -Force build/captures | Out-Null
             '{"result":"PowerShell reached the S045 app launch","stage":"pre-launch"}' | Set-Content build/captures/s045-app-flow.png.flow.json -Encoding utf8
             'PowerShell reached the S045 app launch' | Set-Content build/captures/s045-app-flow-console.txt -Encoding utf8
-            $flowOutput = & .\build\PsychoVault.exe --smoke --expect-image --smoke-bridge-url http://127.0.0.1:8767/Psycho_browser-smoke.html --capture build/captures/s045-app-flow.png --profile $smokeProfile 2>&1
-            $flowExit = $LASTEXITCODE
-            $consoleDetail = "S045 app exit code: $flowExit`n" + ($flowOutput -join "`n")
+            $appProcess = Start-Process -FilePath '.\build\PsychoVault.exe' -ArgumentList @('--smoke','--expect-image','--smoke-bridge-url','http://127.0.0.1:8767/Psycho_browser-smoke.html','--capture','build/captures/s045-app-flow.png','--profile',$smokeProfile) -PassThru
+            if (-not $appProcess.WaitForExit(120000)) {
+              try { $appProcess.Kill($true) } catch {}
+              $appProcess.WaitForExit()
+              $flowExit = 99
+            } else { $flowExit = $appProcess.ExitCode }
+            $consoleDetail = "S045 app exit code: $flowExit"
             $consoleDetail | Set-Content build/captures/s045-app-flow-console.txt -Encoding utf8
             Write-Host $consoleDetail
             if ($flowExit -ne 0) {
-              $detail = ($flowOutput -join ' ') -replace '::', ':'
+              $detail = $consoleDetail
               if (Test-Path build/captures/s045-app-flow.png.flow.json) {
                 $failedReport = Get-Content build/captures/s045-app-flow.png.flow.json -Raw | ConvertFrom-Json
                 $detail += ' ' + ($failedReport | ConvertTo-Json -Compress)
@@ -112,7 +116,7 @@ jobs:
               throw "S045 same-app bridge smoke exited $flowExit"
             }
             if (-not (Test-Path build/captures/s045-app-flow.png.flow.json)) {
-              $detail = ($flowOutput -join ' ') -replace '::', ':'
+              $detail = $consoleDetail
               Write-Host "::error file=.github/workflows/Psycho_owned-engine.yml,line=90,title=S045FlowReportMissing::$detail"
               throw 'S045 same-app flow report was not written'
             }
