@@ -1,0 +1,19 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>P2 audit — scroll and positioning</title>
+<style>
+body { margin: 0; padding: 16px; font: 14px sans-serif; }
+.shell { position: relative; height: 260px; width: 640px; border: 1px solid #334155; overflow: hidden; }
+.sticky { position: sticky; top: 0; background: #dbeafe; padding: 8px; z-index: 2; }
+.scroller { height: 210px; overflow: auto; padding: 8px; }
+.badge { position: absolute; right: 12px; top: 12px; background: #fee2e2; padding: 4px; }
+.fixed-note { position: fixed; right: 12px; bottom: 12px; background: #dcfce7; padding: 4px; }
+</style></head>
+<body><h1>Nested scrolling and positioning audit</h1>
+<div class="shell"><div class="sticky">Sticky header marker</div><div class="badge">Absolute badge marker</div><div class="scroller">
+<p>Scroll item 01 — renderer output stays within the scroll container.</p>
+<p>Scroll item 02 — visible content and clip boundary.</p>
+<p>Scroll item 03 — nested panel row.</p><p>Scroll item 04 — focus and selection target.</p>
+<p>Scroll item 05 — stable layout under overflow.</p><p>Scroll item 06 — another paragraph.</p>
+<p>Scroll item 07 — another paragraph.</p><p>Scroll item 08 — another paragraph.</p>
+<p>Scroll item 09 — another paragraph.</p><p>Scroll item 10 — bottom sentinel marker.</p>
+</div></div><div class="fixed-note">Fixed note marker</div></body></html>

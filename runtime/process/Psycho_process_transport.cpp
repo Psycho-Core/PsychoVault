@@ -15,7 +15,9 @@ ProcessTransport::ProcessTransport(Capability local_capability, const Schemas &s
                                    Read read, Write write, bool accept_responses,
                                    Limits limits)
     : local_capability_(local_capability), schemas_(schemas), read_(std::move(read)),
-      write_(std::move(write)), accept_responses_(accept_responses), limits_(limits) {}
+      write_(std::move(write)), accept_responses_(accept_responses), limits_(limits),
+      incoming_stream_(limits.max_queued_bytes > 4 ? limits.max_queued_bytes - 4
+                                                   : limits.max_queued_bytes) {}
 
 bool ProcessTransport::validate(const Envelope &message, Error &error) const {
   if (!local_capability_.allows(message.channel)) {

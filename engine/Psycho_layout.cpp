@@ -4,6 +4,35 @@ namespace pv {
 namespace {
 // No background rectangle was painted for this box.
 constexpr size_t kNoPaint = static_cast<size_t>(-1);
+void pop_utf8_grapheme(std::string &text) {
+  auto pop_codepoint = [&]() -> uint32_t {
+    if (text.empty())
+      return 0;
+    size_t first = text.size() - 1;
+    while (first > 0 && (uint8_t(text[first]) & 0xc0) == 0x80)
+      --first;
+    uint8_t lead = uint8_t(text[first]);
+    uint32_t cp = lead;
+    if ((lead & 0xe0) == 0xc0)
+      cp = lead & 0x1f;
+    else if ((lead & 0xf0) == 0xe0)
+      cp = lead & 0x0f;
+    else if ((lead & 0xf8) == 0xf0)
+      cp = lead & 0x07;
+    for (size_t i = first + 1; i < text.size(); ++i)
+      cp = (cp << 6) | (uint8_t(text[i]) & 0x3f);
+    text.resize(first);
+    return cp;
+  };
+  uint32_t cp = pop_codepoint();
+  auto extension = [](uint32_t c) {
+    return (c >= 0x0300 && c <= 0x036f) || (c >= 0x1ab0 && c <= 0x1aff) ||
+           (c >= 0x1dc0 && c <= 0x1dff) || (c >= 0xfe00 && c <= 0xfe0f) ||
+           (c >= 0xfe20 && c <= 0xfe2f) || (c >= 0x1f3fb && c <= 0x1f3ff);
+  };
+  while (!text.empty() && extension(cp))
+    cp = pop_codepoint();
+}
 } // namespace
 struct Run {
   std::string text;
@@ -618,6 +647,37 @@ struct Layout {
       auto flush = [&]() {
         if (line.empty() && line_height <= 0)
           return;
+        if (s.white_space == "nowrap" && s.text_overflow == "ellipsis" && line_width > inner_w &&
+            !line.empty()) {
+          const std::string ellipsis = "\xE2\x80\xA6";
+          Run ellipsis_run = line.back();
+          double ellipsis_width = measure.text_width(ellipsis, ellipsis_run.style.font_size,
+                                                     ellipsis_run.style.bold,
+                                                     ellipsis_run.style.font_family);
+          while (!line.empty() && line_width + ellipsis_width > inner_w) {
+            Run &tail = line.back();
+            if (tail.text.empty() || tail.text == " ") {
+              line_width -= tail.width;
+              line.pop_back();
+              continue;
+            }
+            pop_utf8_grapheme(tail.text);
+            tail.width = measure.text_width(tail.text, tail.style.font_size, tail.style.bold,
+                                            tail.style.font_family);
+            if (tail.text.empty())
+              line.pop_back();
+            line_width = 0;
+            for (const auto &run : line)
+              line_width += run.width;
+          }
+          if (ellipsis_width <= inner_w) {
+            ellipsis_run.text = ellipsis;
+            ellipsis_run.width = ellipsis_width;
+            ellipsis_run.break_before = false;
+            line.push_back(std::move(ellipsis_run));
+            line_width += ellipsis_width;
+          }
+        }
         line_height = std::max(line_height, 16.0);
         double tx = inner_x;
         if (s.text_align == "center")
@@ -702,7 +762,7 @@ struct Layout {
             continue;
           }
           double ww = measure.text_width(word, st.font_size, st.bold, st.font_family);
-          if (line_width + ww > inner_w && !line.empty() && word != " ")
+          if (st.white_space != "nowrap" && line_width + ww > inner_w && !line.empty() && word != " ")
             flush();
           if (word == " " && line.empty())
             continue;

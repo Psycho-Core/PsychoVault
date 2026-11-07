@@ -1,6 +1,6 @@
 # Reference-to-rebuild crosswalk
 
-Audit date: 2026-11-06. This document turns the read-only reference into requirements for the independently written browser. It is a traceability/gap record, not a source-code port.
+Audit date: 2026-11-07. This document turns the read-only reference into requirements for the independently written browser. It is a traceability/gap record, not a source-code port.
 
 ## 1. Source and precedence
 
@@ -102,7 +102,7 @@ Inspection of the current reference-only head versus the pinned baseline shows r
 ## 4. Required plan changes from this audit
 
 1. Add/maintain this crosswalk as the source-to-plan map; the feature inventory alone records counts and does not prove that a plan task or test owns every behavior.
-2. Expand S050 from the short S008 CSS list to an engine audit against the actual reference UI's HTML/CSS/JS usage (`index.html`, `newtab.html`, `settings.html`, `renderer.js`) and representative page corpus. Each gap must cite the consuming file/selector/API, engine implementation file, test and priority.
+2. **Completed 2026-11-07:** expanded S050 beyond the S008 CSS list to an engine audit against actual reference UI HTML/CSS/JS usage and a five-page representative corpus. `docs/Psycho_ENGINE-GAPS.md` now carries exact selector/callsite line anchors, engine/test pointers, P0/P1 fixture-smoke mapping and named, owned/ordered semantic deferrals. See the S050 status update below.
 3. Make S083/S141/S163 acceptance row-level: all 125 settings controls, 59 defaults/types, eight dynamic editors, six clear actions, 80 invoke channels, 105 handlers, bridge events, 15 stores and 23 captures must link to implementation and named tests. A present control/category is not a pass.
 4. Add explicit behavior coverage for tab islands and container storage isolation, reference spell interactions, full vault fill safety, translation consent/disclosure, and sidebar/media workflows. These are not fully specified by current broad task bullets.
 5. Expand extension and updater gates to include the current reference's user-visible workflows while preserving stricter security properties; clearly distinguish externally observable parity from implementation differences.
@@ -111,3 +111,11 @@ Inspection of the current reference-only head versus the pinned baseline shows r
 ## 5. Current baseline summary
 
 As of this audit, `python3 tools/Psycho_audit-inventory.py` reports 155 evidence-checked, 48 partial, 36 deferred, 0 failed of 239 inventory items. This is not a parity pass count. The inventory itself finds the UI is not rebuilt, ordinary tabs still use an in-process path, numerous settings/features/IPC handlers are partial or deferred, and the owned engine has 5,009/54,058 Test262 tests passing (9.3%), 16 interpreter crashes, 21,845 unsupported tests and no WPT run (`docs/Psycho_CONFORMANCE.md`). Existing `tests/Psycho_test_main.cpp` and `runtime/tests/*` exercise engine/runtime contracts; `tools/Psycho_audit-inventory.py` audits inventory evidence. There is no rebuilt browser UI yet, so no current reference screenshot/interaction test; the installer directory is README-only, so no installer acceptance test exists. The reference repository's `VERIFICATION.md` and `tools/*.test.cjs` are useful test-intent/source evidence, not proof for this independent codebase. Windows production integration and the reference-to-new-UI screenshot/interaction runs remain outstanding. No milestone should be called reference-complete until the applicable row-level crosswalk tests pass.
+
+## 6. S050 engine audit update — 2026-11-07
+
+S050 is **complete as an audit**. The updated source-to-engine matrix and row-level traceability are in [`Psycho_ENGINE-GAPS.md`](Psycho_ENGINE-GAPS.md). That audit pins the reference UI source to `Psycho-Core/PsychoVault---REFERANCE-ONLY@51a0d717d2feb23ba91126db5e756a08a54e4486` and provides exact source line anchors, current engine/test pointers, priorities, and named regression ownership for each P0/P1 behavior.
+
+The corpus under `tests/fixtures/p2/` contains five license-safe authored fixtures covering mixed-script text and controls, flex/grid, nested scrolling/positioning, raster/SVG/inline SVG images, and externally loaded script-driven DOM mutation. `tools/Psycho_s050_corpus_audit.py` built and ran `pv-engine` and passed all five page/title/paint-marker checks at 1396×834; its preserved output is [`results/Psycho_S050_CORPUS-AUDIT.json`](results/Psycho_S050_CORPUS-AUDIT.json). The existing Linux `pv-tests` suite also passed 813 engine checks and 2,658 total checks. The report maps all 19 P0/P1 matrix rows to fixture-render smoke checks and explicitly records the semantic deferral owner (`Engine / P2 rendering`), priority, target plan step and named regression.
+
+**Interpretation:** S050's audit/traceability exit criteria are satisfied. A passing fixture render is only a paint-path smoke; at S050 close, the named semantic regressions were open and ordered for S051-S066. Subsequent S051 DirectWrite/ellipsis work is now Windows-validated in [run 42340417295](https://github.com/Psycho-Core/PsychoVault/actions/runs/42340417295), with a development ZIP artifact available there; S052 is next. Neither the S050 audit nor the S051 test run establishes full CSS/DOM/ECMAScript conformance, screenshot parity with the reference, completion of P2, or a rebuilt reference UI. The prior surface, settings, bridge, security, network, installer and parity findings in this crosswalk are otherwise unchanged.

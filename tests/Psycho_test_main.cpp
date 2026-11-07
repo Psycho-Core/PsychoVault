@@ -1034,6 +1034,25 @@ int main() {
     CHECK(find_in_paint(paint, "nothing").empty());
   }
   {
+    // S051: a single-line clipped label is measured with the active font metrics
+    // and the ellipsis stays inside the available inline width.
+    Page ellipsized;
+    ellipsized.load(*parse_url("https://text.test/"),
+                    "<!doctype html><style>body{margin:0}#clip{width:56px;font-size:16px;"
+                    "line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}</style>"
+                    "<div id=clip>Wide text with a trailing label</div>");
+    auto frame = ellipsized.render(180, 80, 0);
+    std::string visible;
+    double painted_width = 0;
+    for (const auto &command : frame.at("paint").array)
+      if (int(command.num("kind")) == int(PaintCommand::Kind::Text)) {
+        visible += command.str("text");
+        painted_width += command.num("w");
+      }
+    CHECK(visible.find("\xe2\x80\xa6") != std::string::npos);
+    CHECK(painted_width <= 56.1);
+  }
+  {
     // My canvas gives back what a script set, and the element it belongs to.
     Page page;
     page.load(*parse_url("https://canvas.test/"),
@@ -1745,6 +1764,16 @@ int main() {
   c.fill({0, 0, 64, 64}, 0xff112233);
   c.stroke({4, 4, 20, 20}, 0xffffffff);
   c.text(2, 30, "PV", 12, 0xff00ff00);
+  Canvas text_metrics(1, 1);
+  CHECK(text_metrics.text_width("WWWW", 16) > text_metrics.text_width("iiii", 16));
+  CHECK(text_metrics.text_width("Omega \xce\xa9 and CJK \xe4\xb8\xad\xe6\x96\x87", 16) > 0);
+#ifdef _WIN32
+  Canvas shaped_text(320, 48, 0xffffffff);
+  shaped_text.text(2, 4, "DirectWrite \xce\xa9\xce\xbc\xce\xad\xce\xb3\xce\xb1 \xd0\x9f\xd1\x80\xd0\xb8\xd0\xb2\xd0\xb5\xd1\x82 \xe4\xb8\xad\xe6\x96\x87", 18,
+                   0xff000000);
+  CHECK(std::any_of(shaped_text.pixels.begin(), shaped_text.pixels.end(),
+                    [](uint8_t channel) { return channel != 255; }));
+#endif
   auto png = encode_png(64, 64, c.pixels);
   CHECK(png.size() > 50);
   CHECK(png[0] == 137 && png[1] == 80);

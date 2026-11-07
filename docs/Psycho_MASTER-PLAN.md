@@ -24,7 +24,7 @@ The one thing I will not promise is a date for "every website on earth renders p
 
 The fix is architectural, not cosmetic: **build my own Electron first, then hang my browser UI and my engine on it.** That is what this plan intends to do.
 
-### Current baseline audit — 2026-11-06
+### Starting-point baseline audit — 2026-11-06 (historical)
 
 The repository's existing shell and engine are starting material, not proof that the product works like the reference browser. The current evidence is:
 
@@ -36,7 +36,23 @@ The repository's existing shell and engine are starting material, not proof that
 - `installer/` contains a README only. P10 owns the installer, so the M1 promise of a working installer and the statement that every milestone ends in an installer are not currently schedulable.
 - The M2 UI promise, P2 engine exit gate, and P3 UI implementation are out of order: the P2 gate asks for settings/new-tab markup before P3 creates `ui/`.
 
-Therefore P1 is not complete, and the old shell/engine cannot be counted as reference parity. The first actual source-to-plan audit is recorded in `docs/Psycho_REFERENCE-CROSSWALK.md`: it checks the pinned inventory commit against the read-only reference repository's current HEAD, records where they diverge, maps the reference surfaces to plan steps and current evidence, and identifies the missing acceptance cases. The crosswalk is not implementation evidence. S050's full engine gap table and row-level implementation/test traceability remain outstanding. No P2 gap work should be treated as complete until P1 has a production vertical slice and its Windows exit evidence.
+At this 2026-11-06 starting point, P1 was not complete, and the old shell/engine could not be counted as reference parity. The first actual source-to-plan audit is recorded in `docs/Psycho_REFERENCE-CROSSWALK.md`: it checks the pinned inventory commit against the read-only reference repository's current HEAD, records where they diverge, maps the reference surfaces to plan steps and current evidence, and identifies the missing acceptance cases. The crosswalk is not implementation evidence. At that initial audit point, S050's full engine gap table and row-level implementation/test traceability were still outstanding; they are now completed as an audit below, not as engine implementation.
+
+### P1 acceptance update — 2026-11-07
+
+The P1 exit gate passed in Windows Actions run [42334940299](https://github.com/Psycho-Core/PsychoVault/actions/runs/42334940299), on commit `7265f7e`. The complete run built the Windows executable and passed `pv-tests`; the Windows-only checks exercised two real renderer child processes, measured IPC, killed and replaced a renderer, and empirically verified AppContainer denial of profile-file reads and socket connections. The single-executable renderer launch and package-verifier checks also passed.
+
+S045's same-app acceptance passed in that run: address entry in the engine-rendered `psychovault://newtab/` page invoked the curated bridge, retained the source tab, opened the local fixture as a second tab, and verified that its renderer completed loading and painted an image. The run preserved the flow report and app/fixture captures as artifacts. The final branch cleanup commit `94f896d` only removed the temporary branch-scoped workflow trigger after this successful run; it did not change the acceptance implementation.
+
+**P1 runtime acceptance is complete.** This does not claim reference parity or completion of P2/P3; later-milestone implementation and parity work remain outstanding.
+
+### P2 status — 2026-11-07
+
+S050 is complete as an audit, not as engine implementation. `docs/Psycho_ENGINE-GAPS.md` maps every P0/P1 requirement to exact pinned-reference and engine/test line anchors, five license-safe HTML/CSS/JS/raster/SVG fixtures, a passing `pv-engine` corpus smoke, and an explicit owned/ordered semantic regression deferral. The preserved harness output is `docs/results/Psycho_S050_CORPUS-AUDIT.json`; the refreshed implementation-status crosswalk is `docs/Psycho_REFERENCE-CROSSWALK.md`. This does not claim CSS/DOM/JS conformance, reference screenshot parity, or P2 completion.
+
+**S051 is complete on the supported Windows build.** `Canvas::text_width` and Windows text rasterization use DirectWrite shaping/metrics with Direct2D drawing; the 5×7 bitmap glyph fallback was removed; and nowrap/ellipsis handling plus multilingual metric/raster regressions were added. Linux `pv-tests` passed 817 engine checks / 2,662 total checks. Windows Actions run [42340417295](https://github.com/Psycho-Core/PsychoVault/actions/runs/42340417295) built the code at `2561444`, passed `pv-tests`, rendered fixtures, and passed the existing Windows runtime/package checks. A test ZIP is available in that run's `psychovault-development-2561444e747eb75f5f5ada54c6ff0011015e37ad` artifact. Portable non-Windows rendering now uses approximate layout advances but intentionally does not draw substitute bitmap glyphs; the supported UI text path is Windows DirectWrite.
+
+**Launch/navigation blank-window follow-up:** a missing first frame or failed navigation in the S045 full-page shell path used to leave the window black, because the fallback status was suppressed along with the legacy browser chrome. The shell now shows a loading/failure card with Ctrl+R/Ctrl+T recovery guidance, and the ZIP's README identifies it as a development/test build, not an installer or finished general-use browser. The user's screenshot then exposed the concrete failure: a renderer IPC frame exceeded the default 1 MiB cap even though documents can be 8 MiB. Renderer process IPC now has an explicit 32 MiB bound, with a regression test that transfers a 1.2 MiB document/title through both broker and renderer. Linux tests passed 817 engine checks / 2,664 total checks; Windows run [42344556971](https://github.com/Psycho-Core/PsychoVault/actions/runs/42344556971) passed its build, tests, native-home capture, local fixture render, same-app bridge flow, isolated renderer, and package checks. This does not prove compatibility with arbitrary websites or independently replay the user's exact URL. S052 CSS values is next.
 
 ## 3. What "my own Electron" and "my own Chrome" mean here
 

@@ -16,7 +16,8 @@ bool RendererProcessFarm::spawn(Hosted &renderer, const std::string &executable,
     return false;
   }
   renderer.transport = windows_child_transport(renderer.process, Capability::all(),
-                                               schemas_, true, error, Limits{}, 30000);
+                                               schemas_, true, error,
+                                               renderer_process_limits(), 30000);
   if (!renderer.transport) {
     std::string ignored;
     kill_child_platform(renderer.process, "transport setup failed", ignored);

@@ -1,6 +1,6 @@
 # runtime/ - my own my own runtime
 
-P1 runtime components now exist here. The Windows shell launches two initial isolated renderer workers, then leases a dedicated process per ordinary web tab; navigation, fetch, form POST, input, resize, profile snapshots and rendered images use the process IPC path. The portable worker/client path is tested, but the Windows shell has not been compiled or run here, so this wiring is not yet verified production behavior. The P1 exit gate remains open pending the Windows app-flow and process/security checks.
+P1 runtime components now exist here. The Windows shell launches isolated renderer workers and routes ordinary web-tab navigation, fetch, form POST, input, resize, profile snapshots, and rendered images through process IPC. The Windows acceptance gate passed in [run 42334940299](https://github.com/Psycho-Core/PsychoVault/actions/runs/42334940299) on 2026-11-07: the app-page address entry opened a local fixture in a second tab in the same running app, and the Windows process, IPC, recovery, and isolation checks passed. This closes the P1 runtime acceptance gate; it does not claim browser parity or completion of later milestones.
 
 - `broker/` - window host, tab model, navigation, sessions, permissions, downloads, update service, dialogs, tray, menus.
 - `ipc/` - typed channel definitions, schemas, capability handles, the framed message bus.
@@ -9,36 +9,37 @@ P1 runtime components now exist here. The Windows shell launches two initial iso
 - `services/` - network, storage, vault, extension host and proxy service wrappers around `platform/`.
 - `tests/` - integration harnesses: IPC round-trip, process supervision, navigation, crash recovery.
 
-What exists now (P1 in progress):
+What exists now (P1 acceptance passed; broader browser parity remains future work):
 
 **Integration status:** S035-S040 remain tested runtime contract/service slices,
 not claims that every listed platform service is finished. S041's validated
 parser and S023's singleton lifecycle are wired into the Windows shell. The
-shell now starts two sandboxed `PsychoVault.exe --pv-renderer-child` processes through `RendererProcessFarm`,
-obtains a frame from each over process IPC, leases a dedicated child to each
-ordinary web tab, and releases that child when the tab session ends. Tab loading,
-input, resize, navigation, brokered network fetch/POST, cookie/local-storage
-snapshots, and returned image pixels are routed through IPC in the shell code.
-The farm can add workers as tabs need them and avoids holding its registry lock
-while a renderer waits on network I/O. The Windows-only tests are extended to
-exercise leases, real child processes, measured IPC, kill/recovery, and
-profile-file/socket denial, but the shell, those tests, and the Windows
-executable have not been built or exercised in this Linux run.
-English is the only UI language shipped. The P1 exit gate remains outstanding.
+shell starts sandboxed `PsychoVault.exe --pv-renderer-child` processes through
+`RendererProcessFarm`, obtains frames over process IPC, leases a dedicated child
+to each ordinary web tab, and releases that child when the tab session ends. Tab
+loading, input, resize, navigation, brokered network fetch/POST, cookie/local-
+storage snapshots, and returned image pixels use IPC. The Windows acceptance
+run 42334940299 passed `pv-tests`, including two real same-image renderer
+children, measured IPC, process termination/replacement, and empirical
+AppContainer profile-file and socket denial. It also passed the single-exe
+renderer launch and package-verification steps. See the run's uploaded
+`engine-tests.txt`, flow JSON, and captures for the preserved evidence.
+English is the only UI language shipped; full UI parity and later milestones
+remain out of scope for this P1 acceptance result.
 
-**S045 headless slice:** `ui/index.html` and `ui/app.js` now define a minimal
+**S045 app-UI slice:** `ui/index.html` and `ui/app.js` define a minimal
 engine-rendered address-entry/new-tab surface; its page bridge uses only the
-already curated `psycho.tab.new` method. `Psycho_s045_ui_smoke.py` rendered the
-app page and an independent local web fixture at 1396×834 and wrote PNG
-screenshots plus a JSON report under ignored `build/evidence/S045-headless/`.
-The AppHost contract tests exercise the exact `tab:new`/`tab:activate` bridge schemas and
-check that `nav.go` is not exposed; a process-worker test also exercises the
-bridge round trip from an internal page to a broker callback. The Windows shell
-source now embeds and serves the app page through a renderer process and queues
-those broker actions onto the window thread. The Windows workflow now compiles
-and smoke-renders the shell, but those captures launch the app page and local
-fixture separately; it does not prove app/local page switching inside one
-executable. S045 and S046 remain open.
+curated `psycho.tab.new` method. `Psycho_s045_ui_smoke.py` also renders the
+app page and an independent local web fixture at 1396×834. The Windows
+same-app test in run 42334940299 exercised the address field and bridge in one
+running executable: it retained the `psychovault://newtab/` source tab, opened
+`http://127.0.0.1:8767/Psycho_browser-smoke.html` in tab 2, and verified a ready
+renderer, completed load, expected title, and one rendered image. Both app and
+fixture screenshots plus a machine-readable report were captured. The AppHost
+contract tests verify the curated `tab:new`/`tab:activate` schemas and that
+`nav.go` is not exposed; a process-worker test also covers the bridge round
+trip from an internal page to the broker callback. This is an architecture/flow
+proof, not visual parity. S045 and the S046 Windows acceptance gate passed.
 
 - `ipc/Psycho_bus.*` (S021, done): the framed length-prefixed message bus with
   the 21 legacy channel groups plus runtime channels, capability masks per
@@ -71,10 +72,11 @@ executable. S045 and S046 remain open.
   exercises that state round-trip as well as navigation, click-to-navigate,
   URL-encoded form POST, resize, scroll, key input, malformed-command refusal,
   a second navigation and a 400-by-300 image transferred over multiple bounded
-  chunks in one worker. This is protocol/worker coverage. The shell now has a
-  per-tab process route and origin-scoped cookie/storage synchronization, but
-  that Windows-only integration has not been compiled or run here. The P1 gate
-  remains open until the actual app flow, recovery and isolation checks pass.
+  chunks in one worker. This is protocol/worker coverage. The Windows acceptance
+  run 42334940299 additionally built and exercised the shell's per-tab process
+  route in the real app flow; its Windows renderer/process/security tests and
+  the actual app flow passed there. Separate portable coverage checks the
+  origin-scoped cookie/storage state round-trip.
 - `tests/Psycho_runtime_tests.cpp` (S021-S041 unit contracts): schema and
   wire validation, capability/back-pressure laws, process supervision,
   navigation/session history, permission decisions, and each runtime contract
@@ -96,14 +98,14 @@ executable. S045 and S046 remain open.
   `CrashService` path, including failed and throwing probes. The process seam is
   still fake: the shell does not currently create renderers through this broker,
   and no production caller wires the qualification adapters or crash
-  invalidation. S043 therefore does not prove OS isolation or complete the P1
-  exit gate (two real renderers, real replacement, measured production IPC,
-  profile-file denial, and arbitrary-socket denial remain unproven). S043
-  added 57 checks; S023 fail-closed seam tests added 4 more afterward. The
-  S021's direction/schema hardening added 7 checks; S022 fragmented process
-  transport and engine-worker round trip add 11; S025 resource/overflow hardening
-  added 5. Renderer input, state, form-POST and image-chunk IPC tests are in the
-  suite; the latest portable run passes 811 engine checks and 2651 total.
+  invalidation. S043 itself does not prove OS isolation; that evidence is from
+  the separate S046 Windows acceptance run 42334940299, which passed the real
+  process, replacement, measured IPC, profile-file denial, and socket-denial
+  checks. S043 added 57 checks; S023 fail-closed seam tests added 4 more
+  afterward. S021 direction/schema hardening added 7 checks; S022 fragmented
+  process transport and engine-worker round trip add 11; S025 resource/overflow
+  hardening added 5. Renderer input, state, form-POST and image-chunk IPC tests
+  are in the suite; the latest portable run passes 813 engine checks and 2658 total.
 
 - `process/Psycho_process.*` (S022, supervision core done): the supervisor with
   injected clock - spawn, heartbeat windows, hang detection, kill for cause,
@@ -399,7 +401,9 @@ executable. S045 and S046 remain open.
   exercise in-process contracts and injected fake platform seams only; they do
   not prove a real OS renderer process, profile-file denial, or socket sandbox.
 
-P1 remains in progress. The next required integration is a real renderer
-process connected to the broker's framed IPC, followed by the OS-level crash,
-replacement, profile-file denial, and arbitrary-socket denial proofs in the P1
-exit gate.
+P1's runtime acceptance gate is complete based on Windows run 42334940299:
+the real-process brokered app flow, renderer kill/replacement, measured IPC,
+profile-file denial, and socket denial all passed. The development runtime is
+not the finished browser: UI parity, the full engine gap table (S050), and later
+P2/P3 milestones remain open and must not be represented as completed by this
+P1 result.

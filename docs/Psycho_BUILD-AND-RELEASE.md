@@ -1,4 +1,8 @@
-# My build and release rules
+# PsychoVault Windows development preview
+
+This ZIP is a **developer/test build**, not an installer or a finished everyday web browser. To try the app, extract the whole ZIP and run `PsychoVault.exe`; keep its extracted folder together. `pv-engine.exe` and `pv-tests.exe` are build/test tools, not extra apps you need to launch. The browser engine is still under development, so some websites may fail or render incompletely. A blank black window is not an expected or useful error message.
+
+## Build and release rules
 
 ## 1. Toolchain
 

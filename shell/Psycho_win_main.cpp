@@ -1378,12 +1378,40 @@ struct Browser {
   void draw(Canvas &c) {
     hits.clear();
     if (app_ui_slice) {
-      // Do not paint the legacy GDI browser controls in the app-page slice.
-      // Until an engine frame exists, leave the OS client surface clear rather
-      // than drawing shell-owned loading/error UI over the page.
+      // Keep the S045 page surface free of the legacy browser chrome, but never
+      // leave a user with a featureless black window while a page is starting or
+      // when navigation fails. A small shell-owned status card is the fallback
+      // until the renderer supplies a page frame.
       c.fill({0, 0, double(width), double(height)}, BG);
-      if (current().frame.type == Json::Type::Object && current().error.empty())
+      Tab &tab = current();
+      if (tab.frame.type == Json::Type::Object && tab.error.empty()) {
         draw_content(c);
+      } else {
+        const bool failed = !tab.error.empty();
+        const double card_width = std::min(760.0, std::max(320.0, double(width) - 64));
+        const double card_height = 176;
+        Rect card{(width - card_width) / 2, (height - card_height) / 2,
+                  card_width, card_height};
+        c.fill(card, PANEL);
+        c.stroke(card, BORDER);
+        c.text(card.x + 28, card.y + 26,
+               failed ? "This page didn't load" : "Starting PsychoVault...",
+               22, failed ? 0xfff87171 : TEXT, true);
+        if (failed) {
+          c.text(card.x + 28, card.y + 66, tab.error, 13, MUTED);
+          c.text(card.x + 28, card.y + 112,
+                 "Press Ctrl+R to retry, or Ctrl+T to open a new tab.",
+                 13, TEXT);
+        } else {
+          c.text(card.x + 28, card.y + 66,
+                 tab.loading ? "Waiting for the page renderer..."
+                             : "No page is open yet.",
+                 14, MUTED);
+          c.text(card.x + 28, card.y + 112,
+                 "If this stays here, press Ctrl+T to open a new tab.",
+                 13, TEXT);
+        }
+      }
       return;
     }
     c.fill({0, 0, double(width), double(height)}, BG);

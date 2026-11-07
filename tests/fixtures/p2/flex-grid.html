@@ -1,0 +1,14 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>P2 audit — flex and grid</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; padding: 16px; font: 14px/1.4 sans-serif; }
+.flex-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; width: 600px; }
+.card { flex: 1 1 160px; min-width: 120px; padding: 12px; border: 1px solid #667085; border-radius: 8px; }
+.grid { display: grid; grid-template-columns: 1fr 52px 42px 52px; gap: 6px; width: 520px; margin-top: 18px; }
+.grid > div { padding: 6px; border: 1px solid #667085; }
+</style></head>
+<body><h1>Flex and grid audit</h1>
+<section class="flex-row"><article class="card">Flex card A</article><article class="card">Flex card B</article><article class="card">Flex card C</article></section>
+<section class="grid"><div>Grid label</div><div>Count</div><div>CPU</div><div>Memory</div><div>Renderer process row</div><div>2</div><div>4%</div><div>64 MB</div></section>
+</body></html>

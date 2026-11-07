@@ -1,0 +1,354 @@
+{
+  "audit": "S050 pv-engine fixture corpus render audit",
+  "result": "passed",
+  "scope": "5 hand-authored license-safe fixtures; render and frame-marker smoke only",
+  "date": "2026-11-07",
+  "reference_revision": "Psycho-Core/PsychoVault---REFERANCE-ONLY@51a0d717d2feb23ba91126db5e756a08a54e4486",
+  "viewport": {
+    "width": 1396,
+    "height": 834
+  },
+  "engine": "pv-engine",
+  "fixture_count": 5,
+  "fixture_results": [
+    {
+      "test_id": "P2TextFallbackFixtureRender",
+      "fixture": "tests/fixtures/p2/text-controls.html",
+      "result": "passed",
+      "document_title": "P2 audit \u2014 text and controls",
+      "asserted_paint_markers": [
+        "Latin:",
+        "Web address",
+        "Remember workspace"
+      ],
+      "paint_command_count": 59,
+      "image_paint_command_count": 0,
+      "image_file_bytes": 4658313,
+      "supplied_resources": [],
+      "engine_diagnostics": []
+    },
+    {
+      "test_id": "P2FlexGridFixtureRender",
+      "fixture": "tests/fixtures/p2/flex-grid.html",
+      "result": "passed",
+      "document_title": "P2 audit \u2014 flex and grid",
+      "asserted_paint_markers": [
+        "Flex card A",
+        "Grid label",
+        "Renderer process row"
+      ],
+      "paint_command_count": 51,
+      "image_paint_command_count": 0,
+      "image_file_bytes": 4658313,
+      "supplied_resources": [],
+      "engine_diagnostics": []
+    },
+    {
+      "test_id": "P2NestedScrollFixtureRender",
+      "fixture": "tests/fixtures/p2/scroll-position.html",
+      "result": "passed",
+      "document_title": "P2 audit \u2014 scroll and positioning",
+      "asserted_paint_markers": [
+        "Sticky header marker",
+        "Scroll item 01",
+        "bottom sentinel marker"
+      ],
+      "paint_command_count": 172,
+      "image_paint_command_count": 0,
+      "image_file_bytes": 4658313,
+      "supplied_resources": [],
+      "engine_diagnostics": []
+    },
+    {
+      "test_id": "P2ImageSvgFixtureRender",
+      "fixture": "tests/fixtures/p2/images.html",
+      "result": "passed",
+      "document_title": "P2 audit \u2014 images and SVG",
+      "asserted_paint_markers": [
+        "Image, sizing, and SVG audit",
+        "raster marker",
+        "SVG vector marker."
+      ],
+      "paint_command_count": 26,
+      "image_paint_command_count": 2,
+      "image_file_bytes": 4658313,
+      "supplied_resources": [
+        "https://s050.test/pixel.png",
+        "https://s050.test/mark.svg"
+      ],
+      "engine_diagnostics": []
+    },
+    {
+      "test_id": "P2DynamicDomScriptFixtureRender",
+      "fixture": "tests/fixtures/p2/dynamic-dom.html",
+      "result": "passed",
+      "document_title": "P2 audit \u2014 dynamic DOM",
+      "asserted_paint_markers": [
+        "External script mutation marker"
+      ],
+      "paint_command_count": 24,
+      "image_paint_command_count": 0,
+      "image_file_bytes": 4658313,
+      "supplied_resources": [
+        "https://s050.test/fixture.js"
+      ],
+      "engine_diagnostics": []
+    }
+  ],
+  "p0_p1_feature_rows": [
+    {
+      "feature": "text-fallback",
+      "priority": "P0",
+      "fixture_render_test": "P2TextFallbackFixtureRender",
+      "fixture": "tests/fixtures/p2/text-controls.html",
+      "semantic_regression": "UiTextShapingFallbackMetrics",
+      "reviewed_deferral": {
+        "owner": "Engine / P2 rendering",
+        "priority": "P0",
+        "target_step": "S051",
+        "reason": "Fixture render is only a paint-path smoke; the named semantic assertion is not yet implemented."
+      }
+    },
+    {
+      "feature": "custom-properties",
+      "priority": "P0",
+      "fixture_render_test": "P2TextFallbackFixtureRender",
+      "fixture": "tests/fixtures/p2/text-controls.html",
+      "semantic_regression": "UiCustomPropertiesCascadeAndMutation",
+      "reviewed_deferral": {
+        "owner": "Engine / P2 rendering",
+        "priority": "P0",
+        "target_step": "S052",
+        "reason": "Fixture render is only a paint-path smoke; the named semantic assertion is not yet implemented."
+      }
+    },
+    {
+      "feature": "css-math",
+      "priority": "P0",
+      "fixture_render_test": "P2FlexGridFixtureRender",
+      "fixture": "tests/fixtures/p2/flex-grid.html",
+      "semantic_regression": "UiCssMathFunctionsAndMixedUnits",
+      "reviewed_deferral": {
+        "owner": "Engine / P2 rendering",
+        "priority": "P0",
+        "target_step": "S052",
+        "reason": "Fixture render is only a paint-path smoke; the named semantic assertion is not yet implemented."
+      }
+    },
+    {
+      "feature": "interactive-pseudo-classes",
+      "priority": "P0",
+      "fixture_render_test": "P2TextFallbackFixtureRender",
+      "fixture": "tests/fixtures/p2/text-controls.html",
+      "semantic_regression": "UiPseudoClassInteractionMatrix",
+      "reviewed_deferral": {
+        "owner": "Engine / P2 rendering",
+        "priority": "P0",
+        "target_step": "S053",
+        "reason": "Fixture render is only a paint-path smoke; the named semantic assertion is not yet implemented."
+      }
+    },
+    {
+      "feature": "box-sizing-intrinsic-percent",
+      "priority": "P0",
+      "fixture_render_test": "P2TextFallbackFixtureRender",
+      "fixture": "tests/fixtures/p2/text-controls.html",
+      "semantic_regression": "UiBoxSizingPercentAndIntrinsicSizing",
+      "reviewed_deferral": {
+        "owner": "Engine / P2 rendering",
+        "priority": "P0",
+        "target_step": "S054",
+        "reason": "Fixture render is only a paint-path smoke; the named semantic assertion is not yet implemented."
+      }
+    },
+    {
+      "feature": "flex-layout",
+      "priority": "P0",
+      "fixture_render_test": "P2FlexGridFixtureRender",
+      "fixture": "tests/fixtures/p2/flex-grid.html",
+      "semantic_regression": "UiFlexReferenceRowsAndWrap",
+      "reviewed_deferral": {
+        "owner": "Engine / P2 rendering",
+        "priority": "P0",
+        "target_step": "S055",
+        "reason": "Fixture render is only a paint-path smoke; the named semantic assertion is not yet implemented."
+      }
+    },
+    {
+      "feature": "grid-layout",
+      "priority": "P1",
+      "fixture_render_test": "P2FlexGridFixtureRender",
+      "fixture": "tests/fixtures/p2/flex-grid.html",
+      "semantic_regression": "UiGridTrackSizingAndAreas",
+      "reviewed_deferral": {
+        "owner": "Engine / P2 rendering",
+        "priority": "P1",
+        "target_step": "S056",
+        "reason": "Fixture render is only a paint-path smoke; the named semantic assertion is not yet implemented."
+      }
+    },
+    {
+      "feature": "positioning-stacking-clipping",
+      "priority": "P1",
+      "fixture_render_test": "P2NestedScrollFixtureRender",
+      "fixture": "tests/fixtures/p2/scroll-position.html",
+      "semantic_regression": "UiPositioningStackingAndClipOrder",
+      "reviewed_deferral": {
+        "owner": "Engine / P2 rendering",
+        "priority": "P1",
+        "target_step": "S057",
+        "reason": "Fixture render is only a paint-path smoke; the named semantic assertion is not yet implemented."
+      }
+    },
+    {
+      "feature": "paint-effects",
+      "priority": "P0",
+      "fixture_render_test": "P2TextFallbackFixtureRender",
+      "fixture": "tests/fixtures/p2/text-controls.html",
+      "semantic_regression": "UiPaintEffectsAndTransformedHitTesting",
+      "reviewed_deferral": {
+        "owner": "Engine / P2 rendering",
+        "priority": "P0",
+        "target_step": "S058",
+        "reason": "Fixture render is only a paint-path smoke; the named semantic assertion is not yet implemented."
+      }
+    },
+    {
+      "feature": "animation-media-motion",
+      "priority": "P1",
+      "fixture_render_test": "P2TextFallbackFixtureRender",
+      "fixture": "tests/fixtures/p2/text-controls.html",
+      "semantic_regression": "UiAnimationMediaAndReducedMotion",
+      "reviewed_deferral": {
+        "owner": "Engine / P2 rendering",
+        "priority": "P1",
+        "target_step": "S064/S065",
+        "reason": "Fixture render is only a paint-path smoke; the named semantic assertion is not yet implemented."
+      }
+    },
+    {
+      "feature": "nested-scroll-scrollbars",
+      "priority": "P1",
+      "fixture_render_test": "P2NestedScrollFixtureRender",
+      "fixture": "tests/fixtures/p2/scroll-position.html",
+      "semantic_regression": "UiNestedScrollWheelAndScrollbar",
+      "reviewed_deferral": {
+        "owner": "Engine / P2 rendering",
+        "priority": "P1",
+        "target_step": "S059",
+        "reason": "Fixture render is only a paint-path smoke; the named semantic assertion is not yet implemented."
+      }
+    },
+    {
+      "feature": "pointer-dispatch",
+      "priority": "P0",
+      "fixture_render_test": "P2DynamicDomScriptFixtureRender",
+      "fixture": "tests/fixtures/p2/dynamic-dom.html",
+      "semantic_regression": "UiPointerDelegationAndDefaultActions",
+      "reviewed_deferral": {
+        "owner": "Engine / P2 rendering",
+        "priority": "P0",
+        "target_step": "S060",
+        "reason": "Fixture render is only a paint-path smoke; the named semantic assertion is not yet implemented."
+      }
+    },
+    {
+      "feature": "form-control-state",
+      "priority": "P0",
+      "fixture_render_test": "P2TextFallbackFixtureRender",
+      "fixture": "tests/fixtures/p2/text-controls.html",
+      "semantic_regression": "UiControlStateLabelAndValidation",
+      "reviewed_deferral": {
+        "owner": "Engine / P2 rendering",
+        "priority": "P0",
+        "target_step": "S061",
+        "reason": "Fixture render is only a paint-path smoke; the named semantic assertion is not yet implemented."
+      }
+    },
+    {
+      "feature": "text-editing-ime",
+      "priority": "P0",
+      "fixture_render_test": "P2TextFallbackFixtureRender",
+      "fixture": "tests/fixtures/p2/text-controls.html",
+      "semantic_regression": "UiCaretSelectionClipboardAndIme",
+      "reviewed_deferral": {
+        "owner": "Engine / P2 rendering",
+        "priority": "P0",
+        "target_step": "S062",
+        "reason": "Fixture render is only a paint-path smoke; the named semantic assertion is not yet implemented."
+      }
+    },
+    {
+      "feature": "images-svg-favicon",
+      "priority": "P0",
+      "fixture_render_test": "P2ImageSvgFixtureRender",
+      "fixture": "tests/fixtures/p2/images.html",
+      "semantic_regression": "UiImageIntrinsicSizingSvgAndFavicon",
+      "reviewed_deferral": {
+        "owner": "Engine / P2 rendering",
+        "priority": "P0",
+        "target_step": "S063",
+        "reason": "Fixture render is only a paint-path smoke; the named semantic assertion is not yet implemented."
+      }
+    },
+    {
+      "feature": "dynamic-dom-mutation",
+      "priority": "P1",
+      "fixture_render_test": "P2DynamicDomScriptFixtureRender",
+      "fixture": "tests/fixtures/p2/dynamic-dom.html",
+      "semantic_regression": "UiDynamicDomAndDataAttributes",
+      "reviewed_deferral": {
+        "owner": "Engine / P2 rendering",
+        "priority": "P1",
+        "target_step": "S066",
+        "reason": "Fixture render is only a paint-path smoke; the named semantic assertion is not yet implemented."
+      }
+    },
+    {
+      "feature": "dataset-selector-geometry",
+      "priority": "P0",
+      "fixture_render_test": "P2DynamicDomScriptFixtureRender",
+      "fixture": "tests/fixtures/p2/dynamic-dom.html",
+      "semantic_regression": "UiDatasetClosestMatchesAndDomRect",
+      "reviewed_deferral": {
+        "owner": "Engine / P2 rendering",
+        "priority": "P0",
+        "target_step": "S060",
+        "reason": "Fixture render is only a paint-path smoke; the named semantic assertion is not yet implemented."
+      }
+    },
+    {
+      "feature": "reference-script-builtins-bridge",
+      "priority": "P1",
+      "fixture_render_test": "P2DynamicDomScriptFixtureRender",
+      "fixture": "tests/fixtures/p2/dynamic-dom.html",
+      "semantic_regression": "UiReferenceScriptApiSmoke",
+      "reviewed_deferral": {
+        "owner": "Engine / P2 rendering",
+        "priority": "P1",
+        "target_step": "S066",
+        "reason": "Fixture render is only a paint-path smoke; the named semantic assertion is not yet implemented."
+      }
+    },
+    {
+      "feature": "inline-style-variable-reflow",
+      "priority": "P1",
+      "fixture_render_test": "P2FlexGridFixtureRender",
+      "fixture": "tests/fixtures/p2/flex-grid.html",
+      "semantic_regression": "UiInlineStyleMutationReflow",
+      "reviewed_deferral": {
+        "owner": "Engine / P2 rendering",
+        "priority": "P1",
+        "target_step": "S052",
+        "reason": "Fixture render is only a paint-path smoke; the named semantic assertion is not yet implemented."
+      }
+    }
+  ],
+  "feature_row_count": 19,
+  "limits": [
+    "No claim of CSS/DOM/ECMAScript conformance or reference visual parity.",
+    "A fixture render passing does not mean its listed semantic regression has passed.",
+    "Every P0/P1 behavior remains owned and ordered as a reviewed deferral until its named regression is implemented.",
+    "The screenshots are generated in OUTDIR and are not committed; this JSON report is the preserved run output."
+  ]
+}
