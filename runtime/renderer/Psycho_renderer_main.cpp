@@ -27,7 +27,8 @@ int run_renderer_child() {
     return process_pipe_write(write_handle, bytes, error);
   };
   ProcessTransport transport(capabilities_for(Role::Renderer), schemas,
-                             std::move(read), std::move(write), true);
+                             std::move(read), std::move(write), true,
+                             renderer_process_limits());
   RendererWorker worker(transport, broker_fetcher(transport));
   return worker.run();
 }

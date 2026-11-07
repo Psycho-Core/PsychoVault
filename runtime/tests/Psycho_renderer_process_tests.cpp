@@ -91,7 +91,7 @@ int run_renderer_process_tests(int &shared) {
       },
       [broker_to_child](const std::string &bytes, Error &error) {
         return broker_to_child->write(bytes, error);
-      }, true);
+      }, true, renderer_process_limits());
   ProcessTransport child_transport(
       capabilities_for(Role::Renderer), schemas,
       [broker_to_child](std::string &bytes, Error &error) {
@@ -99,7 +99,7 @@ int run_renderer_process_tests(int &shared) {
       },
       [child_to_broker](const std::string &bytes, Error &error) {
         return child_to_broker->write(bytes, error);
-      }, true);
+      }, true, renderer_process_limits());
 
   RendererWorker worker(child_transport, broker_fetcher(child_transport));
   std::string child_exception;
@@ -150,6 +150,7 @@ int run_renderer_process_tests(int &shared) {
     channel = uint8_t(pixel_seed >> 24);
   }
   const Bytes image_png = encode_png(400, 300, image_pixels);
+  const std::string large_title(1200u * 1024u, 'x');
   Host::Fetcher fetcher = [&](const std::string &url, ResourceType) {
     ++fetches;
     Resource resource;
@@ -174,6 +175,9 @@ int run_renderer_process_tests(int &shared) {
     } else if (url == "https://slice.test/image") {
       resource.text = "<!doctype html><html><head><title>Image page</title></head>"
                       "<body><img src=\"/pixel.png\" width=\"64\" height=\"64\"></body></html>";
+    } else if (url == "https://slice.test/large") {
+      resource.text = "<!doctype html><html><head><title>" + large_title +
+                      "</title></head><body><p>Large page passed</p></body></html>";
     } else if (url == "https://slice.test/pixel.png") {
       resource.mime = "image/png";
       resource.bytes = image_png;
@@ -370,6 +374,15 @@ int run_renderer_process_tests(int &shared) {
   const std::string app_frame_url = reply.payload.find("frame")->str("url");
   PROCESS_CHECK(app_frame_url == "psychovault://newtab" ||
                 app_frame_url == "psychovault://newtab/");
+
+  // A real document can exceed the historical 1 MiB process-frame cap. The
+  // renderer transport must carry the broker response and the resulting frame,
+  // while still enforcing its explicit bounded 32 MiB allowance.
+  PROCESS_CHECK(client.navigate("https://slice.test/large", fetcher, reply, error,
+                                cookie_state, storage_state));
+  PROCESS_CHECK(!error && reply.payload.flag("ok") && reply.payload.find("frame") &&
+                reply.payload.find("frame")->str("title").size() == large_title.size() &&
+                fetches == 6);
 
   PROCESS_CHECK(client.shutdown(error) && !error);
 

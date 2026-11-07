@@ -233,7 +233,7 @@ void FrameStream::feed(const std::string &bytes, std::vector<Envelope> &out, Err
     uint32_t length = 0;
     for (int i = 0; i < 4; ++i)
       length |= uint32_t(static_cast<uint8_t>(buffer_[size_t(i)])) << (8 * i);
-    if (length > (1u << 20) + 64) {
+    if (length > max_frame_bytes_) {
       error = {"wire.oversize", "a frame claimed an impossible length"};
       return;
     }

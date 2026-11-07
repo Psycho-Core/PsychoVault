@@ -115,6 +115,8 @@ private:
 // assume frames arrive whole.
 class FrameStream {
 public:
+  explicit FrameStream(size_t max_frame_bytes = (1u << 20) + 64)
+      : max_frame_bytes_(max_frame_bytes) {}
   std::string encode(const Envelope &env) const;
   // I append bytes as they arrive and hand back any complete envelopes decoded
   // this call. Partial frames sit in my buffer until their length arrives.
@@ -123,14 +125,24 @@ public:
 
 private:
   std::string buffer_;
+  size_t max_frame_bytes_;
   size_t revealed_ = 0; // bytes decoded so far, for debugging surfaces only
 };
 
 struct Limits {
   // Back-pressure numbers, deliberately small enough to trip in tests.
-  size_t max_queued_bytes = 1u << 20; // 1 MiB inbound per endpoint
+  size_t max_queued_bytes = 1u << 20; // 1 MiB inbound per endpoint by default
   size_t max_queued_messages = 512;   // decoded, awaiting pickup
 };
+
+// A document is limited to 8 MiB, but process IPC wraps it in JSON and the
+// resulting layout/frame can be larger. Keep the renderer boundary bounded at
+// 32 MiB without weakening the smaller default for other transports.
+inline Limits renderer_process_limits() {
+  Limits limits;
+  limits.max_queued_bytes = 32u * 1024u * 1024u;
+  return limits;
+}
 
 class Link;
 
