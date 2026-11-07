@@ -1,10 +1,10 @@
 name: Build owned engine
 
-# TEMPORARY branch-only trigger to validate the 32 MiB renderer IPC fix; remove
-# after this Windows run. No other push/tag/PR triggers are enabled.
+# PARKED on purpose (P0/S003). No push, tag or pull-request trigger may start a
+# build until the runtime milestone is real. Run this workflow by hand when the
+# gates in docs/Psycho_MASTER-PLAN.md say an output is worth building; see
+# docs/Psycho_BUILD-AND-RELEASE.md.
 on:
-  push:
-    branches: [arena/f99582b8-psychovault]
   workflow_dispatch:
 permissions:
   contents: read
