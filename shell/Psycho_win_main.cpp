@@ -4189,15 +4189,28 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
           b->smoke_bridge_source_tab = home.id;
           const std::string app_capture = b->capture_path + ".app.png";
           capture(hwnd, app_capture);
-          // This is the address input's stable location in the minimal S045
-          // surface (720px centered card, 22px inner padding). Input, text and
-          // Enter all traverse the same renderer event/IPC route as a user.
-          const int address_x = int(std::lround(
-              b->content.x + (b->content.w - 720.0) / 2.0 + 122.0));
-          const int address_y = int(std::lround(b->content.y + 400.0));
-          b->click(address_x, address_y);
-          b->smoke_bridge_stage = 1;
-          b->smoke_bridge_stage_tick = now;
+          // Locate the input from its visible placeholder paint command instead
+          // of assuming a viewport-specific coordinate. The click, text and
+          // Enter all traverse the renderer event/IPC route as a user would.
+          double address_x = 0, address_y = 0;
+          bool address_found = false;
+          if (const Json *paint = home.frame.find("paint");
+              paint && paint->type == Json::Type::Array) {
+            for (const Json &command : paint->array) {
+              if (command.str("text") != "Type a web address") continue;
+              address_x = command.num("x") + 2.0;
+              address_y = command.num("y") + command.num("h") / 2.0;
+              address_found = true;
+              break;
+            }
+          }
+          if (!address_found) {
+            fail_flow("the app page did not paint its address input placeholder");
+          } else {
+            b->click(int(std::lround(address_x)), int(std::lround(address_y)));
+            b->smoke_bridge_stage = 1;
+            b->smoke_bridge_stage_tick = now;
+          }
         } else if (now - b->start_tick >= 20000) {
           fail_flow("the app UI did not become ready for address entry");
         }
