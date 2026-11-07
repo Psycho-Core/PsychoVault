@@ -4135,6 +4135,8 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         Json report = Json::make_object();
         report.set("result", passed ? "passed" : "failed");
         report.set("reason", reason);
+        report.set("stage", double(b->smoke_bridge_stage));
+        report.set("elapsedMs", double(GetTickCount() - b->start_tick));
         report.set("processId", double(GetCurrentProcessId()));
         report.set("sourceTabId", double(b->smoke_bridge_source_tab));
         report.set("sourceUrl", source ? source->url : std::string());
@@ -4145,6 +4147,9 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         report.set("targetTabId", double(target.id));
         report.set("tabCount", double(b->tabs.size()));
         report.set("targetRendererReady", target.session && target.session->ready);
+        report.set("targetLoading", target.loading);
+        report.set("targetError", target.error);
+        report.set("targetTitle", target.frame.str("title"));
         report.set("targetImageCount", double(target.images.size()));
         report.set("appScreenshot", b->capture_path + ".app.png");
         report.set("fixtureScreenshot", b->capture_path);
