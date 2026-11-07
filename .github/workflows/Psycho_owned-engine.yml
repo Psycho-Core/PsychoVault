@@ -6,12 +6,8 @@ name: Build owned engine
 # docs/Psycho_BUILD-AND-RELEASE.md.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - arena/5fe95615-psychovault
 permissions:
   contents: read
-  checks: write
 
 concurrency:
   group: psychovault-heavy
@@ -95,8 +91,6 @@ jobs:
           try {
             Start-Sleep -Seconds 1
             New-Item -ItemType Directory -Force build/captures | Out-Null
-            '{"result":"PowerShell reached the S045 app launch","stage":"pre-launch"}' | Set-Content build/captures/s045-app-flow.png.flow.json -Encoding utf8
-            'PowerShell reached the S045 app launch' | Set-Content build/captures/s045-app-flow-console.txt -Encoding utf8
             $appProcess = Start-Process -FilePath '.\build\PsychoVault.exe' -ArgumentList @('--smoke','--expect-image','--smoke-bridge-url','http://127.0.0.1:8767/Psycho_browser-smoke.html','--capture','build/captures/s045-app-flow.png','--profile',$smokeProfile) -PassThru
             if (-not $appProcess.WaitForExit(120000)) {
               try { $appProcess.Kill($true) } catch {}
@@ -132,34 +126,6 @@ jobs:
           } finally {
             Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
           }
-
-      - name: Publish temporary S045 flow diagnostics
-        if: always() && steps.s045_flow.outcome == 'failure'
-        shell: pwsh
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          $lines = @()
-          $reportPath = 'build/captures/s045-app-flow.png.flow.json'
-          $consolePath = 'build/captures/s045-app-flow-console.txt'
-          if (Test-Path $reportPath) { $lines += 'Flow report:'; $lines += Get-Content $reportPath -Raw }
-          if (Test-Path $consolePath) { $lines += 'App output:'; $lines += Get-Content $consolePath -Raw }
-          if ($lines.Count -eq 0) { $lines = @('The S045 step failed before writing its smoke report or app output.') }
-          $summary = ($lines -join "`n")
-          $payload = @{
-            name = 'S045 same-app flow diagnostic'
-            head_sha = $env:GITHUB_SHA
-            status = 'completed'
-            conclusion = 'failure'
-            output = @{ title = 'S045 smoke diagnostic'; summary = $summary }
-          } | ConvertTo-Json -Depth 8
-          $headers = @{
-            Authorization = "Bearer $env:GITHUB_TOKEN"
-            Accept = 'application/vnd.github+json'
-            'X-GitHub-Api-Version' = '2022-11-28'
-          }
-          $created = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/check-runs" -Headers $headers -ContentType 'application/json' -Body $payload
-          Write-Host "Created diagnostic check $($created.id)"
 
       - name: Prove my single executable launches an isolated renderer child
         shell: pwsh
