@@ -6,10 +6,6 @@ name: Build owned engine
 # docs/Psycho_BUILD-AND-RELEASE.md.
 on:
   workflow_dispatch:
-  # Temporary S052 Windows validation; remove after the branch-only run.
-  push:
-    branches:
-      - arena/e22c3bdf-psychovault
 permissions:
   contents: read
 
