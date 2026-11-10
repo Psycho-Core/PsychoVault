@@ -592,6 +592,75 @@ int main() {
     }
     CHECK(bad);
   }
+  // UiCustomPropertiesCascadeAndMutation (S052): custom properties inherit
+  // through the tree, participate in the cascade, expand shorthands, and update.
+  {
+    const auto declarations = parse_css_declarations(
+        "color:rgb(1, 2, 3);--Label:'x;y';width:calc(100% - 2px) !important");
+    CHECK(declarations.size() == 3);
+    CHECK(declarations[0].value == "rgb(1, 2, 3)" && declarations[1].property == "--Label");
+    CHECK(declarations[2].important && declarations[2].value == "calc(100% - 2px)");
+    Page page;
+    page.load(*parse_url("https://css-values.test/"),
+              "<!doctype html><style>body{margin:0}#scope{--Space:8px;--accent:#123;"
+              "--forced:5px !important;--cycle:var(--cycle)}"
+              "#item{margin:var(--Space);margin-top:var(--forced);"
+              "padding:var(--Space) var(--cycle,2px);"
+              "width:calc(100px + 10px);height:clamp(10px,5vh,30px);"
+              "background-color:var(--accent)}#font{font:italic bold 18px/1.2 Arial,sans-serif}</style>"
+              "<div id=scope><div id=item></div><span id=font>Styled</span></div>"
+              "<script>var s=document.getElementById('scope').style;"
+              "s.setProperty('--Space','12px');s.setProperty('--forced','9px');</script>");
+    Rect item = node_box(page, "item");
+    CHECK(close_to(item.x, 12) && close_to(item.y, 5));
+    CHECK(close_to(item.w, 114) && close_to(item.h, 54));
+    bool accent_applied = false;
+    const Json accent_frame = page.render(800, 600, 0);
+    for (const auto &command : accent_frame.at("paint").array)
+      if (int(command.num("node")) == page.doc.by_id("item") &&
+          int(command.num("kind")) == int(PaintCommand::Kind::Rect) &&
+          uint32_t(command.num("color")) == 0xff112233u)
+        accent_applied = true;
+    CHECK(accent_applied);
+    bool font_shorthand_applied = false;
+    const Json font_frame = page.render(800, 600, 0);
+    for (const auto &command : font_frame.at("paint").array)
+      if (command.str("text") == "Styled" && close_to(command.num("size"), 18) &&
+          command.flag("bold"))
+        font_shorthand_applied = true;
+    CHECK(font_shorthand_applied);
+    auto color = parse_color("rgb(10 20 30 / 50%)");
+    CHECK(color.r == 10 && color.g == 20 && color.b == 30 && color.a >= 127 && color.a <= 128);
+    auto hsl = parse_color("hsl(210 50% 40%)");
+    CHECK(hsl.r == 51 && hsl.g == 102 && hsl.b == 153);
+  }
+  // UiCssMathFunctionsAndMixedUnits (S052): math and mixed units use the
+  // parent/font/root/viewport bases, including deferred containing-block percentages.
+  {
+    CHECK(close_to(css_length("calc(50% - 2em)", 200, 10, 16, 800, "width", -1), 80));
+    CHECK(close_to(css_length("min(20px, 2em)", 200, 10, 16, 800, "width", -1), 20));
+    CHECK(close_to(css_length("max(10px, calc(1em + 3px))", 200, 10, 16, 800,
+                              "width", -1), 13));
+    CHECK(close_to(css_length("clamp(12px, 5vh, 40px)", 200, 10, 16, 800,
+                              "height", -1, 600), 30));
+    CHECK(close_to(css_length("2.54cm", 200, 10, 16, 800, "width", -1), 96));
+    CHECK(close_to(css_length("10vw", 200, 10, 16, 800, "width", -1, 600), 80));
+    CHECK(close_to(css_length("25vh", 200, 10, 16, 800, "height", -1, 600), 150));
+    Page percentages;
+    percentages.load(*parse_url("https://css-percent.test/"),
+                     "<!doctype html><style>body{margin:0}#outer{width:200px;height:200px}"
+                     "#inner{width:calc(50% - 10px);height:calc(50% - 10px)}</style>"
+                     "<div id=outer><div id=inner></div></div>");
+    Rect inner = node_box(percentages, "inner");
+    CHECK(close_to(inner.w, 90) && close_to(inner.h, 90));
+    Page gaps;
+    gaps.load(*parse_url("https://css-gap.test/"),
+              "<!doctype html><style>body{margin:0}#row{display:flex;gap:3px 7px}"
+              "#a,#b{width:20px;height:10px}</style>"
+              "<div id=row><div id=a></div><div id=b></div></div>");
+    Rect a = node_box(gaps, "a"), b = node_box(gaps, "b");
+    CHECK(close_to(b.x - a.x - a.w, 7));
+  }
   // Positioning, flex, grid and transforms, measured from my own paint list.
   {
     Page page;
@@ -608,9 +677,11 @@ int main() {
     page.load(*parse_url("https://layout.test/"),
               "<!doctype html><style>body{margin:0}"
               "#r{position:relative;top:5px;left:7px;width:100px;height:20px}"
-              "</style><div id=r>rel</div>");
-    Rect r = node_box(page, "r");
+              "#r2{position:relative;right:4px;bottom:3px;width:100px;height:20px}"
+              "</style><div id=r>rel</div><div id=r2>reverse inset</div>");
+    Rect r = node_box(page, "r"), r2 = node_box(page, "r2");
     CHECK(close_to(r.x, 7) && close_to(r.y, 5));
+    CHECK(close_to(r2.x, -4) && close_to(r2.y, 17));
   }
   {
     Page page;
@@ -803,6 +874,119 @@ int main() {
     CHECK(frame);
     CHECK(image);
     CHECK(host.pump() == false);
+  }
+  // UiPseudoClassInteractionMatrix covers interaction state, structural pseudos,
+  // selector specificity, origin/importance, and CSS-wide keywords.
+  {
+    Document selectors;
+    selectors.parse("<div id='box'><button id='one' class='hot'>One</button>"
+                    "<input id='two' type='checkbox' checked><input id='three' disabled>"
+                    "<button id='four'>Four</button></div>");
+    SelectorState state{selectors.by_id("one"), selectors.by_id("two"), selectors.by_id("four")};
+    CHECK(matches_selector(selectors, selectors.by_id("one"), "button:hover", &state));
+    CHECK(matches_selector(selectors, selectors.by_id("box"), ":hover", &state));
+    CHECK(matches_selector(selectors, selectors.by_id("four"), ":active", &state));
+    CHECK(!matches_selector(selectors, selectors.by_id("one"), ":active", &state));
+    CHECK(matches_selector(selectors, selectors.by_id("two"), ":focus", &state));
+    CHECK(matches_selector(selectors, selectors.by_id("two"), ":checked", &state));
+    CHECK(matches_selector(selectors, selectors.by_id("three"), ":disabled"));
+    CHECK(matches_selector(selectors, selectors.by_id("two"), ":enabled"));
+    CHECK(matches_selector(selectors, selectors.by_id("one"), "button:not(:disabled)", &state));
+    CHECK(!matches_selector(selectors, selectors.by_id("one"), "button:not(.hot)", &state));
+    CHECK(matches_selector(selectors, selectors.by_id("one"), ":nth-child(2n+1)"));
+    CHECK(matches_selector(selectors, selectors.by_id("three"), ":nth-child(2n+1)"));
+    CHECK(matches_selector(selectors, selectors.by_id("four"), ":nth-child(2n)"));
+    CHECK(matches_selector(selectors, selectors.by_id("two"), ":nth-child(-n+2)"));
+    CHECK(!matches_selector(selectors, selectors.by_id("one"), ":hover"));
+
+    Document cascade_doc;
+    cascade_doc.parse(
+        "<div id='parent' style='color:#123456;width:120px;background-color:#abcdef'>"
+        "<div id='inherit' style='color:inherit;width:inherit;background-color:inherit'></div>"
+        "<div id='unset' style='color:unset;width:unset'></div>"
+        "<div id='initial' style='color:initial;background-color:initial'></div></div>"
+        "<button id='origin'></button><button id='specific' class='specific'></button>"
+        "<button id='important' class='important'></button>"
+        "<button id='inline' style='color:#0000ff!important'></button>"
+        "<button id='revert'></button><button id='group-rank' class='group-rank'></button>");
+    Stylesheet sheet;
+    int css_order = 0;
+    sheet.parse("*{color:#00ff00}.specific{color:#0000ff}#specific{color:#ff0000}"
+                ".important{color:#0000ff!important}#important{color:#ff0000!important}"
+                "#inline{color:#ff0000!important}#revert{color:revert}"
+                "#group-rank{color:#ff0000}#never,.group-rank{color:#0000ff}", css_order);
+    std::vector<Stylesheet> sheets{sheet};
+    const auto styles = compute_styles(cascade_doc, sheets, 800, 600);
+    const Style &parent_style = styles[cascade_doc.by_id("parent")];
+    const Style &inherited = styles[cascade_doc.by_id("inherit")];
+    const Style &unset = styles[cascade_doc.by_id("unset")];
+    const Style &initial = styles[cascade_doc.by_id("initial")];
+    CHECK(inherited.color.r == 0x12 && inherited.color.g == 0x34 && inherited.color.b == 0x56);
+    CHECK(close_to(inherited.width, 120));
+    CHECK(inherited.background.r == 0xab && inherited.background.g == 0xcd && inherited.background.b == 0xef);
+    CHECK(unset.color.r == parent_style.color.r && unset.color.g == parent_style.color.g &&
+          unset.color.b == parent_style.color.b);
+    CHECK(unset.width < 0);
+    CHECK(initial.color.r == 0 && initial.color.g == 0 && initial.color.b == 0);
+    CHECK(initial.background.transparent);
+    const Style &origin = styles[cascade_doc.by_id("origin")];
+    CHECK(origin.color.r == 0 && origin.color.g == 255 && origin.color.b == 0);
+    const Style &specific = styles[cascade_doc.by_id("specific")];
+    CHECK(specific.color.r == 255 && specific.color.g == 0 && specific.color.b == 0);
+    const Style &important = styles[cascade_doc.by_id("important")];
+    CHECK(important.color.r == 255 && important.color.g == 0 && important.color.b == 0);
+    const Style &inline_important = styles[cascade_doc.by_id("inline")];
+    CHECK(inline_important.color.r == 0 && inline_important.color.g == 0 && inline_important.color.b == 255);
+    const Style &reverted = styles[cascade_doc.by_id("revert")];
+    CHECK(reverted.color.r == 0x11 && reverted.color.g == 0x11 && reverted.color.b == 0x11);
+    const Style &group_specificity = styles[cascade_doc.by_id("group-rank")];
+    CHECK(group_specificity.color.r == 255 && group_specificity.color.g == 0 &&
+          group_specificity.color.b == 0);
+
+    Page interactive;
+    interactive.load(*parse_url("https://local.test/"),
+                     "<style>#btn{width:90px;height:28px;background:#111111}"
+                     "#btn:hover{background:#ff0000}#btn:active{background:#0000ff}"
+                     "#btn:focus{background:#00ff00}</style><button id='btn'>Button</button>");
+    auto button_color = [&](const Json &frame) {
+      for (const Json &command : frame.at("paint").array)
+        if (int(command.num("node", -1)) == interactive.doc.by_id("btn") &&
+            int(command.num("kind", -1)) == 0) return command.num("color");
+      return -1.0;
+    };
+    Rect button = node_box(interactive, "btn");
+    const double x = button.x + button.w / 2, y = button.y + button.h / 2;
+    const double idle = button_color(interactive.render(800, 600, 0));
+    interactive.pointer_move(x, y);
+    const double hover = button_color(interactive.render(800, 600, 0));
+    interactive.pointer_down(x, y);
+    const double active = button_color(interactive.render(800, 600, 0));
+    interactive.pointer_up(x, y);
+    const double released = button_color(interactive.render(800, 600, 0));
+    interactive.click(x, y);
+    const double focused = button_color(interactive.render(800, 600, 0));
+    CHECK(idle >= 0 && hover != idle);
+    CHECK(active != hover && released == hover);
+    CHECK(focused != released);
+
+    Page checkbox;
+    checkbox.load(*parse_url("https://local.test/"),
+                  "<style>#check{width:24px;height:24px;background:#111111}"
+                  "#check:checked{background:#ff00ff}</style>"
+                  "<input id='check' type='checkbox'>");
+    Rect check_box = node_box(checkbox, "check");
+    const double check_x = check_box.x + check_box.w / 2;
+    const double check_y = check_box.y + check_box.h / 2;
+    auto checkbox_color = [&](const Json &frame) {
+      for (const Json &command : frame.at("paint").array)
+        if (int(command.num("node", -1)) == checkbox.doc.by_id("check") &&
+            int(command.num("kind", -1)) == 0) return command.num("color");
+      return -1.0;
+    };
+    const double unchecked = checkbox_color(checkbox.render(800, 600, 0));
+    checkbox.click(check_x, check_y);
+    const double checked = checkbox_color(checkbox.render(800, 600, 0));
+    CHECK(unchecked >= 0 && checked != unchecked);
   }
   Page page;
   page.load(*parse_url("https://local.test/"),
@@ -2818,6 +3002,100 @@ int main() {
                  "<div id=p><div id=a></div></div>");
     CHECK(close_to(node_box(percent, "a").h, 50));
   }
+  // UiBoxSizingPercentAndIntrinsicSizing covers used border/content sizes,
+  // percentage resolution, margin collapse, overflow clips, and scroll markers.
+  {
+    Page boxes;
+    boxes.load(*parse_url("https://box-model.test/"),
+               "<!doctype html><style>body{margin:0}#parent{width:200px;height:200px}"
+               "#pct{height:50%;width:100px;box-sizing:border-box;padding:10px;border:5px solid}"
+               "#limited{width:300px;height:180px;min-width:150px;max-width:180px;"
+               "min-height:120px;max-height:140px;padding:10px;border:5px solid}"
+               "#border-min{box-sizing:border-box;width:80px;height:60px;min-width:120px;"
+               "min-height:100px;padding:10px;border:5px solid}"
+               "#percent-bound{width:20px;height:10px;min-width:50%;max-width:70%;"
+               "min-height:50%;max-height:75%}"
+               "#percent-parent{width:200px;height:150px}"
+               "#percent-child{width:100px;height:20px;margin:10% 0 0 10%;padding-left:5%}"
+               "#negative-flow{width:200px}#negative-a{height:10px;margin-bottom:20px}"
+               "#negative-b{height:10px;margin-top:-5px}</style>"
+               "<div id=parent><div id=pct></div><div id=limited></div><div id=border-min></div>"
+               "<div id=percent-bound></div></div>"
+               "<div id=percent-parent><div id=percent-child></div></div>"
+               "<div id=negative-flow><div id=negative-a></div><div id=negative-b></div></div>");
+    CHECK(close_to(node_box(boxes, "pct").h, 100));
+    Rect limited = node_box(boxes, "limited");
+    CHECK(close_to(limited.w, 210) && close_to(limited.h, 170));
+    Rect border_min = node_box(boxes, "border-min");
+    CHECK(close_to(border_min.w, 120) && close_to(border_min.h, 100));
+    Rect percent_bound = node_box(boxes, "percent-bound");
+    CHECK(close_to(percent_bound.w, 100) && close_to(percent_bound.h, 100));
+    Rect percent_parent = node_box(boxes, "percent-parent");
+    Rect percent_child = node_box(boxes, "percent-child");
+    CHECK(close_to(percent_child.x - percent_parent.x, 20));
+    CHECK(close_to(percent_child.y - percent_parent.y, 20));
+    CHECK(close_to(percent_child.w, 110));
+    Rect negative_a = node_box(boxes, "negative-a");
+    Rect negative_b = node_box(boxes, "negative-b");
+    CHECK(close_to(negative_b.y - negative_a.y, 25));
+
+    Page overflow;
+    overflow.load(*parse_url("https://overflow.test/"),
+                  "<!doctype html><style>body{margin:0}#scroll{width:80px;height:20px;overflow:auto}"
+                  "#tall{height:80px;background:#00ff00}#clip{width:80px;height:20px;"
+                  "overflow:hidden}#hidden{display:block;height:80px}</style>"
+                  "<div id=scroll><div id=tall></div></div><div id=clip>"
+                  "<a id=hidden href='/invisible'>hidden link</a></div>");
+    const Json overflow_frame = overflow.render(200, 150, 0);
+    int scroll_parts = 0;
+    for (const Json &command : overflow_frame.at("paint").array)
+      if (int(command.num("node", -1)) == overflow.doc.by_id("scroll") &&
+          int(command.num("kind", -1)) == int(PaintCommand::Kind::Rect)) ++scroll_parts;
+    CHECK(scroll_parts == 2);
+    Rect clip_box = node_box(overflow, "clip");
+    overflow.click(4, clip_box.y + 40);
+    CHECK(overflow.navigations.empty());
+
+    Page offscreen_clip;
+    offscreen_clip.load(*parse_url("https://clip-stack.test/"),
+                        "<!doctype html><style>body{margin:0}#clip{height:20px;overflow:hidden}"
+                        "#tall{height:80px}#later{height:20px;margin-top:100px;"
+                        "background:#ff0000}</style><div id=clip><div id=tall></div></div>"
+                        "<div id=later></div>");
+    const Json clipped_frame = offscreen_clip.render(100, 50, 100);
+    std::vector<PaintCommand> commands;
+    for (const Json &command : clipped_frame.at("paint").array) {
+      PaintCommand item;
+      item.kind = PaintCommand::Kind(int(command.num("kind", 0)));
+      item.rect = {command.num("x"), command.num("y"), command.num("w"), command.num("h")};
+      item.color = uint32_t(command.num("color"));
+      item.text = command.str("text");
+      item.size = command.num("size");
+      item.thickness = command.num("thickness");
+      item.bold = command.flag("bold");
+      item.node = int(command.num("node", -1));
+      item.gradient = command.str("gradient");
+      item.fixed = command.flag("fixed");
+      commands.push_back(std::move(item));
+    }
+    Canvas pixels(100, 50, 0xffffffffu);
+    paint_commands(pixels, commands, 100, offscreen_clip.images());
+    const size_t pixel = (size_t(25) * pixels.width + 5) * 4;
+    CHECK(pixels.pixels[pixel + 2] > 200 && pixels.pixels[pixel + 1] < 20);
+
+    Page intrinsic;
+    intrinsic.load(*parse_url("https://intrinsic.test/"),
+                   "<!doctype html><style>body{margin:0}#photo{max-width:1.5px}</style>"
+                   "<img id=photo src='/photo.png'>");
+    Resource image;
+    image.url = "https://intrinsic.test/photo.png";
+    image.mime = "image/png";
+    image.ok = true;
+    image.bytes = Bytes(fixtures::rgba_filters.begin(), fixtures::rgba_filters.end());
+    intrinsic.resource(image);
+    Rect fitted_image = node_box(intrinsic, "photo");
+    CHECK(std::abs(fitted_image.w - 1.5) < 0.1 && std::abs(fitted_image.h - 2.5) < 0.1);
+  }
   {
     // grid-template-rows fixes the track heights.
     Page grid;
@@ -2827,6 +3105,45 @@ int main() {
               "<div id=g><div></div><div></div><div id=c></div></div>");
     Rect c = node_box(grid, "c");
     CHECK(close_to(c.y, 40) && close_to(c.x, 0) && close_to(c.w, 50));
+  }
+  {
+    // UiGridTrackSizingAndAreas covers named grid areas, fixed/fractional tracks,
+    // explicit row/column placement, span-aware auto-placement, gaps and item alignment.
+    Page grid;
+    grid.load(*parse_url("https://grid-reference.test/"),
+              "<!doctype html><style>body{margin:0}"
+              "#areas{display:grid;width:300px;height:100px;gap:5px 10px;"
+              "grid-template-columns:minmax(80px, 80px) 1fr 1fr;grid-template-rows:30px 1fr;"
+              "grid-template-areas:'top top top' 'side main main'}"
+              "#top{grid-area:top}#side{grid-area:side}#main{grid-area:main}"
+              "#auto-grid{display:grid;width:90px;column-gap:5px;row-gap:4px;"
+              "grid-template-columns:40px 40px}"
+              "#wide{grid-column:span 2;height:10px}#next{height:10px}"
+              "#explicit{grid-row:2;grid-column:2;height:10px}"
+              "#aligned{display:grid;width:100px;height:40px;grid-template-columns:100px;"
+              "grid-template-rows:40px;place-items:center}"
+              "#centered{width:20px;height:10px}"
+              "#flow{display:grid;width:100px;height:40px;grid-template-rows:20px 20px;"
+              "grid-auto-flow:column}#f1,#f2,#f3{height:5px}"
+              "</style><div id=areas><div id=top></div><div id=side></div><div id=main></div></div>"
+              "<div id=auto-grid><div id=wide></div><div id=next></div>"
+              "<div id=explicit></div></div><div id=aligned><div id=centered></div></div>"
+              "<div id=flow><div id=f1></div><div id=f2></div><div id=f3></div></div>");
+    Rect top = node_box(grid, "top"), side = node_box(grid, "side"), main = node_box(grid, "main");
+    Rect wide = node_box(grid, "wide"), next = node_box(grid, "next");
+    Rect explicit_cell = node_box(grid, "explicit"), centered = node_box(grid, "centered");
+    Rect flow = node_box(grid, "flow"), f1 = node_box(grid, "f1"), f2 = node_box(grid, "f2");
+    Rect f3 = node_box(grid, "f3");
+    CHECK(close_to(top.x, 0) && close_to(top.y, 0) && close_to(top.w, 300) && close_to(top.h, 30));
+    CHECK(close_to(side.x, 0) && close_to(side.y, 35) && close_to(side.w, 80));
+    CHECK(close_to(main.x, 90) && close_to(main.y, 35) && close_to(main.w, 210));
+    CHECK(close_to(wide.x, 0) && close_to(wide.y, 100));
+    CHECK(close_to(next.x, 0) && close_to(next.y, 114));
+    CHECK(close_to(explicit_cell.x, 45) && close_to(explicit_cell.y, 114));
+    CHECK(close_to(centered.x, 40) && close_to(centered.y, 139));
+    CHECK(close_to(f1.x, flow.x) && close_to(f1.y, flow.y));
+    CHECK(close_to(f2.x, flow.x) && close_to(f2.y, flow.y + 20));
+    CHECK(close_to(f3.x, flow.x + 50) && close_to(f3.y, flow.y));
   }
   {
     // flex order and align-self move one item without touching the rest.
@@ -2840,12 +3157,138 @@ int main() {
     CHECK(close_to(flex_b.x, 0) && close_to(flex_b.y, 50));
   }
   {
-    // Sticky stays where the flow puts it until a scroll asks for it.
+    // UiFlexReferenceRowsAndWrap is the named flex reference-row regression:
+    // row wrapping, column wrapping, cross-line alignment and flex-container
+    // positioning are checked from the semantic layout boxes.
+    Page flex;
+    flex.load(*parse_url("https://flex-reference.test/"),
+              "<!doctype html><style>body{margin:0}"
+              "#row{display:flex;flex-flow:row wrap;gap:5px 10px;align-content:space-between;"
+              "width:120px;height:80px}#r1,#r2,#r3{width:60px;height:10px}"
+              "#col{display:flex;flex-flow:column wrap;row-gap:5px;column-gap:10px;"
+              "width:80px;height:50px}#c1,#c2,#c3{width:20px;height:30px}"
+              "#abs{position:absolute;right:0;bottom:0;width:10px;height:10px}"
+              "#auto{display:flex;width:100px;height:30px}"
+              "#auto-child{width:20px;height:10px;margin-left:auto}"
+              "</style><div id=row><div id=r1></div><div id=r2></div><div id=r3></div></div>"
+              "<div id=col><div id=c1></div><div id=c2></div><div id=c3></div></div>"
+              "<div id=flex-cb style='display:flex;position:relative;width:120px;height:80px'>"
+              "<div id=abs></div></div>"
+              "<div id=auto><div id=auto-child></div></div>");
+    Rect r1 = node_box(flex, "r1"), r2 = node_box(flex, "r2"), r3 = node_box(flex, "r3");
+    Rect c1 = node_box(flex, "c1"), c2 = node_box(flex, "c2"), c3 = node_box(flex, "c3");
+    Rect abs = node_box(flex, "abs"), auto_child = node_box(flex, "auto-child");
+    Rect flex_cb = node_box(flex, "flex-cb");
+    CHECK(close_to(r1.x, 0) && close_to(r2.x, 0) && close_to(r3.x, 0));
+    CHECK(close_to(r1.y, 0) && close_to(r2.y, 35) && close_to(r3.y, 70));
+    CHECK(close_to(c1.x, 0) && close_to(c2.x, 30) && close_to(c3.x, 60));
+    CHECK(close_to(c1.y, 80) && close_to(c2.y, 80) && close_to(c3.y, 80));
+    CHECK(close_to(abs.x, flex_cb.x + 110) && close_to(abs.y, flex_cb.y + 70));
+    CHECK(close_to(auto_child.x, 80));
+  }
+  {
+    // Baseline alignment, shrink-to-minimum freezing and a percentage flex-basis
+    // cover the line-level sizing cases which are easy to regress independently.
+    Page flex;
+    flex.load(*parse_url("https://flex-sizing.test/"),
+              "<!doctype html><style>body{margin:0}"
+              "#baseline{display:flex;align-items:baseline;line-height:1}"
+              "#small{font-size:10px}#large{font-size:20px}"
+              "#shrink{display:flex;width:100px}"
+              "#s1{width:80px;min-width:60px;height:10px}#s2{width:80px;height:10px}"
+              "#basis{display:flex;flex-direction:column;width:50px;height:100px}"
+              "#basis-child{flex:0 0 50%;width:10px}"
+              "</style><div id=baseline><div id=small>x</div><div id=large>x</div></div>"
+              "<div id=shrink><div id=s1></div><div id=s2></div></div>"
+              "<div id=basis><div id=basis-child></div></div>");
+    Rect small = node_box(flex, "small"), large = node_box(flex, "large");
+    Rect s1 = node_box(flex, "s1"), s2 = node_box(flex, "s2");
+    Rect basis = node_box(flex, "basis-child");
+    CHECK(small.y > large.y + 5);
+    CHECK(close_to(s1.w, 60) && close_to(s2.w, 40));
+    CHECK(close_to(basis.h, 50));
+  }
+  {
+    // UiPositioningStackingAndClipOrder checks sticky viewport constraints,
+    // fixed viewport behavior, positioned z-order and clipped overflow paint.
+    auto box_in_frame = [](Page &page, const Json &frame, const char *id) {
+      const int node = page.doc.by_id(id);
+      for (const Json &box : frame.at("boxes").array)
+        if (int(box.num("node", -1)) == node)
+          return Rect{box.num("x"), box.num("y"), box.num("w"), box.num("h")};
+      return Rect{0, 0, -1, -1};
+    };
     Page sticky;
     sticky.load(*parse_url("https://sticky.test/"),
-                "<!doctype html><style>body{margin:0}#a{position:sticky;top:5px;height:20px}</style>"
-                "<div id=a></div>");
-    CHECK(close_to(node_box(sticky, "a").y, 0));
+                "<!doctype html><style>body{margin:0}#spacer{height:40px}"
+                "#container{height:100px}#sticky{position:sticky;top:5px;height:20px;background:#123}"
+                "#after{height:80px}#tail{height:300px}</style>"
+                "<div id=spacer></div><div id=container><div id=sticky></div><div id=after></div></div>"
+                "<div id=tail></div>");
+    Json sticky_top = sticky.render(100, 50, 0);
+    Json sticky_pinned = sticky.render(100, 50, 45);
+    Json sticky_bottom = sticky.render(100, 50, 130);
+    CHECK(close_to(box_in_frame(sticky, sticky_top, "sticky").y, 40));
+    CHECK(close_to(box_in_frame(sticky, sticky_pinned, "sticky").y, 50));
+    CHECK(close_to(box_in_frame(sticky, sticky_bottom, "sticky").y, 120));
+
+    Page fixed;
+    fixed.load(*parse_url("https://fixed.test/"),
+               "<!doctype html><style>body{margin:0}#spacer{height:100px}"
+               "#fixed{position:fixed;top:7px;left:9px;width:20px;height:10px;background:#f00}"
+               "#fixed:active{background:#0f0}#tail{height:300px}</style><div id=spacer></div><div id=fixed></div><div id=tail></div>");
+    Json fixed_frame = fixed.render(100, 50, 80);
+    int fixed_id = fixed.doc.by_id("fixed");
+    Rect fixed_box = box_in_frame(fixed, fixed_frame, "fixed");
+    CHECK(close_to(fixed_box.x, 9) && close_to(fixed_box.y, 7));
+    bool fixed_command = false;
+    for (const Json &command : fixed_frame.at("paint").array)
+      if (int(command.num("node", -1)) == fixed_id) fixed_command |= command.flag("fixed");
+    CHECK(fixed_command);
+    fixed.pointer_down(10, 8);
+    Json fixed_active = fixed.render(100, 50, 80);
+    bool active_paint = false;
+    for (const Json &command : fixed_active.at("paint").array)
+      if (int(command.num("node", -1)) == fixed_id &&
+          uint32_t(command.num("color", 0)) == 0xff00ff00u) active_paint = true;
+    CHECK(active_paint);
+
+    Page stacking;
+    stacking.load(*parse_url("https://stacking.test/"),
+                  "<!doctype html><style>body{margin:0}#root{position:relative;width:100px;height:60px}"
+                  "#context{position:absolute;z-index:2;left:0;top:0;width:60px;height:50px;background:#f00}"
+                  "#inner{position:absolute;z-index:99;left:0;top:0;width:20px;height:20px;background:#0f0}"
+                  "#above{position:absolute;z-index:3;left:0;top:0;width:40px;height:30px;background:#00f}"
+                  "#clip{position:relative;overflow:hidden;width:20px;height:20px}"
+                  "#clipped{position:absolute;left:10px;top:0;width:30px;height:20px;background:#0f0}"
+                  "</style><div id=root><div id=context><div id=inner></div></div><div id=above></div></div>"
+                  "<div id=clip><div id=clipped></div></div>");
+    Json stack_frame = stacking.render(100, 100, 0);
+    std::vector<int> stacking_order;
+    for (const Json &command : stack_frame.at("paint").array) {
+      int node = int(command.num("node", -1));
+      if (int(command.num("kind", -1)) == int(PaintCommand::Kind::Rect) &&
+          (node == stacking.doc.by_id("context") || node == stacking.doc.by_id("inner") ||
+           node == stacking.doc.by_id("above"))) stacking_order.push_back(node);
+    }
+    CHECK(stacking_order == std::vector<int>({stacking.doc.by_id("context"),
+                                               stacking.doc.by_id("inner"),
+                                               stacking.doc.by_id("above")}));
+    std::vector<PaintCommand> stack_commands;
+    for (const Json &command : stack_frame.at("paint").array) {
+      PaintCommand entry;
+      entry.kind = PaintCommand::Kind(int(command.num("kind", 0)));
+      entry.rect = {command.num("x"), command.num("y"), command.num("w"), command.num("h")};
+      entry.color = uint32_t(command.num("color"));
+      entry.node = int(command.num("node", -1));
+      stack_commands.push_back(std::move(entry));
+    }
+    Canvas stack_pixels(100, 100, 0xffffffffu);
+    paint_commands(stack_pixels, stack_commands, 0, stacking.images());
+    const size_t inside_clip = (size_t(65) * stack_pixels.width + 15) * 4;
+    const size_t outside_clip = (size_t(65) * stack_pixels.width + 25) * 4;
+    CHECK(stack_pixels.pixels[inside_clip + 1] > 200);
+    CHECK(stack_pixels.pixels[outside_clip] > 200 && stack_pixels.pixels[outside_clip + 1] > 200);
   }
   {
     // A gradient background, an overflow clip and the paint pass that applies
@@ -2892,6 +3335,169 @@ int main() {
     // The tall green child is clipped at the bottom of its 20px box.
     CHECK(((pixel(100, 30) >> 8) & 255) == 255);
     CHECK(pixel(100, 60) == 0xffffffff);
+  }
+  {
+    // UiPaintEffectsAndTransformedHitTesting covers rounded and layered
+    // backgrounds, box shadows, outlines, grouped opacity/filter and a rotated
+    // box whose transformed location is also used for pointer hit testing.
+    Page effects;
+    effects.load(*parse_url("https://paint-effects.test/"),
+      "<!doctype html><style>body{margin:0;background:#fff}"
+      "#round{position:absolute;left:10px;top:10px;width:40px;height:40px;"
+      "background:#ff0000;border-radius:12px}"
+      "#fx{position:absolute;left:60px;top:10px;width:30px;height:20px;"
+      "background:#ff0000;opacity:.5;filter:brightness(.5);box-shadow:0 0 3px #000;"
+      "outline:2px solid #0000ff;transform:translate(10px,5px) scale(1.5) rotate(90deg)}"
+      "#layers{position:absolute;left:10px;top:60px;width:40px;height:20px;"
+      "background-image:linear-gradient(90deg,#ff0000,#0000ff),"
+      "linear-gradient(90deg,#00ff00,#00ffff)}"
+      "#active{position:absolute;left:100px;top:10px;width:20px;height:20px;"
+      "background:#ff0000;transform:translate(20px,10px) rotate(90deg)}"
+      "#active:active{background:#00ff00}</style>"
+      "<div id=round></div><div id=fx></div><div id=layers></div><div id=active></div>");
+    Json initial = effects.render(160, 100, 0);
+    std::vector<PaintCommand> commands;
+    bool saw_radius = false, saw_shadow = false, saw_outline = false;
+    bool saw_layered_gradient = false, saw_group_filter = false;
+    for (const Json &json : initial.at("paint").array) {
+      PaintCommand command;
+      command.kind = PaintCommand::Kind(int(json.num("kind", 0)));
+      command.rect = {json.num("x"), json.num("y"), json.num("w"), json.num("h")};
+      command.color = uint32_t(json.num("color"));
+      command.text = json.str("text");
+      command.size = json.num("size");
+      command.thickness = json.num("thickness");
+      command.bold = json.flag("bold");
+      command.node = int(json.num("node", -1));
+      command.url = json.str("url");
+      command.gradient = json.str("gradient");
+      command.fixed = json.flag("fixed");
+      command.radius = json.num("radius");
+      command.opacity = json.num("opacity", 1);
+      command.blur = json.num("blur");
+      command.spread = json.num("spread");
+      command.offset_x = json.num("offsetX");
+      command.offset_y = json.num("offsetY");
+      command.rotation = json.num("rotation");
+      command.filter = json.str("filter");
+      const int kind = int(command.kind);
+      saw_radius |= kind == int(PaintCommand::Kind::Rect) && command.radius >= 12;
+      saw_shadow |= kind == int(PaintCommand::Kind::Shadow);
+      saw_outline |= kind == int(PaintCommand::Kind::Outline);
+      saw_layered_gradient |= kind == int(PaintCommand::Kind::Rect) && !command.gradient.empty();
+      saw_group_filter |= kind == int(PaintCommand::Kind::PopLayer) &&
+                          command.opacity < 1 && command.filter.find("brightness") != std::string::npos &&
+                          std::abs(command.rotation) > 80;
+      commands.push_back(std::move(command));
+    }
+    CHECK(saw_radius && saw_shadow && saw_outline && saw_layered_gradient && saw_group_filter);
+    Rect transformed = node_box(effects, "active");
+    CHECK(close_to(transformed.x, 120) && close_to(transformed.y, 20) &&
+          close_to(transformed.w, 20) && close_to(transformed.h, 20));
+    Canvas canvas(160, 100, 0xffffffffu);
+    paint_commands(canvas, commands, 0, effects.images());
+    auto pixel = [&](int x, int y) {
+      const size_t offset = (size_t(y) * canvas.width + x) * 4;
+      return (uint32_t(canvas.pixels[offset + 3]) << 24) |
+             (uint32_t(canvas.pixels[offset + 2]) << 16) |
+             (uint32_t(canvas.pixels[offset + 1]) << 8) | canvas.pixels[offset];
+    };
+    CHECK(pixel(10, 10) == 0xffffffffu); // rounded corner leaves the white page visible
+    CHECK(((pixel(25, 25) >> 16) & 255) > 240); // rounded fill covers its interior
+    const uint32_t filtered = pixel(85, 20);
+    CHECK(((filtered >> 16) & 255) > ((filtered >> 8) & 255));
+    CHECK(((filtered >> 8) & 255) < 200 && (filtered & 255) < 200);
+    const uint32_t gradient_left = pixel(12, 70), gradient_right = pixel(48, 70);
+    CHECK(((gradient_left >> 16) & 255) > (gradient_left & 255));
+    CHECK((gradient_right & 255) > ((gradient_right >> 16) & 255));
+    effects.pointer_down(130, 30);
+    Json active = effects.render(160, 100, 0);
+    bool hit_transformed_active = false;
+    for (const Json &command : active.at("paint").array)
+      if (int(command.num("node", -1)) == effects.doc.by_id("active") &&
+          uint32_t(command.num("color", 0)) == 0xff00ff00u)
+        hit_transformed_active = true;
+    CHECK(hit_transformed_active);
+  }
+  {
+    // UiNestedScrollWheelAndScrollbar covers local wheel scrolling, remainder
+    // chaining and overscroll containment, a proportional scrollbar and thumb
+    // dragging, plus keyboard scrolling in the focused nested scroller.
+    Page scrolling;
+    scrolling.load(*parse_url("https://nested-scroll.test/"),
+      "<!doctype html><style>body{margin:0}"
+      "#outer{width:100px;height:80px;overflow:auto;overscroll-behavior:auto}"
+      "#inner{width:70px;height:40px;overflow:auto}"
+      "#inside{height:120px;background:#123456}#tail{height:100px;background:#abcdef}"
+      "#contained{width:50px;height:30px;overflow:auto;overscroll-behavior:contain}"
+      "#contained-content{height:100px}</style>"
+      "<div id=outer><div id=inner><div id=inside></div></div>"
+      "<div id=contained><div id=contained-content></div></div><div id=tail></div></div>");
+    const int outer_id = scrolling.doc.by_id("outer");
+    const int inner_id = scrolling.doc.by_id("inner");
+    const int inside_id = scrolling.doc.by_id("inside");
+    const int tail_id = scrolling.doc.by_id("tail");
+    Json before = scrolling.render(160, 160, 0);
+    auto frame_box = [](const Json &frame, int node) {
+      for (const Json &box : frame.at("boxes").array)
+        if (int(box.num("node", -1)) == node)
+          return Rect{box.num("x"), box.num("y"), box.num("w"), box.num("h")};
+      return Rect{0, 0, -1, -1};
+    };
+    const Rect inside_before = frame_box(before, inside_id);
+    CHECK(inside_before.h >= 120);
+    CHECK(scrolling.wheel(20, 20, 25));
+    Json after_wheel = scrolling.render(160, 160, 0);
+    const Rect inside_after = frame_box(after_wheel, inside_id);
+    CHECK(close_to(inside_after.y, inside_before.y - 25));
+    bool track_seen = false, thumb_seen = false;
+    Rect track, thumb;
+    for (const Json &command : after_wheel.at("paint").array) {
+      if (int(command.num("node", -1)) != inner_id ||
+          int(command.num("kind", -1)) != int(PaintCommand::Kind::Rect)) continue;
+      const Rect bounds{command.num("x"), command.num("y"),
+                        command.num("w"), command.num("h")};
+      const uint32_t color = uint32_t(command.num("color"));
+      if (color == 0x30607080u) { track_seen = true; track = bounds; }
+      if (color == 0xff71869au) { thumb_seen = true; thumb = bounds; }
+    }
+    CHECK(track_seen && thumb_seen && track.h > thumb.h && thumb.y > track.y);
+    const double thumb_y_before_drag = thumb.y;
+    scrolling.pointer_down(thumb.x + thumb.w / 2, thumb.y + thumb.h / 2);
+    scrolling.pointer_move(thumb.x + thumb.w / 2, thumb.y + thumb.h / 2 + 10);
+    scrolling.pointer_up(thumb.x + thumb.w / 2, thumb.y + thumb.h / 2 + 10);
+    Json after_drag = scrolling.render(160, 160, 0);
+    double thumb_y_after_drag = thumb_y_before_drag;
+    for (const Json &command : after_drag.at("paint").array)
+      if (int(command.num("node", -1)) == inner_id &&
+          uint32_t(command.num("color", 0)) == 0xff71869au)
+        thumb_y_after_drag = command.num("y");
+    CHECK(thumb_y_after_drag > thumb_y_before_drag);
+
+    scrolling.pointer_down(20, 20);
+    scrolling.pointer_up(20, 20);
+    scrolling.click(20, 20);
+    const Rect inside_before_key = frame_box(after_drag, inside_id);
+    CHECK(scrolling.scroll_key("ArrowDown"));
+    Json after_key = scrolling.render(160, 160, 0);
+    CHECK(frame_box(after_key, inside_id).y < inside_before_key.y);
+
+    const Rect outer_before_contain = frame_box(after_key, outer_id);
+    const Rect tail_before_contain = frame_box(after_key, tail_id);
+    const Rect contained_before = frame_box(after_key, scrolling.doc.by_id("contained-content"));
+    CHECK(scrolling.wheel(20, 50, 1000));
+    Json after_contained = scrolling.render(160, 160, 0);
+    CHECK(frame_box(after_contained, scrolling.doc.by_id("contained-content")).y < contained_before.y);
+    CHECK(frame_box(after_contained, outer_id).y == outer_before_contain.y);
+    CHECK(frame_box(after_contained, tail_id).y == tail_before_contain.y);
+
+    const Rect tail_before_chain = frame_box(after_contained, tail_id);
+    const Rect inner_before_chain = frame_box(after_contained, inside_id);
+    CHECK(scrolling.wheel(20, 20, 1000));
+    Json after_chain = scrolling.render(160, 160, 0);
+    CHECK(frame_box(after_chain, outer_id).y == outer_before_contain.y);
+    CHECK(frame_box(after_chain, tail_id).y < tail_before_chain.y);
+    CHECK(frame_box(after_chain, inside_id).y < inner_before_chain.y);
   }
   {
     // My HTTPS policy. A header from an HTTPS answer is a promise I keep, the same

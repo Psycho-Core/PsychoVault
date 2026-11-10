@@ -35,5 +35,9 @@ struct Document {
   void parse_fragment(int parent, std::string_view html);
 };
 bool is_void(std::string_view tag);
-bool matches_selector(const Document &doc, int node, std::string_view selector);
+struct SelectorState {
+  int hovered = -1, focused = -1, active = -1;
+};
+bool matches_selector(const Document &doc, int node, std::string_view selector,
+                      const SelectorState *state = nullptr);
 } // namespace pv

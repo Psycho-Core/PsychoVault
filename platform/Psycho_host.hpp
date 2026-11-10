@@ -41,6 +41,11 @@ public:
   bool load(const std::string &input, std::string &error);
   void resize(double width, double height);
   void scroll(double y);
+  void wheel(double x, double y, double delta);
+  void scroll_key(const std::string &key);
+  void pointer_move(double x, double y);
+  void pointer_down(double x, double y);
+  void pointer_up(double x, double y);
   void click(double x, double y);
   void key(const std::string &key, const std::string &text);
   // I run any timer that is due and report a fresh frame. Returns true when I

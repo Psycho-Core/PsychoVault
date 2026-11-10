@@ -983,6 +983,13 @@ public:
     if (name == "focus")
       return r.make_native([this, id](js::Values &) {
         page.focused_ = id;
+        page.dirty_ = true;
+        return js::Value();
+      });
+    if (name == "blur")
+      return r.make_native([this, id](js::Values &) {
+        if (page.focused_ == id) page.focused_ = -1;
+        page.dirty_ = true;
         return js::Value();
       });
     if (name == "preventDefault" || name == "stopPropagation")
@@ -1200,11 +1207,9 @@ public:
   }
   static std::map<std::string, std::string> parse_inline(const std::string &s) {
     std::map<std::string, std::string> out;
-    for (auto &p : split(s, ';')) {
-      auto c = p.find(':');
-      if (c != std::string::npos)
-        out[lower(trim(std::string_view(p).substr(0, c)))] =
-            trim(std::string_view(p).substr(c + 1));
+    for (const CssDeclaration &declaration : parse_css_declarations(s)) {
+      out[declaration.property] = declaration.value +
+          (declaration.important ? " !important" : "");
     }
     return out;
   }
@@ -1286,6 +1291,7 @@ Page::~Page() {
   delete js_->host();
 }
 void Page::load(const Url &url, const std::string &html, const std::string &mime) {
+  hovered_ = active_ = focused_ = -1;
   doc.url = url;
   doc.content_type = mime;
   doc.parse(html);
@@ -1703,19 +1709,45 @@ void Page::rebuild() {
         }
       }
     }
-  auto styles = compute_styles(doc, sheets, width_);
+  const SelectorState selector_state{hovered_, focused_, active_};
+  auto styles = compute_styles(doc, sheets, width_, height_, &selector_state);
+  for (const Style &style : styles)
+    for (const std::string &layer : style.background_layers) {
+      const std::string lowered_layer = lower(layer);
+      const size_t open = lowered_layer.find("url(");
+      const size_t close = open == std::string::npos ? std::string::npos : layer.find(')', open + 4);
+      if (close == std::string::npos) continue;
+      std::string url = trim(layer.substr(open + 4, close - open - 4));
+      if (url.size() >= 2 && ((url.front() == '\'' && url.back() == '\'') ||
+                              (url.front() == '"' && url.back() == '"')))
+        url = url.substr(1, url.size() - 2);
+      request(std::move(url), ResourceType::Image);
+    }
   Canvas measure{int(width_), int(height_)};
-  layout_ = layout_document(doc, styles, width_, height_, resources_, measure);
+  layout_ = layout_document(doc, styles, width_, height_, resources_, measure, scroll_, local_scroll_);
   content_height_ = layout_.height;
+  std::erase_if(local_scroll_, [&](const auto &entry) {
+    return !layout_.scroll_containers.count(entry.first);
+  });
+  for (const auto &[node, container] : layout_.scroll_containers)
+    local_scroll_[node] = container.offset;
   dirty_ = false;
 }
 Json Page::render(double width, double height, double scroll) {
-  width_ = std::clamp(width, 1.0, 8192.0);
-  height_ = std::clamp(height, 1.0, 16384.0);
-  scroll_ = std::max(0.0, scroll);
-  if (dirty_)
+  const double next_width = std::clamp(width, 1.0, 8192.0);
+  const double next_height = std::clamp(height, 1.0, 16384.0);
+  const double next_scroll = std::max(0.0, scroll);
+  if (next_width != width_ || next_height != height_ || next_scroll != scroll_) dirty_ = true;
+  width_ = next_width;
+  height_ = next_height;
+  scroll_ = next_scroll;
+  if (dirty_) rebuild();
+  const double clamped_scroll = std::min(scroll_, std::max(0.0, content_height_ - height_));
+  if (clamped_scroll != scroll_) {
+    scroll_ = clamped_scroll;
+    dirty_ = true;
     rebuild();
-  scroll_ = std::min(scroll_, std::max(0.0, content_height_ - height_));
+  }
   // I only copy pixels for a canvas that has been drawn on since the last frame.
   for (auto &[id, context] : canvases_) {
     auto seen = canvas_revisions_.find(id);
@@ -1749,6 +1781,14 @@ Json Page::render(double width, double height, double scroll) {
     j.set("url", c.url);
     j.set("gradient", c.gradient);
     j.set("fixed", c.fixed);
+    j.set("radius", c.radius);
+    j.set("opacity", c.opacity);
+    j.set("blur", c.blur);
+    j.set("spread", c.spread);
+    j.set("offsetX", c.offset_x);
+    j.set("offsetY", c.offset_y);
+    j.set("rotation", c.rotation);
+    j.set("filter", c.filter);
     paint.array.push_back(std::move(j));
   }
   // A video or an audio element draws its current frame and its controls over the
@@ -1794,9 +1834,21 @@ int Page::hit(double x, double y) const {
   int best = -1;
   double area = std::numeric_limits<double>::max();
   for (auto &[id, r] : layout_.boxes) {
-    if (r.contains(x, y + scroll_) && r.w * r.h < area) {
+    Rect visible = r;
+    for (int parent = doc.nodes[id].parent; parent >= 0; parent = doc.nodes[parent].parent) {
+      auto clip = layout_.clips.find(parent);
+      if (clip == layout_.clips.end()) continue;
+      const double left = std::max(visible.x, clip->second.x);
+      const double top = std::max(visible.y, clip->second.y);
+      const double right = std::min(visible.x + visible.w, clip->second.x + clip->second.w);
+      const double bottom = std::min(visible.y + visible.h, clip->second.y + clip->second.h);
+      visible = {left, top, std::max(0.0, right - left), std::max(0.0, bottom - top)};
+      if (visible.w <= 0 || visible.h <= 0) break;
+    }
+    const double content_y = layout_.fixed_boxes.count(id) ? y : y + scroll_;
+    if (visible.contains(x, content_y) && visible.w * visible.h < area) {
       best = id;
-      area = r.w * r.h;
+      area = visible.w * visible.h;
     }
   }
   return best;
@@ -1835,6 +1887,7 @@ void Page::dispatch(int target, const std::string &type, js::Value event) {
   }
   dirty_ = true;
 }
+static bool page_control_disabled(const Document &doc, int id);
 void Page::activate(int target) {
   if (target < 0 || target >= int(doc.nodes.size()))
     return;
@@ -1851,6 +1904,8 @@ void Page::activate(int target) {
   dispatch(target, "click", event);
   if (prevented)
     return;
+  for (int node = target; node >= 0 && node < int(doc.nodes.size()); node = doc.nodes[node].parent)
+    if (page_control_disabled(doc, node)) return;
   for (int n = target; n >= 0 && n < int(doc.nodes.size()); n = doc.nodes[n].parent) {
     const auto &node = doc.nodes[n];
     if (node.type == Node::Type::Element && (node.name == "video" || node.name == "audio")) {
@@ -1888,9 +1943,185 @@ void Page::activate(int target) {
     n = node.parent;
   }
 }
+void Page::pointer_move(double x, double y) {
+  if (dirty_) rebuild();
+  if (scroll_drag_node_ >= 0) {
+    auto found = layout_.scroll_containers.find(scroll_drag_node_);
+    if (found == layout_.scroll_containers.end()) {
+      scroll_drag_node_ = -1;
+    } else {
+      const auto &scrollbar = found->second;
+      const double travel = std::max(1.0, scrollbar.track.h - scrollbar.thumb.h);
+      const double offset = std::clamp(scroll_drag_start_offset_ +
+          (y - scroll_drag_start_y_) * scrollbar.maximum / travel, 0.0, scrollbar.maximum);
+      if (local_scroll_[scroll_drag_node_] != offset) {
+        local_scroll_[scroll_drag_node_] = offset;
+        dirty_ = true;
+      }
+      return;
+    }
+  }
+  const int target = hit(x, y);
+  if (hovered_ != target) {
+    hovered_ = target;
+    dirty_ = true;
+  }
+}
+bool Page::wheel(double x, double y, double delta) {
+  if (dirty_) rebuild();
+  if (!std::isfinite(delta) || delta == 0) return false;
+  const int target = hit(x, y);
+  double remaining = delta;
+  bool changed = false;
+  for (int node = target; node >= 0 && node < int(doc.nodes.size()); node = doc.nodes[node].parent) {
+    auto found = layout_.scroll_containers.find(node);
+    if (found == layout_.scroll_containers.end() ||
+        !found->second.viewport.contains(x, y + scroll_)) continue;
+    const auto &container = found->second;
+    const double next = std::clamp(container.offset + remaining, 0.0, container.maximum);
+    const double consumed = next - container.offset;
+    if (std::abs(consumed) > 0.001) {
+      local_scroll_[node] = next;
+      remaining -= consumed;
+      changed = true;
+      dirty_ = true;
+    }
+    if (std::abs(remaining) < 0.001 ||
+        container.overscroll == "contain" || container.overscroll == "none") return true;
+  }
+  return changed;
+}
+bool Page::scroll_key(const std::string &key) {
+  if (dirty_) rebuild();
+  const bool home = key == "Home", end = key == "End";
+  const bool page_up = key == "PageUp", page_down = key == "PageDown";
+  const bool up = key == "ArrowUp", down = key == "ArrowDown";
+  if (!home && !end && !page_up && !page_down && !up && !down) return false;
+  const int target = focused_ >= 0 ? focused_ : hovered_;
+  if (target < 0 || target >= int(doc.nodes.size())) return false;
+  double remaining = 0;
+  bool changed = false;
+  for (int node = target; node >= 0 && node < int(doc.nodes.size()); node = doc.nodes[node].parent) {
+    auto found = layout_.scroll_containers.find(node);
+    if (found == layout_.scroll_containers.end()) continue;
+    const auto &container = found->second;
+    if (home || end) {
+      const double next = home ? 0 : container.maximum;
+      if (std::abs(next - container.offset) > 0.001) {
+        local_scroll_[node] = next; dirty_ = changed = true;
+      }
+      return true;
+    }
+    if (remaining == 0)
+      remaining = (page_up ? -std::max(40.0, container.viewport.h * 0.8)
+                   : page_down ? std::max(40.0, container.viewport.h * 0.8)
+                   : up ? -40.0 : 40.0);
+    const double next = std::clamp(container.offset + remaining, 0.0, container.maximum);
+    const double consumed = next - container.offset;
+    if (std::abs(consumed) > 0.001) {
+      local_scroll_[node] = next; remaining -= consumed; dirty_ = changed = true;
+    }
+    if (std::abs(remaining) < 0.001 || container.overscroll == "contain" ||
+        container.overscroll == "none") return true;
+  }
+  return changed;
+}
+void Page::pointer_down(double x, double y) {
+  if (dirty_) rebuild();
+  suppress_click_ = false;
+  scrollbar_pointer_ = false;
+  scroll_drag_node_ = -1;
+  const double document_y = y + scroll_;
+  for (const auto &[node, scrollbar] : layout_.scroll_containers) {
+    if (!scrollbar.track.contains(x, document_y)) continue;
+    bool visible = true;
+    for (int parent = doc.nodes[node].parent; parent >= 0; parent = doc.nodes[parent].parent) {
+      auto clip = layout_.clips.find(parent);
+      if (clip != layout_.clips.end() && !clip->second.contains(x, document_y)) {
+        visible = false; break;
+      }
+    }
+    if (!visible) continue;
+    scrollbar_pointer_ = true;
+    active_ = -1;
+    hovered_ = -1;
+    if (scrollbar.thumb.contains(x, document_y)) {
+      scroll_drag_node_ = node;
+      scroll_drag_start_y_ = y;
+      scroll_drag_start_offset_ = scrollbar.offset;
+    } else {
+      const double travel = std::max(1.0, scrollbar.track.h - scrollbar.thumb.h);
+      const double fraction = std::clamp((document_y - scrollbar.track.y - scrollbar.thumb.h / 2) /
+                                         travel, 0.0, 1.0);
+      local_scroll_[node] = fraction * scrollbar.maximum;
+      dirty_ = true;
+    }
+    dirty_ = true;
+    return;
+  }
+  const int target = hit(x, y);
+  bool is_disabled = false;
+  for (int node = target; node >= 0 && node < int(doc.nodes.size()); node = doc.nodes[node].parent)
+    if (page_control_disabled(doc, node)) { is_disabled = true; break; }
+  const int active_target = is_disabled ? -1 : target;
+  if (active_ != active_target || hovered_ != target) {
+    active_ = active_target;
+    hovered_ = target;
+    dirty_ = true;
+  }
+}
+void Page::pointer_up(double x, double y) {
+  if (dirty_) rebuild();
+  if (scrollbar_pointer_) {
+    suppress_click_ = true;
+    scrollbar_pointer_ = false;
+    scroll_drag_node_ = -1;
+    return;
+  }
+  const int target = hit(x, y);
+  if (active_ != -1 || hovered_ != target) {
+    active_ = -1;
+    hovered_ = target;
+    dirty_ = true;
+  }
+}
+static bool page_control_disabled(const Document &doc, int id) {
+  if (id < 0 || id >= int(doc.nodes.size())) return false;
+  const Node &node = doc.nodes[id];
+  const bool control = node.name == "button" || node.name == "input" || node.name == "select" ||
+                       node.name == "textarea" || node.name == "option" || node.name == "optgroup" ||
+                       node.name == "fieldset";
+  if (!control) return false;
+  std::string ignored;
+  if (node.get_attribute("disabled", ignored)) return true;
+  if (node.name == "option" && node.parent >= 0 &&
+      doc.nodes[node.parent].name == "optgroup" &&
+      doc.nodes[node.parent].get_attribute("disabled", ignored)) return true;
+  for (int parent = node.parent; parent >= 0; parent = doc.nodes[parent].parent)
+    if (doc.nodes[parent].name == "fieldset" &&
+        doc.nodes[parent].get_attribute("disabled", ignored)) return true;
+  return false;
+}
+static int focusable_element(const Document &doc, int target) {
+  for (int node = target; node >= 0 && node < int(doc.nodes.size()); node = doc.nodes[node].parent) {
+    const Node &candidate = doc.nodes[node];
+    if (candidate.type != Node::Type::Element || page_control_disabled(doc, node)) continue;
+    std::string ignored;
+    if (candidate.name == "a" && candidate.get_attribute("href", ignored)) return node;
+    if (candidate.name == "button" || candidate.name == "input" || candidate.name == "select" ||
+        candidate.name == "textarea" || candidate.get_attribute("tabindex", ignored)) return node;
+  }
+  return -1;
+}
 void Page::click(double x, double y) {
+  if (suppress_click_) { suppress_click_ = false; return; }
   note_user_activation();
+  if (dirty_) rebuild();
   int target = hit(x, y);
+  hovered_ = target;
+  active_ = -1;
+  focused_ = focusable_element(doc, target);
+  dirty_ = true;
   // A media element owns everything inside its box: the strip along the bottom is
   // the scrub bar, and the rest of the box plays or pauses it.
   for (int n = target; n >= 0 && n < int(doc.nodes.size()); n = doc.nodes[n].parent) {
