@@ -10,6 +10,17 @@
 #include <wrl/client.h>
 #endif
 namespace pv {
+static bool rounded_contains(Rect rect, double radius, double x, double y) {
+  if (!rect.contains(x, y)) return false;
+  radius = std::clamp(radius, 0.0, std::min(rect.w, rect.h) / 2.0);
+  if (radius <= 0) return true;
+  const double cx = x < rect.x + radius ? rect.x + radius
+                    : x > rect.x + rect.w - radius ? rect.x + rect.w - radius : x;
+  const double cy = y < rect.y + radius ? rect.y + radius
+                    : y > rect.y + rect.h - radius ? rect.y + rect.h - radius : y;
+  const double dx = x - cx, dy = y - cy;
+  return dx * dx + dy * dy <= radius * radius;
+}
 uint32_t blend(uint32_t d, uint32_t s) {
   uint32_t a = s >> 24;
   if (!a)
@@ -135,14 +146,15 @@ uint32_t gradient_shade(const Gradient &gradient, double x, double y) {
   }
   return gradient.stops.back().color;
 }
-void Canvas::fill_gradient(Rect r, const Gradient &gradient) {
+void Canvas::fill_gradient(Rect r, const Gradient &gradient, double radius) {
   int x0 = std::clamp(int(std::floor(std::max(r.x, clip.x))), 0, width),
       y0 = std::clamp(int(std::floor(std::max(r.y, clip.y))), 0, height),
       x1 = std::clamp(int(std::ceil(std::min(r.x + r.w, clip.x + clip.w))), 0, width),
       y1 = std::clamp(int(std::ceil(std::min(r.y + r.h, clip.y + clip.h))), 0, height);
   for (int y = y0; y < y1; ++y)
     for (int x = x0; x < x1; ++x)
-      pixel(x, y, gradient_shade(gradient, x + 0.5, y + 0.5));
+      if (rounded_contains(r, radius, x + 0.5, y + 0.5))
+        pixel(x, y, gradient_shade(gradient, x + 0.5, y + 0.5));
 }
 Canvas::Canvas(int w, int h, uint32_t color)
     : width(std::clamp(w, 1, 8192)), height(std::clamp(h, 1, 16384)),
@@ -157,21 +169,29 @@ Canvas::Canvas(int w, int h, uint32_t color)
 void Canvas::pixel(int x, int y, uint32_t c) {
   if (x < 0 || y < 0 || x >= width || y >= height || !clip.contains(x + 0.5, y + 0.5))
     return;
-  size_t i = (size_t(y) * width + x) * 4;
-  uint32_t d =
-      0xff000000 | (uint32_t(pixels[i + 2]) << 16) | (uint32_t(pixels[i + 1]) << 8) | pixels[i];
-  uint32_t o = blend(d, c);
-  pixels[i] = o;
-  pixels[i + 1] = o >> 8;
-  pixels[i + 2] = o >> 16;
-  pixels[i + 3] = o >> 24;
+  for (const auto &[rect, radius] : rounded_clips)
+    if (!rounded_contains(rect, radius, x + 0.5, y + 0.5)) return;
+  const size_t i = (size_t(y) * width + x) * 4;
+  const uint32_t sa = c >> 24;
+  const uint32_t da = pixels[i + 3];
+  const uint32_t inverse = 255 - sa;
+  const uint32_t oa = sa + (da * inverse + 127) / 255;
+  if (oa == 0) { pixels[i] = pixels[i + 1] = pixels[i + 2] = pixels[i + 3] = 0; return; }
+  auto channel = [&](uint32_t source, uint32_t destination) {
+    const uint32_t premultiplied = source * sa + (destination * da * inverse + 127) / 255;
+    return (premultiplied + oa / 2) / oa;
+  };
+  pixels[i] = uint8_t(channel(c & 255, pixels[i]));
+  pixels[i + 1] = uint8_t(channel((c >> 8) & 255, pixels[i + 1]));
+  pixels[i + 2] = uint8_t(channel((c >> 16) & 255, pixels[i + 2]));
+  pixels[i + 3] = uint8_t(oa);
 }
 void Canvas::fill(Rect r, uint32_t c) {
   int x0 = std::clamp(int(std::floor(std::max(r.x, clip.x))), 0, width),
       y0 = std::clamp(int(std::floor(std::max(r.y, clip.y))), 0, height),
       x1 = std::clamp(int(std::ceil(std::min(r.x + r.w, clip.x + clip.w))), 0, width),
       y1 = std::clamp(int(std::ceil(std::min(r.y + r.h, clip.y + clip.h))), 0, height);
-  if ((c >> 24) == 255) {
+  if ((c >> 24) == 255 && rounded_clips.empty()) {
     for (int y = y0; y < y1; ++y) {
       uint8_t *row = pixels.data() + (size_t(y) * width + x0) * 4;
       for (int x = x0; x < x1; ++x) {
@@ -187,11 +207,53 @@ void Canvas::fill(Rect r, uint32_t c) {
       for (int x = x0; x < x1; ++x)
         pixel(x, y, c);
 }
+void Canvas::fill_rounded(Rect r, double radius, uint32_t c) {
+  const int x0 = std::clamp(int(std::floor(std::max(r.x, clip.x))), 0, width);
+  const int y0 = std::clamp(int(std::floor(std::max(r.y, clip.y))), 0, height);
+  const int x1 = std::clamp(int(std::ceil(std::min(r.x + r.w, clip.x + clip.w))), 0, width);
+  const int y1 = std::clamp(int(std::ceil(std::min(r.y + r.h, clip.y + clip.h))), 0, height);
+  for (int y = y0; y < y1; ++y)
+    for (int x = x0; x < x1; ++x)
+      if (rounded_contains(r, radius, x + 0.5, y + 0.5)) pixel(x, y, c);
+}
 void Canvas::stroke(Rect r, uint32_t c, double t) {
   fill({r.x, r.y, r.w, t}, c);
   fill({r.x, r.y + r.h - t, r.w, t}, c);
   fill({r.x, r.y, t, r.h}, c);
   fill({r.x + r.w - t, r.y, t, r.h}, c);
+}
+void Canvas::stroke_rounded(Rect r, double radius, uint32_t c, double thickness) {
+  thickness = std::clamp(thickness, 0.0, std::min(r.w, r.h) / 2.0);
+  if (thickness <= 0) return;
+  const int x0 = std::clamp(int(std::floor(std::max(r.x, clip.x))), 0, width);
+  const int y0 = std::clamp(int(std::floor(std::max(r.y, clip.y))), 0, height);
+  const int x1 = std::clamp(int(std::ceil(std::min(r.x + r.w, clip.x + clip.w))), 0, width);
+  const int y1 = std::clamp(int(std::ceil(std::min(r.y + r.h, clip.y + clip.h))), 0, height);
+  Rect inner{r.x + thickness, r.y + thickness,
+             std::max(0.0, r.w - thickness * 2), std::max(0.0, r.h - thickness * 2)};
+  for (int y = y0; y < y1; ++y)
+    for (int x = x0; x < x1; ++x) {
+      const double px = x + 0.5, py = y + 0.5;
+      if (rounded_contains(r, radius, px, py) &&
+          !rounded_contains(inner, std::max(0.0, radius - thickness), px, py)) pixel(x, y, c);
+    }
+}
+void Canvas::box_shadow(Rect r, double radius, double offset_x, double offset_y,
+                        double blur, double spread, uint32_t color) {
+  if ((color >> 24) == 0) return;
+  blur = std::clamp(blur, 0.0, 64.0);
+  spread = std::clamp(spread, -64.0, 64.0);
+  const Rect shifted{r.x + offset_x, r.y + offset_y, r.w, r.h};
+  const int rings = blur > 0 ? 6 : 1;
+  for (int ring = rings; ring >= 1; --ring) {
+    const double extent = spread + blur * double(ring) / rings;
+    Rect shape{shifted.x - extent, shifted.y - extent,
+               std::max(0.0, shifted.w + extent * 2), std::max(0.0, shifted.h + extent * 2)};
+    uint32_t alpha = color >> 24;
+    if (blur > 0) alpha = uint32_t(std::max(1.0, alpha * (0.08 + 0.045 * (rings - ring))));
+    const uint32_t tinted = (color & 0x00ffffffu) | (alpha << 24);
+    fill_rounded(shape, std::max(0.0, radius + extent), tinted);
+  }
 }
 void Canvas::line(double x1, double y1, double x2, double y2, uint32_t c, double t) {
   int steps = int(std::max(std::fabs(x2 - x1), std::fabs(y2 - y1))) + 1;
@@ -499,7 +561,7 @@ static void chunk(Bytes &out, const char *type, const Bytes &data) {
   out.insert(out.end(), data.begin(), data.end());
   be32(out, crc32(out.data() + start, out.size() - start));
 }
-void Canvas::image(const Image &source, Rect destination) {
+void Canvas::image(const Image &source, Rect destination, double radius) {
   if (!source.valid() || destination.w <= 0 || destination.h <= 0)
     return;
   double left = std::max(destination.x, clip.x), top = std::max(destination.y, clip.y);
@@ -513,6 +575,7 @@ void Canvas::image(const Image &source, Rect destination) {
     int sy = std::clamp(int((y + 0.5 - destination.y) * source.height / destination.h), 0,
                         source.height - 1);
     for (int x = x0; x < x1; ++x) {
+      if (!rounded_contains(destination, radius, x + 0.5, y + 0.5)) continue;
       int sx = std::clamp(int((x + 0.5 - destination.x) * source.width / destination.w), 0,
                           source.width - 1);
       size_t from = (size_t(sy) * size_t(source.width) + size_t(sx)) * 4;

@@ -61,6 +61,11 @@ public:
   }
   void resource(const Resource &res);
   Json render(double width, double height, double scroll);
+  void pointer_move(double x, double y);
+  bool wheel(double x, double y, double delta);
+  bool scroll_key(const std::string &key);
+  void pointer_down(double x, double y);
+  void pointer_up(double x, double y);
   void click(double x, double y);
   void key(const std::string &key, const std::string &text);
   // My autoplay gate: when on, a scripted play() needs a real click within the
@@ -159,8 +164,12 @@ private:
   std::vector<HistoryEntry> history_;
   size_t history_index_ = 0;
   LayoutResult layout_;
+  std::unordered_map<int, double> local_scroll_;
+  int scroll_drag_node_ = -1;
+  bool scrollbar_pointer_ = false, suppress_click_ = false;
+  double scroll_drag_start_y_ = 0, scroll_drag_start_offset_ = 0;
   double width_ = 1000, height_ = 700, scroll_ = 0, content_height_ = 0;
-  int focused_ = -1;
+  int hovered_ = -1, active_ = -1, focused_ = -1;
   bool dirty_ = true;
   void run_scripts();
   void install_fetch();

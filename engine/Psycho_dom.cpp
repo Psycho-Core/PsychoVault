@@ -455,211 +455,285 @@ struct SimpleSelector {
   std::string tag, id;
   std::vector<std::string> classes;
   std::vector<std::array<std::string, 3>> attrs;
-  std::string pseudo;
+  std::vector<std::string> pseudos;
   char relation = ' ';
 };
+static std::vector<std::string> selector_groups(std::string_view text) {
+  std::vector<std::string> groups;
+  size_t start = 0;
+  int parentheses = 0, brackets = 0;
+  char quote = 0;
+  bool escaped = false;
+  for (size_t i = 0; i < text.size(); ++i) {
+    const char c = text[i];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (c == '\\') escaped = true;
+      else if (c == quote) quote = 0;
+      continue;
+    }
+    if (c == '\'' || c == '"') { quote = c; continue; }
+    if (c == '(') ++parentheses;
+    else if (c == ')' && parentheses > 0) --parentheses;
+    else if (c == '[') ++brackets;
+    else if (c == ']' && brackets > 0) --brackets;
+    else if (c == ',' && parentheses == 0 && brackets == 0) {
+      groups.emplace_back(trim(text.substr(start, i - start)));
+      start = i + 1;
+    }
+  }
+  groups.emplace_back(trim(text.substr(start)));
+  return groups;
+}
 static std::vector<std::vector<SimpleSelector>> parse_selector(std::string_view selector) {
   std::vector<std::vector<SimpleSelector>> groups;
-  for (auto &group : split(selector, ',')) {
-    std::string s = trim(group);
-    if (s.empty() || s.size() > 4096)
-      return {};
+  for (const std::string &group : selector_groups(selector)) {
+    const std::string s = trim(group);
+    if (s.empty() || s.size() > 4096) return {};
     std::vector<SimpleSelector> chain;
     size_t p = 0;
     while (p < s.size()) {
-      while (p < s.size() && std::isspace(static_cast<unsigned char>(s[p])))
+      bool had_space = false;
+      while (p < s.size() && std::isspace(static_cast<unsigned char>(s[p]))) {
         ++p;
-      char relation = ' ';
-      if (p < s.size() && (s[p] == '>' || s[p] == '+' || s[p] == '~'))
-        relation = s[p++];
-      while (p < s.size() && std::isspace(static_cast<unsigned char>(s[p])))
-        ++p;
-      SimpleSelector part;
-      part.relation = chain.empty() ? ' ' : relation;
-      if (p < s.size() && (std::isalpha(static_cast<unsigned char>(s[p])) || s[p] == '*')) {
-        size_t a = p;
-        if (s[p] == '*')
-          ++p;
-        else
-          while (p < s.size() &&
-                 (std::isalnum(static_cast<unsigned char>(s[p])) || s[p] == '-' || s[p] == '_'))
-            ++p;
-        part.tag = lower(s.substr(a, p - a));
+        had_space = true;
       }
-      while (p < s.size() && s[p] != ' ' && s[p] != '\t' && s[p] != '\n' && s[p] != '>' &&
-             s[p] != '+' && s[p] != '~') {
-        char kind = s[p++];
-        size_t a = p;
+      if (p >= s.size()) break;
+      char relation = chain.empty() ? ' ' : (had_space ? ' ' : 0);
+      if (s[p] == '>' || s[p] == '+' || s[p] == '~') relation = s[p++];
+      if (relation == 0) return {};
+      while (p < s.size() && std::isspace(static_cast<unsigned char>(s[p]))) ++p;
+      SimpleSelector part;
+      part.relation = relation;
+      if (p < s.size() && (std::isalpha(static_cast<unsigned char>(s[p])) || s[p] == '*')) {
+        const size_t begin = p++;
+        if (s[begin] != '*')
+          while (p < s.size() && (std::isalnum(static_cast<unsigned char>(s[p])) ||
+                                  s[p] == '-' || s[p] == '_')) ++p;
+        part.tag = lower(std::string_view(s).substr(begin, p - begin));
+      }
+      while (p < s.size() && !std::isspace(static_cast<unsigned char>(s[p])) &&
+             s[p] != '>' && s[p] != '+' && s[p] != '~') {
+        const char kind = s[p++];
         if (kind == '#' || kind == '.') {
+          const size_t begin = p;
           while (p < s.size() && (std::isalnum(static_cast<unsigned char>(s[p])) || s[p] == '-' ||
-                                  s[p] == '_' || static_cast<unsigned char>(s[p]) >= 128))
-            ++p;
-          auto value = std::string(s.substr(a, p - a));
-          if (kind == '#')
-            part.id = value;
-          else
-            part.classes.push_back(value);
+                                  s[p] == '_' || static_cast<unsigned char>(s[p]) >= 128)) ++p;
+          if (begin == p) return {};
+          std::string value = s.substr(begin, p - begin);
+          if (kind == '#') part.id = std::move(value);
+          else part.classes.push_back(std::move(value));
         } else if (kind == '[') {
-          size_t e = s.find(']', p);
-          if (e == std::string::npos)
-            return {};
-          auto inside = std::string(s.substr(p, e - p));
-          p = e + 1;
-          std::array<std::string, 3> a;
+          const size_t begin = p;
+          char q = 0;
+          bool escape = false;
+          for (; p < s.size(); ++p) {
+            const char c = s[p];
+            if (q) {
+              if (escape) escape = false;
+              else if (c == '\\') escape = true;
+              else if (c == q) q = 0;
+            } else if (c == '\'' || c == '"') q = c;
+            else if (c == ']') break;
+          }
+          if (p >= s.size()) return {};
+          std::string inside = trim(std::string_view(s).substr(begin, p - begin));
+          ++p;
+          std::array<std::string, 3> attr;
           size_t op = inside.find_first_of("=^$*~|");
-          if (op == std::string::npos)
-            a[0] = lower(trim(inside));
+          if (op == std::string::npos) attr[0] = lower(trim(inside));
           else {
-            a[0] = lower(trim(std::string_view(inside).substr(0, op)));
-            a[1] = inside.substr(op, inside[op] == '=' ? 1 : 2);
-            auto v = trim(std::string_view(inside).substr(op + a[1].size()));
-            if (v.size() >= 2 && (v.front() == '"' || v.front() == '\''))
-              v = v.substr(1, v.size() - 2);
-            a[2] = v;
+            attr[0] = lower(trim(std::string_view(inside).substr(0, op)));
+            attr[1] = inside.substr(op, inside[op] == '=' ? 1 : 2);
+            std::string value = trim(std::string_view(inside).substr(op + attr[1].size()));
+            if (value.size() >= 2 && (value.front() == '\'' || value.front() == '"'))
+              value = value.substr(1, value.size() - 2);
+            attr[2] = std::move(value);
           }
-          part.attrs.push_back(a);
+          if (attr[0].empty()) return {};
+          part.attrs.push_back(std::move(attr));
         } else if (kind == ':') {
-          if (p < s.size() && s[p] == ':')
-            return {};
-          while (p < s.size() && (std::isalnum(static_cast<unsigned char>(s[p])) || s[p] == '-'))
-            ++p;
-          part.pseudo = lower(s.substr(a, p - a));
+          if (p < s.size() && s[p] == ':') return {};
+          const size_t begin = p;
+          while (p < s.size() && (std::isalnum(static_cast<unsigned char>(s[p])) || s[p] == '-')) ++p;
+          if (begin == p) return {};
+          std::string pseudo = lower(std::string_view(s).substr(begin, p - begin));
           if (p < s.size() && s[p] == '(') {
-            size_t e = s.find(')', p);
-            if (e == std::string::npos)
-              return {};
-            part.pseudo += s.substr(p, e - p + 1);
-            p = e + 1;
+            const size_t open = p++;
+            int depth = 1;
+            char q = 0;
+            bool escape = false;
+            for (; p < s.size() && depth; ++p) {
+              const char c = s[p];
+              if (q) {
+                if (escape) escape = false;
+                else if (c == '\\') escape = true;
+                else if (c == q) q = 0;
+              } else if (c == '\'' || c == '"') q = c;
+              else if (c == '(') ++depth;
+              else if (c == ')') --depth;
+            }
+            if (depth != 0) return {};
+            pseudo += s.substr(open, p - open);
           }
-        } else
-          return {};
+          part.pseudos.push_back(std::move(pseudo));
+        } else return {};
       }
       if (part.tag.empty() && part.id.empty() && part.classes.empty() && part.attrs.empty() &&
-          part.pseudo.empty())
-        return {};
+          part.pseudos.empty()) return {};
       chain.push_back(std::move(part));
-      if (chain.size() > 64)
-        return {};
+      if (chain.size() > 64) return {};
     }
-    if (!chain.empty())
-      groups.push_back(std::move(chain));
+    if (!chain.empty()) groups.push_back(std::move(chain));
   }
   return groups;
 }
-static bool match_simple(const Document &d, int n, const SimpleSelector &s) {
-  const auto &node = d.nodes[n];
-  if (node.type != Node::Type::Element)
-    return false;
-  if (!s.tag.empty() && s.tag != "*" && node.name != s.tag)
-    return false;
-  if (!s.id.empty() && node.attribute("id") != s.id)
-    return false;
-  for (auto &c : s.classes)
-    if (!node.has_class(c))
-      return false;
-  for (auto &a : s.attrs) {
+static bool match_chain(const Document &d, int n, const std::vector<SimpleSelector> &chain,
+                        size_t i, const SelectorState *state);
+static bool is_self_or_ancestor(const Document &d, int candidate, int node) {
+  for (int current = node; current >= 0; current = d.nodes[current].parent)
+    if (current == candidate) return true;
+  return false;
+}
+static bool nth_child_matches(size_t one_based_index, std::string expression) {
+  expression = lower(trim(expression));
+  expression.erase(std::remove_if(expression.begin(), expression.end(),
+                                  [](unsigned char c) { return std::isspace(c); }),
+                   expression.end());
+  if (expression == "odd") return one_based_index % 2 == 1;
+  if (expression == "even") return one_based_index % 2 == 0;
+  const size_t n = expression.find('n');
+  try {
+    if (n == std::string::npos) return one_based_index == size_t(std::stoul(expression));
+    const std::string a_text = expression.substr(0, n);
+    const std::string b_text = expression.substr(n + 1);
+    const int a = a_text.empty() || a_text == "+" ? 1 : a_text == "-" ? -1 : std::stoi(a_text);
+    const int b = b_text.empty() ? 0 : std::stoi(b_text);
+    const int delta = int(one_based_index) - b;
+    return a == 0 ? delta == 0 : delta % a == 0 && delta / a >= 0;
+  } catch (...) { return false; }
+}
+static bool is_form_control(const Node &node) {
+  return node.name == "button" || node.name == "input" || node.name == "select" ||
+         node.name == "textarea" || node.name == "option" || node.name == "optgroup" ||
+         node.name == "fieldset";
+}
+static bool disabled(const Document &d, int n) {
+  const Node &node = d.nodes[n];
+  if (!is_form_control(node)) return false;
+  std::string ignored;
+  if (node.get_attribute("disabled", ignored)) return true;
+  if (node.name == "option" && node.parent >= 0 &&
+      d.nodes[node.parent].name == "optgroup" &&
+      d.nodes[node.parent].get_attribute("disabled", ignored)) return true;
+  for (int p = node.parent; p >= 0; p = d.nodes[p].parent)
+    if (d.nodes[p].name == "fieldset" && d.nodes[p].get_attribute("disabled", ignored)) return true;
+  return false;
+}
+static bool match_simple(const Document &d, int n, const SimpleSelector &s,
+                         const SelectorState *state) {
+  if (n < 0 || n >= int(d.nodes.size())) return false;
+  const Node &node = d.nodes[n];
+  if (node.type != Node::Type::Element) return false;
+  if (!s.tag.empty() && s.tag != "*" && node.name != s.tag) return false;
+  if (!s.id.empty() && node.attribute("id") != s.id) return false;
+  for (const std::string &c : s.classes) if (!node.has_class(c)) return false;
+  for (const auto &a : s.attrs) {
     std::string value;
-    bool has = node.get_attribute(a[0], value);
-    if (!has)
-      return false;
-    if (a[1].empty())
-      continue;
-    if (a[1] == "=" && value != a[2])
-      return false;
-    if (a[1] == "^=" && !starts(value, a[2]))
-      return false;
-    if (a[1] == "$=" && !ends(value, a[2]))
-      return false;
-    if (a[1] == "*=" && value.find(a[2]) == std::string::npos)
-      return false;
+    if (!node.get_attribute(a[0], value)) return false;
+    if (a[1].empty()) continue;
+    if (a[1] == "=" && value != a[2]) return false;
+    if (a[1] == "^=" && !starts(value, a[2])) return false;
+    if (a[1] == "$=" && !ends(value, a[2])) return false;
+    if (a[1] == "*=" && value.find(a[2]) == std::string::npos) return false;
     if (a[1] == "~=") {
       bool found = false;
-      for (auto &v : split(value, ' '))
-        if (v == a[2])
-          found = true;
-      if (!found)
-        return false;
+      for (const auto &word : split(value, ' ')) if (word == a[2]) found = true;
+      if (!found) return false;
     }
+    if (a[1] == "|=" && value != a[2] && !starts(value, a[2] + "-")) return false;
   }
-  if (!s.pseudo.empty()) {
-    if (s.pseudo == "root") {
-      if (node.parent < 0 || d.nodes[node.parent].type != Node::Type::Document)
-        return false;
-    } else if (s.pseudo == "first-child" || s.pseudo == "last-child" ||
-               starts(s.pseudo, "nth-child(")) {
-      if (node.parent < 0)
-        return false;
+  for (const std::string &pseudo : s.pseudos) {
+    if (pseudo == "root") {
+      if (node.parent < 0 || d.nodes[node.parent].type != Node::Type::Document) return false;
+    } else if (pseudo == "first-child" || pseudo == "last-child" ||
+               pseudo == "only-child" || starts(pseudo, "nth-child(")) {
+      if (node.parent < 0) return false;
       std::vector<int> siblings;
-      for (int c : d.nodes[node.parent].children)
-        if (d.nodes[c].type == Node::Type::Element)
-          siblings.push_back(c);
-      if (siblings.empty())
+      for (int child : d.nodes[node.parent].children)
+        if (d.nodes[child].type == Node::Type::Element) siblings.push_back(child);
+      auto it = std::find(siblings.begin(), siblings.end(), n);
+      if (it == siblings.end()) return false;
+      const size_t index = size_t(it - siblings.begin()) + 1;
+      if (pseudo == "first-child" && index != 1) return false;
+      if (pseudo == "last-child" && index != siblings.size()) return false;
+      if (pseudo == "only-child" && siblings.size() != 1) return false;
+      if (starts(pseudo, "nth-child(") &&
+          !nth_child_matches(index, pseudo.substr(10, pseudo.size() - 11))) return false;
+    } else if (pseudo == "checked") {
+      std::string ignored;
+      const std::string type = lower(node.attribute("type"));
+      const bool checked_input = node.name == "input" && (type == "checkbox" || type == "radio") &&
+                                 node.get_attribute("checked", ignored);
+      const bool selected_option = node.name == "option" && node.get_attribute("selected", ignored);
+      if (!checked_input && !selected_option) return false;
+    } else if (pseudo == "disabled") {
+      if (!disabled(d, n)) return false;
+    } else if (pseudo == "enabled") {
+      if (!is_form_control(node) || disabled(d, n)) return false;
+    } else if (pseudo == "hover") {
+      if (!state || state->hovered < 0 || !is_self_or_ancestor(d, n, state->hovered)) return false;
+    } else if (pseudo == "active") {
+      if (!state || state->active < 0 || !is_self_or_ancestor(d, n, state->active)) return false;
+    } else if (pseudo == "focus") {
+      if (!state || state->focused != n) return false;
+    } else if (pseudo == "focus-within" || pseudo == "focus-visible") {
+      if (!state || state->focused < 0 ||
+          (pseudo == "focus-visible" ? state->focused != n : !is_self_or_ancestor(d, n, state->focused)))
         return false;
-      size_t index = std::find(siblings.begin(), siblings.end(), n) - siblings.begin();
-      if (s.pseudo == "first-child" && index != 0)
-        return false;
-      if (s.pseudo == "last-child" && index + 1 != siblings.size())
-        return false;
-      if (starts(s.pseudo, "nth-child(")) {
-        auto arg = s.pseudo.substr(10, s.pseudo.size() - 11);
-        int target = 0;
-        try {
-          target = std::stoi(arg);
-        } catch (...) {
-          return false;
-        }
-        if (index + 1 != size_t(target))
-          return false;
-      }
-    } else if (s.pseudo == "checked") {
-      std::string value;
-      if (!node.get_attribute("checked", value) && !node.get_attribute("selected", value))
-        return false;
-    } else
-      return false;
+    } else if (starts(pseudo, "not(") && pseudo.back() == ')') {
+      static thread_local unsigned negation_depth = 0;
+      if (negation_depth >= 64) return false;
+      ++negation_depth;
+      const std::string_view argument(pseudo.data() + 4, pseudo.size() - 5);
+      bool excluded = false;
+      for (const auto &group : parse_selector(argument))
+        if (!group.empty() && match_chain(d, n, group, group.size() - 1, state)) excluded = true;
+      --negation_depth;
+      if (excluded) return false;
+    } else return false;
   }
   return true;
 }
 static bool match_chain(const Document &d, int n, const std::vector<SimpleSelector> &chain,
-                        size_t i) {
-  if (!match_simple(d, n, chain[i]))
-    return false;
-  if (i == 0)
-    return true;
-  const auto &node = d.nodes[n];
-  char rel = chain[i].relation;
-  if (rel == '>')
-    return node.parent >= 0 && match_chain(d, node.parent, chain, i - 1);
+                        size_t i, const SelectorState *state) {
+  if (i >= chain.size() || !match_simple(d, n, chain[i], state)) return false;
+  if (i == 0) return true;
+  const Node &node = d.nodes[n];
+  const char rel = chain[i].relation;
+  if (rel == '>') return node.parent >= 0 && match_chain(d, node.parent, chain, i - 1, state);
   if (rel == '+' || rel == '~') {
-    if (node.parent < 0)
-      return false;
-    const auto &sib = d.nodes[node.parent].children;
-    auto it = std::find(sib.begin(), sib.end(), n);
-    if (it == sib.begin())
-      return false;
-    if (rel == '+') {
-      --it;
-      return d.nodes[*it].type == Node::Type::Element && match_chain(d, *it, chain, i - 1);
-    }
+    if (node.parent < 0) return false;
+    const auto &siblings = d.nodes[node.parent].children;
+    auto it = std::find(siblings.begin(), siblings.end(), n);
+    if (it == siblings.begin() || it == siblings.end()) return false;
     do {
       --it;
-      if (d.nodes[*it].type == Node::Type::Element && match_chain(d, *it, chain, i - 1))
+      if (d.nodes[*it].type == Node::Type::Element && match_chain(d, *it, chain, i - 1, state))
         return true;
-    } while (it != sib.begin());
+      if (rel == '+') return false;
+    } while (it != siblings.begin());
     return false;
   }
-  for (int p = node.parent; p >= 0; p = d.nodes[p].parent)
-    if (match_chain(d, p, chain, i - 1))
-      return true;
+  for (int parent = node.parent; parent >= 0; parent = d.nodes[parent].parent)
+    if (match_chain(d, parent, chain, i - 1, state)) return true;
   return false;
 }
-bool matches_selector(const Document &d, int n, std::string_view selector) {
-  if (n < 0 || n >= int(d.nodes.size()))
-    return false;
-  auto groups = parse_selector(selector);
-  for (auto &chain : groups)
-    if (match_chain(d, n, chain, chain.size() - 1))
-      return true;
+bool matches_selector(const Document &d, int n, std::string_view selector,
+                      const SelectorState *state) {
+  if (n < 0 || n >= int(d.nodes.size())) return false;
+  for (const auto &group : parse_selector(selector))
+    if (!group.empty() && match_chain(d, n, group, group.size() - 1, state)) return true;
   return false;
 }
 } // namespace pv

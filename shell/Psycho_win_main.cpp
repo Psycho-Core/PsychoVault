@@ -763,6 +763,9 @@ struct Browser {
   int settings_category = 0;
   std::vector<Hit> hits;
   Rect content{0, 0, 1000, 700};
+  bool page_pointer_inside = false, page_pointer_down = false;
+  bool document_scroll_drag = false;
+  double document_scroll_drag_start_y = 0, document_scroll_drag_start = 0;
   int width = 1440, height = 940;
   // S045 architecture slice: the browser's page surface is the only drawn
   // interface; the native shell keeps windowing, input dispatch and presentation.
@@ -2643,7 +2646,9 @@ struct Browser {
     for (auto &j : t.frame.at("paint").array) {
       PaintCommand p;
       p.kind = PaintCommand::Kind(int(j.num("kind")));
-      p.rect = {j.num("x") * zoom + origin_x, j.num("y") * zoom + origin_y - t.scroll * zoom,
+      const bool fixed = j.flag("fixed");
+      p.rect = {j.num("x") * zoom + origin_x,
+                j.num("y") * zoom + origin_y - (fixed ? 0 : t.scroll * zoom),
                 j.num("w") * zoom, j.num("h") * zoom};
       p.color = uint32_t(j.num("color"));
       p.text = j.str("text");
@@ -2653,7 +2658,15 @@ struct Browser {
       p.node = int(j.num("node"));
       p.url = j.str("url");
       p.gradient = j.str("gradient");
-      p.fixed = j.flag("fixed");
+      p.fixed = fixed;
+      p.radius = j.num("radius") * zoom;
+      p.opacity = j.num("opacity", 1);
+      p.blur = j.num("blur") * zoom;
+      p.spread = j.num("spread") * zoom;
+      p.offset_x = j.num("offsetX") * zoom;
+      p.offset_y = j.num("offsetY") * zoom;
+      p.rotation = j.num("rotation");
+      p.filter = j.str("filter");
       commands.push_back(p);
     }
     return commands;
@@ -2724,6 +2737,20 @@ struct Browser {
     status = "Zoom " + std::to_string(int(t.zoom * 100 + 0.5)) + "%";
     InvalidateRect(hwnd, nullptr, FALSE);
   }
+  std::pair<Rect, Rect> document_scrollbar(double *maximum = nullptr) {
+    Tab &t = current();
+    const double zoom = t.zoom > 0 ? t.zoom : 1.0;
+    const double total = t.frame.num("height", content.h / zoom);
+    const double visible = content.h / zoom;
+    const double max_scroll = std::max(0.0, total - visible);
+    if (maximum) *maximum = max_scroll;
+    if (max_scroll <= 0 || content.h <= 0) return {{}, {}};
+    const Rect track{content.x + content.w - 8, content.y, 8, content.h};
+    const double thumb_height = std::min(track.h,
+        std::max(18.0, track.h * visible / std::max(total, visible)));
+    const double thumb_y = track.y + (track.h - thumb_height) * t.scroll / max_scroll;
+    return {track, {track.x, thumb_y, track.w, thumb_height}};
+  }
   void draw_content(Canvas &c) {
     Tab &t = current();
     if (t.loading && t.frame.type == Json::Type::Null) {
@@ -2752,7 +2779,79 @@ struct Browser {
       } else
         c.stroke(r, 0xff2a4a6a);
     }
+    double document_max = 0;
+    const auto [document_track, document_thumb] = document_scrollbar(&document_max);
+    if (document_max > 0) {
+      c.fill(document_track, 0x30607080u);
+      c.fill_rounded(document_thumb, 4, 0xff71869au);
+    }
     c.clip = old;
+  }
+  void send_page_pointer(const char *tag, int x, int y) {
+    if (!current().session) return;
+    Json command = Json::make_object();
+    command.set("tag", tag);
+    const double zoom = current().zoom > 0 ? current().zoom : 1.0;
+    command.set("x", (x - content.x) / zoom);
+    command.set("y", (y - content.y) / zoom);
+    current().session->send(command);
+  }
+  void pointer_move(int x, int y) {
+    if (document_scroll_drag) {
+      double maximum = 0;
+      const auto [track, thumb] = document_scrollbar(&maximum);
+      const double travel = std::max(1.0, track.h - thumb.h);
+      const double position = document_scroll_drag_start +
+          (y - document_scroll_drag_start_y) * maximum / travel;
+      scroll_to(position);
+      return;
+    }
+    const bool inside = content.contains(x, y);
+    if (inside || page_pointer_inside || page_pointer_down) send_page_pointer("pointermove", x, y);
+    page_pointer_inside = inside;
+  }
+  void wheel(int x, int y, double delta) {
+    if (!content.contains(x, y) || !current().session) return;
+    Json command = Json::make_object();
+    command.set("tag", "wheel");
+    const double zoom = current().zoom > 0 ? current().zoom : 1.0;
+    command.set("x", (x - content.x) / zoom);
+    command.set("y", (y - content.y) / zoom);
+    command.set("delta", delta / zoom);
+    current().session->send(command);
+  }
+  void scroll_key(const char *key) {
+    if (!current().session) return;
+    Json command = Json::make_object();
+    command.set("tag", "scrollkey");
+    command.set("key", key);
+    current().session->send(command);
+  }
+  void pointer_down(int x, int y) {
+    if (!content.contains(x, y)) return;
+    double maximum = 0;
+    const auto [track, thumb] = document_scrollbar(&maximum);
+    if (maximum > 0 && track.contains(x, y)) {
+      page_pointer_down = false;
+      if (thumb.contains(x, y)) {
+        document_scroll_drag = true;
+        document_scroll_drag_start_y = y;
+        document_scroll_drag_start = current().scroll;
+      } else {
+        const double travel = std::max(1.0, track.h - thumb.h);
+        const double ratio = std::clamp((y - track.y - thumb.h / 2) / travel, 0.0, 1.0);
+        scroll_to(ratio * maximum);
+      }
+      return;
+    }
+    page_pointer_down = true;
+    send_page_pointer("pointerdown", x, y);
+  }
+  void pointer_up(int x, int y) {
+    if (document_scroll_drag) { document_scroll_drag = false; return; }
+    if (!page_pointer_down) return;
+    send_page_pointer("pointerup", x, y);
+    page_pointer_down = false;
   }
   void click(int x, int y) {
     if (palette_open) {
@@ -3373,12 +3472,12 @@ struct Browser {
       InvalidateRect(hwnd, nullptr, FALSE);
       return;
     }
-    if (wp == VK_PRIOR || wp == VK_NEXT || wp == VK_UP || wp == VK_DOWN) {
-      double delta = wp == VK_PRIOR  ? -content.h * 0.8
-                     : wp == VK_NEXT ? content.h * 0.8
-                     : wp == VK_UP   ? -60
-                                     : 60;
-      scroll(delta);
+    if (wp == VK_PRIOR || wp == VK_NEXT || wp == VK_UP || wp == VK_DOWN ||
+        wp == VK_HOME || wp == VK_END) {
+      const char *key = wp == VK_PRIOR ? "PageUp" : wp == VK_NEXT ? "PageDown"
+                        : wp == VK_UP ? "ArrowUp" : wp == VK_DOWN ? "ArrowDown"
+                        : wp == VK_HOME ? "Home" : "End";
+      scroll_key(key);
       return;
     }
     if (current().session && (wp == VK_RETURN || wp == VK_BACK || wp == VK_TAB)) {
@@ -3911,12 +4010,12 @@ struct Browser {
     }
     CloseClipboard();
   }
-  void scroll(double delta) {
+  void scroll_to(double position) {
     Tab &t = current();
-    double zoom = t.zoom > 0 ? t.zoom : 1.0;
-    double page_height = t.frame.num("height", content.h / zoom);
-    double max = std::max(0.0, page_height - content.h / zoom);
-    t.scroll = std::clamp(t.scroll + delta / zoom, 0.0, max);
+    const double zoom = t.zoom > 0 ? t.zoom : 1.0;
+    const double page_height = t.frame.num("height", content.h / zoom);
+    const double maximum = std::max(0.0, page_height - content.h / zoom);
+    t.scroll = std::clamp(position, 0.0, maximum);
     if (t.session) {
       Json j = Json::make_object();
       j.set("tag", "scroll");
@@ -3924,6 +4023,10 @@ struct Browser {
       t.session->send(j);
     }
     InvalidateRect(hwnd, nullptr, FALSE);
+  }
+  void scroll(double delta) {
+    const double zoom = current().zoom > 0 ? current().zoom : 1.0;
+    scroll_to(current().scroll + delta / zoom);
   }
 };
 static std::string pick_folder(HWND owner) {
@@ -3997,19 +4100,46 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     paint(hwnd);
     return 0;
   case WM_LBUTTONDOWN: {
-    if (auto b = browser(hwnd))
-      b->click(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
+    const int x = GET_X_LPARAM(lp), y = GET_Y_LPARAM(lp);
+    if (auto b = browser(hwnd)) {
+      if (b->content.contains(x, y)) {
+        SetCapture(hwnd);
+        b->pointer_down(x, y);
+      } else b->click(x, y);
+    }
     SetFocus(hwnd);
     return 0;
   }
+  case WM_LBUTTONUP: {
+    const int x = GET_X_LPARAM(lp), y = GET_Y_LPARAM(lp);
+    if (auto b = browser(hwnd)) {
+      const bool page_click = b->page_pointer_down && b->content.contains(x, y);
+      b->pointer_up(x, y);
+      if (page_click) b->click(x, y);
+    }
+    if (GetCapture() == hwnd) ReleaseCapture();
+    return 0;
+  }
+  case WM_MOUSEMOVE: {
+    TRACKMOUSEEVENT tracking{sizeof(TRACKMOUSEEVENT), TME_LEAVE, hwnd, 0};
+    TrackMouseEvent(&tracking);
+    if (auto b = browser(hwnd)) b->pointer_move(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
+    return 0;
+  }
+  case WM_MOUSELEAVE:
+    if (auto b = browser(hwnd))
+      b->pointer_move(int(b->content.x) - 1, int(b->content.y) - 1);
+    return 0;
   case WM_RBUTTONDOWN: {
     if (auto b = browser(hwnd))
       b->right_click(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
     return 0;
   }
   case WM_MOUSEWHEEL: {
+    POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+    ScreenToClient(hwnd, &point);
     if (auto b = browser(hwnd))
-      b->scroll(-double(GET_WHEEL_DELTA_WPARAM(wp)) / 120 * 60);
+      b->wheel(point.x, point.y, -double(GET_WHEEL_DELTA_WPARAM(wp)) / 120 * 60);
     return 0;
   }
   case WM_KEYDOWN:

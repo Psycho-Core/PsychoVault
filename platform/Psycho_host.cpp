@@ -1,6 +1,7 @@
 // PsychoVault original source. I drive my own engine inside my own process.
 #include "Psycho_host.hpp"
 #include <algorithm>
+#include <cmath>
 #include <exception>
 
 namespace pv {
@@ -95,6 +96,48 @@ void Host::scroll(double y) {
   scroll_ = std::max(0.0, y);
   if (loaded_)
     settle();
+}
+
+void Host::wheel(double x, double y, double delta) {
+  if (!loaded_ || !std::isfinite(delta)) return;
+  if (!page_->wheel(x, y, delta)) {
+    const double maximum = std::max(0.0, page_->content_height() - height_);
+    scroll_ = std::clamp(scroll_ + delta, 0.0, maximum);
+  }
+  settle();
+}
+
+void Host::scroll_key(const std::string &key) {
+  if (!loaded_) return;
+  if (!page_->scroll_key(key)) {
+    double delta = key == "PageUp" ? -height_ * 0.8
+                   : key == "PageDown" ? height_ * 0.8
+                   : key == "ArrowUp" ? -40
+                   : key == "ArrowDown" ? 40
+                   : key == "Home" ? -scroll_
+                   : key == "End" ? page_->content_height() - height_ - scroll_ : 0;
+    const double maximum = std::max(0.0, page_->content_height() - height_);
+    scroll_ = std::clamp(scroll_ + delta, 0.0, maximum);
+  }
+  settle();
+}
+
+void Host::pointer_move(double x, double y) {
+  if (!loaded_) return;
+  page_->pointer_move(x, y);
+  settle();
+}
+
+void Host::pointer_down(double x, double y) {
+  if (!loaded_) return;
+  page_->pointer_down(x, y);
+  settle();
+}
+
+void Host::pointer_up(double x, double y) {
+  if (!loaded_) return;
+  page_->pointer_up(x, y);
+  settle();
 }
 
 void Host::click(double x, double y) {
