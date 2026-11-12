@@ -966,8 +966,8 @@ int main() {
     interactive.click(x, y);
     const double focused = button_color(interactive.render(800, 600, 0));
     CHECK(idle >= 0 && hover != idle);
-    CHECK(active != hover && released == hover);
-    CHECK(focused != released);
+    CHECK(active != hover && released != hover);
+    CHECK(focused == released);
 
     Page checkbox;
     checkbox.load(*parse_url("https://local.test/"),
@@ -2015,6 +2015,20 @@ int main() {
       threw = true;
     }
     CHECK(threw);
+  }
+  {
+    Page lazy_page;
+    lazy_page.load(
+        *parse_url("https://local.test/"),
+        "<!doctype html><body style='margin:0'><div style='height:700px'></div>"
+        "<img loading='lazy' src='later.png'></body>");
+    CHECK(lazy_page.requests.empty());
+    lazy_page.render(100, 100, 0);
+    CHECK(lazy_page.requests.empty());
+    lazy_page.render(100, 100, 600);
+    CHECK(lazy_page.requests.size() == 1);
+    CHECK(lazy_page.requests[0].url == "https://local.test/later.png");
+    CHECK(lazy_page.requests[0].type == ResourceType::Image);
   }
   {
     Page image_page;
@@ -3431,7 +3445,7 @@ int main() {
       "#inside{height:120px;background:#123456}#tail{height:100px;background:#abcdef}"
       "#contained{width:50px;height:30px;overflow:auto;overscroll-behavior:contain}"
       "#contained-content{height:100px}</style>"
-      "<div id=outer><div id=inner><div id=inside></div></div>"
+      "<div id=outer><div id=inner tabindex=0><div id=inside></div></div>"
       "<div id=contained><div id=contained-content></div></div><div id=tail></div></div>");
     const int outer_id = scrolling.doc.by_id("outer");
     const int inner_id = scrolling.doc.by_id("inner");
@@ -3498,6 +3512,203 @@ int main() {
     CHECK(frame_box(after_chain, outer_id).y == outer_before_contain.y);
     CHECK(frame_box(after_chain, tail_id).y < tail_before_chain.y);
     CHECK(frame_box(after_chain, inside_id).y < inner_before_chain.y);
+  }
+  {
+    // UiPointerDelegationAndDefaultActions covers the DOM event capture/target/
+    // bubble phases, pointer/mouse ordering, focus transitions, propagation and
+    // default cancellation for links, typing and the existing control defaults.
+    Page events;
+    events.load(*parse_url("https://events.test/"),
+      "<!doctype html><title></title><style>body{margin:0}"
+      "button,a,input{display:block;width:90px;height:24px}"
+      "#stop{margin-top:4px}#cancel{margin-top:4px}</style>"
+      "<div id=parent><button id=child></button><button id=stop></button>"
+      "<a id=cancel href='/next'>go</a><input id=field></div>"
+      "<script>"
+      "var mark=function(s){document.title=document.title+s};"
+      "var p=document.getElementById('parent'), c=document.getElementById('child');"
+      "p.addEventListener('click',function(e){mark(e.eventPhase===1?'C':'?')},true);"
+      "p.addEventListener('click',function(e){mark(e.eventPhase===3?'B':'?')});"
+      "c.addEventListener('pointermove',function(){mark('v')});"
+      "c.addEventListener('mousemove',function(){mark('m')});"
+      "c.addEventListener('pointerdown',function(){mark('P')});"
+      "c.addEventListener('mousedown',function(){mark('M')});"
+      "p.addEventListener('focusin',function(){mark('i')});"
+      "c.addEventListener('focus',function(){mark('f')});"
+      "c.addEventListener('pointerup',function(){mark('U')});"
+      "c.addEventListener('mouseup',function(){mark('u')});"
+      "c.addEventListener('click',function(e){"
+      "if(e.target.id==='child'&&e.currentTarget.id==='child'&&e.eventPhase===2)mark('T');"
+      "else mark('!')});"
+      "var removed=function(){mark('X')};c.addEventListener('click',removed,true);"
+      "c.removeEventListener('click',removed,true);"
+      "document.getElementById('stop').addEventListener('click',function(e){mark('S');e.stopPropagation()});"
+      "document.getElementById('cancel').addEventListener('click',function(e){e.preventDefault()});"
+      "document.getElementById('field').addEventListener('keydown',function(e){"
+      "if(e.key==='x'){mark('K');e.preventDefault()}});"
+      "document.getElementById('field').addEventListener('keypress',function(){mark('P')});"
+      "document.getElementById('field').addEventListener('keyup',function(){mark('U')});"
+      "</script>");
+    auto center = [&](const char *id) {
+      Rect box = node_box(events, id);
+      return std::pair<double,double>{box.x + box.w / 2, box.y + box.h / 2};
+    };
+    auto [child_x, child_y] = center("child");
+    events.pointer_move(child_x, child_y);
+    events.pointer_down(child_x, child_y);
+    events.pointer_up(child_x, child_y);
+    events.click(child_x, child_y);
+    CHECK(events.title() == "vmPMifUuCTB");
+
+    events.doc.set_text(events.doc.element("title", events.doc.head), "");
+    auto [stop_x, stop_y] = center("stop");
+    events.click(stop_x, stop_y);
+    CHECK(events.title() == "iCS"); // captured, then target; stopped before parent bubble
+
+    events.doc.set_text(events.doc.element("title", events.doc.head), "");
+    auto [link_x, link_y] = center("cancel");
+    events.click(link_x, link_y);
+    CHECK(events.navigations.empty()); // preventDefault cancels anchor navigation
+
+    auto [field_x, field_y] = center("field");
+    events.click(field_x, field_y);
+    events.doc.set_text(events.doc.element("title", events.doc.head), "");
+    events.key("x", "x");
+    events.key_up("x");
+    CHECK(events.title() == "KU"); // keydown cancellation skips keypress and text insertion
+    CHECK(events.doc.nodes[events.doc.by_id("field")].attribute("value").empty());
+
+    Page checkbox;
+    checkbox.load(*parse_url("https://events.test/check/"),
+      "<input id=check type=checkbox><script>"
+      "document.getElementById('check').addEventListener('click',function(e){e.preventDefault()});"
+      "</script>");
+    Rect check = node_box(checkbox, "check");
+    checkbox.click(check.x + check.w / 2, check.y + check.h / 2);
+    std::string checked;
+    CHECK(!checkbox.doc.nodes[checkbox.doc.by_id("check")].get_attribute("checked", checked));
+  }
+  {
+    // S061: checked state, label activation, select keyboard state and required
+    // control validity stay synchronized with selector matching and form APIs.
+    Page controls;
+    controls.load(*parse_url("https://controls.test/"),
+      "<form id=form action='/send'><input id=required name=q required>"
+      "<input id=radio-a type=radio name=choice checked><input id=radio-b type=radio name=choice>"
+      "<input id=number type=number min=1 max=5 step=2 value=3>"
+      "<select id=mode><option value=one selected>One</option><option value=two>Two</option></select>"
+      "<button id=submit>Send</button></form><input id=agree type=checkbox>"
+      "<label id=agree-label for=agree>Agree</label><script>"
+      "document.getElementById('required').addEventListener('invalid',function(){document.title='invalid'});"
+      "document.getElementById('form').checkValidity();</script>");
+    const int required = controls.doc.by_id("required");
+    const int checkbox_id = controls.doc.by_id("agree");
+    const int radio_a = controls.doc.by_id("radio-a");
+    const int radio_b = controls.doc.by_id("radio-b");
+    const int select = controls.doc.by_id("mode");
+    const int numeric = controls.doc.by_id("number");
+    CHECK(controls.title() == "invalid");
+    CHECK(!form_control_valid(controls.doc, required));
+    CHECK(form_control_valid(controls.doc, numeric));
+    controls.doc.nodes[numeric].set_attribute("value", "4");
+    CHECK(!form_control_valid(controls.doc, numeric));
+    controls.doc.nodes[numeric].set_attribute("value", "3");
+    CHECK(matches_selector(controls.doc, required, ":invalid"));
+    CHECK(!matches_selector(controls.doc, required, ":valid"));
+    auto has_control_attr = [&](int node, const std::string &attribute) {
+      std::string value;
+      return controls.doc.nodes[node].get_attribute(attribute, value);
+    };
+    auto click_control = [&](const char *id) {
+      const Rect box = node_box(controls, id);
+      controls.click(box.x + box.w / 2, box.y + box.h / 2);
+    };
+    click_control("submit");
+    CHECK(controls.navigations.empty());
+    click_control("agree-label");
+    CHECK(has_control_attr(checkbox_id, "checked"));
+    click_control("radio-b");
+    CHECK(has_control_attr(radio_b, "checked"));
+    CHECK(!has_control_attr(radio_a, "checked"));
+    click_control("mode");
+    controls.key("ArrowDown", "");
+    const auto options = controls.doc.query("option", select);
+    CHECK(options.size() == 2 && !matches_selector(controls.doc, options[0], ":checked") &&
+          matches_selector(controls.doc, options[1], ":checked"));
+    controls.doc.nodes[required].set_attribute("value", "ready");
+    CHECK(form_control_valid(controls.doc, required));
+    CHECK(matches_selector(controls.doc, required, ":valid"));
+    click_control("submit");
+    CHECK(controls.navigations.size() == 1 && controls.navigations[0].find("/send") != std::string::npos);
+  }
+  {
+    // S062: selection offsets, pointer drag, editing history, clipboard operations,
+    // caret paint and cancelable IME composition share one focused editor state.
+    Page editor;
+    editor.load(*parse_url("https://editor.test/"),
+      "<input id=edit value='hello world'><script>"
+      "var field=document.getElementById('edit');field.focus();"
+      "field.setSelectionRange(1,4,'forward');"
+      "document.title=field.selectionStart+':'+field.selectionEnd;</script>");
+    const int field = editor.doc.by_id("edit");
+    CHECK(editor.title() == "1:4");
+    auto selected_frame = editor.render(400, 100, 0);
+    bool selection_painted = false;
+    for (const Json &command : selected_frame.at("paint").array)
+      if (int(command.num("node", -1)) == field && uint32_t(command.num("color", 0)) == 0x803878d0u)
+        selection_painted = true;
+    CHECK(selection_painted);
+    CHECK(editor.edit_clipboard(false) == "ell");
+    CHECK(editor.edit_clipboard(true) == "ell");
+    CHECK(editor.doc.nodes[field].attribute("value") == "ho world");
+    editor.paste_text("EL");
+    CHECK(editor.doc.nodes[field].attribute("value") == "hELo world");
+    editor.key("Control", "");
+    editor.key("z", "");
+    editor.key_up("Control");
+    CHECK(editor.doc.nodes[field].attribute("value") == "ho world");
+    editor.key("Control", "");
+    editor.key("y", "");
+    editor.key_up("Control");
+    CHECK(editor.doc.nodes[field].attribute("value") == "hELo world");
+    editor.key("Control", "");
+    editor.key("a", "");
+    editor.key_up("Control");
+    editor.key("x", "new");
+    CHECK(editor.doc.nodes[field].attribute("value") == "new");
+    editor.key("Control", "");
+    editor.key("z", "");
+    editor.key_up("Control");
+    CHECK(editor.doc.nodes[field].attribute("value") == "hELo world");
+    Rect field_box = node_box(editor, "edit");
+    editor.pointer_down(field_box.x + 12, field_box.y + field_box.h / 2);
+    editor.pointer_move(field_box.x + 54, field_box.y + field_box.h / 2);
+    editor.pointer_up(field_box.x + 54, field_box.y + field_box.h / 2);
+    CHECK(!editor.edit_clipboard(false).empty());
+
+    Page unicode_editor;
+    unicode_editor.load(*parse_url("https://unicode-editor.test/"),
+      "<input id=u value='a😀b'><script>var u=document.getElementById('u');"
+      "u.focus();u.setSelectionRange(1,3);</script>");
+    const int unicode_field = unicode_editor.doc.by_id("u");
+    CHECK(unicode_editor.edit_clipboard(false) == "😀");
+    CHECK(unicode_editor.edit_clipboard(true) == "😀");
+    CHECK(unicode_editor.doc.nodes[unicode_field].attribute("value") == "ab");
+
+    Page ime;
+    ime.load(*parse_url("https://ime-editor.test/"),
+      "<input id=ime value=abc><script>var f=document.getElementById('ime');"
+      "f.focus();f.setSelectionRange(1,2);</script>");
+    const int ime_field = ime.doc.by_id("ime");
+    ime.composition_start();
+    ime.composition_update("あ", 3);
+    CHECK(ime.doc.nodes[ime_field].attribute("value") == "aあc");
+    ime.composition_cancel();
+    CHECK(ime.doc.nodes[ime_field].attribute("value") == "abc");
+    ime.composition_start();
+    ime.composition_update("xy", 2);
+    ime.composition_commit("xy");
+    CHECK(ime.doc.nodes[ime_field].attribute("value") == "axyc");
   }
   {
     // My HTTPS policy. A header from an HTTPS answer is a promise I keep, the same

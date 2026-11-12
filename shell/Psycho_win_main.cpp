@@ -41,6 +41,8 @@
 #include <thread>
 #include <windows.h>
 #include <windowsx.h>
+#include <imm.h>
+#pragma comment(lib, "imm32.lib")
 
 namespace pv {
 struct ForwardedLaunch {
@@ -54,7 +56,8 @@ static rt::AppInstance *app_instance = nullptr;
 static rt::RendererProcessFarm *renderer_farm = nullptr;
 static constexpr UINT WM_FRAME = WM_APP + 1, WM_NAVIGATE = WM_APP + 2, WM_DIALOG = WM_APP + 3,
                       WM_DONE = WM_APP + 4, WM_IMAGE = WM_APP + 5, WM_URL = WM_APP + 6,
-                      WM_FORWARD_LAUNCH = WM_APP + 7, WM_BRIDGE = WM_APP + 8;
+                      WM_FORWARD_LAUNCH = WM_APP + 7, WM_BRIDGE = WM_APP + 8,
+                      WM_CLIPBOARD = WM_APP + 9;
 static constexpr uint32_t BG = 0xff05080f, RAIL = 0xff080d16, CHROME = 0xff070b12,
                           PANEL = 0xff0d1420, BORDER = 0xff1c2736, TEXT = 0xffe6edf3,
                           MUTED = 0xff8b98a9, ACCENT = 0xff38bdf8;
@@ -62,7 +65,7 @@ struct Update {
   int tab;
   uint64_t generation;
   Json frame;
-  std::string error, url, title;
+  std::string error, url, title, clipboard;
   // Renderer pixels arrive over bounded IPC chunks and are reconstructed here.
   std::shared_ptr<const Image> image;
 };
@@ -119,6 +122,16 @@ static std::wstring utf16_of(const std::string &text) {
   std::wstring out(size_t(n > 0 ? n : 0), 0);
   if (n > 0)
     MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()), out.data(), n);
+  return out;
+}
+static std::string utf8_of_wide(std::wstring_view text) {
+  if (text.empty()) return {};
+  const int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text.data(),
+                                        int(text.size()), nullptr, 0, nullptr, nullptr);
+  if (bytes <= 0) return {};
+  std::string out(size_t(bytes), '\0');
+  if (!WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text.data(), int(text.size()),
+                           out.data(), bytes, nullptr, nullptr)) return {};
   return out;
 }
 // The result of my tunnel test. A worker fills it and the painting code reads it,
@@ -400,6 +413,9 @@ void Session::deliver(HostEvent event) {
   } else if (event.tag == "dialog") {
     update->url = std::move(event.text);
     post_update(hwnd, WM_DIALOG, update);
+  } else if (event.tag == "clipboard") {
+    update->clipboard = std::move(event.text);
+    post_update(hwnd, WM_CLIPBOARD, update);
   } else {
     delete update;
     if (event.tag == "log")
@@ -435,6 +451,13 @@ void Session::deliver_renderer_reply(const rt::Envelope &reply) {
     HostEvent event;
     event.tag = "frame";
     event.frame = *frame;
+    deliver(std::move(event));
+  }
+  const std::string clipboard = reply.payload.str("clipboard");
+  if (!clipboard.empty()) {
+    HostEvent event;
+    event.tag = "clipboard";
+    event.text = clipboard;
     deliver(std::move(event));
   }
   const std::string navigation = reply.payload.str("navigation");
@@ -763,7 +786,7 @@ struct Browser {
   int settings_category = 0;
   std::vector<Hit> hits;
   Rect content{0, 0, 1000, 700};
-  bool page_pointer_inside = false, page_pointer_down = false;
+  bool page_pointer_inside = false, page_pointer_down = false, page_composing = false;
   bool document_scroll_drag = false;
   double document_scroll_drag_start_y = 0, document_scroll_drag_start = 0;
   int width = 1440, height = 940;
@@ -1187,6 +1210,7 @@ struct Browser {
     if (index < 0 || index >= int(tabs.size()))
       return;
     Tab &tab = tabs[size_t(index)];
+    if (index == active && page_composing) composition_cancel();
     stop_session(tab);
     std::string target = input;
     auto u = navigate_input(input, profile.search_template());
@@ -2827,6 +2851,66 @@ struct Browser {
     command.set("key", key);
     current().session->send(command);
   }
+  void page_key(const std::string &key) {
+    if (!current().session) return;
+    Json command = Json::make_object();
+    command.set("tag", "key");
+    command.set("key", key);
+    current().session->send(command);
+  }
+  void edit_clipboard(bool cut) {
+    if (!current().session) return;
+    Json command = Json::make_object();
+    command.set("tag", cut ? "cut" : "copy");
+    current().session->send(command);
+  }
+  void composition_start() {
+    if (address_focus || home_focus || panel_focus || !current().session) return;
+    Json command = Json::make_object(); command.set("tag", "compositionstart");
+    current().session->send(command); page_composing = true;
+  }
+  void composition_update(const std::string &text, size_t caret) {
+    if (!page_composing || !current().session) return;
+    Json command = Json::make_object(); command.set("tag", "compositionupdate");
+    command.set("text", text); command.set("caret", double(caret));
+    current().session->send(command);
+  }
+  void composition_commit(const std::string &text) {
+    if (!page_composing || !current().session) return;
+    Json command = Json::make_object(); command.set("tag", "compositioncommit");
+    command.set("text", text); current().session->send(command); page_composing = false;
+  }
+  void composition_cancel() {
+    if (!page_composing || !current().session) return;
+    Json command = Json::make_object(); command.set("tag", "compositioncancel");
+    current().session->send(command); page_composing = false;
+  }
+  void key_up(WPARAM wp) {
+    if (address_focus || home_focus || !current().session) return;
+    std::string key = wp == VK_RETURN ? "Enter" : wp == VK_BACK ? "Backspace"
+                      : wp == VK_TAB ? "Tab" : wp == VK_UP ? "ArrowUp"
+                      : wp == VK_DOWN ? "ArrowDown" : wp == VK_PRIOR ? "PageUp"
+                      : wp == VK_NEXT ? "PageDown" : wp == VK_HOME ? "Home"
+                      : wp == VK_END ? "End" : wp == VK_SPACE ? " "
+                      : wp == VK_ESCAPE ? "Escape" : wp == VK_DELETE ? "Delete"
+                      : wp == VK_LEFT ? "ArrowLeft" : wp == VK_RIGHT ? "ArrowRight"
+                      : wp == VK_SHIFT ? "Shift" : wp == VK_CONTROL ? "Control"
+                      : wp == VK_MENU ? "Alt" : std::string();
+    if (key.empty() && wp >= 'A' && wp <= 'Z') {
+      char letter = char(wp);
+      const bool shifted = GetKeyState(VK_SHIFT) < 0;
+      const bool caps = (GetKeyState(VK_CAPITAL) & 1) != 0;
+      if (!(shifted ^ caps)) letter = char(letter - 'A' + 'a');
+      key.assign(1, letter);
+    } else if (key.empty() && wp >= '0' && wp <= '9') {
+      key.assign(1, char(wp));
+    }
+    if (key.empty()) return;
+    Json command = Json::make_object();
+    command.set("tag", "keyup");
+    command.set("key", key);
+    current().session->send(command);
+  }
   void pointer_down(int x, int y) {
     if (!content.contains(x, y)) return;
     double maximum = 0;
@@ -3343,6 +3427,11 @@ struct Browser {
         return;
       }
     }
+    if (ctrl && (wp == 'C' || wp == 'X') && !address_focus && !home_focus &&
+        !panel_focus && !find_open && current().session) {
+      edit_clipboard(wp == 'X');
+      return;
+    }
     if (ctrl && wp == 'V') {
       paste();
       return;
@@ -3477,15 +3566,23 @@ struct Browser {
       const char *key = wp == VK_PRIOR ? "PageUp" : wp == VK_NEXT ? "PageDown"
                         : wp == VK_UP ? "ArrowUp" : wp == VK_DOWN ? "ArrowDown"
                         : wp == VK_HOME ? "Home" : "End";
-      scroll_key(key);
+      page_key(key);
       return;
     }
-    if (current().session && (wp == VK_RETURN || wp == VK_BACK || wp == VK_TAB)) {
-      Json j = Json::make_object();
-      j.set("tag", "key");
-      j.set("key", wp == VK_RETURN ? "Enter" : wp == VK_BACK ? "Backspace" : "Tab");
-      current().session->send(j);
+    std::string page_key_name = wp == VK_RETURN ? "Enter" : wp == VK_BACK ? "Backspace"
+        : wp == VK_TAB ? "Tab" : wp == VK_DELETE ? "Delete"
+        : wp == VK_LEFT ? "ArrowLeft" : wp == VK_RIGHT ? "ArrowRight"
+        : wp == VK_CONTROL ? "Control" : wp == VK_SHIFT ? "Shift"
+        : wp == VK_MENU ? "Alt" : wp == VK_SPACE ? "Space" : std::string();
+    if (page_key_name.empty() && wp >= 'A' && wp <= 'Z') {
+      char letter = char(wp);
+      if (!(shift ^ ((GetKeyState(VK_CAPITAL) & 1) != 0))) letter = char(letter - 'A' + 'a');
+      page_key_name.assign(1, letter);
+    } else if (page_key_name.empty() && wp >= '0' && wp <= '9') {
+      page_key_name.assign(1, char(wp));
     }
+    if (!page_key_name.empty() && !address_focus && !home_focus && !panel_focus && !find_open)
+      page_key(page_key_name);
   }
   static size_t previous_cp(const std::string &text, size_t caret) {
     if (!caret)
@@ -4001,9 +4098,15 @@ struct Browser {
       if (text) {
         int n = WideCharToMultiByte(CP_UTF8, 0, text, -1, nullptr, 0, nullptr, nullptr);
         if (n > 0 && n <= 8192) {
-          std::string utf8(size_t(n - 1), '\0');
+          std::string utf8(size_t(n), '\0');
           WideCharToMultiByte(CP_UTF8, 0, text, -1, utf8.data(), n, nullptr, nullptr);
-          insert_text(utf8);
+          utf8.pop_back();
+          if (!address_focus && !home_focus && !panel_focus && !find_open && current().session) {
+            Json command = Json::make_object();
+            command.set("tag", "paste");
+            command.set("text", utf8);
+            current().session->send(command);
+          } else insert_text(utf8);
         }
         GlobalUnlock(data);
       }
@@ -4142,9 +4245,42 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       b->wheel(point.x, point.y, -double(GET_WHEEL_DELTA_WPARAM(wp)) / 120 * 60);
     return 0;
   }
+  case WM_IME_STARTCOMPOSITION:
+    if (auto b = browser(hwnd)) b->composition_start();
+    return DefWindowProcW(hwnd, msg, wp, lp);
+  case WM_IME_COMPOSITION: {
+    auto b = browser(hwnd);
+    HIMC context = ImmGetContext(hwnd);
+    if (!b || !context) return DefWindowProcW(hwnd, msg, wp, lp);
+    auto read_composition = [&](DWORD index) {
+      LONG bytes = ImmGetCompositionStringW(context, index, nullptr, 0);
+      if (bytes <= 0 || bytes > 8192 * LONG(sizeof(wchar_t)) || bytes % LONG(sizeof(wchar_t)))
+        return std::wstring();
+      std::wstring result(size_t(bytes / LONG(sizeof(wchar_t))), L'\0');
+      if (ImmGetCompositionStringW(context, index, result.data(), DWORD(bytes)) < 0) return std::wstring();
+      return result;
+    };
+    if (lp & GCS_RESULTSTR) {
+      const std::string committed = utf8_of_wide(read_composition(GCS_RESULTSTR));
+      b->composition_commit(committed);
+    } else if (lp & GCS_COMPSTR) {
+      const std::wstring preedit = read_composition(GCS_COMPSTR);
+      LONG caret_units = ImmGetCompositionStringW(context, GCS_CURSORPOS, nullptr, 0);
+      const size_t caret = size_t(std::clamp<LONG>(caret_units, 0, LONG(preedit.size())));
+      b->composition_update(utf8_of_wide(preedit), utf8_of_wide(preedit.substr(0, caret)).size());
+    }
+    ImmReleaseContext(hwnd, context);
+    return 0;
+  }
+  case WM_IME_ENDCOMPOSITION:
+    if (auto b = browser(hwnd)) b->composition_cancel();
+    return DefWindowProcW(hwnd, msg, wp, lp);
   case WM_KEYDOWN:
     if (auto b = browser(hwnd))
       b->key(msg, wp, lp);
+    return 0;
+  case WM_KEYUP:
+    if (auto b = browser(hwnd)) b->key_up(wp);
     return 0;
   case WM_CHAR:
     if (auto b = browser(hwnd))
@@ -4253,6 +4389,14 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
           }
           break;
         }
+    }
+    return 0;
+  }
+  case WM_CLIPBOARD: {
+    std::unique_ptr<Update> up(reinterpret_cast<Update *>(lp));
+    if (auto b = browser(hwnd)) {
+      Tab *tab = b->find_tab(int(wp));
+      if (tab && tab->generation == up->generation) b->write_clipboard(up->clipboard);
     }
     return 0;
   }

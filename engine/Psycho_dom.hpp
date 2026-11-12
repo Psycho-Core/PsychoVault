@@ -40,4 +40,5 @@ struct SelectorState {
 };
 bool matches_selector(const Document &doc, int node, std::string_view selector,
                       const SelectorState *state = nullptr);
+bool form_control_valid(const Document &doc, int node);
 } // namespace pv

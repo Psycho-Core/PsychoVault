@@ -1667,8 +1667,8 @@ struct Layout {
         if (child.name == "input" || child.name == "button" || child.name == "select" ||
             child.name == "textarea") {
           flush();
-          std::string label =
-              child.name == "button" ? doc.text_content(c) : child.attribute("value");
+          std::string label = child.name == "button" || child.name == "textarea"
+              ? doc.text_content(c) : child.attribute("value");
           if (child.name == "input" && child.attribute("type") == "checkbox")
             label = child.get_attribute("checked", label) ? "[x]" : "[ ]";
           if (child.name == "select") {

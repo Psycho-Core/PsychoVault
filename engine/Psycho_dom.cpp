@@ -630,6 +630,98 @@ static bool disabled(const Document &d, int n) {
     if (d.nodes[p].name == "fieldset" && d.nodes[p].get_attribute("disabled", ignored)) return true;
   return false;
 }
+static int form_owner(const Document &doc, int node) {
+  if (node < 0 || node >= int(doc.nodes.size())) return -1;
+  const std::string explicit_form = doc.nodes[node].attribute("form");
+  if (!explicit_form.empty()) {
+    const int owner = doc.by_id(explicit_form);
+    return owner >= 0 && doc.nodes[owner].name == "form" ? owner : -1;
+  }
+  for (int parent = doc.nodes[node].parent; parent >= 0; parent = doc.nodes[parent].parent)
+    if (doc.nodes[parent].name == "form") return parent;
+  return -1;
+}
+bool form_control_valid(const Document &doc, int id) {
+  if (id < 0 || id >= int(doc.nodes.size())) return true;
+  const Node &node = doc.nodes[id];
+  if (node.type != Node::Type::Element || !is_form_control(node) || disabled(doc, id)) return true;
+  std::string ignored;
+  if (node.name == "button" || node.name == "fieldset" || node.name == "optgroup" ||
+      node.name == "option") return true;
+  if (node.name == "input") {
+    const std::string input_type = lower(node.attribute("type", "text"));
+    if (input_type == "hidden" || input_type == "button" || input_type == "submit" ||
+        input_type == "reset" || input_type == "image") return true;
+  }
+  const bool required = node.get_attribute("required", ignored);
+  if (node.name == "input" && lower(node.attribute("type", "text")) == "radio" && required) {
+    const std::string name = node.attribute("name");
+    const int owner = form_owner(doc, id);
+    for (int other = 0; !name.empty() && other < int(doc.nodes.size()); ++other)
+      if (other != id && doc.nodes[other].name == "input" &&
+          lower(doc.nodes[other].attribute("type", "text")) == "radio" &&
+          doc.nodes[other].attribute("name") == name && form_owner(doc, other) == owner &&
+          !disabled(doc, other) && doc.nodes[other].get_attribute("checked", ignored)) return true;
+  }
+  std::string value;
+  if (node.name == "textarea") value = doc.text_content(id);
+  else if (node.name == "select") {
+    for (int option : node.children)
+      if (doc.nodes[option].name == "option" && doc.nodes[option].get_attribute("selected", ignored)) {
+        value = doc.nodes[option].attribute("value", doc.text_content(option));
+        break;
+      }
+    if (value.empty() && !node.children.empty())
+      for (int option : node.children)
+        if (doc.nodes[option].name == "option") {
+          value = doc.nodes[option].attribute("value", doc.text_content(option));
+          break;
+        }
+  } else value = node.attribute("value");
+  const std::string type = node.name == "input" ? lower(node.attribute("type", "text")) : "text";
+  if (required) {
+    if (type == "checkbox") {
+      if (!node.get_attribute("checked", ignored)) return false;
+    } else if (type == "radio") {
+      if (!node.get_attribute("checked", ignored)) return false;
+    } else if (value.empty() && type != "range") return false;
+  }
+  if (value.empty()) return true;
+  if (type == "email") {
+    const size_t at = value.find('@');
+    if (at == std::string::npos || at == 0 || at + 1 >= value.size() ||
+        value.find('@', at + 1) != std::string::npos || value.find('.', at + 1) == std::string::npos)
+      return false;
+  }
+  if (type == "number" || type == "range") {
+    double number = 0;
+    try {
+      size_t used = 0;
+      number = std::stod(value, &used);
+      if (used != value.size() || !std::isfinite(number)) return false;
+    } catch (...) { return false; }
+    auto bound = [&](const char *name, bool minimum) {
+      const std::string raw = node.attribute(name);
+      if (raw.empty()) return true;
+      try {
+        size_t used = 0;
+        const double limit = std::stod(raw, &used);
+        return used == raw.size() && (minimum ? number >= limit : number <= limit);
+      } catch (...) { return true; }
+    };
+    if (!bound("min", true) || !bound("max", false)) return false;
+    const std::string raw_step = node.attribute("step");
+    if (!raw_step.empty() && lower(raw_step) != "any") {
+      try {
+        const double step = std::stod(raw_step);
+        const double base = node.attribute("min").empty() ? 0.0 : std::stod(node.attribute("min"));
+        if (step > 0 && std::abs((number - base) / step - std::round((number - base) / step)) > 1e-7)
+          return false;
+      } catch (...) { }
+    }
+  }
+  return true;
+}
 static bool match_simple(const Document &d, int n, const SimpleSelector &s,
                          const SelectorState *state) {
   if (n < 0 || n >= int(d.nodes.size())) return false;
@@ -681,6 +773,14 @@ static bool match_simple(const Document &d, int n, const SimpleSelector &s,
       if (!disabled(d, n)) return false;
     } else if (pseudo == "enabled") {
       if (!is_form_control(node) || disabled(d, n)) return false;
+    } else if (pseudo == "required" || pseudo == "optional") {
+      if (node.name != "input" && node.name != "select" && node.name != "textarea") return false;
+      std::string required_value;
+      const bool required = node.get_attribute("required", required_value);
+      if ((pseudo == "required") != required) return false;
+    } else if (pseudo == "valid" || pseudo == "invalid") {
+      if ((node.name != "input" && node.name != "select" && node.name != "textarea") ||
+          form_control_valid(d, n) == (pseudo == "invalid")) return false;
     } else if (pseudo == "hover") {
       if (!state || state->hovered < 0 || !is_self_or_ancestor(d, n, state->hovered)) return false;
     } else if (pseudo == "active") {

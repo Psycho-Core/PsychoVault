@@ -48,6 +48,13 @@ public:
   void pointer_up(double x, double y);
   void click(double x, double y);
   void key(const std::string &key, const std::string &text);
+  void key_up(const std::string &key);
+  std::string edit_clipboard(bool cut);
+  void paste_text(const std::string &text);
+  void composition_start();
+  void composition_update(const std::string &text, size_t caret);
+  void composition_commit(const std::string &text);
+  void composition_cancel();
   // I run any timer that is due and report a fresh frame. Returns true when I
   // did any work, so a caller can idle instead of spinning.
   bool pump();
