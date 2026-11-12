@@ -327,13 +327,35 @@ bool RendererWorker::input(const Envelope &request, Envelope &response, Error &e
     else host_->pointer_up(x, y);
   } else if (tag == "pump") {
     host_->pump();
-  } else if (tag == "key") {
+  } else if (tag == "key" || tag == "keyup") {
     const std::string key = request.payload.str("key");
     const std::string text = request.payload.str("text");
     if ((key.empty() && text.empty()) || key.size() > 64 || text.size() > 4096) {
       return reject("key input is empty or exceeds its size limit");
     }
-    host_->key(key, text);
+    if (tag == "keyup") host_->key_up(key);
+    else host_->key(key, text);
+  } else if (tag == "copy" || tag == "cut") {
+    const std::string clipboard = host_->edit_clipboard(tag == "cut");
+    if (!clipboard.empty()) payload.set("clipboard", Json(clipboard));
+  } else if (tag == "paste") {
+    const std::string text = request.payload.str("text");
+    if (text.size() > 65536) return reject("paste text exceeds its size limit");
+    host_->paste_text(text);
+  } else if (tag == "compositionstart") {
+    host_->composition_start();
+  } else if (tag == "compositionupdate") {
+    const std::string text = request.payload.str("text");
+    const double caret = request.payload.num("caret", 0);
+    if (text.size() > 4096 || caret < 0 || caret > 8192 || caret != std::floor(caret))
+      return reject("composition update is outside its text or caret bounds");
+    host_->composition_update(text, size_t(caret));
+  } else if (tag == "compositioncommit") {
+    const std::string text = request.payload.str("text");
+    if (text.size() > 4096) return reject("composition text exceeds its size limit");
+    host_->composition_commit(text);
+  } else if (tag == "compositioncancel") {
+    host_->composition_cancel();
   } else {
     return reject("renderer input tag is not supported");
   }

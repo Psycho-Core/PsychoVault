@@ -154,6 +154,49 @@ void Host::key(const std::string &key, const std::string &text) {
   settle();
 }
 
+void Host::key_up(const std::string &key) {
+  if (!loaded_) return;
+  page_->key_up(key);
+  settle();
+}
+
+std::string Host::edit_clipboard(bool cut) {
+  if (!loaded_) return {};
+  std::string text = page_->edit_clipboard(cut);
+  settle();
+  return text;
+}
+
+void Host::paste_text(const std::string &text) {
+  if (!loaded_ || text.size() > 65536) return;
+  page_->paste_text(text);
+  settle();
+}
+
+void Host::composition_start() {
+  if (!loaded_) return;
+  page_->composition_start();
+  settle();
+}
+
+void Host::composition_update(const std::string &text, size_t caret) {
+  if (!loaded_ || text.size() > 4096) return;
+  page_->composition_update(text, caret);
+  settle();
+}
+
+void Host::composition_commit(const std::string &text) {
+  if (!loaded_ || text.size() > 4096) return;
+  page_->composition_commit(text);
+  settle();
+}
+
+void Host::composition_cancel() {
+  if (!loaded_) return;
+  page_->composition_cancel();
+  settle();
+}
+
 double Host::next_timer_delay() const {
   return loaded_ ? page_->next_timer_delay() : -1.0;
 }

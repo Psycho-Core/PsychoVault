@@ -68,6 +68,13 @@ public:
   void pointer_up(double x, double y);
   void click(double x, double y);
   void key(const std::string &key, const std::string &text);
+  void key_up(const std::string &key);
+  std::string edit_clipboard(bool cut);
+  void paste_text(const std::string &text);
+  void composition_start();
+  void composition_update(const std::string &preedit, size_t caret);
+  void composition_commit(const std::string &text);
+  void composition_cancel();
   // My autoplay gate: when on, a scripted play() needs a real click within the
   // last couple of seconds, which is how every mainstream gesture gate works.
   bool block_autoplay = false;
@@ -121,10 +128,21 @@ private:
     int node;
     std::string type;
     js::Value fn;
+    bool capture = false;
   };
   std::unique_ptr<js::Runtime> js_;
   std::function<void(js::Runtime &)> script_bootstrap_;
   std::vector<Listener> listeners_;
+  struct TextSelection { size_t start = 0, end = 0; std::string direction = "none"; };
+  struct EditorHistory { std::vector<std::string> undo, redo; };
+  struct CompositionState { std::string original, preedit; size_t start = 0, end = 0; bool active = false; };
+  std::map<int, TextSelection> selections_;
+  std::map<int, EditorHistory> editor_history_;
+  std::map<int, CompositionState> compositions_;
+  std::string clipboard_text_;
+  bool control_down_ = false, shift_down_ = false, selecting_text_ = false, editor_dragged_ = false;
+  int selection_node_ = -1;
+  size_t selection_anchor_ = 0;
   std::map<std::string, Resource> resources_;
   std::map<std::string, Image> images_;
   std::map<int, Canvas2D> canvases_;
@@ -170,6 +188,9 @@ private:
   double scroll_drag_start_y_ = 0, scroll_drag_start_offset_ = 0;
   double width_ = 1000, height_ = 700, scroll_ = 0, content_height_ = 0;
   int hovered_ = -1, active_ = -1, focused_ = -1;
+  int pointer_down_target_ = -1;
+  bool pointer_click_pending_ = false, pointer_click_allowed_ = false;
+  double pointer_x_ = 0, pointer_y_ = 0;
   bool dirty_ = true;
   void run_scripts();
   void install_fetch();
@@ -177,6 +198,13 @@ private:
   // an object owns rather than an element.
   void install_media();
   void dispatch_host(int id, const std::string &type);
+  std::string editor_value(int node) const;
+  TextSelection &editor_selection(int node);
+  void set_editor_value(int node, std::string value, bool record_undo = true);
+  void replace_editor_selection(int node, const std::string &inserted);
+  bool editor_key(int node, const std::string &key, const std::string &text);
+  size_t caret_at(int node, double x) const;
+  bool scroll_key_default(const std::string &key, int target);
   void open_pending_media_sources();
   // I load a media element from whatever src it points at, including a blob URL a
   // page made with a media source.
@@ -190,12 +218,14 @@ private:
   void execute_script(int node);
   void request(std::string url, ResourceType type = ResourceType::Other);
   void rebuild();
-  void dispatch(int target, const std::string &type, js::Value event);
+  bool dispatch(int target, const std::string &type, js::Value event,
+                bool bubbles = true, bool cancelable = true);
+  void set_focus(int target);
   int hit(double x, double y) const;
   void submit_form(int form);
   void request_navigation(const std::string &input);
-  void add_listener(int node, const std::string &type, js::Value fn);
-  void remove_listener(int node, const std::string &type, js::Value fn);
+  void add_listener(int node, const std::string &type, js::Value fn, bool capture = false);
+  void remove_listener(int node, const std::string &type, js::Value fn, bool capture = false);
   void activate(int target);
   friend class PageHost;
 };

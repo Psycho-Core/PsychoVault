@@ -30,6 +30,59 @@ static js::Value time_ranges(js::Runtime &r, std::vector<std::pair<double, doubl
   });
   return out;
 }
+static int page_form_owner(const Document &doc, int id);
+static bool text_editor_control(const Node &node) {
+  if (node.name == "textarea") return true;
+  if (node.name != "input") return false;
+  const std::string type = lower(node.attribute("type", "text"));
+  return type == "text" || type == "search" || type == "url" || type == "tel" ||
+         type == "email" || type == "password" || type == "number";
+}
+static size_t utf16_length(std::string_view text) {
+  size_t length = 0;
+  for (uint32_t cp : utf8_decode(text)) length += cp > 0xffff ? 2 : 1;
+  return length;
+}
+static size_t utf16_to_byte(std::string_view text, size_t offset) {
+  size_t units = 0, bytes = 0;
+  for (uint32_t cp : utf8_decode(text)) {
+    if (units >= offset) break;
+    const size_t width = cp > 0xffff ? 2 : 1;
+    if (units + width > offset) break;
+    units += width;
+    bytes += utf8_encode(cp).size();
+  }
+  return bytes;
+}
+static size_t byte_to_utf16(std::string_view text, size_t offset) {
+  size_t units = 0, bytes = 0;
+  for (uint32_t cp : utf8_decode(text)) {
+    const size_t length = utf8_encode(cp).size();
+    if (bytes + length > offset) break;
+    bytes += length;
+    units += cp > 0xffff ? 2 : 1;
+  }
+  return units;
+}
+static bool valid_editor_utf8(std::string_view text) {
+  std::string normalized;
+  for (uint32_t cp : utf8_decode(text)) normalized += utf8_encode(cp);
+  return normalized == text;
+}
+static bool utf8_byte_boundary(std::string_view text, size_t offset) {
+  return offset <= text.size() &&
+      (offset == text.size() || (static_cast<uint8_t>(text[offset]) & 0xc0) != 0x80);
+}
+static bool listener_capture_option(const js::Values &arguments) {
+  if (arguments.size() < 3) return false;
+  const js::Value &options = arguments[2];
+  if (options.type == js::Value::Type::Boolean) return options.boolean;
+  if (options.type == js::Value::Type::Object && options.object) {
+    auto capture = options.object->properties.find("capture");
+    return capture != options.object->properties.end() && capture->second.truthy();
+  }
+  return false;
+}
 class PageHost : public js::Host {
 public:
   Page &page;
@@ -564,10 +617,14 @@ public:
           page.dirty_ = true;
           return node(id);
         });
-      if (name == "addEventListener")
-        return r.make_native([this](js::Values &a) {
-          if (a.size() > 1)
-            page.add_listener(page.doc.root, a[0].to_string(), a[1]);
+      if (name == "addEventListener" || name == "removeEventListener")
+        return r.make_native([this, name](js::Values &a) {
+          if (a.size() > 1) {
+            const std::string type = a[0].to_string();
+            const bool capture = listener_capture_option(a);
+            if (name == "addEventListener") page.add_listener(page.doc.root, type, a[1], capture);
+            else page.remove_listener(page.doc.root, type, a[1], capture);
+          }
           return js::Value();
         });
       if (name == "write")
@@ -781,10 +838,85 @@ public:
       return js::Value(d.text_content(id));
     if (name == "innerHTML")
       return js::Value(serialize_children(d, id));
-    if (name == "value")
-      return js::Value(n.name == "textarea" ? d.text_content(id) : n.attribute("value"));
+    if (name == "value") {
+      if (n.name == "textarea") return js::Value(d.text_content(id));
+      if (n.name == "select") {
+        int first = -1;
+        for (int option : n.children) {
+          if (d.nodes[option].name != "option") continue;
+          if (first < 0) first = option;
+          if (has_attr(d.nodes[option], "selected"))
+            return js::Value(d.nodes[option].attribute("value", d.text_content(option)));
+        }
+        return first >= 0 ? js::Value(d.nodes[first].attribute("value", d.text_content(first)))
+                          : js::Value(std::string());
+      }
+      return js::Value(n.attribute("value"));
+    }
+    if (name == "selectedIndex" && n.name == "select") {
+      int option_index = 0, first = -1;
+      for (int option : n.children) {
+        if (d.nodes[option].name != "option") continue;
+        if (first < 0) first = option_index;
+        if (has_attr(d.nodes[option], "selected")) return js::Value(double(option_index));
+        ++option_index;
+      }
+      return js::Value(first < 0 ? -1.0 : double(first));
+    }
+    if (name == "selected" && n.name == "option") return js::Value(has_attr(n, "selected"));
+    if ((name == "selectionStart" || name == "selectionEnd" || name == "selectionDirection") &&
+        text_editor_control(n)) {
+      const auto &selection = page.editor_selection(id);
+      if (name == "selectionStart") return js::Value(double(selection.start));
+      if (name == "selectionEnd") return js::Value(double(selection.end));
+      return js::Value(selection.direction);
+    }
+    if (name == "setSelectionRange" && text_editor_control(n))
+      return r.make_native([this, id](js::Values &arguments) {
+        const size_t length = utf16_length(page.editor_value(id));
+        const size_t start = size_t(std::clamp(arguments.size() > 0 ? arguments[0].to_number() : 0.0,
+                                               0.0, double(length)));
+        const size_t end = size_t(std::clamp(arguments.size() > 1 ? arguments[1].to_number() : 0.0,
+                                             0.0, double(length)));
+        auto &selection = page.editor_selection(id);
+        selection.start = std::min(start, end);
+        selection.end = std::max(start, end);
+        selection.direction = arguments.size() > 2 ? arguments[2].to_string() : "none";
+        if (selection.direction != "forward" && selection.direction != "backward")
+          selection.direction = "none";
+        page.dirty_ = true;
+        return js::Value();
+      });
+    if (name == "select" && text_editor_control(n))
+      return r.make_native([this, id](js::Values &) {
+        auto &selection = page.editor_selection(id);
+        selection.start = 0;
+        selection.end = utf16_length(page.editor_value(id));
+        selection.direction = "forward";
+        page.dirty_ = true;
+        return js::Value();
+      });
     if (name == "checked")
       return js::Value(has_attr(n, "checked"));
+    if (n.name == "form" && name == "checkValidity")
+      return r.make_native([this, id](js::Values &) {
+        bool valid = true;
+        for (int control : page.doc.query("*", id))
+          if ((page.doc.nodes[control].name == "input" || page.doc.nodes[control].name == "select" ||
+               page.doc.nodes[control].name == "textarea") && !form_control_valid(page.doc, control)) {
+            valid = false;
+            page.dispatch(control, "invalid", page.js_->make_object(), false, false);
+          }
+        return js::Value(valid);
+      });
+    if ((name == "checkValidity" || name == "reportValidity") && n.type == Node::Type::Element)
+      return r.make_native([this, id](js::Values &) {
+        const bool valid = form_control_valid(page.doc, id);
+        if (!valid) page.dispatch(id, "invalid", page.js_->make_object(), false, false);
+        return js::Value(valid);
+      });
+    if (name == "willValidate")
+      return js::Value(n.name == "input" || n.name == "select" || n.name == "textarea");
     if (n.type == Node::Type::Element && (n.name == "video" || n.name == "audio")) {
       MediaPlayer *player = page.player_for(id);
       if (name == "src")
@@ -966,13 +1098,13 @@ public:
     if (name == "addEventListener")
       return r.make_native([this, id](js::Values &a) {
         if (a.size() > 1)
-          page.add_listener(id, a[0].to_string(), a[1]);
+          page.add_listener(id, a[0].to_string(), a[1], listener_capture_option(a));
         return js::Value();
       });
     if (name == "removeEventListener")
       return r.make_native([this, id](js::Values &a) {
         if (a.size() > 1)
-          page.remove_listener(id, a[0].to_string(), a[1]);
+          page.remove_listener(id, a[0].to_string(), a[1], listener_capture_option(a));
         return js::Value();
       });
     if (name == "click")
@@ -982,14 +1114,12 @@ public:
       });
     if (name == "focus")
       return r.make_native([this, id](js::Values &) {
-        page.focused_ = id;
-        page.dirty_ = true;
+        page.set_focus(id);
         return js::Value();
       });
     if (name == "blur")
       return r.make_native([this, id](js::Values &) {
-        if (page.focused_ == id) page.focused_ = -1;
-        page.dirty_ = true;
+        if (page.focused_ == id) page.set_focus(-1);
         return js::Value();
       });
     if (name == "preventDefault" || name == "stopPropagation")
@@ -1114,18 +1244,75 @@ public:
       return true;
     }
     if (name == "value") {
-      if (n.name == "textarea")
-        d.set_text(id, value.to_string());
-      else
-        n.set_attribute("value", value.to_string());
+      if (text_editor_control(n)) page.set_editor_value(id, value.to_string(), false);
+      else if (n.name == "select") {
+        bool selected = false;
+        for (int option : n.children) if (d.nodes[option].name == "option") {
+          const std::string option_value = d.nodes[option].attribute("value", d.text_content(option));
+          const bool match = !selected && option_value == value.to_string();
+          if (match) selected = true;
+          if (match) d.nodes[option].set_attribute("selected", "");
+          else std::erase_if(d.nodes[option].attributes,
+                             [](auto &attribute) { return attribute.first == "selected"; });
+        }
+      } else n.set_attribute("value", value.to_string());
+      page.dirty_ = true;
+      return true;
+    }
+    if (name == "selectedIndex" && n.name == "select") {
+      int option_index = 0;
+      for (int option : n.children) if (d.nodes[option].name == "option") {
+        if (option_index++ == int(value.to_number())) d.nodes[option].set_attribute("selected", "");
+        else std::erase_if(d.nodes[option].attributes,
+                           [](auto &attribute) { return attribute.first == "selected"; });
+      }
+      page.dirty_ = true;
+      return true;
+    }
+    if ((name == "selectionStart" || name == "selectionEnd" || name == "selectionDirection") &&
+        text_editor_control(n)) {
+      auto &selection = page.editor_selection(id);
+      const size_t length = utf16_length(page.editor_value(id));
+      if (name == "selectionStart") {
+        selection.start = size_t(std::clamp(value.to_number(), 0.0, double(length)));
+        if (selection.end < selection.start) selection.end = selection.start;
+      } else if (name == "selectionEnd") {
+        selection.end = size_t(std::clamp(value.to_number(), double(selection.start), double(length)));
+      } else {
+        selection.direction = value.to_string();
+        if (selection.direction != "forward" && selection.direction != "backward")
+          selection.direction = "none";
+      }
+      page.dirty_ = true;
+      return true;
+    }
+    if (name == "selected" && n.name == "option") {
+      if (value.truthy()) {
+        n.set_attribute("selected", "");
+        if (n.parent >= 0 && d.nodes[n.parent].name == "select" && !has_attr(d.nodes[n.parent], "multiple"))
+          for (int option : d.nodes[n.parent].children)
+            if (option != id && d.nodes[option].name == "option")
+              std::erase_if(d.nodes[option].attributes,
+                            [](auto &attribute) { return attribute.first == "selected"; });
+      } else std::erase_if(n.attributes,
+                           [](auto &attribute) { return attribute.first == "selected"; });
       page.dirty_ = true;
       return true;
     }
     if (name == "checked") {
-      if (value.truthy())
+      if (value.truthy()) {
+        if (n.name == "input" && lower(n.attribute("type")) == "radio") {
+          const std::string group = n.attribute("name");
+          const int owner = page_form_owner(d, id);
+          for (int other = 0; !group.empty() && other < int(d.nodes.size()); ++other)
+            if (other != id && d.nodes[other].name == "input" &&
+                lower(d.nodes[other].attribute("type")) == "radio" &&
+                d.nodes[other].attribute("name") == group && page_form_owner(d, other) == owner)
+              std::erase_if(d.nodes[other].attributes,
+                            [](auto &attribute) { return attribute.first == "checked"; });
+        }
         n.set_attribute("checked", "");
-      else
-        std::erase_if(n.attributes, [](auto &a) { return a.first == "checked"; });
+      } else std::erase_if(n.attributes, [](auto &attribute) { return attribute.first == "checked"; });
       page.dirty_ = true;
       return true;
     }
@@ -1254,15 +1441,18 @@ void Page::request_navigation(const std::string &input) {
       navigations.push_back(u->href());
   }
 }
-void Page::add_listener(int node, const std::string &type, js::Value fn) {
-  if (listeners_.size() >= 1024 || fn.type_of() != "function")
-    return;
-  listeners_.push_back({node, type, fn});
+void Page::add_listener(int node, const std::string &type, js::Value fn, bool capture) {
+  if (listeners_.size() >= 1024 || fn.type_of() != "function") return;
+  for (const Listener &listener : listeners_)
+    if (listener.node == node && listener.type == type && listener.fn.object == fn.object &&
+        listener.capture == capture) return;
+  listeners_.push_back({node, type, fn, capture});
   js_->root(fn.object);
 }
-void Page::remove_listener(int node, const std::string &type, js::Value fn) {
+void Page::remove_listener(int node, const std::string &type, js::Value fn, bool capture) {
   for (auto it = listeners_.begin(); it != listeners_.end(); ++it)
-    if (it->node == node && it->type == type && it->fn.object == fn.object) {
+    if (it->node == node && it->type == type && it->fn.object == fn.object &&
+        it->capture == capture) {
       js_->unroot(it->fn.object);
       listeners_.erase(it);
       return;
@@ -1292,6 +1482,9 @@ Page::~Page() {
 }
 void Page::load(const Url &url, const std::string &html, const std::string &mime) {
   hovered_ = active_ = focused_ = -1;
+  selections_.clear(); editor_history_.clear(); compositions_.clear(); clipboard_text_.clear();
+  control_down_ = shift_down_ = selecting_text_ = editor_dragged_ = false;
+  selection_node_ = -1; selection_anchor_ = 0;
   doc.url = url;
   doc.content_type = mime;
   doc.parse(html);
@@ -1669,8 +1862,12 @@ void Page::run_scripts() {
       }
     } else if (n.name == "link" && lower(n.attribute("rel")) == "stylesheet")
       request(n.attribute("href"), ResourceType::Stylesheet);
-    else if (n.name == "img")
-      request(n.attribute("src"), ResourceType::Image);
+    else if (n.name == "img") {
+      // Lazy images are queued from their laid-out viewport box in render().
+      // Eager images retain the usual load-time request behavior.
+      if (lower(n.attribute("loading")) != "lazy")
+        request(n.attribute("src"), ResourceType::Image);
+    }
     else if (n.name == "video" || n.name == "audio") {
       if (!n.attribute("src").empty())
         request(n.attribute("src"), ResourceType::Media);
@@ -1748,6 +1945,17 @@ Json Page::render(double width, double height, double scroll) {
     dirty_ = true;
     rebuild();
   }
+  // I begin lazy image fetches once their layout box is near the viewport. The
+  // small vertical margin avoids waiting until an image is exactly visible.
+  for (const auto &node : doc.nodes) {
+    if (node.type != Node::Type::Element || node.name != "img" ||
+        lower(node.attribute("loading")) != "lazy")
+      continue;
+    auto box = layout_.boxes.find(node.id);
+    if (box != layout_.boxes.end() && box->second.y + box->second.h >= scroll_ - height_ &&
+        box->second.y <= scroll_ + 2 * height_)
+      request(node.attribute("src"), ResourceType::Image);
+  }
   // I only copy pixels for a canvas that has been drawn on since the last frame.
   for (auto &[id, context] : canvases_) {
     auto seen = canvas_revisions_.find(id);
@@ -1763,7 +1971,39 @@ Json Page::render(double width, double height, double scroll) {
   frame.set("height", content_height_);
   frame.set("scroll", scroll_);
   Json paint = Json::make_array();
-  for (auto &c : layout_.paint) {
+  std::vector<PaintCommand> frame_paint;
+  const bool editor_focused = focused_ >= 0 && focused_ < int(doc.nodes.size()) &&
+                              text_editor_control(doc.nodes[focused_]);
+  TextSelection editor_range;
+  std::string editor_text;
+  if (editor_focused) {
+    editor_text = editor_value(focused_);
+    editor_range = editor_selection(focused_);
+  }
+  Canvas text_measure{1, 1};
+  for (const PaintCommand &command : layout_.paint) {
+    if (editor_focused && command.node == focused_ && command.kind == PaintCommand::Kind::Text) {
+      const size_t start_byte = utf16_to_byte(editor_text, editor_range.start);
+      const size_t end_byte = utf16_to_byte(editor_text, editor_range.end);
+      const std::string before = editor_text.substr(0, start_byte);
+      const double before_width = text_measure.text_width(before, command.size, command.bold);
+      if (editor_range.end > editor_range.start) {
+        const std::string selected = editor_text.substr(start_byte, end_byte - start_byte);
+        const double selected_width = text_measure.text_width(selected, command.size, command.bold);
+        if (selected_width > 0)
+          frame_paint.emplace_back(PaintCommand::Kind::Rect,
+              Rect{command.rect.x + before_width, command.rect.y, selected_width, command.rect.h},
+              0x803878d0, std::string(), 0, 0, false, focused_);
+      }
+      frame_paint.push_back(command);
+      if (editor_range.start == editor_range.end && (now_ms() / 530) % 2 == 0)
+        frame_paint.emplace_back(PaintCommand::Kind::Rect,
+            Rect{command.rect.x + before_width, command.rect.y + 1, 1,
+                 std::max(1.0, command.rect.h - 2)}, command.color, std::string(), 0, 0, false, focused_);
+    } else frame_paint.push_back(command);
+  }
+  frame.set("focusedEditable", editor_focused);
+  for (const auto &c : frame_paint) {
     if (paint.array.size() >= 50000)
       break;
     Json j = Json::make_object();
@@ -1853,59 +2093,182 @@ int Page::hit(double x, double y) const {
   }
   return best;
 }
-void Page::dispatch(int target, const std::string &type, js::Value event) {
+bool Page::dispatch(int target, const std::string &type, js::Value event,
+                    bool bubbles, bool cancelable) {
+  if (!event.object) event = js_->make_object();
+  struct DispatchState {
+    bool stopped = false, immediate = false, prevented = false;
+    bool cancelable = true, passive = false;
+  };
+  auto state = std::make_shared<DispatchState>();
+  state->cancelable = cancelable;
+  js::Object *event_object = event.object;
+  event_object->properties["type"] = js::Value(type);
+  if (!event_object->properties.count("target"))
+    event_object->properties["target"] = target >= 0 ? js_->host_value(target) : js::Value::null();
+  event_object->properties["bubbles"] = js::Value(bubbles);
+  event_object->properties["cancelable"] = js::Value(cancelable);
+  event_object->properties["defaultPrevented"] = js::Value(false);
+  event_object->properties["eventPhase"] = js::Value(0);
+  event_object->properties["currentTarget"] = js::Value::null();
+  event_object->properties["preventDefault"] = js_->make_native([state, event_object](js::Values &) {
+    if (state->cancelable && !state->passive) {
+      state->prevented = true;
+      event_object->properties["defaultPrevented"] = js::Value(true);
+    }
+    return js::Value();
+  });
+  event_object->properties["stopPropagation"] = js_->make_native([state](js::Values &) {
+    state->stopped = true;
+    return js::Value();
+  });
+  event_object->properties["stopImmediatePropagation"] = js_->make_native([state](js::Values &) {
+    state->stopped = true;
+    state->immediate = true;
+    return js::Value();
+  });
+  if (target < 0 || target >= int(doc.nodes.size())) return false;
   std::vector<int> path;
-  for (int n = target; n >= 0; n = doc.nodes[n].parent)
-    path.push_back(n);
-  bool stop = false;
-  for (int n : path) {
-    for (auto &l : listeners_) {
-      if (l.node != n || l.type != type)
-        continue;
+  for (int node = target; node >= 0 && node < int(doc.nodes.size()); node = doc.nodes[node].parent)
+    path.push_back(node);
+  const std::vector<Listener> snapshot = listeners_;
+  auto invoke = [&](int node, bool capture, int phase) {
+    event_object->properties["currentTarget"] = js_->host_value(node);
+    event_object->properties["eventPhase"] = js::Value(phase);
+    state->immediate = false;
+    for (const Listener &listener : snapshot) {
+      if (listener.node != node || listener.type != type || listener.capture != capture) continue;
+      const bool still_registered = std::any_of(listeners_.begin(), listeners_.end(),
+          [&](const Listener &live) {
+            return live.node == listener.node && live.type == listener.type &&
+                   live.capture == listener.capture && live.fn.object == listener.fn.object;
+          });
+      if (!still_registered) continue;
       js_->reset_fuel();
       try {
-        js::Value result = js_->call(l.fn, {event}, js_->host_value(n));
-        if (result.type == js::Value::Type::Boolean && !result.boolean)
-          stop = true;
-      } catch (js::JsError &e) {
-        diagnostics.push_back({"event", e.value.to_string()});
-      } catch (std::exception &e) {
-        diagnostics.push_back({"event", e.what()});
+        js_->call(listener.fn, {event}, js_->host_value(node));
+      } catch (js::JsError &error) {
+        diagnostics.push_back({"event", error.value.to_string()});
+      } catch (std::exception &error) {
+        diagnostics.push_back({"event", error.what()});
       }
+      if (state->immediate) break;
     }
-    if (stop)
-      break;
+  };
+  // Capture travels from the root to the target's parent.
+  for (size_t i = path.size(); i > 1; --i) {
+    invoke(path[i - 1], true, 1);
+    if (state->stopped) break;
   }
-  // Microtasks belonging to this event run before I return to the page, which is
-  // the order a browser gives a task and its promise callbacks.
+  // A stop at an ancestor prevents reaching the target. At the target,
+  // stopPropagation still permits the other listeners on that same node.
+  if (!state->stopped) {
+    invoke(target, true, 2);
+    const bool immediate_at_target = state->immediate;
+    if (!immediate_at_target) invoke(target, false, 2);
+  }
+  if (bubbles && !state->stopped) {
+    for (size_t i = 1; i < path.size(); ++i) {
+      invoke(path[i], false, 3);
+      if (state->stopped) break;
+    }
+  }
+  event_object->properties["currentTarget"] = js::Value::null();
+  event_object->properties["eventPhase"] = js::Value(0);
   try {
     js_->drain_microtasks();
-  } catch (js::JsError &e) {
-    diagnostics.push_back({"microtask", e.value.to_string()});
-  } catch (std::exception &e) {
-    diagnostics.push_back({"microtask", e.what()});
+  } catch (js::JsError &error) {
+    diagnostics.push_back({"microtask", error.value.to_string()});
+  } catch (std::exception &error) {
+    diagnostics.push_back({"microtask", error.what()});
+  }
+  dirty_ = true;
+  return state->prevented;
+}
+void Page::set_focus(int target) {
+  if (target == focused_) return;
+  const int previous = focused_;
+  if (previous >= 0 && previous < int(doc.nodes.size())) {
+    auto focusout = js_->make_object();
+    focusout.object->properties["relatedTarget"] =
+        target >= 0 && target < int(doc.nodes.size()) ? js_->host_value(target) : js::Value::null();
+    dispatch(previous, "focusout", focusout, true, false);
+    auto blur = js_->make_object();
+    blur.object->properties["relatedTarget"] =
+        target >= 0 && target < int(doc.nodes.size()) ? js_->host_value(target) : js::Value::null();
+    dispatch(previous, "blur", blur, false, false);
+  }
+  focused_ = target >= 0 && target < int(doc.nodes.size()) ? target : -1;
+  if (focused_ >= 0) {
+    auto focusin = js_->make_object();
+    focusin.object->properties["relatedTarget"] =
+        previous >= 0 && previous < int(doc.nodes.size()) ? js_->host_value(previous) : js::Value::null();
+    dispatch(focused_, "focusin", focusin, true, false);
+    auto focus = js_->make_object();
+    focus.object->properties["relatedTarget"] =
+        previous >= 0 && previous < int(doc.nodes.size()) ? js_->host_value(previous) : js::Value::null();
+    dispatch(focused_, "focus", focus, false, false);
   }
   dirty_ = true;
 }
+
 static bool page_control_disabled(const Document &doc, int id);
+static int focusable_element(const Document &doc, int target);
+static int page_form_owner(const Document &doc, int id) {
+  if (id < 0 || id >= int(doc.nodes.size())) return -1;
+  const std::string explicit_form = doc.nodes[id].attribute("form");
+  if (!explicit_form.empty()) {
+    int owner = doc.by_id(explicit_form);
+    return owner >= 0 && doc.nodes[owner].name == "form" ? owner : -1;
+  }
+  for (int node = doc.nodes[id].parent; node >= 0; node = doc.nodes[node].parent)
+    if (doc.nodes[node].name == "form") return node;
+  return -1;
+}
+static int label_control(const Document &doc, int label) {
+  if (label < 0 || label >= int(doc.nodes.size())) return -1;
+  auto labelable = [&](int node) {
+    if (node < 0 || node >= int(doc.nodes.size())) return false;
+    const Node &candidate = doc.nodes[node];
+    if (candidate.name == "input" && lower(candidate.attribute("type", "text")) == "hidden") return false;
+    return candidate.name == "input" || candidate.name == "button" ||
+           candidate.name == "select" || candidate.name == "textarea";
+  };
+  const std::string for_id = doc.nodes[label].attribute("for");
+  if (!for_id.empty()) {
+    const int target = doc.by_id(for_id);
+    return labelable(target) ? target : -1;
+  }
+  std::vector<int> pending;
+  for (auto child = doc.nodes[label].children.rbegin(); child != doc.nodes[label].children.rend(); ++child)
+    pending.push_back(*child);
+  while (!pending.empty()) {
+    const int node = pending.back(); pending.pop_back();
+    if (labelable(node)) return node;
+    for (auto child = doc.nodes[node].children.rbegin(); child != doc.nodes[node].children.rend(); ++child)
+      pending.push_back(*child);
+  }
+  return -1;
+}
 void Page::activate(int target) {
   if (target < 0 || target >= int(doc.nodes.size()))
     return;
   auto event = js_->make_object();
   event.object->properties["type"] = js::Value("click");
   event.object->properties["target"] = js_->host_value(target);
-  bool prevented = false;
-  event.object->properties["preventDefault"] = js_->make_native([&prevented](js::Values &) {
-    prevented = true;
-    return js::Value();
-  });
-  event.object->properties["stopPropagation"] =
-      js_->make_native([](js::Values &) { return js::Value(); });
-  dispatch(target, "click", event);
-  if (prevented)
-    return;
+  event.object->properties["detail"] = js::Value(1);
+  event.object->properties["button"] = js::Value(0);
+  if (dispatch(target, "click", event, true, true)) return;
   for (int node = target; node >= 0 && node < int(doc.nodes.size()); node = doc.nodes[node].parent)
     if (page_control_disabled(doc, node)) return;
+  if (doc.nodes[target].name == "label") {
+    const int control = label_control(doc, target);
+    if (control >= 0 && !page_control_disabled(doc, control)) {
+      set_focus(focusable_element(doc, control));
+      activate(control);
+    }
+    return;
+  }
   for (int n = target; n >= 0 && n < int(doc.nodes.size()); n = doc.nodes[n].parent) {
     const auto &node = doc.nodes[n];
     if (node.type == Node::Type::Element && (node.name == "video" || node.name == "audio")) {
@@ -1920,19 +2283,45 @@ void Page::activate(int target) {
       request_navigation(node.attribute("href"));
       return;
     }
-    if (node.name == "input" && lower(node.attribute("type")) == "checkbox") {
-      std::string v;
-      if (node.get_attribute("checked", v))
-        std::erase_if(doc.nodes[n].attributes, [](auto &a) { return a.first == "checked"; });
-      else
+    if (node.name == "input" && (lower(node.attribute("type")) == "checkbox" ||
+                                  lower(node.attribute("type")) == "radio")) {
+      const std::string type = lower(node.attribute("type"));
+      std::string checked_value;
+      const bool was_checked = node.get_attribute("checked", checked_value);
+      bool changed = false;
+      if (type == "checkbox") {
+        if (was_checked)
+          std::erase_if(doc.nodes[n].attributes, [](auto &attribute) { return attribute.first == "checked"; });
+        else doc.nodes[n].set_attribute("checked", "");
+        changed = true;
+      } else if (!was_checked) {
+        const std::string name = node.attribute("name");
+        const int owner = page_form_owner(doc, n);
+        for (int other = 0; !name.empty() && other < int(doc.nodes.size()); ++other) {
+          if (other == n || doc.nodes[other].name != "input" ||
+              lower(doc.nodes[other].attribute("type")) != "radio" ||
+              doc.nodes[other].attribute("name") != name || page_form_owner(doc, other) != owner) continue;
+          changed |= doc.nodes[other].get_attribute("checked", checked_value);
+          std::erase_if(doc.nodes[other].attributes,
+                        [](auto &attribute) { return attribute.first == "checked"; });
+        }
         doc.nodes[n].set_attribute("checked", "");
+        changed = true;
+      }
       dirty_ = true;
+      if (changed) {
+        dispatch(n, "input", js_->make_object(), true, false);
+        dispatch(n, "change", js_->make_object(), true, false);
+      }
       return;
     }
-    if (node.name == "button" ||
+    const std::string button_type = lower(node.attribute("type", "submit"));
+    if ((node.name == "button" && button_type == "reset") ||
+        (node.name == "input" && lower(node.attribute("type")) == "reset"))
+      return;
+    if ((node.name == "button" && button_type == "submit") ||
         (node.name == "input" &&
-         (lower(node.attribute("type")) == "submit" || lower(node.attribute("type")) == "button" ||
-          lower(node.attribute("type")) == "image"))) {
+         (lower(node.attribute("type")) == "submit" || lower(node.attribute("type")) == "image"))) {
       int form = node.parent;
       while (form >= 0 && doc.nodes[form].name != "form")
         form = doc.nodes[form].parent;
@@ -1945,6 +2334,17 @@ void Page::activate(int target) {
 }
 void Page::pointer_move(double x, double y) {
   if (dirty_) rebuild();
+  if (selecting_text_ && selection_node_ >= 0 && selection_node_ < int(doc.nodes.size())) {
+    const size_t position = caret_at(selection_node_, x);
+    if (position != selection_anchor_) {
+      auto &selection = editor_selection(selection_node_);
+      selection.start = std::min(selection_anchor_, position);
+      selection.end = std::max(selection_anchor_, position);
+      selection.direction = position < selection_anchor_ ? "backward" : "forward";
+      editor_dragged_ = true;
+      dirty_ = true;
+    }
+  }
   if (scroll_drag_node_ >= 0) {
     auto found = layout_.scroll_containers.find(scroll_drag_node_);
     if (found == layout_.scroll_containers.end()) {
@@ -1961,11 +2361,41 @@ void Page::pointer_move(double x, double y) {
       return;
     }
   }
+  const int previous = hovered_;
   const int target = hit(x, y);
-  if (hovered_ != target) {
+  pointer_x_ = x; pointer_y_ = y;
+  if (previous != target) {
+    auto transition = [&](int node, const std::string &type, int related, bool bubbles) {
+      if (node < 0) return;
+      js::Value event = js_->make_object();
+      event.object->properties["relatedTarget"] =
+          related >= 0 ? js_->host_value(related) : js::Value::null();
+      event.object->properties["clientX"] = js::Value(x);
+      event.object->properties["clientY"] = js::Value(y);
+      dispatch(node, type, event, bubbles, false);
+    };
+    transition(previous, "pointerout", target, true);
+    transition(previous, "mouseout", target, true);
+    transition(previous, "pointerleave", target, false);
+    transition(previous, "mouseleave", target, false);
+    transition(target, "pointerover", previous, true);
+    transition(target, "mouseover", previous, true);
+    transition(target, "pointerenter", previous, false);
+    transition(target, "mouseenter", previous, false);
     hovered_ = target;
     dirty_ = true;
   }
+  auto movement = [&](const std::string &type) {
+    if (target < 0) return;
+    js::Value event = js_->make_object();
+    event.object->properties["clientX"] = js::Value(x);
+    event.object->properties["clientY"] = js::Value(y);
+    event.object->properties["button"] = js::Value(-1);
+    event.object->properties["buttons"] = js::Value(active_ >= 0 ? 1 : 0);
+    dispatch(target, type, event, true, false);
+  };
+  movement("pointermove");
+  movement("mousemove");
 }
 bool Page::wheel(double x, double y, double delta) {
   if (dirty_) rebuild();
@@ -1993,44 +2423,28 @@ bool Page::wheel(double x, double y, double delta) {
 }
 bool Page::scroll_key(const std::string &key) {
   if (dirty_) rebuild();
-  const bool home = key == "Home", end = key == "End";
-  const bool page_up = key == "PageUp", page_down = key == "PageDown";
-  const bool up = key == "ArrowUp", down = key == "ArrowDown";
-  if (!home && !end && !page_up && !page_down && !up && !down) return false;
-  const int target = focused_ >= 0 ? focused_ : hovered_;
-  if (target < 0 || target >= int(doc.nodes.size())) return false;
-  double remaining = 0;
-  bool changed = false;
-  for (int node = target; node >= 0 && node < int(doc.nodes.size()); node = doc.nodes[node].parent) {
-    auto found = layout_.scroll_containers.find(node);
-    if (found == layout_.scroll_containers.end()) continue;
-    const auto &container = found->second;
-    if (home || end) {
-      const double next = home ? 0 : container.maximum;
-      if (std::abs(next - container.offset) > 0.001) {
-        local_scroll_[node] = next; dirty_ = changed = true;
-      }
-      return true;
-    }
-    if (remaining == 0)
-      remaining = (page_up ? -std::max(40.0, container.viewport.h * 0.8)
-                   : page_down ? std::max(40.0, container.viewport.h * 0.8)
-                   : up ? -40.0 : 40.0);
-    const double next = std::clamp(container.offset + remaining, 0.0, container.maximum);
-    const double consumed = next - container.offset;
-    if (std::abs(consumed) > 0.001) {
-      local_scroll_[node] = next; remaining -= consumed; dirty_ = changed = true;
-    }
-    if (std::abs(remaining) < 0.001 || container.overscroll == "contain" ||
-        container.overscroll == "none") return true;
-  }
-  return changed;
+  const bool supported = key == "Home" || key == "End" || key == "PageUp" ||
+      key == "PageDown" || key == "ArrowUp" || key == "ArrowDown";
+  if (!supported) return false;
+  const int target = focused_ >= 0 ? focused_ : doc.body;
+  js::Value event = js_->make_object();
+  event.object->properties["key"] = js::Value(key);
+  event.object->properties["code"] = js::Value(key);
+  event.object->properties["target"] = js_->host_value(target);
+  if (dispatch(target, "keydown", event)) return true;
+  return scroll_key_default(key, target);
 }
 void Page::pointer_down(double x, double y) {
   if (dirty_) rebuild();
   suppress_click_ = false;
   scrollbar_pointer_ = false;
   scroll_drag_node_ = -1;
+  pointer_click_pending_ = false;
+  pointer_click_allowed_ = false;
+  pointer_down_target_ = -1;
+  selecting_text_ = false;
+  editor_dragged_ = false;
+  selection_node_ = -1;
   const double document_y = y + scroll_;
   for (const auto &[node, scrollbar] : layout_.scroll_containers) {
     if (!scrollbar.track.contains(x, document_y)) continue;
@@ -2059,15 +2473,45 @@ void Page::pointer_down(double x, double y) {
     dirty_ = true;
     return;
   }
+  pointer_click_pending_ = false;
+  pointer_click_allowed_ = false;
+  pointer_x_ = x; pointer_y_ = y;
   const int target = hit(x, y);
+  pointer_down_target_ = target;
   bool is_disabled = false;
   for (int node = target; node >= 0 && node < int(doc.nodes.size()); node = doc.nodes[node].parent)
     if (page_control_disabled(doc, node)) { is_disabled = true; break; }
-  const int active_target = is_disabled ? -1 : target;
-  if (active_ != active_target || hovered_ != target) {
-    active_ = active_target;
-    hovered_ = target;
-    dirty_ = true;
+  active_ = is_disabled ? -1 : target;
+  hovered_ = target;
+  dirty_ = true;
+  if (target < 0) return;
+  auto make_pointer_event = [&]() {
+    js::Value event = js_->make_object();
+    event.object->properties["clientX"] = js::Value(x);
+    event.object->properties["clientY"] = js::Value(y);
+    event.object->properties["button"] = js::Value(0);
+    event.object->properties["buttons"] = js::Value(1);
+    event.object->properties["pointerId"] = js::Value(1);
+    event.object->properties["pointerType"] = js::Value("mouse");
+    event.object->properties["isPrimary"] = js::Value(true);
+    return event;
+  };
+  const bool pointer_prevented = dispatch(target, "pointerdown", make_pointer_event());
+  bool mouse_prevented = false;
+  if (!pointer_prevented)
+    mouse_prevented = dispatch(target, "mousedown", make_pointer_event());
+  if (!pointer_prevented && !mouse_prevented && !is_disabled) {
+    const int focus_target = focusable_element(doc, target);
+    set_focus(focus_target);
+    if (focus_target >= 0 && text_editor_control(doc.nodes[focus_target])) {
+      selection_node_ = focus_target;
+      selection_anchor_ = caret_at(focus_target, x);
+      auto &selection = editor_selection(focus_target);
+      selection.start = selection.end = selection_anchor_;
+      selection.direction = "none";
+      selecting_text_ = true;
+      dirty_ = true;
+    }
   }
 }
 void Page::pointer_up(double x, double y) {
@@ -2076,11 +2520,33 @@ void Page::pointer_up(double x, double y) {
     suppress_click_ = true;
     scrollbar_pointer_ = false;
     scroll_drag_node_ = -1;
+    pointer_down_target_ = -1;
+    pointer_click_pending_ = false;
     return;
   }
+  pointer_x_ = x; pointer_y_ = y;
   const int target = hit(x, y);
-  if (active_ != -1 || hovered_ != target) {
-    active_ = -1;
+  auto make_pointer_event = [&]() {
+    js::Value event = js_->make_object();
+    event.object->properties["clientX"] = js::Value(x);
+    event.object->properties["clientY"] = js::Value(y);
+    event.object->properties["button"] = js::Value(0);
+    event.object->properties["buttons"] = js::Value(0);
+    event.object->properties["pointerId"] = js::Value(1);
+    event.object->properties["pointerType"] = js::Value("mouse");
+    event.object->properties["isPrimary"] = js::Value(true);
+    return event;
+  };
+  if (target >= 0) {
+    dispatch(target, "pointerup", make_pointer_event());
+    dispatch(target, "mouseup", make_pointer_event());
+  }
+  pointer_click_pending_ = pointer_down_target_ >= 0;
+  pointer_click_allowed_ = pointer_down_target_ == target && target >= 0;
+  selecting_text_ = false;
+  pointer_down_target_ = -1;
+  active_ = -1;
+  if (hovered_ != target) {
     hovered_ = target;
     dirty_ = true;
   }
@@ -2115,12 +2581,29 @@ static int focusable_element(const Document &doc, int target) {
 }
 void Page::click(double x, double y) {
   if (suppress_click_) { suppress_click_ = false; return; }
+  if (pointer_click_pending_) {
+    const bool allowed = pointer_click_allowed_;
+    pointer_click_pending_ = pointer_click_allowed_ = false;
+    if (!allowed || editor_dragged_) {
+      editor_dragged_ = false;
+      selecting_text_ = false;
+      return;
+    }
+  }
   note_user_activation();
   if (dirty_) rebuild();
   int target = hit(x, y);
   hovered_ = target;
   active_ = -1;
-  focused_ = focusable_element(doc, target);
+  const int focus_target = focusable_element(doc, target);
+  set_focus(focus_target);
+  if (focus_target >= 0 && text_editor_control(doc.nodes[focus_target])) {
+    const size_t caret = caret_at(focus_target, x);
+    auto &selection = editor_selection(focus_target);
+    selection.start = selection.end = caret;
+    selection.direction = "none";
+    selection_node_ = -1;
+  }
   dirty_ = true;
   // A media element owns everything inside its box: the strip along the bottom is
   // the scrub bar, and the rest of the box plays or pauses it.
@@ -2132,7 +2615,7 @@ void Page::click(double x, double y) {
     if (box == layout_.boxes.end())
       break;
     const Rect &r = box->second;
-    focused_ = n;
+    set_focus(n);
     double strip = std::min(30.0, r.h * 0.5);
     bool controls = r.h >= 24 && r.w >= 48 && y - r.y >= r.h - strip;
     if (controls && r.w >= 100) {
@@ -2146,12 +2629,399 @@ void Page::click(double x, double y) {
     toggle_media(n);
     return;
   }
-  if (target >= 0) {
-    focused_ = target;
-    activate(target);
-  }
+  if (target >= 0) activate(target);
 }
+std::string Page::editor_value(int node) const {
+  if (node < 0 || node >= int(doc.nodes.size())) return {};
+  const Node &element = doc.nodes[node];
+  return element.name == "textarea" ? doc.text_content(node) : element.attribute("value");
+}
+Page::TextSelection &Page::editor_selection(int node) {
+  auto [at, inserted] = selections_.try_emplace(node);
+  const size_t length = utf16_length(editor_value(node));
+  if (inserted) at->second.start = at->second.end = length;
+  at->second.start = std::min(at->second.start, length);
+  at->second.end = std::clamp(at->second.end, at->second.start, length);
+  return at->second;
+}
+void Page::set_editor_value(int node, std::string value, bool record_undo) {
+  if (node < 0 || node >= int(doc.nodes.size()) || !text_editor_control(doc.nodes[node])) return;
+  std::string old = editor_value(node);
+  if (old == value) return;
+  if (record_undo) {
+    auto &history = editor_history_[node];
+    history.undo.push_back(old);
+    if (history.undo.size() > 100) history.undo.erase(history.undo.begin());
+    history.redo.clear();
+  }
+  if (doc.nodes[node].name == "textarea") doc.set_text(node, value);
+  else doc.nodes[node].set_attribute("value", value);
+  auto &selection = editor_selection(node);
+  selection.start = selection.end = utf16_length(value);
+  selection.direction = "none";
+  dirty_ = true;
+}
+void Page::replace_editor_selection(int node, const std::string &inserted) {
+  if (node < 0 || node >= int(doc.nodes.size()) || !text_editor_control(doc.nodes[node])) return;
+  const std::string value = editor_value(node);
+  auto &selection = editor_selection(node);
+  const size_t start = utf16_to_byte(value, selection.start);
+  const size_t end = utf16_to_byte(value, selection.end);
+  std::string updated = value.substr(0, start) + inserted + value.substr(end);
+  if (updated == value) return;
+  auto &history = editor_history_[node];
+  history.undo.push_back(value);
+  if (history.undo.size() > 100) history.undo.erase(history.undo.begin());
+  history.redo.clear();
+  if (doc.nodes[node].name == "textarea") doc.set_text(node, updated);
+  else doc.nodes[node].set_attribute("value", updated);
+  const size_t caret = selection.start + utf16_length(inserted);
+  selection.start = selection.end = caret;
+  selection.direction = "none";
+  dirty_ = true;
+  dispatch(node, "input", js_->make_object(), true, false);
+}
+bool Page::scroll_key_default(const std::string &key, int target) {
+  if (target < 0 || target >= int(doc.nodes.size())) target = doc.body;
+  const bool home = key == "Home", end = key == "End";
+  const bool page_up = key == "PageUp", page_down = key == "PageDown";
+  const bool up = key == "ArrowUp", down = key == "ArrowDown";
+  if (!home && !end && !page_up && !page_down && !up && !down) return false;
+  double remaining = 0;
+  bool found_container = false;
+  for (int node = target; node >= 0 && node < int(doc.nodes.size()); node = doc.nodes[node].parent) {
+    auto found = layout_.scroll_containers.find(node);
+    if (found == layout_.scroll_containers.end()) continue;
+    found_container = true;
+    const auto &container = found->second;
+    if (home || end) {
+      const double next = home ? 0 : container.maximum;
+      if (std::abs(next - container.offset) > 0.001) {
+        local_scroll_[node] = next; dirty_ = true;
+      }
+      return true;
+    }
+    if (remaining == 0)
+      remaining = (page_up ? -std::max(40.0, container.viewport.h * 0.8)
+                   : page_down ? std::max(40.0, container.viewport.h * 0.8)
+                   : up ? -40.0 : 40.0);
+    const double next = std::clamp(container.offset + remaining, 0.0, container.maximum);
+    remaining -= next - container.offset;
+    if (std::abs(next - container.offset) > 0.001) {
+      local_scroll_[node] = next; dirty_ = true;
+    }
+    if (std::abs(remaining) < 0.001 || container.overscroll == "contain" ||
+        container.overscroll == "none") return true;
+  }
+  if (!found_container || std::abs(remaining) > 0.001) {
+    const double step = key == "ArrowUp" ? -40 : key == "ArrowDown" ? 40
+                       : key == "PageUp" ? -std::max(40.0, height_ * 0.8)
+                       : key == "PageDown" ? std::max(40.0, height_ * 0.8)
+                       : key == "Home" ? -scroll_ : key == "End" ? content_height_ - scroll_ : 0;
+    const double next = std::clamp(scroll_ + step, 0.0, std::max(0.0, content_height_ - height_));
+    if (std::abs(next - scroll_) > 0.001) {
+      scroll_ = next;
+      dirty_ = true;
+      return true;
+    }
+  }
+  return false;
+}
+size_t Page::caret_at(int node, double x) const {
+  const std::string value = editor_value(node);
+  double text_x = layout_.boxes.count(node) ? layout_.boxes.at(node).x + 8 : 0;
+  double font_size = 16;
+  bool bold = false;
+  for (const auto &command : layout_.paint)
+    if (command.node == node && command.kind == PaintCommand::Kind::Text) {
+      text_x = command.rect.x;
+      font_size = command.size;
+      bold = command.bold;
+      break;
+    }
+  Canvas measure{1, 1};
+  size_t best = 0;
+  double previous = text_x;
+  for (uint32_t cp : utf8_decode(value)) {
+    const size_t units = cp > 0xffff ? 2 : 1;
+    const size_t next = best + units;
+    const std::string prefix = value.substr(0, utf16_to_byte(value, next));
+    const double position = text_x + measure.text_width(prefix, font_size, bold);
+    if (x < (previous + position) * 0.5) return best;
+    best = next;
+    previous = position;
+  }
+  return best;
+}
+bool Page::editor_key(int node, const std::string &key, const std::string &text) {
+  if (node < 0 || node >= int(doc.nodes.size()) || !text_editor_control(doc.nodes[node])) return false;
+  auto &selection = editor_selection(node);
+  const std::string value = editor_value(node);
+  const size_t length = utf16_length(value);
+  const bool has_selection = selection.start != selection.end;
+  if (control_down_ && (key == "a" || key == "A")) {
+    selection.start = 0; selection.end = length; selection.direction = "forward"; dirty_ = true; return true;
+  }
+  if (control_down_ && (key == "z" || key == "Z" || key == "y" || key == "Y")) {
+    const bool redo = key == "y" || key == "Y" || (shift_down_ && (key == "z" || key == "Z"));
+    auto &history = editor_history_[node];
+    auto &from = redo ? history.redo : history.undo;
+    auto &to = redo ? history.undo : history.redo;
+    if (!from.empty()) {
+      to.push_back(value);
+      std::string restored = std::move(from.back()); from.pop_back();
+      if (doc.nodes[node].name == "textarea") doc.set_text(node, restored);
+      else doc.nodes[node].set_attribute("value", restored);
+      selection.start = selection.end = utf16_length(restored);
+      dirty_ = true;
+      dispatch(node, "input", js_->make_object(), true, false);
+    }
+    return true;
+  }
+  if (control_down_ && (key == "c" || key == "C")) { edit_clipboard(false); return true; }
+  if (control_down_ && (key == "x" || key == "X")) { edit_clipboard(true); return true; }
+  if (control_down_ && (key == "v" || key == "V")) { replace_editor_selection(node, clipboard_text_); return true; }
+  if (key == "Backspace" || key == "Delete") {
+    if (!has_selection) {
+      if (key == "Backspace" && selection.start > 0) {
+        const size_t byte = utf16_to_byte(value, selection.start);
+        size_t previous = byte;
+        while (previous > 0 && (uint8_t(value[previous - 1]) & 0xc0) == 0x80) --previous;
+        if (previous > 0) --previous;
+        selection.start = byte_to_utf16(value, previous);
+      } else if (key == "Delete" && selection.end < length) {
+        const size_t byte = utf16_to_byte(value, selection.end);
+        size_t next = byte + 1;
+        while (next < value.size() && (uint8_t(value[next]) & 0xc0) == 0x80) ++next;
+        selection.end = byte_to_utf16(value, next);
+      } else return true;
+    }
+    replace_editor_selection(node, "");
+    return true;
+  }
+  if (key == "ArrowLeft" || key == "ArrowRight" || key == "ArrowUp" ||
+      key == "ArrowDown" || key == "Home" || key == "End") {
+    size_t next = selection.direction == "backward" ? selection.start : selection.end;
+    if ((key == "ArrowUp" || key == "ArrowDown") && doc.nodes[node].name == "textarea") {
+      const size_t byte = utf16_to_byte(value, selection.end);
+      const size_t line_start = byte == 0 ? 0 : value.rfind('\n', byte - 1) == std::string::npos
+          ? 0 : value.rfind('\n', byte - 1) + 1;
+      const size_t line_end_at = value.find('\n', byte);
+      const size_t line_end = line_end_at == std::string::npos ? value.size() : line_end_at;
+      const size_t column = byte - line_start;
+      if (key == "ArrowUp" && line_start > 0) {
+        const size_t prior_end = line_start - 1;
+        const size_t prior_start_at = prior_end == 0 ? std::string::npos : value.rfind('\n', prior_end - 1);
+        const size_t prior_start = prior_start_at == std::string::npos ? 0 : prior_start_at + 1;
+        next = byte_to_utf16(value, prior_start + std::min(column, prior_end - prior_start));
+      } else if (key == "ArrowDown" && line_end < value.size()) {
+        const size_t next_start = line_end + 1;
+        const size_t next_end_at = value.find('\n', next_start);
+        const size_t next_end = next_end_at == std::string::npos ? value.size() : next_end_at;
+        next = byte_to_utf16(value, next_start + std::min(column, next_end - next_start));
+      }
+    } else if (key == "ArrowLeft") {
+      if (has_selection && !shift_down_) next = selection.start;
+      else if (next > 0) {
+        size_t byte = utf16_to_byte(value, next);
+        if (byte > 0) {
+          --byte; while (byte > 0 && (uint8_t(value[byte]) & 0xc0) == 0x80) --byte;
+          next = byte_to_utf16(value, byte);
+        }
+      }
+    } else if (key == "ArrowRight") {
+      if (has_selection && !shift_down_) next = selection.end;
+      else if (next < length) {
+        size_t byte = utf16_to_byte(value, next), end = byte + 1;
+        while (end < value.size() && (uint8_t(value[end]) & 0xc0) == 0x80) ++end;
+        next = byte_to_utf16(value, end);
+      }
+    } else if (key == "Home" || key == "End") {
+      if (doc.nodes[node].name == "textarea") {
+        const size_t byte = utf16_to_byte(value, selection.end);
+        const size_t line_start = byte == 0 ? 0 : value.rfind('\n', byte - 1) == std::string::npos
+            ? 0 : value.rfind('\n', byte - 1) + 1;
+        const size_t line_end_at = value.find('\n', byte);
+        const size_t line_end = line_end_at == std::string::npos ? value.size() : line_end_at;
+        next = byte_to_utf16(value, key == "Home" ? line_start : line_end);
+      } else next = key == "Home" ? 0 : length;
+    }
+    if (shift_down_) {
+      if (selection_node_ != node) {
+        selection_anchor_ = has_selection ? selection.start : selection.end;
+        selection_node_ = node;
+      }
+      selection.start = std::min(selection_anchor_, next);
+      selection.end = std::max(selection_anchor_, next);
+      selection.direction = next < selection_anchor_ ? "backward" : "forward";
+    } else {
+      selection.start = selection.end = next;
+      selection.direction = "none";
+      selection_node_ = -1;
+    }
+    dirty_ = true;
+    return true;
+  }
+  if (key == "Enter" && doc.nodes[node].name != "textarea") return false;
+  if (key == "Enter" && doc.nodes[node].name == "textarea") {
+    replace_editor_selection(node, "\n");
+    return true;
+  }
+  if (!text.empty() && !control_down_) {
+    replace_editor_selection(node, text);
+    return true;
+  }
+  return false;
+}
+std::string Page::edit_clipboard(bool cut) {
+  const int node = focused_;
+  if (node < 0 || node >= int(doc.nodes.size()) || !text_editor_control(doc.nodes[node])) return {};
+  auto &selection = editor_selection(node);
+  if (selection.start == selection.end) return {};
+  const std::string value = editor_value(node);
+  clipboard_text_ = value.substr(utf16_to_byte(value, selection.start),
+                                 utf16_to_byte(value, selection.end) - utf16_to_byte(value, selection.start));
+  auto event = js_->make_object();
+  event.object->properties["text"] = js::Value(clipboard_text_);
+  if (dispatch(node, cut ? "cut" : "copy", event, true, true)) {
+    clipboard_text_.clear();
+    return {};
+  }
+  if (cut) replace_editor_selection(node, "");
+  return clipboard_text_;
+}
+void Page::paste_text(const std::string &text) {
+  if (text.size() > 65536 || !valid_editor_utf8(text) || focused_ < 0 ||
+      focused_ >= int(doc.nodes.size()) || !text_editor_control(doc.nodes[focused_])) return;
+  auto event = js_->make_object();
+  event.object->properties["text"] = js::Value(text);
+  if (dispatch(focused_, "paste", event, true, true)) return;
+  replace_editor_selection(focused_, text);
+}
+void Page::composition_start() {
+  const int node = focused_;
+  if (node < 0 || node >= int(doc.nodes.size()) || !text_editor_control(doc.nodes[node])) return;
+  auto &state = compositions_[node];
+  if (state.active) return;
+  const auto &selection = editor_selection(node);
+  state = {editor_value(node), {}, selection.start, selection.end, true};
+  dispatch(node, "compositionstart", js_->make_object(), true, false);
+}
+void Page::composition_update(const std::string &preedit, size_t caret) {
+  const int node = focused_;
+  auto found = compositions_.find(node);
+  if (found == compositions_.end() || !found->second.active || preedit.size() > 4096 ||
+      !valid_editor_utf8(preedit) || !utf8_byte_boundary(preedit, caret)) return;
+  auto &state = found->second;
+  state.preedit = preedit;
+  const std::string before = state.original.substr(0, utf16_to_byte(state.original, state.start));
+  const std::string after = state.original.substr(utf16_to_byte(state.original, state.end));
+  const size_t composition_caret = byte_to_utf16(preedit, caret);
+  std::string value = before + preedit + after;
+  if (doc.nodes[node].name == "textarea") doc.set_text(node, value);
+  else doc.nodes[node].set_attribute("value", value);
+  auto &selection = editor_selection(node);
+  selection.start = selection.end = state.start + composition_caret;
+  dirty_ = true;
+  auto event = js_->make_object();
+  event.object->properties["data"] = js::Value(preedit);
+  dispatch(node, "compositionupdate", event, true, false);
+  dispatch(node, "input", js_->make_object(), true, false);
+}
+void Page::composition_commit(const std::string &text) {
+  const int node = focused_;
+  auto found = compositions_.find(node);
+  if (found == compositions_.end() || !found->second.active || !valid_editor_utf8(text) || text.size() > 4096) return;
+  auto state = std::move(found->second);
+  compositions_.erase(found);
+  if (doc.nodes[node].name == "textarea") doc.set_text(node, state.original);
+  else doc.nodes[node].set_attribute("value", state.original);
+  auto &selection = editor_selection(node);
+  selection.start = state.start; selection.end = state.end;
+  replace_editor_selection(node, text);
+  auto event = js_->make_object();
+  event.object->properties["data"] = js::Value(text);
+  dispatch(node, "compositionend", event, true, false);
+}
+void Page::composition_cancel() {
+  const int node = focused_;
+  auto found = compositions_.find(node);
+  if (found == compositions_.end() || !found->second.active) return;
+  auto state = std::move(found->second);
+  compositions_.erase(found);
+  if (doc.nodes[node].name == "textarea") doc.set_text(node, state.original);
+  else doc.nodes[node].set_attribute("value", state.original);
+  auto &selection = editor_selection(node);
+  selection.start = state.start; selection.end = state.end;
+  dirty_ = true;
+  auto event = js_->make_object();
+  event.object->properties["data"] = js::Value();
+  dispatch(node, "compositionend", event, true, false);
+}
+
 void Page::key(const std::string &key, const std::string &text) {
+  const int event_target = focused_ >= 0 && focused_ < int(doc.nodes.size()) ? focused_ : doc.body;
+  if (!key.empty() || !text.empty()) {
+    std::string event_key = key.empty() ? text : key;
+    if (event_key == "Space") event_key = " ";
+    if (!key.empty()) {
+      js::Value event = js_->make_object();
+      event.object->properties["key"] = js::Value(event_key);
+      event.object->properties["code"] = js::Value(event_key);
+      event.object->properties["target"] = js_->host_value(event_target);
+      if (dispatch(event_target, "keydown", event)) return;
+    }
+    if (!text.empty()) {
+      js::Value press = js_->make_object();
+      press.object->properties["key"] = js::Value(event_key);
+      press.object->properties["data"] = js::Value(text);
+      press.object->properties["target"] = js_->host_value(event_target);
+      if (dispatch(event_target, "keypress", press)) return;
+    }
+  }
+  if (key == "Control") { control_down_ = true; return; }
+  if (key == "Shift") { shift_down_ = true; selection_node_ = -1; return; }
+  if (key == "Alt") return;
+  if (key == "Escape" && compositions_.count(focused_) && compositions_[focused_].active) {
+    composition_cancel();
+    return;
+  }
+  if (focused_ >= 0 && focused_ < int(doc.nodes.size()) &&
+      editor_key(focused_, key, text)) return;
+  const bool scroll_navigation = key == "ArrowUp" || key == "ArrowDown" || key == "PageUp" ||
+                                key == "PageDown" || key == "Home" || key == "End";
+  if (scroll_navigation && (event_target < 0 || event_target >= int(doc.nodes.size()) ||
+                            (!text_editor_control(doc.nodes[event_target]) &&
+                             doc.nodes[event_target].name != "select"))) {
+    scroll_key_default(key, event_target);
+    return;
+  }
+  if (focused_ >= 0 && focused_ < int(doc.nodes.size()) && doc.nodes[focused_].name == "select" &&
+      (key == "ArrowDown" || key == "ArrowUp" || key == "Home" || key == "End")) {
+    Node &select = doc.nodes[focused_];
+    std::vector<int> options;
+    for (int option : select.children)
+      if (doc.nodes[option].name == "option" && !page_control_disabled(doc, option)) options.push_back(option);
+    if (!options.empty()) {
+      int selected = -1;
+      for (size_t i = 0; i < options.size(); ++i)
+        if (has_attr(doc.nodes[options[i]], "selected")) { selected = int(i); break; }
+      const int current = selected < 0 ? 0 : selected;
+      const int next = key == "Home" ? 0 : key == "End" ? int(options.size()) - 1
+                    : std::clamp(current + (key == "ArrowDown" ? 1 : -1), 0, int(options.size()) - 1);
+      if (selected != next) {
+        for (int option : select.children)
+          if (doc.nodes[option].name == "option")
+            std::erase_if(doc.nodes[option].attributes,
+                          [](auto &attribute) { return attribute.first == "selected"; });
+        doc.nodes[options[next]].set_attribute("selected", "");
+        dirty_ = true;
+        dispatch(focused_, "input", js_->make_object(), true, false);
+        dispatch(focused_, "change", js_->make_object(), true, false);
+      }
+    }
+    return;
+  }
   if (key == "Space") {
     int node = focused_;
     bool usable = node >= 0 && node < int(doc.nodes.size()) && doc.nodes[node].type == Node::Type::Element &&
@@ -2170,45 +3040,28 @@ void Page::key(const std::string &key, const std::string &text) {
       return;
     }
   }
-  if (focused_ < 0 || focused_ >= int(doc.nodes.size()))
-    return;
-  if (!key.empty() || !text.empty()) {
-    std::string event_key = key.empty() ? text : key;
-    if (event_key == "Space") event_key = " ";
-    js::Value event = js_->make_object();
-    event.object->properties["type"] = js::Value("keydown");
-    event.object->properties["key"] = js::Value(event_key);
-    event.object->properties["target"] = js_->host_value(focused_);
-    dispatch(focused_, "keydown", event);
-    if (focused_ < 0 || focused_ >= int(doc.nodes.size()))
-      return;
+  if (focused_ < 0 || focused_ >= int(doc.nodes.size())) {
+    if (key != "Tab") return;
   }
-  auto &n = doc.nodes[focused_];
-  if (n.name == "input" || n.name == "textarea") {
-    auto type = lower(n.attribute("type"));
-    if (type != "checkbox" && type != "radio" && type != "button" && type != "submit") {
-      std::string value = n.name == "textarea" ? doc.text_content(focused_) : n.attribute("value");
-      if (key == "Backspace" && !value.empty()) {
-        auto cps = utf8_decode(value);
-        cps.pop_back();
-        value.clear();
-        for (auto c : cps)
-          value += utf8_encode(c);
-      } else if (key == "Enter" && n.name == "textarea")
-        value += '\n';
-      else if (!text.empty())
-        value += text;
-      if (n.name == "textarea")
-        doc.set_text(focused_, value);
-      else
-        n.set_attribute("value", value);
-      auto event = js_->make_object();
-      event.object->properties["type"] = js::Value("input");
-      event.object->properties["target"] = js_->host_value(focused_);
-      dispatch(focused_, "input", event);
-      dirty_ = true;
+  if (key == "Tab") {
+    std::vector<int> tabbable;
+    for (int node = 0; node < int(doc.nodes.size()); ++node)
+      if (focusable_element(doc, node) == node) {
+        std::string raw = doc.nodes[node].attribute("tabindex");
+        int order = 0;
+        try { if (!raw.empty()) order = std::stoi(raw); } catch (...) { order = 0; }
+        if (order >= 0) tabbable.push_back(node);
+      }
+    if (!tabbable.empty()) {
+      auto current = std::find(tabbable.begin(), tabbable.end(), focused_);
+      const size_t next = current == tabbable.end() || ++current == tabbable.end()
+          ? 0 : size_t(current - tabbable.begin());
+      set_focus(tabbable[next]);
     }
+    return;
   }
+  if (focused_ < 0 || focused_ >= int(doc.nodes.size())) return;
+  auto &n = doc.nodes[focused_];
   if (key == "Enter") {
     int form = n.parent;
     while (form >= 0 && doc.nodes[form].name != "form")
@@ -2216,6 +3069,16 @@ void Page::key(const std::string &key, const std::string &text) {
     if (form >= 0)
       submit_form(form);
   }
+}
+void Page::key_up(const std::string &key) {
+  const int target = focused_ >= 0 && focused_ < int(doc.nodes.size()) ? focused_ : doc.body;
+  js::Value event = js_->make_object();
+  event.object->properties["key"] = js::Value(key);
+  event.object->properties["code"] = js::Value(key);
+  event.object->properties["target"] = js_->host_value(target);
+  dispatch(target, "keyup", event, true, false);
+  if (key == "Control") control_down_ = false;
+  if (key == "Shift") { shift_down_ = false; selection_node_ = -1; }
 }
 // A form body is encoded the way a browser does it, where a space becomes a
 // plus and everything outside the unreserved set is escaped.
@@ -2236,6 +3099,16 @@ static std::string form_encode(const std::string &text) {
   return out;
 }
 void Page::submit_form(int form) {
+  if (form < 0 || form >= int(doc.nodes.size()) || doc.nodes[form].name != "form") return;
+  const std::vector<int> controls = doc.query("*", form);
+  for (int control : controls) {
+    const std::string &name = doc.nodes[control].name;
+    if ((name == "input" || name == "select" || name == "textarea") &&
+        !form_control_valid(doc, control)) {
+      dispatch(control, "invalid", js_->make_object(), false, false);
+      return;
+    }
+  }
   const auto &f = doc.nodes[form];
   std::string method = lower(f.attribute("method", "get"));
   std::string action = f.attribute("action");
