@@ -20,7 +20,7 @@ No third-party runtime library ships inside the product. Build-time tools never 
 ## 2. Local build order
 
 1. `python tools/Psycho_build.py --target engine` - engine and unit tests, runs on the development machine.
-2. `python tools/Psycho_build.py --target tests` - full unit + golden-image suite.
+2. `python tools/Psycho_build.py --target tests` and run `build/pv-tests` - engine and runtime unit/integration tests. For S070 rendering goldens, build `--target engine`, then run `python tests/Psycho_golden_tests.py` and `python tools/Psycho_golden.py --engine build/pv-engine` (use `pv-engine.exe` on Windows); see `tests/golden/README.md`.
 3. On Windows, `python tools/Psycho_build.py --target all` - one shell executable with an internal sandboxed renderer-child mode, plus tests.
 4. `python tools/Psycho_package.py --stage` - payload staging with hashes.
 5. `installer` build - `PsychoVault-Setup-<version>.exe`.

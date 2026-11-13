@@ -1,6 +1,6 @@
 # P2 / S050 engine-to-reference gap audit
 
-Audit date: 2026-11-01. Status: **S050 audit complete; S051 and S052 Windows implementation gates passed; targeted S053-S069 subsets are implemented and Linux-tested locally. S068/S069 also passed Windows automated build, tests, and general smoke captures; S066/S067 performance and interactive Win32 behavior remain unvalidated. S070-S071 remain open.** This is the ordered P2 input. It does not claim that the reference UI is implemented or visually matched.
+Audit date: 2026-11-01. Status: **S050 audit complete; S051 and S052 Windows implementation gates passed; targeted S053-S069 subsets are implemented and Linux-tested locally. S068/S069 also passed Windows automated build, tests, and general smoke captures; S066/S067 performance and interactive Win32 behavior remain unvalidated. S070 has a targeted owned golden suite; S071 and the broad P2 exit gate remain open.** This is the ordered P2 input. It does not claim that the reference UI is implemented or visually matched.
 
 ## Sources and scope
 
@@ -325,3 +325,9 @@ I embed the SIL OFL 1.1 Inter upright variable font and its full license in Wind
 Linux `pv-tests` passed **1,059 engine checks / 2,906 total checks**, including family/weight serialization and equal CSS layout widths at DPR 1, 1.5 and 2. [Windows push-triggered run 43493151145](https://github.com/Psycho-Core/PsychoVault/actions/runs/43493151145) passed for commit `15e8b10`, including font-loading, fallback-glyph, smoothing, MSVC build, smoke and package-license checks. The temporary branch-only push trigger was removed; the run does not establish manual-dispatch permission.
 
 This is not full CSS Fonts conformance: per-character CSS family-list fallback, `@font-face`, italic faces and relative weights remain incomplete. DPR checks are CSS-layout tests, not physical multi-monitor DPI or screenshot-parity tests. See `S069_IMPLEMENTATION.md`.
+
+## S070 follow-up — owned rendering goldens
+
+The local golden runner covers one representative scenario for each S052–S069 step. It checks PNG pixels exactly against checked-in owned baselines, supplements images with semantic pixel/frame probes, and emits actual and diff images and a JSON report. The CLI now preserves effect, fixed and font paint fields and can replay targeted input. Linux passed **18/18** goldens, **6** harness self-tests and **1,059 engine / 2,906 total checks**. [Windows push-triggered run 43515852499](https://github.com/Psycho-Core/PsychoVault/actions/runs/43515852499) passed the golden suite, engine tests, native smoke and packaging at commit `e923556`; its temporary branch-only trigger was removed and does not establish manual-dispatch permission. See `S070_IMPLEMENTATION.md` and `tests/golden/README.md` for commands, baseline provenance and limits.
+
+These images lock in current owned-engine behavior rather than establish standards correctness or reference parity. Comprehensive S052–S069 visual coverage, real compositor/DPI behavior, S071 reference diffs and the full P2 exit gate remain open.
