@@ -47,6 +47,10 @@ def verify(out: pathlib.Path) -> None:
                 raise SystemExit(f"my ZIP is missing {required}")
         if "extensions/PsychoVault-VPN-Bridge/manifest.json" not in names:
             raise SystemExit("my ZIP is missing my bundled VPN bridge")
+        license_name = "licenses/Inter-OFL.txt"
+        license_path = pathlib.Path(__file__).resolve().parents[1] / "assets/fonts/OFL.txt"
+        if license_name not in names or z.read(license_name) != license_path.read_bytes():
+            raise SystemExit("my ZIP is missing the unmodified bundled font license")
         for name in names:
             if name.startswith(("build/", ".git/")) or "test-profile" in name:
                 raise SystemExit(f"my ZIP must not contain {name}")

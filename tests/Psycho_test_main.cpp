@@ -2197,6 +2197,14 @@ int main() {
                     false, "PsychoVault UI, Segoe UI, sans-serif", 600);
   CHECK(std::any_of(bundled_text.pixels.begin(), bundled_text.pixels.end(),
                     [](uint8_t channel) { return channel != 255; }));
+  CHECK(std::any_of(bundled_text.pixels.begin(), bundled_text.pixels.end(),
+                    [](uint8_t channel) { return channel > 0 && channel < 255; }));
+  Canvas fallback_a(64, 40, 0xffffffff), fallback_b(64, 40, 0xffffffff);
+  fallback_a.text(1, 1, "\xe4\xb8\xad", 20, 0xff000000, false, "PsychoVault UI", 400);
+  fallback_b.text(1, 1, "\xe6\x96\x87", 20, 0xff000000, false, "PsychoVault UI", 400);
+  CHECK(fallback_a.pixels != fallback_b.pixels); // Distinct CJK fallback glyphs, not two tofu boxes.
+  CHECK(close_to(bundled_width, text_metrics.text_width(
+      "PsychoVault sample", 20, false, "'Missing, Family', PsychoVault UI", 400)));
   Canvas shaped_text(320, 48, 0xffffffff);
   shaped_text.text(2, 4, "DirectWrite \xce\xa9\xce\xbc\xce\xad\xce\xb3\xce\xb1 \xd0\x9f\xd1\x80\xd0\xb8\xd0\xb2\xd0\xb5\xd1\x82 \xe4\xb8\xad\xe6\x96\x87", 18,
                    0xff000000);

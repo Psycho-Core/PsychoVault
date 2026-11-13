@@ -321,9 +321,16 @@ static SelectedFamily first_installed_family(std::string_view css_stack,
   std::wstring stack = wide_text(css_stack.empty() ? "Segoe UI" : css_stack);
   size_t start = 0;
   while (start < stack.size()) {
-    size_t end = stack.find(L',', start);
-    if (end == std::wstring::npos)
-      end = stack.size();
+    size_t end = start;
+    wchar_t quote = 0;
+    for (; end < stack.size(); ++end) {
+      const wchar_t ch = stack[end];
+      if (quote) {
+        if (ch == quote) quote = 0;
+        else if (ch == L'\\' && end + 1 < stack.size()) ++end;
+      } else if (ch == L'\'' || ch == L'"') quote = ch;
+      else if (ch == L',') break;
+    }
     std::wstring candidate = stack.substr(start, end - start);
     auto first = candidate.find_first_not_of(L" \t\r\n\"'");
     auto last = candidate.find_last_not_of(L" \t\r\n\"'");
@@ -410,7 +417,13 @@ struct DirectWriteContext {
         FAILED(modern->CreateFontSetBuilder(&builder)) || FAILED(builder->AddFontFile(file.Get())) ||
         FAILED(builder->CreateFontSet(&set)) ||
         FAILED(modern->CreateFontCollectionFromFontSet(set.Get(), &ui_collection))) return false;
-    return ui_collection && ui_collection->GetFontFamilyCount() > 0;
+    UINT32 index = 0;
+    BOOL exists = FALSE;
+    if (!ui_collection || FAILED(ui_collection->FindFamilyName(L"Inter", &index, &exists)) || !exists) {
+      ui_collection.Reset();
+      return false;
+    }
+    return true;
   }
 
   bool ready() {
