@@ -166,11 +166,29 @@ Canvas::Canvas(int w, int h, uint32_t color)
     pixels[i + 3] = color >> 24;
   }
 }
+static bool path_clip_contains(const Canvas::PathClip &clip, double x, double y) {
+  int winding = 0;
+  bool parity = false;
+  for (const auto &contour : clip.contours) {
+    if (contour.size() < 3) continue;
+    for (size_t i = 0; i < contour.size(); ++i) {
+      const Point &a = contour[i], &b = contour[(i + 1) % contour.size()];
+      if ((a.y > y) == (b.y > y)) continue;
+      const double cross_x = a.x + (y - a.y) * (b.x - a.x) / (b.y - a.y);
+      if (cross_x <= x) continue;
+      parity = !parity;
+      winding += b.y > a.y ? 1 : -1;
+    }
+  }
+  return clip.even_odd ? parity : winding != 0;
+}
 void Canvas::pixel(int x, int y, uint32_t c) {
   if (x < 0 || y < 0 || x >= width || y >= height || !clip.contains(x + 0.5, y + 0.5))
     return;
   for (const auto &[rect, radius] : rounded_clips)
     if (!rounded_contains(rect, radius, x + 0.5, y + 0.5)) return;
+  for (const PathClip &path_clip : path_clips)
+    if (!path_clip_contains(path_clip, x + 0.5, y + 0.5)) return;
   const size_t i = (size_t(y) * width + x) * 4;
   const uint32_t sa = c >> 24;
   const uint32_t da = pixels[i + 3];
@@ -186,12 +204,22 @@ void Canvas::pixel(int x, int y, uint32_t c) {
   pixels[i + 2] = uint8_t(channel((c >> 16) & 255, pixels[i + 2]));
   pixels[i + 3] = uint8_t(oa);
 }
+void Canvas::clear_pixel(int x, int y) {
+  if (x < 0 || y < 0 || x >= width || y >= height || !clip.contains(x + 0.5, y + 0.5))
+    return;
+  for (const auto &[rect, radius] : rounded_clips)
+    if (!rounded_contains(rect, radius, x + 0.5, y + 0.5)) return;
+  for (const PathClip &path_clip : path_clips)
+    if (!path_clip_contains(path_clip, x + 0.5, y + 0.5)) return;
+  const size_t i = (size_t(y) * width + x) * 4;
+  pixels[i] = pixels[i + 1] = pixels[i + 2] = pixels[i + 3] = 0;
+}
 void Canvas::fill(Rect r, uint32_t c) {
   int x0 = std::clamp(int(std::floor(std::max(r.x, clip.x))), 0, width),
       y0 = std::clamp(int(std::floor(std::max(r.y, clip.y))), 0, height),
       x1 = std::clamp(int(std::ceil(std::min(r.x + r.w, clip.x + clip.w))), 0, width),
       y1 = std::clamp(int(std::ceil(std::min(r.y + r.h, clip.y + clip.h))), 0, height);
-  if ((c >> 24) == 255 && rounded_clips.empty()) {
+  if ((c >> 24) == 255 && rounded_clips.empty() && path_clips.empty()) {
     for (int y = y0; y < y1; ++y) {
       uint8_t *row = pixels.data() + (size_t(y) * width + x0) * 4;
       for (int x = x0; x < x1; ++x) {
@@ -534,7 +562,8 @@ void Canvas::text(double x, double y, std::string_view text, double size, uint32
       uint8_t coverage = pixels[(size_t(row) * size_t(width) + size_t(col)) * 4 + 3];
       if (coverage)
         pixel(int(x) + col - left, int(y) + row - top,
-              (uint32_t(coverage) << 24) | (color & 0x00ffffff));
+              (((uint32_t(coverage) * (color >> 24) + 127) / 255) << 24) |
+                  (color & 0x00ffffff));
     }
 #else
   // A non-Windows build deliberately has no bitmap-font fallback: it retains
