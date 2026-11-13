@@ -52,6 +52,7 @@ def main() -> None:
     if build_doc.exists():
         files["README-BUILD.md"] = build_doc
     files["NOTICE.txt"] = ROOT / "NOTICE.txt"
+    files["licenses/Inter-OFL.txt"] = ROOT / "assets/fonts/OFL.txt"
 
     info = out / "BUILD-INFO.txt"
     info.write_text(

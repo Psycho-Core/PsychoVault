@@ -83,11 +83,22 @@ def main():
     if compiler=="auto":compiler="msvc" if windows else "gcc"
     env=msvc_env() if compiler=="msvc" else os.environ.copy()
     cxx="cl" if compiler=="msvc" else os.environ.get("CXX","g++")
+    font_resource=None
+    if windows and compiler=="msvc":
+        # Both font and licence are resources in every executable, including the
+        # restricted renderer child. No per-user or system font installation.
+        rc=out/"Psycho_fonts.rc"
+        font_path=(ROOT/"assets/fonts/Inter-Regular-variable.ttf").as_posix()
+        license_path=(ROOT/"assets/fonts/OFL.txt").as_posix()
+        rc.write_text(f'101 RCDATA "{font_path}"\n102 RCDATA "{license_path}"\n',encoding="utf-8")
+        font_resource=out/"Psycho_fonts.res"
+        run(["rc", "/nologo", "/fo"+str(font_resource), str(rc)],env)
     def target(name,sources,libs=(),subsystem=None,entry=None):
         obj=out/"obj"/name;obj.parent.mkdir(parents=True,exist_ok=True);obj.mkdir(exist_ok=True)
         if compiler=="msvc":
             cmd=[cxx,"/nologo","/std:c++20","/utf-8","/EHsc","/O2","/MT","/W3","/WX","/permissive-","/DUNICODE","/D_UNICODE","/D_CRT_SECURE_NO_WARNINGS","/sdl","/GS","/guard:cf","/I"+str(ROOT),"/I"+str(out),"/D"+VERSION_DEFINE,"/Fo"+str(obj)+os.sep]
             cmd+= [str(ROOT/s) for s in sources]
+            if font_resource: cmd.append(str(font_resource))
             cmd+=["/link","/DYNAMICBASE","/NXCOMPAT","/HIGHENTROPYVA","/INCREMENTAL:NO"]
             if subsystem:cmd+=[f"/SUBSYSTEM:"+subsystem]
             if entry:cmd+=[f"/ENTRY:"+entry]

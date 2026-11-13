@@ -2555,10 +2555,12 @@ Json Page::render(double width, double height, double scroll) {
       const size_t start_byte = utf16_to_byte(editor_text, editor_range.start);
       const size_t end_byte = utf16_to_byte(editor_text, editor_range.end);
       const std::string before = editor_text.substr(0, start_byte);
-      const double before_width = text_measure.text_width(before, command.size, command.bold);
+      const double before_width = text_measure.text_width(before, command.size, command.bold,
+                                                           command.font_family, command.font_weight);
       if (editor_range.end > editor_range.start) {
         const std::string selected = editor_text.substr(start_byte, end_byte - start_byte);
-        const double selected_width = text_measure.text_width(selected, command.size, command.bold);
+        const double selected_width = text_measure.text_width(selected, command.size, command.bold,
+                                                               command.font_family, command.font_weight);
         if (selected_width > 0)
           frame_paint.emplace_back(PaintCommand::Kind::Rect,
               Rect{command.rect.x + before_width, command.rect.y, selected_width, command.rect.h},
@@ -2586,6 +2588,8 @@ Json Page::render(double width, double height, double scroll) {
     j.set("size", c.size);
     j.set("thickness", c.thickness);
     j.set("bold", c.bold);
+    j.set("fontFamily", c.font_family);
+    j.set("fontWeight", c.font_weight);
     j.set("node", c.node);
     j.set("url", c.url);
     j.set("gradient", c.gradient);
@@ -3418,11 +3422,15 @@ size_t Page::caret_at(int node, double x) const {
   double text_x = layout_.boxes.count(node) ? layout_.boxes.at(node).x + 8 : 0;
   double font_size = 16;
   bool bold = false;
+  std::string font_family = "Segoe UI";
+  int font_weight = 0;
   for (const auto &command : layout_.paint)
     if (command.node == node && command.kind == PaintCommand::Kind::Text) {
       text_x = command.rect.x;
       font_size = command.size;
       bold = command.bold;
+      font_family = command.font_family;
+      font_weight = command.font_weight;
       break;
     }
   Canvas measure{1, 1};
@@ -3432,7 +3440,7 @@ size_t Page::caret_at(int node, double x) const {
     const size_t units = cp > 0xffff ? 2 : 1;
     const size_t next = best + units;
     const std::string prefix = value.substr(0, utf16_to_byte(value, next));
-    const double position = text_x + measure.text_width(prefix, font_size, bold);
+    const double position = text_x + measure.text_width(prefix, font_size, bold, font_family, font_weight);
     if (x < (previous + position) * 0.5) return best;
     best = next;
     previous = position;

@@ -2734,6 +2734,8 @@ struct Browser {
       p.size = j.num("size") * zoom;
       p.thickness = j.num("thickness");
       p.bold = j.flag("bold");
+      p.font_family = j.str("fontFamily", "Segoe UI");
+      p.font_weight = int(j.num("fontWeight"));
       p.node = int(j.num("node"));
       p.url = j.str("url");
       p.gradient = j.str("gradient");

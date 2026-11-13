@@ -179,7 +179,7 @@ struct Layout {
     const Node &node = doc.nodes[id];
     Style style = resolve_box_style(styles[id], available);
     if (node.type == Node::Type::Text)
-      return measure.text_width(node.text, style.font_size, style.bold, style.font_family);
+      return measure.text_width(node.text, style.font_size, style.bold, style.font_family, style_font_weight(style));
     if (node.type != Node::Type::Element || style.display == "none") return 0;
     const double specified = resolved_width(style, available);
     double content = specified;
@@ -198,7 +198,7 @@ struct Layout {
       std::string text = doc.text_content(id);
       if (node.name == "input" || node.name == "textarea" || node.name == "select")
         text = node.attribute("value").empty() ? node.attribute("placeholder") : node.attribute("value");
-      content = measure.text_width(text, style.font_size, style.bold, style.font_family);
+      content = measure.text_width(text, style.font_size, style.bold, style.font_family, style_font_weight(style));
       for (int child : node.children)
         if (doc.nodes[child].type == Node::Type::Element)
           content = std::max(content, measure_w(child, available, depth + 1));
@@ -1333,7 +1333,7 @@ struct Layout {
           Run ellipsis_run = line.back();
           double ellipsis_width = measure.text_width(ellipsis, ellipsis_run.style.font_size,
                                                      ellipsis_run.style.bold,
-                                                     ellipsis_run.style.font_family);
+                                                     ellipsis_run.style.font_family, style_font_weight(ellipsis_run.style));
           while (!line.empty() && line_width + ellipsis_width > inner_w) {
             Run &tail = line.back();
             if (tail.text.empty() || tail.text == " ") {
@@ -1343,7 +1343,7 @@ struct Layout {
             }
             pop_utf8_grapheme(tail.text);
             tail.width = measure.text_width(tail.text, tail.style.font_size, tail.style.bold,
-                                            tail.style.font_family);
+                                            tail.style.font_family, style_font_weight(tail.style));
             if (tail.text.empty())
               line.pop_back();
             line_width = 0;
@@ -1441,7 +1441,7 @@ struct Layout {
             flush();
             continue;
           }
-          double ww = measure.text_width(word, st.font_size, st.bold, st.font_family);
+          double ww = measure.text_width(word, st.font_size, st.bold, st.font_family, style_font_weight(st));
           if (st.white_space != "nowrap" && line_width + ww > inner_w && !line.empty() && word != " ")
             flush();
           if (word == " " && line.empty())
@@ -1686,7 +1686,7 @@ struct Layout {
           const double specified_width = resolved_width(cs, inner_w);
           double cw = specified_width >= 0
                           ? specified_width
-                          : std::max(80.0, measure.text_width(label, cs.font_size) +
+                          : std::max(80.0, measure.text_width(label, cs.font_size, cs.bold, cs.font_family, style_font_weight(cs)) +
                                                 cs.padding[1] + cs.padding[3] + 16),
                  ch = cs.height >= 0             ? cs.height
                       : child.name == "textarea" ? 80
@@ -1922,6 +1922,14 @@ LayoutResult layout_document(const Document &doc, const std::vector<Style> &styl
   l.out.height = std::max(height, used);
   l.out.paint[0].rect.h = l.out.height;
   l.apply_sticky_positions();
+  for (auto &command : l.out.paint) {
+    if (command.kind == PaintCommand::Kind::Text && command.node >= 0 &&
+        size_t(command.node) < styles.size()) {
+      const Style &style = styles[size_t(command.node)];
+      command.font_family = style.font_family;
+      command.font_weight = style_font_weight(style);
+    }
+  }
   return l.out;
 }
 // I parse the small linear and radial gradients a page uses into stops.
@@ -2242,7 +2250,8 @@ void paint_commands(Canvas &canvas, const std::vector<PaintCommand> &commands, d
       target->line(r.x, r.y, r.x + r.w, r.y, command.color, command.thickness);
       break;
     case PaintCommand::Kind::Text:
-      target->text(r.x, r.y, command.text, command.size, command.color, command.bold);
+      target->text(r.x, r.y, command.text, command.size, command.color, command.bold,
+                   command.font_family, command.font_weight);
       break;
     case PaintCommand::Kind::Canvas: {
       auto found = images.find(command.url);

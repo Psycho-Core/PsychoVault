@@ -6,7 +6,7 @@
 #include <windows.h>
 #include <d2d1.h>
 #include <d2d1helper.h>
-#include <dwrite.h>
+#include <dwrite_3.h>
 #include <wrl/client.h>
 #endif
 namespace pv {
@@ -311,14 +311,26 @@ static std::wstring wide_text(std::string_view text) {
   return result;
 }
 
-static std::wstring first_installed_family(std::string_view css_stack,
-                                           IDWriteFontCollection *collection) {
+struct SelectedFamily {
+  std::wstring name;
+  IDWriteFontCollection *collection = nullptr;
+};
+static SelectedFamily first_installed_family(std::string_view css_stack,
+                                             IDWriteFontCollection *collection,
+                                             IDWriteFontCollection *ui_collection) {
   std::wstring stack = wide_text(css_stack.empty() ? "Segoe UI" : css_stack);
   size_t start = 0;
   while (start < stack.size()) {
-    size_t end = stack.find(L',', start);
-    if (end == std::wstring::npos)
-      end = stack.size();
+    size_t end = start;
+    wchar_t quote = 0;
+    for (; end < stack.size(); ++end) {
+      const wchar_t ch = stack[end];
+      if (quote) {
+        if (ch == quote) quote = 0;
+        else if (ch == L'\\' && end + 1 < stack.size()) ++end;
+      } else if (ch == L'\'' || ch == L'"') quote = ch;
+      else if (ch == L',') break;
+    }
     std::wstring candidate = stack.substr(start, end - start);
     auto first = candidate.find_first_not_of(L" \t\r\n\"'");
     auto last = candidate.find_last_not_of(L" \t\r\n\"'");
@@ -326,8 +338,16 @@ static std::wstring first_installed_family(std::string_view css_stack,
       candidate = candidate.substr(first, last - first + 1);
     else
       candidate.clear();
-    if (candidate == L"system-ui" || candidate == L"-apple-system")
+    std::wstring folded = candidate;
+    std::transform(folded.begin(), folded.end(), folded.begin(), [](wchar_t ch) {
+      return ch >= L'A' && ch <= L'Z' ? wchar_t(ch + (L'a' - L'A')) : ch;
+    });
+    if ((folded == L"psychovault ui" || folded == L"inter") && ui_collection)
+      return {L"Inter", ui_collection};
+    if (folded == L"system-ui" || folded == L"-apple-system" || folded == L"sans-serif")
       candidate = L"Segoe UI";
+    else if (folded == L"serif") candidate = L"Times New Roman";
+    else if (folded == L"monospace") candidate = L"Consolas";
     if (!candidate.empty()) {
       UINT32 index = 0;
       BOOL exists = FALSE;
@@ -349,24 +369,62 @@ static std::wstring first_installed_family(std::string_view css_stack,
             std::wstring canonical(size_t(length) + 1, L'\0');
             if (SUCCEEDED(names->GetString(name_index, canonical.data(), length + 1))) {
               canonical.resize(length);
-              return canonical;
+              return {canonical, collection};
             }
           }
         }
-        return candidate;
+        return {candidate, collection};
       }
     }
     start = end + 1;
   }
-  return L"Segoe UI";
+  return {L"Segoe UI", collection};
 }
 
 struct DirectWriteContext {
   ComPtr<IDWriteFactory> write_factory;
   ComPtr<ID2D1Factory> d2d_factory;
   ComPtr<IDWriteFontCollection> font_collection;
+  ComPtr<IDWriteFontCollection1> ui_collection;
+  ComPtr<IDWriteInMemoryFontFileLoader> ui_loader;
+  bool ui_attempted = false, ui_registered = false;
   ComPtr<ID2D1DCRenderTarget> render_target;
   std::map<std::wstring, ComPtr<IDWriteTextFormat>> formats;
+
+  ~DirectWriteContext() {
+    formats.clear();
+    ui_collection.Reset();
+    if (ui_registered) write_factory->UnregisterFontFileLoader(ui_loader.Get());
+  }
+
+  bool load_ui_font() {
+    if (ui_attempted) return ui_collection != nullptr;
+    ui_attempted = true;
+    ComPtr<IDWriteFactory5> modern;
+    if (FAILED(write_factory.As(&modern))) return false;
+    HRSRC resource = FindResourceW(nullptr, MAKEINTRESOURCEW(101), RT_RCDATA);
+    if (!resource) return false;
+    const DWORD size = SizeofResource(nullptr, resource);
+    HGLOBAL loaded = LoadResource(nullptr, resource);
+    const void *data = loaded ? LockResource(loaded) : nullptr;
+    if (!data || !size || FAILED(modern->CreateInMemoryFontFileLoader(&ui_loader))) return false;
+    if (FAILED(write_factory->RegisterFontFileLoader(ui_loader.Get()))) return false;
+    ui_registered = true;
+    ComPtr<IDWriteFontFile> file;
+    ComPtr<IDWriteFontSetBuilder1> builder;
+    ComPtr<IDWriteFontSet> set;
+    if (FAILED(ui_loader->CreateInMemoryFontFileReference(write_factory.Get(), data, size, nullptr, &file)) ||
+        FAILED(modern->CreateFontSetBuilder(&builder)) || FAILED(builder->AddFontFile(file.Get())) ||
+        FAILED(builder->CreateFontSet(&set)) ||
+        FAILED(modern->CreateFontCollectionFromFontSet(set.Get(), &ui_collection))) return false;
+    UINT32 index = 0;
+    BOOL exists = FALSE;
+    if (!ui_collection || FAILED(ui_collection->FindFamilyName(L"Inter", &index, &exists)) || !exists) {
+      ui_collection.Reset();
+      return false;
+    }
+    return true;
+  }
 
   bool ready() {
     if (!write_factory && FAILED(DWriteCreateFactory(
@@ -391,13 +449,16 @@ struct DirectWriteContext {
     return true;
   }
 
-  IDWriteTextFormat *format(std::string_view family, double size, bool bold) {
+  IDWriteTextFormat *format(std::string_view family, double size, bool bold, int weight) {
     if (!ready())
       return nullptr;
-    double clamped_size = std::clamp(size, 1.0, 512.0);
-    std::wstring selected = first_installed_family(family, font_collection.Get());
-    std::wstring key = selected + L"|" + std::to_wstring(int(std::lround(clamped_size * 64))) +
-                       (bold ? L"|bold" : L"|regular");
+    const int size64 = int(std::lround(std::clamp(size, 1.0, 512.0) * 64));
+    const double clamped_size = size64 / 64.0;
+    const int effective_weight = weight >= 1 && weight <= 1000 ? weight : (bold ? 700 : 400);
+    load_ui_font();
+    SelectedFamily selected = first_installed_family(family, font_collection.Get(), ui_collection.Get());
+    std::wstring key = selected.name + (selected.collection == ui_collection.Get() ? L"|bundled|" : L"|system|") +
+                       std::to_wstring(size64) + L"|" + std::to_wstring(effective_weight);
     auto found = formats.find(key);
     if (found != formats.end())
       return found->second.Get();
@@ -405,7 +466,7 @@ struct DirectWriteContext {
       formats.clear();
     ComPtr<IDWriteTextFormat> created;
     HRESULT hr = write_factory->CreateTextFormat(
-        selected.c_str(), font_collection.Get(), bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+        selected.name.c_str(), selected.collection, DWRITE_FONT_WEIGHT(effective_weight),
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, FLOAT(clamped_size), L"en-us", &created);
     if (FAILED(hr) || !created)
       return nullptr;
@@ -415,14 +476,14 @@ struct DirectWriteContext {
     return it->second.Get();
   }
 
-  bool layout(std::string_view text, std::string_view family, double size, bool bold,
+  bool layout(std::string_view text, std::string_view family, double size, bool bold, int weight,
               ComPtr<IDWriteTextLayout> &out, DWRITE_TEXT_METRICS *metrics = nullptr,
               DWRITE_OVERHANG_METRICS *overhang = nullptr) {
     if (!ready() || text.size() > UINT32_MAX)
       return false;
     std::wstring wide = wide_text(text);
     ComPtr<IDWriteTextFormat> text_format;
-    IDWriteTextFormat *cached = format(family, size, bold);
+    IDWriteTextFormat *cached = format(family, size, bold, weight);
     if (!cached)
       return false;
     // The format cache is thread-local and is not cleared while a call is using it.
@@ -486,17 +547,28 @@ static double portable_text_width(std::string_view text, double size) {
 }
 #endif
 
-double Canvas::text_width(std::string_view text, double size, bool bold, std::string_view family) const {
+bool bundled_ui_font_available() {
+#ifdef _WIN32
+  auto &context = direct_write();
+  return context.ready() && context.load_ui_font();
+#else
+  return false;
+#endif
+}
+
+double Canvas::text_width(std::string_view text, double size, bool bold, std::string_view family,
+                          int weight) const {
 #ifdef _WIN32
   auto &context = direct_write();
   ComPtr<IDWriteTextLayout> layout;
   DWRITE_TEXT_METRICS metrics{};
-  if (context.layout(text, family, size, bold, layout, &metrics))
+  if (context.layout(text, family, size, bold, weight, layout, &metrics))
     return metrics.widthIncludingTrailingWhitespace;
   return 0;
 #else
   (void)bold;
   (void)family;
+  (void)weight;
   // Portable advances support layout/unit tests only; this build does not ship
   // or rasterize a substitute font. Windows UI text uses DirectWrite metrics.
   return portable_text_width(text, size);
@@ -504,7 +576,7 @@ double Canvas::text_width(std::string_view text, double size, bool bold, std::st
 }
 
 void Canvas::text(double x, double y, std::string_view text, double size, uint32_t color, bool bold,
-                  std::string_view family) {
+                  std::string_view family, int weight) {
 #ifdef _WIN32
   if (text.empty())
     return;
@@ -512,7 +584,7 @@ void Canvas::text(double x, double y, std::string_view text, double size, uint32
   ComPtr<IDWriteTextLayout> layout;
   DWRITE_TEXT_METRICS metrics{};
   DWRITE_OVERHANG_METRICS overhang{};
-  if (!context.layout(text, family, size, bold, layout, &metrics, &overhang) || !context.render_target)
+  if (!context.layout(text, family, size, bold, weight, layout, &metrics, &overhang) || !context.render_target)
     return;
   int left = std::max(0, int(std::ceil(overhang.left))) + 2;
   int top = std::max(0, int(std::ceil(overhang.top))) + 2;
@@ -575,6 +647,7 @@ void Canvas::text(double x, double y, std::string_view text, double size, uint32
   (void)color;
   (void)bold;
   (void)family;
+  (void)weight;
 #endif
 }
 static void be32(Bytes &out, uint32_t n) {

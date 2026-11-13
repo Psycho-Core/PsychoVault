@@ -2154,9 +2154,57 @@ int main() {
   c.stroke({4, 4, 20, 20}, 0xffffffff);
   c.text(2, 30, "PV", 12, 0xff00ff00);
   Canvas text_metrics(1, 1);
+  {
+    // S069: the complete family stack and numeric weight survive cascade,
+    // layout, damage serialization, and a DPR-only environment change.
+    Page fonts;
+    fonts.load(*parse_url("https://fonts.test/"),
+        "<!doctype html><style>body{margin:0;font-family:'Missing Family', 'PsychoVault UI', sans-serif;"
+        "font-size:20px;font-weight:600}</style><div id=label>Font sample</div>");
+    auto font_command = [](const Json &frame) {
+      for (const Json &command : frame.at("paint").array)
+        if (int(command.num("kind")) == int(PaintCommand::Kind::Text) &&
+            command.str("text").find("Font") != std::string::npos) return command;
+      return Json();
+    };
+    MediaEnvironment env;
+    env.device_pixel_ratio = 1.0;
+    fonts.set_viewport_environment(400, 200, env);
+    const Json one = font_command(fonts.render(400, 200, 0));
+    CHECK(one.str("fontFamily") == "'Missing Family', 'PsychoVault UI', sans-serif");
+    CHECK(one.num("fontWeight") == 600 && one.num("w") > 0);
+    env.device_pixel_ratio = 1.5;
+    fonts.set_viewport_environment(400, 200, env);
+    const Json one_half = font_command(fonts.render(400, 200, 0));
+    env.device_pixel_ratio = 2.0;
+    fonts.set_viewport_environment(400, 200, env);
+    const Json two = font_command(fonts.render(400, 200, 0));
+    CHECK(close_to(one.num("w"), one_half.num("w")) && close_to(one.num("w"), two.num("w")));
+  }
   CHECK(text_metrics.text_width("WWWW", 16) > text_metrics.text_width("iiii", 16));
   CHECK(text_metrics.text_width("Omega \xce\xa9 and CJK \xe4\xb8\xad\xe6\x96\x87", 16) > 0);
 #ifdef _WIN32
+  CHECK(bundled_ui_font_available());
+  const double bundled_width = text_metrics.text_width("PsychoVault sample", 20, false, "PsychoVault UI", 400);
+  const double bundled_fallback_width = text_metrics.text_width(
+      "PsychoVault sample", 20, false, "NoSuchFamily-PV, PsychoVault UI, sans-serif", 400);
+  const double bundled_bold = text_metrics.text_width("PsychoVault sample", 20, false, "PsychoVault UI", 700);
+  CHECK(bundled_width > 0 && close_to(bundled_width, bundled_fallback_width));
+  CHECK(bundled_bold > 0);
+  CHECK(close_to(bundled_width, text_metrics.text_width("PsychoVault sample", 20, false, "PsychoVault UI", 400)));
+  Canvas bundled_text(320, 48, 0xffffffff);
+  bundled_text.text(2, 4, "PsychoVault \xce\xa9 \xe4\xb8\xad", 20, 0xff000000,
+                    false, "PsychoVault UI, Segoe UI, sans-serif", 600);
+  CHECK(std::any_of(bundled_text.pixels.begin(), bundled_text.pixels.end(),
+                    [](uint8_t channel) { return channel != 255; }));
+  CHECK(std::any_of(bundled_text.pixels.begin(), bundled_text.pixels.end(),
+                    [](uint8_t channel) { return channel > 0 && channel < 255; }));
+  Canvas fallback_a(64, 40, 0xffffffff), fallback_b(64, 40, 0xffffffff);
+  fallback_a.text(1, 1, "\xe4\xb8\xad", 20, 0xff000000, false, "PsychoVault UI", 400);
+  fallback_b.text(1, 1, "\xe6\x96\x87", 20, 0xff000000, false, "PsychoVault UI", 400);
+  CHECK(fallback_a.pixels != fallback_b.pixels); // Distinct CJK fallback glyphs, not two tofu boxes.
+  CHECK(close_to(bundled_width, text_metrics.text_width(
+      "PsychoVault sample", 20, false, "'Missing, Family', PsychoVault UI", 400)));
   Canvas shaped_text(320, 48, 0xffffffff);
   shaped_text.text(2, 4, "DirectWrite \xce\xa9\xce\xbc\xce\xad\xce\xb3\xce\xb1 \xd0\x9f\xd1\x80\xd0\xb8\xd0\xb2\xd0\xb5\xd1\x82 \xe4\xb8\xad\xe6\x96\x87", 18,
                    0xff000000);
