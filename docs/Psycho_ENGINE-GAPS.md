@@ -1,6 +1,6 @@
 # P2 / S050 engine-to-reference gap audit
 
-Audit date: 2026-11-01. Status: **S050 audit complete; S051 and S052 Windows implementation gates passed; targeted S053-S066 subsets are implemented and Linux-tested locally (S066 Win32 path remains unvalidated); S067-S071 remain open.** This is the ordered P2 input. It does not claim that the reference UI is implemented or visually matched.
+Audit date: 2026-11-01. Status: **S050 audit complete; S051 and S052 Windows implementation gates passed; targeted S053-S067 subsets are implemented and Linux-tested locally (S066/S067 Win32 paths remain unvalidated); S068-S071 remain open.** This is the ordered P2 input. It does not claim that the reference UI is implemented or visually matched.
 
 ## Sources and scope
 
@@ -299,3 +299,11 @@ First-pass S066 is implemented in `engine/Psycho_page.cpp/.hpp` and the Win32 sh
 `tests/Psycho_test_main.cpp` adds S066 regressions for unchanged-frame and nonvisual pointer-move cache reuse, zero damage, and a hover-color transition producing local damage. Linux validation: `python3 tools/Psycho_build.py --compiler gcc --target tests --outdir /tmp/pv-s066-verified && /tmp/pv-s066-verified/pv-tests` passed **996 engine checks / 2,843 total checks**.
 
 This is not dirty-subtree incremental layout: any cache-signature change runs the full layout pass. Paint comparison remains linear and order-sensitive, the shell still traverses the full paint stream under a clip, numerous non-renderer shell interactions still request full-window invalidation, and Windows compilation/interactive GDI/DPI/resize validation has not been performed. See `S066_IMPLEMENTATION.md` for scope and remaining gaps.
+
+## S067 follow-up — tile damage and presentation instrumentation, 2026-11-01
+
+The frame protocol now reports 128px CSS-pixel damage tiles, full-damage state and compositor counters (changed commands, fixed/scrolled paint command counts, and effect groups). The Win32 shell consumes tile damage and uses `DwmFlush()` after GDI flush; it periodically emits paint counts and an approximate missed-refresh estimate to the debugger output. Existing `fixed` paint flags and effect `PushLayer`/`PopLayer` groups feed the layer classification.
+
+`S067CompositorTilesLayersAndFrameMetrics` verifies initial damage tiles, fixed/effect metadata and no tile damage on unchanged frames. Linux validation: `python3 tools/Psycho_build.py --compiler gcc --target tests --outdir /tmp/pv-s067-tests && /tmp/pv-s067-tests/pv-tests` passed **1,040 engine checks / 2,887 total checks**.
+
+This remains a partial compositor implementation. There are no persistent independent raster surfaces for scrolled/transformed/fixed layers, tiles are invalidation units over one software backing canvas rather than separately cached bitmaps, and the estimate is not hardware-present telemetry. Win32 DWM pacing, actual dropped frames, multi-monitor/variable-refresh behavior, and scroll/transform performance need Windows profiling. See `S067_IMPLEMENTATION.md`.
