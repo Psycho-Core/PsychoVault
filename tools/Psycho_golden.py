@@ -168,6 +168,7 @@ def run(engine: pathlib.Path, output: pathlib.Path, candidates: bool = False) ->
             if proc.stderr.strip():
                 raise RuntimeError(f"renderer diagnostics: {proc.stderr.strip()}")
             frame = json.loads(proc.stdout)
+            if not isinstance(frame, dict): raise ValueError("renderer frame is not a JSON object")
             w, h, pixels = decode_png(image)
             if (w, h) != (WIDTH, HEIGHT): raise ValueError(f"actual dimensions {w}x{h}")
             validate(case, frame, pixels)
@@ -189,7 +190,7 @@ def run(engine: pathlib.Path, output: pathlib.Path, candidates: bool = False) ->
                     result["diff"] = str(diff_path)
                     raise ValueError(f"{changed} pixels differ; see {diff_path}")
                 result["result"] = "passed"
-        except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired, zlib.error, json.JSONDecodeError) as error:
+        except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired, zlib.error, struct.error) as error:
             result["error"] = str(error)
         report["cases"].append(result)
         print(f"{result['id']}: {result['result']}" + (f" — {result['error']}" if "error" in result else ""))
