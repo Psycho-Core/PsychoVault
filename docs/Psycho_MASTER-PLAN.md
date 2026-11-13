@@ -207,6 +207,8 @@ Order matters: my own UI's CSS comes first, then the web's common CSS, then the 
 
 **Exit gate:** the engine golden-image suite covers the S052-S069 feature set and is green on the supported Windows build. Representative test fixtures derived from the reference UI's CSS/DOM contract render correctly. The actual settings/new-tab HTML and full screenshot parity are delivered and tested in P3/M2, not assumed to exist before P3.
 
+**S072 audit: gate not yet demonstrated.** The current 18-case suite is green on Linux and in a Windows automated run, but is representative rather than feature-set coverage; the reference-contract corpus is a render/marker smoke rather than proof of correct rendering, and S071 is unimplemented. Per-step evidence, Windows run scope and remaining work are recorded in [S072_PHASE2_AUDIT.md](S072_PHASE2_AUDIT.md). Earlier per-step Windows caveats above describe the evidence available at that step; the subsequent combined automated Windows run does not establish interactive or performance behavior.
+
 ### P3 - My UI on my engine (the interface contract)
 
 - **S080** Author `ui/` as plain HTML/CSS/JS: design tokens (colours, spacing, radii, typography) taken from the screenshots and the legacy stylesheet.
