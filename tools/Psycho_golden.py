@@ -176,11 +176,12 @@ def run(engine: pathlib.Path, output: pathlib.Path, candidates: bool = False) ->
                 write_png(output / "candidates" / (name + ".png"), w, h, pixels)
                 result["result"] = "candidate"
             else:
-                baseline = BASELINES / (platform if name == "s069" else "common") / (name + ".png")
+                platform_baseline = BASELINES / platform / (name + ".png")
+                baseline = platform_baseline if name == "s069" or platform_baseline.exists() else BASELINES / "common" / (name + ".png")
                 ew, eh, expected = decode_png(baseline)
                 if (ew, eh) != (w, h): raise ValueError(f"baseline dimensions {ew}x{eh}, actual {w}x{h}")
                 changed, diff = compare(expected, pixels)
-                result["baseline"] = str(baseline.relative_to(ROOT))
+                result["baseline"] = str(baseline.relative_to(ROOT) if ROOT in baseline.parents else baseline)
                 result["changed_pixels"] = changed
                 if changed:
                     diff_path = output / (name + ".diff.png")
