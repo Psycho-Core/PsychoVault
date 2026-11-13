@@ -1,6 +1,6 @@
 # S068 — Canvas 2D subset
 
-**Status (2026-11-01):** A focused software Canvas 2D subset is implemented and Linux-tested. It is not full Canvas 2D conformance; see remaining work below.
+**Status:** A focused software Canvas 2D subset is implemented and covered by Linux and Windows automated tests. It is not full Canvas 2D conformance; see remaining work below.
 
 ## Implemented
 
@@ -14,10 +14,12 @@ Regression coverage in `tests/Psycho_test_main.cpp` exercises transformed paths,
 
 Linux validation: `python3 tools/Psycho_build.py --compiler gcc --target tests --outdir /tmp/pv-s068-verified && /tmp/pv-s068-verified/pv-tests` passed **1,056 engine checks / 2,903 total checks** (before adding the Windows-only test).
 
+Windows validation: [push-triggered Actions run 43437658811](https://github.com/Psycho-Core/PsychoVault/actions/runs/43437658811) passed for commit `d8a965966dafbe85590c8b70e75a9e45b51dcfae`, including MSVC browser/test builds, engine tests (including the DirectWrite clip/alpha check), headless and native smoke captures, and package verification. The branch-only temporary trigger was removed afterward. This does not validate manual workflow dispatch permissions.
+
 ## Remaining work / limits
 
 - No `Path2D`, `arcTo`, `ellipse` shape quality beyond sampled polygons, line-cap/join/miter behavior, compositing modes, shadows, image smoothing, or full DOMMatrix/getTransform support.
 - Stroke text is rendered using the stroke color but is not an outlined glyph path. Text measurement/metrics and baseline placement are approximations; Linux has no text raster backend.
 - Image sampling is nearest-neighbor. Negative source/destination rectangles, crop validation, alpha/compositing edge cases, image-source lifecycle, and browser exception semantics need further conformance work.
 - Clipping uses software point-in-path tests with polygonal path approximations; complex/self-intersecting path rules and performance have not been validated against a browser reference. Beyond 64 nested clips, drawing fails closed until restored; dash traversal is capped at 100,000 segments per stroke. Save depth is capped at 64.
-- Windows DirectWrite/raster output and end-to-end page canvas painting have not been compiled or interactively tested in this Linux environment.
+- The Windows automated test checks a clipped, alpha-blended DirectWrite glyph; broader interactive page-canvas visual and performance validation remains outstanding. `fill()` currently uses nonzero winding only; gradient text and full gradient-transform semantics remain open.

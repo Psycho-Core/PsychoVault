@@ -1,6 +1,6 @@
 # P2 / S050 engine-to-reference gap audit
 
-Audit date: 2026-11-01. Status: **S050 audit complete; S051 and S052 Windows implementation gates passed; targeted S053-S068 subsets are implemented and Linux-tested locally (S066/S067 Win32 paths and S068 Windows raster remain unvalidated); S069-S071 remain open.** This is the ordered P2 input. It does not claim that the reference UI is implemented or visually matched.
+Audit date: 2026-11-01. Status: **S050 audit complete; S051 and S052 Windows implementation gates passed; targeted S053-S068 subsets are implemented and Linux-tested locally. S068 also passed Windows automated build, tests, and general smoke captures; S066/S067 performance and interactive Win32 behavior remain unvalidated. S069-S071 remain open.** This is the ordered P2 input. It does not claim that the reference UI is implemented or visually matched.
 
 ## Sources and scope
 
@@ -314,4 +314,6 @@ A targeted Canvas 2D subset now captures transforms when path segments are built
 
 The S068 regressions check clip intersection, holes and restoration; transformed paths; line-dash state; rotated ellipse and image pixels; transformed clearing and bitmap resets. Linux validation: `python3 tools/Psycho_build.py --compiler gcc --target tests --outdir /tmp/pv-s068-verified && /tmp/pv-s068-verified/pv-tests` passed **1,056 engine checks / 2,903 total checks**.
 
-This is not browser-complete Canvas 2D. `Path2D`, `arcTo`, true stroke-text outlines, line cap/join/miter styles, compositing modes, high-quality transformed image sampling, robust clip winding/antialiasing and browser exception semantics remain open. Windows text/raster validation is outstanding. See `S068_IMPLEMENTATION.md`.
+Windows automated validation also passed on commit `d8a965` in [push-triggered run 43437658811](https://github.com/Psycho-Core/PsychoVault/actions/runs/43437658811): MSVC builds, engine tests including a focused DirectWrite clip/alpha check, and general native smoke captures. The temporary branch-only trigger was removed, and this is not evidence of manual-dispatch permission.
+
+This is not browser-complete Canvas 2D. `Path2D`, `arcTo`, true stroke-text outlines, line cap/join/miter styles, compositing modes, high-quality transformed image sampling, robust clip winding/antialiasing and browser exception semantics remain open. Interactive page-canvas visual validation is outstanding. See `S068_IMPLEMENTATION.md`.
