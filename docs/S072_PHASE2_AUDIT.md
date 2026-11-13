@@ -2,6 +2,8 @@
 
 Audit date: 2026-11-01. Audited source: `246ab98974982f8e6137c8d618cb3b3170ffb54d` (S070 merge). S072 is an audit label, not a previously planned implementation step.
 
+**Later update:** the S071 comparison mechanism was added after this audit; see [S071_IMPLEMENTATION.md](S071_IMPLEMENTATION.md). The findings below are preserved as the historical assessment of the audited commit. The broader P2 exit gate remains open.
+
 ## Verdict
 
 **Phase 2 is not complete; the exit gate is not demonstrated.** S070 supplies a useful, green *representative regression suite*, but one 160×100 owned image per S052–S069 step is not evidence that each step's feature set is covered. The five S050 contract-derived fixtures reach the paint path and contain expected frame markers; that is not an independent determination that they render correctly. S071, a separately listed visual-diff harness, has not been implemented. Full settings/new-tab pages and screenshot parity are P3/M2 deliverables, not prerequisites to the P2 exit gate.

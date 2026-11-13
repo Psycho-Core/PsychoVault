@@ -54,6 +54,12 @@ jobs:
         run: |
           python tests/Psycho_golden_tests.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/Psycho_reference_diff_tests.py 2>&1 | Tee-Object build/reference-diff-tests.txt
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            foreach ($line in (Get-Content build/reference-diff-tests.txt)) { Write-Host "::error title=Reference diff tests::$line" }
+            exit $code
+          }
           python tools/Psycho_golden.py --engine build/pv-engine.exe --outdir build/golden-results
           $code = $LASTEXITCODE
           if ($code -ne 0 -and (Test-Path build/golden-results/report.json)) {

@@ -64,5 +64,6 @@ scroll anchoring, full animation timing, selection/IME, display-list caching,
 actual compositor presentation/dropped frames, physical DPI changes, CSS/font
 conformance or visual parity. Font output can differ across Windows versions or
 system font/fallback updates, so an exact pixel difference needs investigation,
-not an automatic baseline refresh. Full reference screenshot comparison is
-S071, and the broader P2 exit gate remains open.
+not an automatic baseline refresh. The S071 reference comparison mechanism is
+documented in `docs/S071_IMPLEMENTATION.md`; matching UI views and the broader
+P2 exit gate remain open.
