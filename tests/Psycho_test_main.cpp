@@ -839,6 +839,30 @@ int main() {
         local_damage = true;
     CHECK(local_damage);
   }
+  // S067: compositor metadata groups fixed/effect paint and quantizes damage
+  // to bounded tiles, while unchanged frames leave the tile set empty.
+  {
+    Page page;
+    page.load(*parse_url("https://compositor.test/"),
+        "<!doctype html><style>body{margin:0}#fixed{position:fixed;top:4px;left:5px;width:30px;height:20px;background:#123}"
+        "#effect{width:30px;height:20px;opacity:.8;transform:rotate(4deg);background:#456}</style>"
+        "<div id=fixed></div><div id=effect></div>");
+    Json frame = page.render(400, 300, 0);
+    CHECK(frame.find("damageTiles") && !frame.at("damageTiles").array.empty());
+    CHECK(frame.at("compositor").num("tileSize") == 128);
+    for (const Json &tile : frame.at("damageTiles").array) {
+      CHECK(std::fmod(tile.num("x"), 128) == 0);
+      CHECK(std::fmod(tile.num("y"), 128) == 0);
+      CHECK(tile.num("size") == 128);
+    }
+    CHECK(frame.at("compositor").num("fixedLayerCommands") > 0);
+    CHECK(frame.at("compositor").num("effectLayers") > 0);
+    CHECK(frame.flag("fullDamage"));
+    Json unchanged = page.render(400, 300, 0);
+    CHECK(unchanged.at("damageTiles").array.empty());
+    CHECK(!unchanged.flag("fullDamage"));
+    CHECK(unchanged.at("compositor").num("tileCount") == 0);
+  }
   // Positioning, flex, grid and transforms, measured from my own paint list.
   {
     Page page;

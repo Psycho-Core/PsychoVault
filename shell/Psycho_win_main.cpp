@@ -817,6 +817,8 @@ struct Browser {
   double document_scroll_drag_start_y = 0, document_scroll_drag_start = 0;
   int width = 1440, height = 940;
   std::unique_ptr<Canvas> paint_surface;
+  uint64_t compositor_presented_frames = 0, compositor_dropped_frames = 0;
+  std::chrono::steady_clock::time_point compositor_metrics_at{};
   // S045 architecture slice: the browser's page surface is the only drawn
   // interface; the native shell keeps windowing, input dispatch and presentation.
   bool app_ui_slice = true;
@@ -4215,6 +4217,7 @@ static void paint(HWND hwnd) {
     return;
   PAINTSTRUCT ps;
   HDC dc = BeginPaint(hwnd, &ps);
+  const auto paint_started = std::chrono::steady_clock::now();
   if (!b->paint_surface || b->paint_surface->width != std::max(1, b->width) ||
       b->paint_surface->height != std::max(1, b->height))
     b->paint_surface = std::make_unique<Canvas>(b->width, b->height, BG);
@@ -4239,7 +4242,27 @@ static void paint(HWND hwnd) {
                   dirty_x, dirty_y, dirty_right - dirty_x, dirty_bottom - dirty_y,
                   canvas.pixels.data(), &bi, DIB_RGB_COLORS, SRCCOPY);
   canvas.clip = {0, 0, double(canvas.width), double(canvas.height)};
+  const int reported_refresh_hz = GetDeviceCaps(dc, VREFRESH);
+  const int refresh_hz = reported_refresh_hz >= 20 ? reported_refresh_hz : 60;
   EndPaint(hwnd, &ps);
+  GdiFlush();
+  const double elapsed = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - paint_started).count();
+  DwmFlush();
+  ++b->compositor_presented_frames;
+  if (elapsed > 1.0 / refresh_hz)
+    b->compositor_dropped_frames += uint64_t(std::max(1.0, std::ceil(elapsed * refresh_hz) - 1));
+  const auto metrics_now = std::chrono::steady_clock::now();
+  if (b->compositor_metrics_at.time_since_epoch().count() == 0)
+    b->compositor_metrics_at = metrics_now;
+  if (metrics_now - b->compositor_metrics_at >= std::chrono::seconds(5)) {
+    const std::string metrics = "PsychoVault compositor: paints=" +
+        std::to_string(b->compositor_presented_frames) + " estimated-dropped=" +
+        std::to_string(b->compositor_dropped_frames) + "\n";
+    OutputDebugStringA(metrics.c_str());
+    b->compositor_presented_frames = b->compositor_dropped_frames = 0;
+    b->compositor_metrics_at = metrics_now;
+  }
 }
 static void capture(HWND hwnd, const std::string &path) {
   Browser *b = browser(hwnd);
@@ -4404,24 +4427,48 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (full_repaint || b->find_open) {
           InvalidateRect(hwnd, nullptr, FALSE);
         } else {
-          const Json *damage = tab->frame.find("damage");
-          if (!damage || damage->type != Json::Type::Array || damage->array.size() > 64) {
-            InvalidateRect(hwnd, nullptr, FALSE);
-          } else {
+          const Json *tiles = tab->frame.find("damageTiles");
+          if (tab->frame.flag("fullDamage")) {
+            RECT page{LONG(std::floor(b->content.x)), LONG(std::floor(b->content.y)),
+                      LONG(std::ceil(b->content.x + b->content.w)),
+                      LONG(std::ceil(b->content.y + b->content.h))};
+            InvalidateRect(hwnd, &page, FALSE);
+          } else if (tiles && tiles->type == Json::Type::Array && tiles->array.size() <= 256) {
             const double zoom = tab->zoom > 0 ? tab->zoom : 1.0;
-            for (const Json &region : damage->array) {
-              const double x = b->content.x + region.num("x") * zoom;
+            for (const Json &tile : tiles->array) {
+              const double x = b->content.x + tile.num("x") * zoom;
               const double y = b->content.y +
-                  (region.flag("fixed") ? region.num("y") : region.num("y") - tab->scroll) * zoom;
-              Rect clipped{x, y, region.num("w") * zoom, region.num("h") * zoom};
-              const double left = std::max(clipped.x, b->content.x);
-              const double top = std::max(clipped.y, b->content.y);
-              const double right = std::min(clipped.x + clipped.w, b->content.x + b->content.w);
-              const double bottom = std::min(clipped.y + clipped.h, b->content.y + b->content.h);
+                  (tile.flag("fixed") ? tile.num("y") : tile.num("y") - tab->scroll) * zoom;
+              const double size = tile.num("size", 128) * zoom;
+              const double left = std::max(x, b->content.x);
+              const double top = std::max(y, b->content.y);
+              const double right = std::min(x + size, b->content.x + b->content.w);
+              const double bottom = std::min(y + size, b->content.y + b->content.h);
               if (right <= left || bottom <= top) continue;
               RECT dirty{LONG(std::floor(left)), LONG(std::floor(top)),
                          LONG(std::ceil(right)), LONG(std::ceil(bottom))};
               InvalidateRect(hwnd, &dirty, FALSE);
+            }
+          } else {
+            const Json *damage = tab->frame.find("damage");
+            if (!damage || damage->type != Json::Type::Array || damage->array.size() > 64) {
+              InvalidateRect(hwnd, nullptr, FALSE);
+            } else {
+              const double zoom = tab->zoom > 0 ? tab->zoom : 1.0;
+              for (const Json &region : damage->array) {
+                const double x = b->content.x + region.num("x") * zoom;
+                const double y = b->content.y +
+                    (region.flag("fixed") ? region.num("y") : region.num("y") - tab->scroll) * zoom;
+                Rect clipped{x, y, region.num("w") * zoom, region.num("h") * zoom};
+                const double left = std::max(clipped.x, b->content.x);
+                const double top = std::max(clipped.y, b->content.y);
+                const double right = std::min(clipped.x + clipped.w, b->content.x + b->content.w);
+                const double bottom = std::min(clipped.y + clipped.h, b->content.y + b->content.h);
+                if (right <= left || bottom <= top) continue;
+                RECT dirty{LONG(std::floor(left)), LONG(std::floor(top)),
+                           LONG(std::ceil(right)), LONG(std::ceil(bottom))};
+                InvalidateRect(hwnd, &dirty, FALSE);
+              }
             }
           }
         }

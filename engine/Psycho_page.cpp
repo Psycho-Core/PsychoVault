@@ -2619,9 +2619,11 @@ Json Page::render(double width, double height, double scroll) {
     }
     damage_regions.push_back({{}, clipped, fixed});
   };
+  size_t changed_commands = 0;
   if (!full_damage) {
     for (size_t i = 0; i < current_paint.size(); ++i) {
       if (previous_paint_[i].signature == current_paint[i].signature) continue;
+      ++changed_commands;
       add_damage(previous_paint_[i].rect, previous_paint_[i].fixed);
       add_damage(current_paint[i].rect, current_paint[i].fixed);
       if (damage_regions.size() > 64) {
@@ -2629,10 +2631,33 @@ Json Page::render(double width, double height, double scroll) {
         break;
       }
     }
+  } else {
+    changed_commands = current_paint.size();
   }
   if (full_damage) {
     damage_regions.clear();
     damage_regions.push_back({{}, {0, scroll_, width_, height_}, false});
+  }
+  constexpr int compositor_tile_size = 128;
+  std::set<std::tuple<int, int, bool>> tile_keys;
+  bool tile_overflow = false;
+  for (const DamageSnapshot &region : damage_regions) {
+    if (region.rect.w <= 0 || region.rect.h <= 0) continue;
+    const int left = std::max(0, int(std::floor(region.rect.x / compositor_tile_size)));
+    const int top = std::max(0, int(std::floor(region.rect.y / compositor_tile_size)));
+    const int right = int(std::floor(std::max(region.rect.x, region.rect.x + region.rect.w - 1e-6) /
+                                     compositor_tile_size));
+    const int bottom = int(std::floor(std::max(region.rect.y, region.rect.y + region.rect.h - 1e-6) /
+                                      compositor_tile_size));
+    for (int ty = top; ty <= bottom && !tile_overflow; ++ty)
+      for (int tx = left; tx <= right; ++tx) {
+        tile_keys.emplace(tx, ty, region.fixed);
+        if (tile_keys.size() > 256) {
+          tile_overflow = true;
+          tile_keys.clear();
+          break;
+        }
+      }
   }
   frame.set("paint", std::move(paint));
   Json damage = Json::make_array();
@@ -2646,6 +2671,33 @@ Json Page::render(double width, double height, double scroll) {
     damage.array.push_back(std::move(item));
   }
   frame.set("damage", std::move(damage));
+  Json tiles = Json::make_array();
+  if (!tile_overflow)
+    for (const auto &[tx, ty, fixed] : tile_keys) {
+      Json item = Json::make_object();
+      item.set("x", double(tx * compositor_tile_size));
+      item.set("y", double(ty * compositor_tile_size));
+      item.set("size", compositor_tile_size);
+      item.set("fixed", fixed);
+      tiles.array.push_back(std::move(item));
+    }
+  frame.set("damageTiles", std::move(tiles));
+  frame.set("fullDamage", full_damage || tile_overflow);
+  Json compositor = Json::make_object();
+  compositor.set("tileSize", compositor_tile_size);
+  compositor.set("tileCount", double(tile_keys.size()));
+  compositor.set("changedCommands", double(changed_commands));
+  compositor.set("fullDamage", full_damage || tile_overflow);
+  size_t fixed_commands = 0, scrolled_commands = 0, effect_layers = 0;
+  for (const Json &command : frame.at("paint").array) {
+    if (command.flag("fixed")) ++fixed_commands;
+    else ++scrolled_commands;
+    if (command.num("kind", -1) == int(PaintCommand::Kind::PushLayer)) ++effect_layers;
+  }
+  compositor.set("fixedLayerCommands", double(fixed_commands));
+  compositor.set("scrolledLayerCommands", double(scrolled_commands));
+  compositor.set("effectLayers", double(effect_layers));
+  frame.set("compositor", std::move(compositor));
   previous_paint_ = std::move(current_paint);
   previous_frame_width_ = width_;
   previous_frame_height_ = height_;
