@@ -110,7 +110,7 @@ class ReferenceDiffTests(unittest.TestCase):
         def render(command, **kwargs):
             self.assertEqual(command[command.index("--width") + 1], "2")
             self.assertEqual(command[command.index("--height") + 1], "2")
-            self.assertIn(f"https://reference.test/app.js={resource}", command)
+            self.assertIn(f"https://reference.test/app.js={resource.resolve()}", command)
             png.write_png(pathlib.Path(command[command.index("--out") + 1]), 2, 2, self.pixels)
             return SimpleNamespace(returncode=0, stdout="{}", stderr="")
         with mock.patch.object(diff.subprocess, "run", side_effect=render):
