@@ -1,6 +1,6 @@
 # P2 / S050 engine-to-reference gap audit
 
-Audit date: 2026-11-01. Status: **S050 audit complete; S051 and S052 Windows implementation gates passed; targeted S053-S069 subsets are implemented and Linux-tested locally. The combined S070 Windows automated build, tests and 18 golden cases also passed; S066/S067 performance and interactive Win32 behavior remain unvalidated. S070 has a targeted owned golden suite; S071 and the broad P2 exit gate remain open.** See [S072_PHASE2_AUDIT.md](S072_PHASE2_AUDIT.md) for current evidence and gate disposition; dated per-step notes below preserve historical results. This is the ordered P2 input. It does not claim that the reference UI is implemented or visually matched.
+Audit date: 2026-11-01. Status: **S050 audit complete; S051 and S052 Windows implementation gates passed; targeted S053-S069 subsets are implemented and Linux-tested locally. The combined S070 Windows automated build, tests and 18 golden cases also passed; S066/S067 performance and interactive Win32 behavior remain unvalidated. S070 has a targeted owned golden suite; S071's diff mechanism is implemented, while matching P3 views, parity and the broad P2 exit gate remain open.** See [S072_PHASE2_AUDIT.md](S072_PHASE2_AUDIT.md) for current evidence and gate disposition; dated per-step notes below preserve historical results. This is the ordered P2 input. It does not claim that the reference UI is implemented or visually matched.
 
 ## Sources and scope
 

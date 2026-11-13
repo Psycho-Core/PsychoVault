@@ -49,7 +49,7 @@ def decode_png(path: pathlib.Path) -> tuple[int, int, bytes]:
     data = path.read_bytes()
     if data[:8] != b"\x89PNG\r\n\x1a\n":
         raise ValueError(f"{path}: invalid PNG signature")
-    at, idat, width, height = 8, bytearray(), 0, 0
+    at, idat, width, height, channels = 8, bytearray(), 0, 0, 0
     while at + 12 <= len(data):
         size = int.from_bytes(data[at:at + 4], "big")
         kind = data[at + 4:at + 8]
@@ -59,27 +59,30 @@ def decode_png(path: pathlib.Path) -> tuple[int, int, bytes]:
         at += size + 12
         if kind == b"IHDR":
             width, height, depth, color, compression, filtering, interlace = struct.unpack(">IIBBBBB", payload)
-            if (depth, color, compression, filtering, interlace) != (8, 6, 0, 0, 0):
-                raise ValueError(f"{path}: only noninterlaced RGBA8 PNG is supported")
+            if depth != 8 or color not in (2, 6) or (compression, filtering, interlace) != (0, 0, 0):
+                raise ValueError(f"{path}: only noninterlaced RGB8 or RGBA8 PNG is supported")
+            channels = 3 if color == 2 else 4
         elif kind == b"IDAT":
             idat.extend(payload)
         elif kind == b"IEND":
             break
-    if not (0 < width <= 8192 and 0 < height <= 8192):
-        raise ValueError(f"{path}: invalid dimensions")
-    raw = zlib.decompress(idat)
-    stride = width * 4
-    if len(raw) != height * (stride + 1):
+    if not (0 < width <= 8192 and 0 < height <= 8192 and channels):
+        raise ValueError(f"{path}: invalid dimensions or missing IHDR")
+    stride = width * channels
+    expected_size = height * (stride + 1)
+    decompressor = zlib.decompressobj()
+    raw = decompressor.decompress(idat, expected_size + 1)
+    if len(raw) != expected_size or not decompressor.eof or decompressor.unused_data:
         raise ValueError(f"{path}: unexpected image data size")
-    out = bytearray(width * height * 4)
+    out = bytearray(width * height * channels)
     previous = bytearray(stride)
     for y in range(height):
         filter_type = raw[y * (stride + 1)]
         row = bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
         for x in range(stride):
-            a = row[x - 4] if x >= 4 else 0
+            a = row[x - channels] if x >= channels else 0
             b = previous[x]
-            c = previous[x - 4] if x >= 4 else 0
+            c = previous[x - channels] if x >= channels else 0
             if filter_type == 1: predict = a
             elif filter_type == 2: predict = b
             elif filter_type == 3: predict = (a + b) // 2
@@ -92,6 +95,12 @@ def decode_png(path: pathlib.Path) -> tuple[int, int, bytes]:
             row[x] = (row[x] + predict) & 255
         out[y * stride:(y + 1) * stride] = row
         previous = row
+    if channels == 3:
+        rgba = bytearray(width * height * 4)
+        for pixel in range(width * height):
+            rgba[pixel * 4:pixel * 4 + 3] = out[pixel * 3:pixel * 3 + 3]
+            rgba[pixel * 4 + 3] = 255
+        out = rgba
     return width, height, bytes(out)
 
 

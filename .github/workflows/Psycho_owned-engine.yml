@@ -6,6 +6,9 @@ name: Build owned engine
 # docs/Psycho_BUILD-AND-RELEASE.md.
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - arena/9c1ade6a-psychovault
 permissions:
   contents: read
 
@@ -53,6 +56,8 @@ jobs:
         shell: pwsh
         run: |
           python tests/Psycho_golden_tests.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/Psycho_reference_diff_tests.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/Psycho_golden.py --engine build/pv-engine.exe --outdir build/golden-results
           $code = $LASTEXITCODE
