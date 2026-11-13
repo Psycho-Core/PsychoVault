@@ -6,6 +6,9 @@ name: Build owned engine
 # docs/Psycho_BUILD-AND-RELEASE.md.
 on:
   workflow_dispatch:
+  # Temporary branch-only S070 baseline capture and validation.
+  push:
+    branches: ["arena/7d7503b8-psychovault"]
 permissions:
   contents: read
 
@@ -49,6 +52,17 @@ jobs:
           $code = $LASTEXITCODE
           "exit code: $code" | Tee-Object -Append build/engine-tests.txt
           if ($code -ne 0) { exit $code }
+      - name: Temporarily capture S070 Windows baseline
+        shell: pwsh
+        run: |
+          python tests/Psycho_golden_tests.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/Psycho_golden.py --engine build/pv-engine.exe --outdir build/s070-candidate --candidates
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $encoded = python -c "import pathlib,zlib,base64; print(base64.b64encode(zlib.compress(pathlib.Path('build/s070-candidate/candidates/s069.png').read_bytes(),9)).decode())"
+          Write-Host "::warning title=S070WindowsBaseline::$encoded"
+          python -c "import sys,pathlib; sys.path.insert(0,'tools'); import Psycho_golden as g; bad=[n for n in g.CASES if n!='s069' and g.decode_png(pathlib.Path('build/s070-candidate/candidates')/(n+'.png'))!=g.decode_png(g.BASELINES/'common'/(n+'.png'))]; print('Common baseline differences:',bad); sys.exit(bool(bad))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Publish my failing check
         if: failure()
         shell: pwsh
