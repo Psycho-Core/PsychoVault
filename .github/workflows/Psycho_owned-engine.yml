@@ -6,9 +6,6 @@ name: Build owned engine
 # docs/Psycho_BUILD-AND-RELEASE.md.
 on:
   workflow_dispatch:
-  # Temporary S070 Windows baseline comparison on this branch only.
-  push:
-    branches: ["arena/7d7503b8-psychovault"]
 permissions:
   contents: read
 
@@ -52,13 +49,6 @@ jobs:
           $code = $LASTEXITCODE
           "exit code: $code" | Tee-Object -Append build/engine-tests.txt
           if ($code -ne 0) { exit $code }
-      - name: Temporarily capture differing Windows baselines
-        shell: pwsh
-        run: |
-          python tools/Psycho_golden.py --engine build/pv-engine.exe --outdir build/s070-candidate --candidates
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python tests/Psycho_capture_s070_windows.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run rendering golden suite
         shell: pwsh
         run: |
