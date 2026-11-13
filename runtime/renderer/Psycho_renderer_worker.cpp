@@ -233,7 +233,65 @@ bool RendererWorker::navigate(const Envelope &request, Envelope &response, Error
         throw std::runtime_error(bridge_error.code + ": " + bridge_error.message);
     });
   }
-  host_->resize(1024, 768);
+  MediaEnvironment initial_media;
+  if (const Json *dpr = request.payload.find("devicePixelRatio"); dpr) {
+    if (dpr->type != Json::Type::Number || !std::isfinite(dpr->number) ||
+        dpr->number < 0.25 || dpr->number > 8.0) {
+      payload.set("ok", Json(false));
+      payload.set("detail", Json("devicePixelRatio must be finite and between 0.25 and 8"));
+      response.payload = std::move(payload);
+      error = Error{};
+      return true;
+    }
+    initial_media.device_pixel_ratio = dpr->number;
+  }
+  if (const Json *width = request.payload.find("scrollbarWidth")) {
+    if (width->type != Json::Type::Number || !std::isfinite(width->number) ||
+        width->number < 0 || width->number > 64.0) {
+      payload.set("ok", Json(false));
+      payload.set("detail", Json("scrollbarWidth must be finite and between 0 and 64"));
+      response.payload = std::move(payload);
+      error = Error{};
+      return true;
+    }
+    initial_media.scrollbar_width = width->number;
+  }
+  if (const Json *value = request.payload.find("prefersReducedMotion"))
+    if (value->type == Json::Type::String) initial_media.prefers_reduced_motion = value->string;
+  if (const Json *value = request.payload.find("prefersColorScheme"))
+    if (value->type == Json::Type::String) initial_media.prefers_color_scheme = value->string;
+  if (const Json *value = request.payload.find("prefersContrast"))
+    if (value->type == Json::Type::String) initial_media.prefers_contrast = value->string;
+  if (const Json *value = request.payload.find("forcedColors"))
+    if (value->type == Json::Type::String) initial_media.forced_colors = value->string;
+  double initial_width = 1024, initial_height = 768;
+  if (const Json *value = request.payload.find("width")) {
+    if (value->type != Json::Type::Number || !std::isfinite(value->number) ||
+        value->number <= 0 || value->number > 8192) {
+      payload.set("ok", Json(false));
+      payload.set("detail", Json("viewport width must be finite and between 1 and 8192"));
+      response.payload = std::move(payload);
+      error = Error{};
+      return true;
+    }
+    initial_width = value->number;
+  }
+  if (const Json *value = request.payload.find("height")) {
+    if (value->type != Json::Type::Number || !std::isfinite(value->number) ||
+        value->number <= 0 || value->number > 16384) {
+      payload.set("ok", Json(false));
+      payload.set("detail", Json("viewport height must be finite and between 1 and 16384"));
+      response.payload = std::move(payload);
+      error = Error{};
+      return true;
+    }
+    initial_height = value->number;
+  }
+  initial_media.viewport_width = initial_width;
+  initial_media.viewport_height = initial_height;
+  media_environment_ = initial_media;
+  host_->set_media_environment(media_environment_);
+  host_->resize(initial_width, initial_height);
   std::string load_error;
   const bool loaded = host_->load(url, load_error);
   if (loaded) host_->pump();
@@ -295,6 +353,42 @@ bool RendererWorker::input(const Envelope &request, Envelope &response, Error &e
         width <= 0 || height <= 0) {
       return reject("resize requires positive finite width and height");
     }
+    MediaEnvironment media = media_environment_;
+    if (const Json *dpr = request.payload.find("devicePixelRatio")) {
+      if (dpr->type != Json::Type::Number || !std::isfinite(dpr->number) ||
+          dpr->number < 0.25 || dpr->number > 8.0)
+        return reject("devicePixelRatio must be finite and between 0.25 and 8");
+      media.device_pixel_ratio = dpr->number;
+    }
+    if (const Json *width = request.payload.find("scrollbarWidth")) {
+      if (width->type != Json::Type::Number || !std::isfinite(width->number) ||
+          width->number < 0 || width->number > 64.0)
+        return reject("scrollbarWidth must be finite and between 0 and 64");
+      media.scrollbar_width = width->number;
+    }
+    auto preference = [&](const char *key, std::initializer_list<const char *> values,
+                          std::string &out) {
+      const Json *field = request.payload.find(key);
+      if (!field) return true;
+      if (field->type != Json::Type::String) return false;
+      for (const char *value : values)
+        if (field->string == value) {
+          out = field->string;
+          return true;
+        }
+      return false;
+    };
+    if (!preference("prefersReducedMotion", {"reduce", "no-preference"},
+                    media.prefers_reduced_motion) ||
+        !preference("prefersColorScheme", {"light", "dark"}, media.prefers_color_scheme) ||
+        !preference("prefersContrast", {"no-preference", "more", "less", "custom"},
+                    media.prefers_contrast) ||
+        !preference("forcedColors", {"none", "active"}, media.forced_colors))
+      return reject("resize contains an unsupported media preference");
+    media.viewport_width = width;
+    media.viewport_height = height;
+    media_environment_ = media;
+    host_->set_media_environment(media_environment_);
     host_->resize(width, height);
   } else if (tag == "scroll") {
     double y = 0;

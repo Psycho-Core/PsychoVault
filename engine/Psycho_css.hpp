@@ -12,7 +12,7 @@ Color parse_color(std::string_view value);
 struct Style {
   std::string display = "block", font_family = "Segoe UI", text_align = "left", weight = "normal",
               box_sizing = "content-box", white_space = "normal", text_overflow = "clip", position = "static",
-              overflow = "visible", overscroll_behavior = "auto", flex_direction = "row",
+              overflow = "visible", scrollbar_gutter = "auto", overscroll_behavior = "auto", flex_direction = "row",
               justify_content = "flex-start",
               align_items = "stretch", align_self = "auto", align_content = "stretch",
               flex_wrap = "nowrap", grid_columns, grid_rows, grid_template_areas,
@@ -55,6 +55,23 @@ struct CssDeclaration {
   std::string property, value;
   bool important = false;
 };
+struct MediaEnvironment {
+  double device_pixel_ratio = 1.0;
+  double scrollbar_width = 8.0;
+  double viewport_width = 1000.0, viewport_height = 700.0;
+  std::string prefers_reduced_motion = "no-preference";
+  std::string prefers_color_scheme = "light";
+  std::string prefers_contrast = "no-preference";
+  std::string forced_colors = "none";
+};
+struct CssKeyframe {
+  double offset = 0;
+  std::map<std::string, std::string> declarations;
+};
+struct CssKeyframes {
+  std::string name;
+  std::vector<CssKeyframe> frames;
+};
 struct CssRule {
   std::string selector, media;
   std::map<std::string, std::string> declarations;
@@ -64,13 +81,17 @@ struct CssRule {
 };
 struct Stylesheet {
   std::vector<CssRule> rules;
+  std::vector<CssKeyframes> keyframes;
   std::vector<Diagnostic> diagnostics;
   void parse(std::string_view text, int &order);
 };
 std::vector<CssDeclaration> parse_css_declarations(std::string_view text);
+void apply_style_overrides(Style &style, const std::map<std::string, std::string> &declarations,
+                          double viewport_width, double viewport_height);
 std::vector<Style> compute_styles(const Document &doc, const std::vector<Stylesheet> &sheets,
                                   double viewport_width, double viewport_height = -1,
-                                  const SelectorState *selector_state = nullptr);
+                                  const SelectorState *selector_state = nullptr,
+                                  const MediaEnvironment *media_environment = nullptr);
 double css_length(const std::string &value, double parent, double font_size, double root_font,
                   double viewport_width, const std::string &property, double fallback,
                   double viewport_height = -1);

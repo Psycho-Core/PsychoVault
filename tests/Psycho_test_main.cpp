@@ -661,6 +661,184 @@ int main() {
     Rect a = node_box(gaps, "a"), b = node_box(gaps, "b");
     CHECK(close_to(b.x - a.x - a.w, 7));
   }
+  // S064 media queries: viewport width/height, orientation, aspect ratio,
+  // comma-separated query lists and the documented default preference values.
+  {
+    Page media;
+    media.load(*parse_url("https://media.test/"),
+        "<!doctype html><style>body{margin:0}#target{width:10px;height:10px}"
+        "@media screen and (min-width:700px) and (max-height:650px) and (min-aspect-ratio:4/3){"
+        "#target{width:22px}}"
+        "@media (orientation:portrait){#target{height:33px}}"
+        "@media (prefers-reduced-motion:no-preference){#target{background-color:#112233}}"
+        "@media (prefers-reduced-motion:reduce){#target{background-color:#445566}}"
+        "@media (max-width:600px), (min-height:700px){#target{margin-left:9px}}"
+        "@media (width:500px) and (height:700px){#target{padding-right:4px}}"
+        "</style><div id=target></div>");
+    const int target_id = media.doc.by_id("target");
+    auto get_box = [&](const Json &frame) {
+      for (const Json &entry : frame.at("boxes").array)
+        if (int(entry.num("node", -1)) == target_id)
+          return Rect{entry.num("x"), entry.num("y"), entry.num("w"), entry.num("h")};
+      return Rect{0, 0, -1, -1};
+    };
+    auto has_default_preference_color = [&](const Json &frame) {
+      for (const Json &command : frame.at("paint").array)
+        if (int(command.num("node", -1)) == target_id &&
+            uint32_t(command.num("color", 0)) == 0xff112233u)
+          return true;
+      return false;
+    };
+    Json frame = media.render(800, 600, 0);
+    Rect target = get_box(frame);
+    CHECK(close_to(target.w, 22) && close_to(target.h, 10) && close_to(target.x, 0));
+    CHECK(has_default_preference_color(frame));
+    frame = media.render(800, 700, 0);
+    target = get_box(frame);
+    CHECK(close_to(target.w, 10) && close_to(target.h, 10) && close_to(target.x, 9));
+    frame = media.render(500, 700, 0);
+    target = get_box(frame);
+    CHECK(close_to(target.w, 14) && close_to(target.h, 33) && close_to(target.x, 9));
+  }
+  // UiViewportMediaPreferencesAndDpr (S064): the host-provided viewport and
+  // display environment are visible to script, and media features recascade.
+  {
+    MediaEnvironment environment;
+    environment.device_pixel_ratio = 2.0;
+    environment.prefers_reduced_motion = "reduce";
+    environment.prefers_color_scheme = "dark";
+    environment.prefers_contrast = "more";
+    environment.forced_colors = "active";
+    Page media;
+    media.set_viewport_environment(640, 480, environment);
+    media.load(*parse_url("https://media-env.test/"),
+        "<!doctype html><style>body{margin:0}#target{width:10px}"
+        "@media (min-resolution:192dpi) and (prefers-reduced-motion:reduce) and "
+        "(prefers-color-scheme:dark) and (prefers-contrast:more) and (forced-colors:active){"
+        "#target{width:42px}}</style><div id=target></div>"
+        "<script>document.title=window.devicePixelRatio+':'+innerWidth+':'+innerHeight;</script>");
+    CHECK(media.title() == "2:640:480");
+    Json frame = media.render(640, 480, 0);
+    int target_id = media.doc.by_id("target");
+    Rect box{};
+    for (const Json &entry : frame.at("boxes").array)
+      if (int(entry.num("node", -1)) == target_id)
+        box = {entry.num("x"), entry.num("y"), entry.num("w"), entry.num("h")};
+    CHECK(close_to(box.w, 42));
+    environment.device_pixel_ratio = 1.0;
+    media.set_viewport_environment(640, 480, environment);
+    frame = media.render(640, 480, 0);
+    for (const Json &entry : frame.at("boxes").array)
+      if (int(entry.num("node", -1)) == target_id)
+        box = {entry.num("x"), entry.num("y"), entry.num("w"), entry.num("h")};
+    CHECK(close_to(box.w, 10));
+  }
+  // A stable document scrollbar gutter is included in the layout viewport.
+  {
+    Page gutter;
+    gutter.load(*parse_url("https://gutter.test/"),
+        "<!doctype html><style>html,body{margin:0}body{scrollbar-gutter:stable}</style>"
+        "<body id=body><div style='height:300px'></div></body>");
+    Json frame = gutter.render(400, 100, 0);
+    const int body_id = gutter.doc.body;
+    double body_width = -1;
+    for (const Json &entry : frame.at("boxes").array)
+      if (int(entry.num("node", -1)) == body_id) body_width = entry.num("w", -1);
+    CHECK(close_to(body_width, 392));
+
+    Page document_scroll;
+    document_scroll.load(*parse_url("https://document-scroll.test/"),
+        "<!doctype html><style>html,body{margin:0}</style>"
+        "<body id=body><div style='height:300px'></div></body>");
+    frame = document_scroll.render(400, 100, 0);
+    const int scroll_body_id = document_scroll.doc.body;
+    body_width = -1;
+    for (const Json &entry : frame.at("boxes").array)
+      if (int(entry.num("node", -1)) == scroll_body_id) body_width = entry.num("w", -1);
+    CHECK(close_to(body_width, 392));
+  }
+  // S065: named keyframes, compositor-clock updates, simple transitions and
+  // prefers-reduced-motion suppression all affect the rendered page styles.
+  {
+    auto painted_opacity = [](const Json &frame, int node) {
+      double opacity = 1;
+      for (const Json &command : frame.at("paint").array)
+        if (int(command.num("node", -1)) == node)
+          opacity = std::min(opacity, command.num("opacity", 1));
+      return opacity;
+    };
+    Page animation;
+    animation.load(*parse_url("https://animation.test/"),
+        "<!doctype html><style>body{margin:0}@keyframes fade{from{opacity:0}to{opacity:1}}"
+        "#fade{width:20px;height:20px;background:#fff;animation:fade 140ms linear forwards}"
+        "#transition{width:20px;height:20px;background:#fff;opacity:0;"
+        "transition:opacity 140ms cubic-bezier(0,0,1,1)}"
+        "#transition:hover{opacity:1}</style><div id=fade></div><div id=transition></div>");
+    const int fade_id = animation.doc.by_id("fade");
+    const int transition_id = animation.doc.by_id("transition");
+    Json frame = animation.render(200, 120, 0);
+    CHECK(painted_opacity(frame, fade_id) < 0.15);
+    Rect transition_box = node_box(animation, "transition");
+    animation.pointer_move(transition_box.x + 2, transition_box.y + 2);
+    animation.render(200, 120, 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(65));
+    animation.tick();
+    frame = animation.render(200, 120, 0);
+    CHECK(painted_opacity(frame, fade_id) > 0.2 && painted_opacity(frame, fade_id) < 0.9);
+    CHECK(painted_opacity(frame, transition_id) > 0.2 && painted_opacity(frame, transition_id) < 0.9);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    animation.tick();
+    frame = animation.render(200, 120, 0);
+    CHECK(close_to(painted_opacity(frame, fade_id), 1));
+    CHECK(close_to(painted_opacity(frame, transition_id), 1));
+
+    MediaEnvironment reduced;
+    reduced.prefers_reduced_motion = "reduce";
+    Page reduced_page;
+    reduced_page.set_viewport_environment(200, 120, reduced);
+    reduced_page.load(*parse_url("https://reduced-motion.test/"),
+        "<!doctype html><style>@keyframes fade{from{opacity:0}to{opacity:1}}"
+        "#fade{width:20px;height:20px;opacity:0;animation:fade 100ms linear forwards}"
+        "</style><div id=fade></div>");
+    frame = reduced_page.render(200, 120, 0);
+    CHECK(close_to(painted_opacity(frame, reduced_page.doc.by_id("fade")), 0));
+    CHECK(!reduced_page.animation_pending());
+  }
+  // S066: unchanged interaction state reuses retained layout, while a visual
+  // hover change emits only a bounded damaged region for partial presentation.
+  {
+    Page idle;
+    idle.load(*parse_url("https://incremental.test/"),
+        "<!doctype html><style>body{margin:0}#plain{width:40px;height:20px;background:#123}</style>"
+        "<div id=plain></div>");
+    idle.render(800, 600, 0);
+    const uint64_t initial_layouts = idle.layout_rebuild_count();
+    Json unchanged = idle.render(800, 600, 0);
+    CHECK(idle.layout_rebuild_count() == initial_layouts);
+    CHECK(unchanged.at("damage").array.empty());
+    Rect plain = node_box(idle, "plain");
+    idle.pointer_move(plain.x + 2, plain.y + 2);
+    unchanged = idle.render(800, 600, 0);
+    CHECK(idle.layout_rebuild_count() == initial_layouts);
+    CHECK(unchanged.at("damage").array.empty());
+
+    Page hovered;
+    hovered.load(*parse_url("https://damage.test/"),
+        "<!doctype html><style>body{margin:0}#box{width:40px;height:20px;background:#123}"
+        "#box:hover{background:#f00}</style><div id=box></div>");
+    hovered.render(800, 600, 0);
+    const uint64_t before_hover = hovered.layout_rebuild_count();
+    Rect box = node_box(hovered, "box");
+    hovered.pointer_move(box.x + 2, box.y + 2);
+    Json changed = hovered.render(800, 600, 0);
+    CHECK(hovered.layout_rebuild_count() > before_hover);
+    CHECK(!changed.at("damage").array.empty());
+    bool local_damage = false;
+    for (const Json &damage : changed.at("damage").array)
+      if (damage.num("w") < 100 && damage.num("h") < 100)
+        local_damage = true;
+    CHECK(local_damage);
+  }
   // Positioning, flex, grid and transforms, measured from my own paint list.
   {
     Page page;

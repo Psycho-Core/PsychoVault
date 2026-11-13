@@ -296,6 +296,16 @@ struct AudioOut {
       started = true;
   }
 };
+static void set_resize_media_environment(Json &message, double device_pixel_ratio,
+                                         double scrollbar_width, bool reduce_motion,
+                                         const std::string &theme, bool high_contrast) {
+  message.set("devicePixelRatio", Json(std::clamp(device_pixel_ratio, 0.25, 8.0)));
+  message.set("scrollbarWidth", Json(std::clamp(scrollbar_width, 0.0, 64.0)));
+  message.set("prefersReducedMotion", Json(reduce_motion ? "reduce" : "no-preference"));
+  message.set("prefersColorScheme", Json(theme == "light" ? "light" : "dark"));
+  message.set("prefersContrast", Json(high_contrast ? "more" : "no-preference"));
+  message.set("forcedColors", Json(high_contrast ? "active" : "none"));
+}
 struct Session {
   std::thread worker;
   HWND hwnd = nullptr;
@@ -316,7 +326,9 @@ struct Session {
   rt::RendererProcessFarm *farm = nullptr;
   rt::RendererProcessClient::BridgeInvoker bridge_invoke;
   size_t renderer_slot = std::numeric_limits<size_t>::max();
-  double width = 1000, height = 700;
+  double width = 1000, height = 700, device_pixel_ratio = 1.0, scrollbar_width = 8.0;
+  bool reduce_motion = false, high_contrast = false;
+  std::string color_scheme = "dark";
   std::mutex mutex;
   std::condition_variable changed;
   std::deque<Json> outgoing;
@@ -654,8 +666,20 @@ void Session::run() {
       ok = farm->input(renderer_slot, *command, fetcher, reply, renderer_error,
                        std::move(cookies), std::move(local), poster, bridge_invoke);
     else
-      ok = farm->navigate(renderer_slot, url, fetcher, reply, renderer_error,
-                          std::move(cookies), std::move(local), poster, bridge_invoke);
+      {
+        MediaEnvironment environment;
+        environment.viewport_width = width;
+        environment.viewport_height = height;
+        environment.device_pixel_ratio = device_pixel_ratio;
+        environment.scrollbar_width = scrollbar_width;
+        environment.prefers_reduced_motion = reduce_motion ? "reduce" : "no-preference";
+        environment.prefers_color_scheme = color_scheme;
+        environment.prefers_contrast = high_contrast ? "more" : "no-preference";
+        environment.forced_colors = high_contrast ? "active" : "none";
+        ok = farm->navigate(renderer_slot, url, fetcher, reply, renderer_error,
+                            std::move(cookies), std::move(local), poster, bridge_invoke,
+                            environment);
+      }
     if (!ok) return false;
     if (const Json *frame = reply.payload.find("frame");
         frame && frame->type == Json::Type::Object) {
@@ -693,6 +717,8 @@ void Session::run() {
   resize.set("tag", Json("resize"));
   resize.set("width", Json(width));
   resize.set("height", Json(height));
+  set_resize_media_environment(resize, device_pixel_ratio, scrollbar_width, reduce_motion,
+                                color_scheme, high_contrast);
   if (!exchange(&resize, reply)) {
     fail("Renderer resize IPC failed: " + renderer_error.message);
     return;
@@ -790,6 +816,7 @@ struct Browser {
   bool document_scroll_drag = false;
   double document_scroll_drag_start_y = 0, document_scroll_drag_start = 0;
   int width = 1440, height = 940;
+  std::unique_ptr<Canvas> paint_surface;
   // S045 architecture slice: the browser's page surface is the only drawn
   // interface; the native shell keeps windowing, input dispatch and presentation.
   bool app_ui_slice = true;
@@ -1191,6 +1218,8 @@ struct Browser {
       j.set("tag", "resize");
       j.set("width", content.w / tab.zoom);
       j.set("height", content.h / tab.zoom);
+      set_resize_media_environment(j, page_device_pixel_ratio(tab.zoom), 8.0 / tab.zoom,
+                                   profile.reduce_motion, profile.theme, profile.high_contrast);
       tab.session->send(j);
     }
     save_session();
@@ -1334,6 +1363,11 @@ struct Browser {
     }
     session->width = content.w / tab.zoom;
     session->height = content.h / tab.zoom;
+    session->device_pixel_ratio = page_device_pixel_ratio(tab.zoom);
+    session->scrollbar_width = 8.0 / tab.zoom;
+    session->reduce_motion = profile.reduce_motion;
+    session->color_scheme = profile.theme == "light" ? "light" : "dark";
+    session->high_contrast = profile.high_contrast;
     tab.session = session;
     session->worker = std::thread([session] { session->run(); });
     if (index == active)
@@ -1387,6 +1421,23 @@ struct Browser {
       navigate(t.history[t.index], false);
     }
   }
+  double page_device_pixel_ratio(double zoom) const {
+    HDC dc = hwnd ? GetDC(hwnd) : nullptr;
+    const int dpi = dc ? GetDeviceCaps(dc, LOGPIXELSX) : 96;
+    if (dc) ReleaseDC(hwnd, dc);
+    return std::clamp((dpi > 0 ? double(dpi) / 96.0 : 1.0) * zoom, 0.25, 8.0);
+  }
+  void refresh_viewport_environment() {
+    Tab &tab = current();
+    if (!tab.session) return;
+    Json message = Json::make_object();
+    message.set("tag", "resize");
+    message.set("width", content.w / tab.zoom);
+    message.set("height", content.h / tab.zoom);
+    set_resize_media_environment(message, page_device_pixel_ratio(tab.zoom), 8.0 / tab.zoom,
+                                 profile.reduce_motion, profile.theme, profile.high_contrast);
+    tab.session->send(message);
+  }
   void resize(int w, int h) {
     width = w;
     height = h;
@@ -1397,6 +1448,8 @@ struct Browser {
       j.set("tag", "resize");
       j.set("width", content.w / current().zoom);
       j.set("height", content.h / current().zoom);
+      set_resize_media_environment(j, page_device_pixel_ratio(current().zoom), 8.0 / current().zoom,
+                                   profile.reduce_motion, profile.theme, profile.high_contrast);
       current().session->send(j);
     }
     update_find();
@@ -2755,6 +2808,8 @@ struct Browser {
       j.set("tag", "resize");
       j.set("width", content.w / t.zoom);
       j.set("height", content.h / t.zoom);
+      set_resize_media_environment(j, page_device_pixel_ratio(t.zoom), 8.0 / t.zoom,
+                                   profile.reduce_motion, profile.theme, profile.high_contrast);
       t.session->send(j);
     }
     update_find();
@@ -3164,8 +3219,10 @@ struct Browser {
           if (!profile.user_words.empty()) { profile.remove_user_word(profile.user_words.back()); spell_reload_users(); save_profile(); }
         } else if (h.action == "setting-high-contrast") {
           profile.high_contrast = !profile.high_contrast; save_profile();
+          refresh_viewport_environment();
         } else if (h.action == "setting-reduce-motion") {
           profile.reduce_motion = !profile.reduce_motion; save_profile();
+          refresh_viewport_environment();
         } else if (h.action == "setting-tab-close") {
           profile.show_tab_close_buttons = !profile.show_tab_close_buttons; save_profile();
         } else if (h.action == "setting-check-update") {
@@ -4158,7 +4215,13 @@ static void paint(HWND hwnd) {
     return;
   PAINTSTRUCT ps;
   HDC dc = BeginPaint(hwnd, &ps);
-  Canvas canvas(b->width, b->height, BG);
+  if (!b->paint_surface || b->paint_surface->width != std::max(1, b->width) ||
+      b->paint_surface->height != std::max(1, b->height))
+    b->paint_surface = std::make_unique<Canvas>(b->width, b->height, BG);
+  Canvas &canvas = *b->paint_surface;
+  canvas.clip = {double(ps.rcPaint.left), double(ps.rcPaint.top),
+                 double(std::max(0L, ps.rcPaint.right - ps.rcPaint.left)),
+                 double(std::max(0L, ps.rcPaint.bottom - ps.rcPaint.top))};
   b->draw(canvas);
   BITMAPINFO bi{};
   bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -4167,8 +4230,15 @@ static void paint(HWND hwnd) {
   bi.bmiHeader.biPlanes = 1;
   bi.bmiHeader.biBitCount = 32;
   bi.bmiHeader.biCompression = BI_RGB;
-  SetDIBitsToDevice(dc, 0, 0, canvas.width, canvas.height, 0, 0, 0, canvas.height,
-                    canvas.pixels.data(), &bi, DIB_RGB_COLORS);
+  const int dirty_x = std::clamp(ps.rcPaint.left, 0L, LONG(canvas.width));
+  const int dirty_y = std::clamp(ps.rcPaint.top, 0L, LONG(canvas.height));
+  const int dirty_right = std::clamp(ps.rcPaint.right, LONG(dirty_x), LONG(canvas.width));
+  const int dirty_bottom = std::clamp(ps.rcPaint.bottom, LONG(dirty_y), LONG(canvas.height));
+  if (dirty_right > dirty_x && dirty_bottom > dirty_y)
+    StretchDIBits(dc, dirty_x, dirty_y, dirty_right - dirty_x, dirty_bottom - dirty_y,
+                  dirty_x, dirty_y, dirty_right - dirty_x, dirty_bottom - dirty_y,
+                  canvas.pixels.data(), &bi, DIB_RGB_COLORS, SRCCOPY);
+  canvas.clip = {0, 0, double(canvas.width), double(canvas.height)};
   EndPaint(hwnd, &ps);
 }
 static void capture(HWND hwnd, const std::string &path) {
@@ -4297,6 +4367,9 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     auto b = browser(hwnd);
     Tab *tab = b ? b->find_tab(int(wp)) : nullptr;
     if (tab && up->generation == tab->generation) {
+      bool full_repaint = !up->error.empty();
+      const std::string old_title = tab->title, old_url = tab->url;
+      const bool old_loading = tab->loading, old_recorded = tab->recorded;
       if (!up->error.empty()) {
         tab->error = up->error;
         tab->loading = false;
@@ -4325,9 +4398,34 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
           b->status = tab->url;
           b->update_find();
         }
+        full_repaint = !old_recorded || old_loading || old_title != tab->title || old_url != tab->url;
       }
-      if (tab == &b->current())
-        InvalidateRect(hwnd, nullptr, FALSE);
+      if (tab == &b->current()) {
+        if (full_repaint || b->find_open) {
+          InvalidateRect(hwnd, nullptr, FALSE);
+        } else {
+          const Json *damage = tab->frame.find("damage");
+          if (!damage || damage->type != Json::Type::Array || damage->array.size() > 64) {
+            InvalidateRect(hwnd, nullptr, FALSE);
+          } else {
+            const double zoom = tab->zoom > 0 ? tab->zoom : 1.0;
+            for (const Json &region : damage->array) {
+              const double x = b->content.x + region.num("x") * zoom;
+              const double y = b->content.y +
+                  (region.flag("fixed") ? region.num("y") : region.num("y") - tab->scroll) * zoom;
+              Rect clipped{x, y, region.num("w") * zoom, region.num("h") * zoom};
+              const double left = std::max(clipped.x, b->content.x);
+              const double top = std::max(clipped.y, b->content.y);
+              const double right = std::min(clipped.x + clipped.w, b->content.x + b->content.w);
+              const double bottom = std::min(clipped.y + clipped.h, b->content.y + b->content.h);
+              if (right <= left || bottom <= top) continue;
+              RECT dirty{LONG(std::floor(left)), LONG(std::floor(top)),
+                         LONG(std::ceil(right)), LONG(std::ceil(bottom))};
+              InvalidateRect(hwnd, &dirty, FALSE);
+            }
+          }
+        }
+      }
     }
     return 0;
   }

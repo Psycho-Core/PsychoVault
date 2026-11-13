@@ -22,7 +22,8 @@ public:
                 Envelope &reply, Error &error,
                 Json cookie_state = Json::make_array(),
                 Json storage_state = Json::make_object(),
-                Host::Poster poster = {}, BridgeInvoker bridge = {});
+                Host::Poster poster = {}, BridgeInvoker bridge = {},
+                MediaEnvironment media_environment = {});
   bool input(const Json &command, const Host::Fetcher &fetcher,
              Envelope &reply, Error &error,
              Json cookie_state = Json::make_array(),

@@ -294,9 +294,18 @@ bool RendererProcessClient::navigate(const std::string &url,
                                      const Host::Fetcher &fetcher,
                                      Envelope &reply, Error &error,
                                      Json cookie_state, Json storage_state,
-                                     Host::Poster poster, BridgeInvoker bridge) {
+                                     Host::Poster poster, BridgeInvoker bridge,
+                                     MediaEnvironment media_environment) {
   Json payload = Json::make_object();
   payload.set("url", Json(url));
+  payload.set("width", Json(media_environment.viewport_width));
+  payload.set("height", Json(media_environment.viewport_height));
+  payload.set("devicePixelRatio", Json(media_environment.device_pixel_ratio));
+  payload.set("scrollbarWidth", Json(media_environment.scrollbar_width));
+  payload.set("prefersReducedMotion", Json(media_environment.prefers_reduced_motion));
+  payload.set("prefersColorScheme", Json(media_environment.prefers_color_scheme));
+  payload.set("prefersContrast", Json(media_environment.prefers_contrast));
+  payload.set("forcedColors", Json(media_environment.forced_colors));
   return exchange("renderer:navigate", std::move(payload), fetcher, reply, error,
                   cookie_state, storage_state, poster, bridge);
 }

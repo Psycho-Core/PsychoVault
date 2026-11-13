@@ -79,6 +79,7 @@ bool Host::load(const std::string &input, std::string &error) {
   // I honour a redirect: the document's base URL is where the bytes came from,
   // not where I asked for them.
   auto base = main.url.empty() ? std::nullopt : parse_url(main.url);
+  page_->set_viewport_environment(width_, height_, media_environment_);
   page_->load(base ? *base : *url, main.text, main.mime);
   loaded_ = true;
   settle();
@@ -88,6 +89,17 @@ bool Host::load(const std::string &input, std::string &error) {
 void Host::resize(double width, double height) {
   width_ = std::clamp(width, 1.0, 8192.0);
   height_ = std::clamp(height, 1.0, 16384.0);
+  page_->set_viewport_environment(width_, height_, media_environment_);
+  if (loaded_)
+    settle();
+}
+
+void Host::set_media_environment(const MediaEnvironment &environment) {
+  media_environment_ = environment;
+  media_environment_.device_pixel_ratio =
+      std::clamp(std::isfinite(environment.device_pixel_ratio) ? environment.device_pixel_ratio : 1.0,
+                 0.25, 8.0);
+  page_->set_viewport_environment(width_, height_, media_environment_);
   if (loaded_)
     settle();
 }
@@ -209,9 +221,10 @@ bool Host::pump() {
   // Playing media and a freshly appended segment are work of their own: the clock
   // has to move even when no timer is due and nothing is being fetched.
   bool playing = page_->media_pending();
-  if (!timer_due && !playing && page_->requests.empty())
+  bool animating = page_->animation_pending();
+  if (!timer_due && !playing && !animating && page_->requests.empty())
     return false;
-  if (timer_due || playing)
+  if (timer_due || playing || animating)
     page_->tick();
   settle();
   return true;

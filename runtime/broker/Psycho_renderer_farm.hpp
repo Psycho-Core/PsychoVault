@@ -26,7 +26,8 @@ public:
                 Json cookie_state = Json::make_array(),
                 Json storage_state = Json::make_object(),
                 Host::Poster poster = {},
-                RendererProcessClient::BridgeInvoker bridge = {});
+                RendererProcessClient::BridgeInvoker bridge = {},
+                MediaEnvironment media_environment = {});
   bool input(size_t renderer, const Json &command, const Host::Fetcher &fetcher,
              Envelope &reply, Error &error,
              Json cookie_state = Json::make_array(),

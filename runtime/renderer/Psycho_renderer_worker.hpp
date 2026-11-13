@@ -44,6 +44,7 @@ private:
   uint32_t next_bridge_id_ = 0x80000000u;
   std::chrono::steady_clock::time_point started_;
   std::unique_ptr<Host> host_;
+  MediaEnvironment media_environment_;
   CookieJar cookies_;
   Storage storage_;
   std::vector<PendingImage> pending_images_;
