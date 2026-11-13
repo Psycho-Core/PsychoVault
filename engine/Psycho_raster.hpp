@@ -43,9 +43,9 @@ struct Canvas {
                   double blur, double spread, uint32_t color);
   void line(double x1, double y1, double x2, double y2, uint32_t color, double thickness = 1);
   void text(double x, double y, std::string_view text, double size, uint32_t color,
-            bool bold = false, std::string_view family = "Segoe UI");
+            bool bold = false, std::string_view family = "Segoe UI", int weight = 0);
   double text_width(std::string_view text, double size, bool bold = false,
-                    std::string_view family = "Segoe UI") const;
+                    std::string_view family = "Segoe UI", int weight = 0) const;
   void pixel(int x, int y, uint32_t color);
   void clear_pixel(int x, int y);
   void image(const Image &source, Rect destination, double radius = 0);
@@ -61,4 +61,6 @@ struct Canvas {
 };
 Bytes encode_png(int width, int height, const Bytes &bgra);
 uint32_t blend(uint32_t dst, uint32_t src);
+// Whether the embedded UI family was successfully loaded by DirectWrite.
+bool bundled_ui_font_available();
 } // namespace pv

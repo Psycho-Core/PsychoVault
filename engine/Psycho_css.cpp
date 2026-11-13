@@ -863,20 +863,12 @@ static void apply(Style &s, const std::map<std::string, std::string> &d, double 
         css_length(*v, parent_width, s.font_size, root, viewport, "font-size", s.font_size, viewport_height), 6.0,
         128.0);
   if (auto v = get("font-family")) {
-    auto families = split_css_top_level(*v, ',');
-    if (!families.empty()) {
-      s.font_family = trim(families.front());
-      if (s.font_family.size() >= 2 &&
-          ((s.font_family.front() == '\'' && s.font_family.back() == '\'') ||
-           (s.font_family.front() == '"' && s.font_family.back() == '"')))
-        s.font_family = s.font_family.substr(1, s.font_family.size() - 2);
-    }
+    const std::string family = trim(*v);
+    if (!family.empty()) s.font_family = family;
   }
   if (auto v = get("font-weight")) {
-    s.weight = *v;
-    s.bold =
-        *v == "bold" || *v == "bolder" ||
-        (!v->empty() && std::isdigit(static_cast<unsigned char>((*v)[0])) && std::stoi(*v) >= 600);
+    s.weight = lower(trim(*v));
+    s.bold = s.weight == "bold" || s.weight == "bolder" || style_font_weight(s) >= 600;
   }
   if (auto v = get("font-style"))
     s.italic = v->find("italic") != std::string::npos;

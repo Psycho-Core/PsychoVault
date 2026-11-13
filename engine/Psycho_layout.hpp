@@ -13,6 +13,8 @@ struct PaintCommand {
   std::string text;
   double size = 16, thickness = 1;
   bool bold = false;
+  std::string font_family = "Segoe UI";
+  int font_weight = 0; // 0 retains compatibility with legacy bold-only commands.
   int node = -1;
   std::string url;
   // A gradient background keeps its CSS text until the paint pass parses it.

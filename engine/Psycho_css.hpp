@@ -51,6 +51,21 @@ struct Style {
   // only when a consuming property is computed.
   std::map<std::string, std::string> custom_properties;
 };
+// Numeric weights retained for measurement and paint; relative weights remain
+// approximations until the cascade resolves them against the parent.
+inline int style_font_weight(const Style &style) {
+  const std::string &weight = style.weight;
+  if (weight == "normal") return 400;
+  if (weight == "bold") return 700;
+  if (weight == "bolder" || weight == "lighter") return style.bold ? 700 : 400;
+  int value = 0;
+  if (weight.empty()) return style.bold ? 700 : 400;
+  for (char c : weight) {
+    if (c < '0' || c > '9' || value > 1000) return style.bold ? 700 : 400;
+    value = value * 10 + (c - '0');
+  }
+  return value >= 1 && value <= 1000 ? value : (style.bold ? 700 : 400);
+}
 struct CssDeclaration {
   std::string property, value;
   bool important = false;
