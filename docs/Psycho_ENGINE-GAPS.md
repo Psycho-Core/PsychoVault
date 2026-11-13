@@ -1,6 +1,6 @@
 # P2 / S050 engine-to-reference gap audit
 
-Audit date: 2026-11-01. Status: **S050 audit complete; S051 and S052 Windows implementation gates passed; targeted S053-S067 subsets are implemented and Linux-tested locally (S066/S067 Win32 paths remain unvalidated); S068-S071 remain open.** This is the ordered P2 input. It does not claim that the reference UI is implemented or visually matched.
+Audit date: 2026-11-01. Status: **S050 audit complete; S051 and S052 Windows implementation gates passed; targeted S053-S068 subsets are implemented and Linux-tested locally (S066/S067 Win32 paths and S068 Windows raster remain unvalidated); S069-S071 remain open.** This is the ordered P2 input. It does not claim that the reference UI is implemented or visually matched.
 
 ## Sources and scope
 
@@ -307,3 +307,11 @@ The frame protocol now reports 128px CSS-pixel damage tiles, full-damage state a
 `S067CompositorTilesLayersAndFrameMetrics` verifies initial damage tiles, fixed/effect metadata and no tile damage on unchanged frames. Linux validation: `python3 tools/Psycho_build.py --compiler gcc --target tests --outdir /tmp/pv-s067-tests && /tmp/pv-s067-tests/pv-tests` passed **1,040 engine checks / 2,887 total checks**.
 
 This remains a partial compositor implementation. There are no persistent independent raster surfaces for scrolled/transformed/fixed layers, tiles are invalidation units over one software backing canvas rather than separately cached bitmaps, and the estimate is not hardware-present telemetry. Win32 DWM pacing, actual dropped frames, multi-monitor/variable-refresh behavior, and scroll/transform performance need Windows profiling. See `S067_IMPLEMENTATION.md`.
+
+## S068 follow-up — Canvas 2D primitives and clipping, 2026-11-01
+
+A targeted Canvas 2D subset now captures transforms when path segments are built; implements nonzero/even-odd path clipping with `save()`/`restore()`; applies affine transforms to images and text; supports baseline state, `transform()`/`resetTransform()`, `clearRect` under affine transforms, persistent line dashes and corrected anticlockwise arc flags. Canvas resize resets drawing state and clip/path stacks.
+
+The S068 regressions check clip intersection, holes and restoration; transformed paths; line-dash state; rotated ellipse and image pixels; transformed clearing and bitmap resets. Linux validation: `python3 tools/Psycho_build.py --compiler gcc --target tests --outdir /tmp/pv-s068-verified && /tmp/pv-s068-verified/pv-tests` passed **1,056 engine checks / 2,903 total checks**.
+
+This is not browser-complete Canvas 2D. `Path2D`, `arcTo`, true stroke-text outlines, line cap/join/miter styles, compositing modes, high-quality transformed image sampling, robust clip winding/antialiasing and browser exception semantics remain open. Windows text/raster validation is outstanding. See `S068_IMPLEMENTATION.md`.

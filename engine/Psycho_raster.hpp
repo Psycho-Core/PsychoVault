@@ -25,10 +25,15 @@ struct Gradient {
 // I sample a gradient at a point, clamping outside the ends.
 uint32_t gradient_shade(const Gradient &gradient, double x, double y);
 struct Canvas {
+  struct PathClip {
+    std::vector<std::vector<Point>> contours;
+    bool even_odd = false;
+  };
   int width = 0, height = 0;
   Bytes pixels;
   Rect clip;
   std::vector<std::pair<Rect, double>> rounded_clips;
+  std::vector<PathClip> path_clips;
   Canvas(int w, int h, uint32_t color = 0xff000000);
   void fill(Rect r, uint32_t color);
   void fill_rounded(Rect r, double radius, uint32_t color);
@@ -42,6 +47,7 @@ struct Canvas {
   double text_width(std::string_view text, double size, bool bold = false,
                     std::string_view family = "Segoe UI") const;
   void pixel(int x, int y, uint32_t color);
+  void clear_pixel(int x, int y);
   void image(const Image &source, Rect destination, double radius = 0);
   // I fill a closed polygon with a scan line walk, and I stroke a path as a
   // chain of thick segments. Both clip to my own rectangle.

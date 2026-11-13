@@ -299,6 +299,8 @@ public:
       return js::Value(c->state.font);
     if (name == "textAlign")
       return js::Value(c->state.text_align);
+    if (name == "textBaseline")
+      return js::Value(c->state.text_baseline);
     if (name == "canvas")
       return node(canvas_node);
     if (name == "beginPath")
@@ -309,6 +311,11 @@ public:
     if (name == "closePath")
       return r.make_native([c](js::Values &) {
         c->close_path();
+        return js::Value();
+      });
+    if (name == "clip")
+      return r.make_native([c](js::Values &a) {
+        c->clip(!a.empty() && lower(a[0].to_string()) == "evenodd");
         return js::Value();
       });
     if (name == "moveTo")
@@ -329,13 +336,13 @@ public:
     if (name == "arc")
       return r.make_native([c, number](js::Values &a) {
         c->add_arc(number(a, 0), number(a, 1), number(a, 2), number(a, 3), number(a, 4),
-                   a.size() < 6 || a[5].truthy());
+                   a.size() < 6 || !a[5].truthy());
         return js::Value();
       });
     if (name == "ellipse")
       return r.make_native([c, number](js::Values &a) {
-        c->add_ellipse(number(a, 0), number(a, 1), number(a, 2), number(a, 3), number(a, 4),
-                       number(a, 5), a.size() < 8 || a[7].truthy());
+        c->add_ellipse(number(a, 0), number(a, 1), number(a, 2), number(a, 3), number(a, 5),
+                       number(a, 6), a.size() < 8 || !a[7].truthy(), number(a, 4));
         return js::Value();
       });
     if (name == "quadraticCurveTo")
@@ -422,6 +429,17 @@ public:
                          number(a, 5));
         return js::Value();
       });
+    if (name == "transform")
+      return r.make_native([c, number](js::Values &a) {
+        c->apply_transform(number(a, 0, 1), number(a, 1), number(a, 2), number(a, 3, 1),
+                           number(a, 4), number(a, 5));
+        return js::Value();
+      });
+    if (name == "resetTransform")
+      return r.make_native([c](js::Values &) {
+        c->set_transform(1, 0, 0, 1, 0, 0);
+        return js::Value();
+      });
     if (name == "drawImage")
       return r.make_native([this, c, number](js::Values &a) {
         if (a.empty())
@@ -458,8 +476,10 @@ public:
         return js::Value();
       });
     if (name == "getLineDash")
-      return r.make_native([this](js::Values &) {
-        return page.js_->make_array({});
+      return r.make_native([this, c](js::Values &) {
+        js::Values dashes;
+        for (double dash : c->line_dash()) dashes.emplace_back(dash);
+        return page.js_->make_array(dashes);
       });
     if (name == "toDataURL")
       return r.make_native([c](js::Values &) { return js::Value(c->data_url()); });
@@ -1171,7 +1191,8 @@ public:
         return true;
       }
       if (name == "lineWidth") {
-        c.state.line_width = std::max(0.0, value.to_number());
+        const double width = value.to_number();
+        if (std::isfinite(width) && width > 0) c.state.line_width = width;
         return true;
       }
       if (name == "globalAlpha") {
@@ -1183,7 +1204,16 @@ public:
         return true;
       }
       if (name == "textAlign") {
-        c.state.text_align = lower(value.to_string());
+        const std::string align = lower(value.to_string());
+        if (align == "start" || align == "end" || align == "left" || align == "right" ||
+            align == "center") c.state.text_align = align;
+        return true;
+      }
+      if (name == "textBaseline") {
+        const std::string baseline = lower(value.to_string());
+        if (baseline == "top" || baseline == "hanging" || baseline == "middle" ||
+            baseline == "alphabetic" || baseline == "ideographic" || baseline == "bottom")
+          c.state.text_baseline = baseline;
         return true;
       }
       return false;
@@ -1225,7 +1255,8 @@ public:
       return false;
     auto &n = d.nodes[id];
     if (n.name == "canvas" && (name == "width" || name == "height")) {
-      auto &ctx = page.canvases_[id];
+      canvas_context(id);
+      auto &ctx = page.canvases_.at(id);
       int w = name == "width" ? int(value.to_number()) : ctx.width();
       int h = name == "height" ? int(value.to_number()) : ctx.height();
       ctx.resize(std::clamp(w, 1, 8192), std::clamp(h, 1, 8192));

@@ -17,7 +17,7 @@ struct CanvasState {
   std::string fill_style = "#000000", stroke_style = "#000000";
   double line_width = 1, global_alpha = 1;
   std::string font = "10px sans-serif";
-  std::string text_align = "start";
+  std::string text_align = "start", text_baseline = "alphabetic";
   bool has_gradient = false;
   int fill_gradient_id = -1;
   Gradient fill_gradient;
@@ -51,11 +51,12 @@ public:
   void add_rect(double x, double y, double w, double h);
   void add_arc(double cx, double cy, double r, double start, double end, bool clockwise);
   void add_ellipse(double cx, double cy, double rx, double ry, double start, double end,
-                   bool clockwise);
+                   bool clockwise, double rotation = 0);
   void add_quadratic(double cx, double cy, double x, double y);
   void add_bezier(double c1x, double c1y, double c2x, double c2y, double x, double y);
   void fill();
   void stroke();
+  void clip(bool even_odd = false);
   void fill_rect(double x, double y, double w, double h);
   void stroke_rect(double x, double y, double w, double h);
   void clear_rect(double x, double y, double w, double h);
@@ -69,6 +70,7 @@ public:
   // A rounded rectangle is a path, so fill and stroke both work on it.
   void add_round_rect(double x, double y, double w, double h, double radius);
   void set_line_dash(const std::vector<double> &dashes);
+  const std::vector<double> &line_dash() const { return dashes_; }
   // I fit a source canvas into a destination, which is what drawImage does when
   // the source is another canvas.
   void draw_canvas(const Canvas2D &source, double x, double y, double w, double h);
@@ -94,15 +96,16 @@ private:
   Canvas surface;
   std::vector<std::vector<Point>> path;
   std::vector<Point> current;
-  std::vector<CanvasState> saved;
+  struct SavedState { CanvasState state; size_t clip_count = 0; std::vector<double> dashes; };
+  std::vector<SavedState> saved;
   std::vector<double> dashes_;
   void push(Point p) {
     current.push_back(p);
   }
   void flush_subpath();
+  void draw_text(double x, double y, std::string_view text, uint32_t color);
   uint32_t shade(const Gradient &gradient, double x, double y) const;
   void fill_polygon(std::vector<Point> points, uint32_t color);
   void fill_polygon_gradient(std::vector<Point> points, const Gradient &gradient);
-  std::vector<Point> mapped(const std::vector<Point> &points) const;
 };
 } // namespace pv

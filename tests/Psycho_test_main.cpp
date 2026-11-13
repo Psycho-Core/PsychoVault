@@ -3116,6 +3116,126 @@ int main() {
     CHECK(resized.width == 6 && at(resized, 0, 0) == 0x00000000u);
   }
   {
+    // S068: paths retain their construction-time transforms, clip state saves
+    // and restores, and images use the complete affine transform.
+    Page canvas_page;
+    canvas_page.load(*parse_url("https://canvas-subset.test/"),
+        "<!doctype html><canvas id=src width=2 height=1></canvas>"
+        "<canvas id=dst width=20 height=20></canvas><script>"
+        "var src=document.getElementById('src').getContext('2d');"
+        "src.fillStyle='#ff0000';src.fillRect(0,0,1,1);"
+        "src.fillStyle='#00ff00';src.fillRect(1,0,1,1);"
+        "var d=document.getElementById('dst').getContext('2d');"
+        "d.setTransform(0,1,-1,0,12,0);d.drawImage(document.getElementById('src'),2,2,6,2);"
+        "d.setTransform(1,0,0,1,0,0);d.setLineDash([2,3]);d.save();d.setLineDash([4]);d.restore();"
+        "d.beginPath();d.rect(1,1,2,2);d.translate(4,0);d.rect(1,1,2,2);"
+        "d.setTransform(1,0,0,1,0,0);d.fillStyle='#ff0000';d.fill();"
+        "d.save();d.beginPath();d.rect(1,10,5,5);d.clip();"
+        "d.fillStyle='#0000ff';d.fillRect(0,8,20,12);d.restore();"
+        "d.fillStyle='#ffffff';d.fillRect(14,14,2,2);"
+        "d.textBaseline='middle';d.textAlign='center';d.fillText('x',100,100);"
+        "document.title=d.getLineDash().join(',')+'|'+d.textBaseline+'|'+d.textAlign;"
+        "</script>");
+    canvas_page.render(100, 80, 0);
+    CHECK(canvas_page.title() == "2,3|middle|center");
+    const Image &image = canvas_page.canvas_images().at(canvas_page.doc.by_id("dst"));
+    auto pixel = [&](int x, int y) {
+      const size_t i = (size_t(y) * image.width + x) * 4;
+      return (uint32_t(image.pixels[i + 3]) << 24) |
+          (uint32_t(image.pixels[i + 2]) << 16) | (uint32_t(image.pixels[i + 1]) << 8) |
+          image.pixels[i];
+    };
+    CHECK(pixel(8, 3) == 0xffff0000u && pixel(8, 6) == 0xff00ff00u);
+    CHECK(pixel(1, 1) == 0xffff0000u && pixel(5, 1) == 0xffff0000u);
+    CHECK(pixel(2, 11) == 0xff0000ffu && pixel(8, 11) == 0x00000000u);
+    CHECK(pixel(14, 14) == 0xffffffffu);
+  }
+  {
+    // S068: Canvas ellipse uses rotation/start/end in the web API order.
+    Page ellipse_page;
+    ellipse_page.load(*parse_url("https://ellipse.test/"),
+        "<!doctype html><canvas id=c width=30 height=30></canvas><script>"
+        "var c=document.getElementById('c').getContext('2d');"
+        "c.fillStyle='#ff0000';c.beginPath();"
+        "c.ellipse(15,15,8,3,1.5707963267948966,0,6.283185307179586);c.fill();"
+        "</script>");
+    ellipse_page.render(100, 100, 0);
+    const Image &image = ellipse_page.canvas_images().at(ellipse_page.doc.by_id("c"));
+    CHECK(image.pixels[(size_t(9) * 30 + 15) * 4 + 3] == 255);
+    CHECK(image.pixels[(size_t(15) * 30 + 9) * 4 + 3] == 0);
+  }
+  {
+    // S068: clip intersection, holes, clear, and same-size bitmap reset.
+    Canvas2D canvas(24, 24);
+    auto rgba = [&](int x, int y) { return canvas.get_pixels(x, y, 1, 1); };
+    canvas.begin_path();
+    canvas.add_rect(0, 0, 20, 20);
+    canvas.add_rect(5, 5, 10, 10);
+    canvas.save();
+    canvas.clip(true);
+    canvas.state.fill = 0xffff0000u;
+    canvas.fill_rect(0, 0, 24, 24);
+    CHECK(rgba(2, 2)[0] == 255 && rgba(7, 7)[3] == 0);
+    canvas.begin_path();
+    canvas.add_rect(0, 0, 10, 10);
+    canvas.clip();
+    canvas.state.fill = 0xff00ff00u;
+    canvas.fill_rect(0, 0, 24, 24);
+    CHECK(rgba(2, 2)[1] == 255 && rgba(18, 2)[0] == 255);
+    canvas.clear_rect(0, 0, 24, 24);
+    CHECK(rgba(2, 2)[3] == 0 && rgba(18, 2)[0] == 255);
+    canvas.restore();
+    canvas.begin_path();
+    canvas.clip(); // An empty path clips everything, until restored.
+    canvas.state.fill = 0xff0000ffu;
+    canvas.fill_rect(0, 0, 24, 24);
+    CHECK(rgba(22, 22)[3] == 0);
+    canvas.resize(24, 24);
+    CHECK(canvas.state.fill == 0xff000000u && rgba(18, 2)[3] == 0);
+    canvas.fill_rect(0, 0, 24, 24);
+    canvas.set_transform(0, 1, -1, 0, 12, 0);
+    canvas.clear_rect(2, 2, 6, 2);
+    CHECK(rgba(8, 3)[3] == 0 && rgba(7, 3)[3] == 255);
+    canvas.set_transform(1, 0, 0, 1, 0, 0);
+    canvas.begin_path();
+    canvas.move_to(1, 20);
+    canvas.line_to(4, 20);
+    canvas.stroke();
+    canvas.line_to(8, 20);
+    canvas.state.stroke = 0xffff0000u;
+    canvas.stroke();
+    CHECK(rgba(6, 20)[0] == 255);
+    canvas.set_line_dash({0, 2, 3});
+    CHECK(canvas.line_dash().size() == 6);
+    canvas.set_line_dash({-1});
+    CHECK(canvas.line_dash().size() == 6);
+  }
+#ifdef _WIN32
+  {
+    // DirectWrite glyphs must retain color alpha and obey transformed clips.
+    Canvas2D text(40, 40);
+    text.begin_path();
+    text.add_rect(10, 10, 8, 20);
+    text.clip();
+    text.state.font = "16px sans-serif";
+    text.state.text_baseline = "top";
+    text.state.fill = 0x80ff0000u;
+    text.translate(10, 10);
+    text.fill_text(0, 0, "H");
+    bool covered = false, escaped = false, alpha_ok = true;
+    const auto image = text.snapshot();
+    for (int y = 0; y < 40; ++y)
+      for (int x = 0; x < 40; ++x) {
+        const uint8_t a = image.pixels[(size_t(y) * 40 + x) * 4 + 3];
+        if (!a) continue;
+        covered = true;
+        if (x < 10 || x >= 18 || y < 10 || y >= 30) escaped = true;
+        if (a > 128) alpha_ok = false;
+      }
+    CHECK(covered && !escaped && alpha_ok);
+  }
+#endif
+  {
     // A JPEG and an SVG arrive through the resource path a site uses.
     Page media;
     media.load(*parse_url("https://media.test/"),
