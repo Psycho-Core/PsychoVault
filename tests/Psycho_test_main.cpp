@@ -3540,10 +3540,10 @@ int main() {
               "</style><div id=baseline><div id=small>x</div><div id=large>x</div></div>"
               "<div id=shrink><div id=s1></div><div id=s2></div></div>"
               "<div id=basis><div id=basis-child></div></div>");
-    Rect small = node_box(flex, "small"), large = node_box(flex, "large");
+    Rect small_box = node_box(flex, "small"), large_box = node_box(flex, "large");
     Rect s1 = node_box(flex, "s1"), s2 = node_box(flex, "s2");
     Rect basis = node_box(flex, "basis-child");
-    CHECK(small.y > large.y + 5);
+    CHECK(small_box.y > large_box.y + 5);
     CHECK(close_to(s1.w, 60) && close_to(s2.w, 40));
     CHECK(close_to(basis.h, 50));
   }
