@@ -60,6 +60,8 @@ public:
     script_bootstrap_ = std::move(bootstrap);
   }
   void resource(const Resource &res);
+  void set_viewport_environment(double width, double height,
+                                const MediaEnvironment &environment);
   Json render(double width, double height, double scroll);
   void pointer_move(double x, double y);
   bool wheel(double x, double y, double delta);
@@ -83,6 +85,7 @@ public:
     return double(now_ms()) - last_activation_ms_ < 2500.0;
   }
   double next_timer_delay() const;
+  bool animation_pending() const;
   void tick();
   // I run whatever timers are due now and report whether I ran any.
   bool run_due_timers();
@@ -100,6 +103,7 @@ public:
   double content_height() const {
     return content_height_;
   }
+  uint64_t layout_rebuild_count() const { return layout_rebuild_count_; }
   // Media. My page owns the players, so the clock, the frame and the audio all
   // come from one place.
   const std::map<int, Image> &media_images() const {
@@ -124,6 +128,21 @@ public:
   void revoke_media_object_url(const std::string &url);
 
 private:
+  struct RunningAnimation {
+    std::string name, timing = "linear", direction = "normal", fill = "none";
+    double start_ms = 0, duration_ms = 0, delay_ms = 0, iterations = 1;
+    std::vector<CssKeyframe> frames;
+  };
+  struct RunningTransition {
+    std::string property, timing = "linear";
+    std::string from, to;
+    double start_ms = 0, duration_ms = 0, delay_ms = 0;
+  };
+  struct DamageSnapshot {
+    std::string signature;
+    Rect rect;
+    bool fixed = false;
+  };
   struct Listener {
     int node;
     std::string type;
@@ -182,11 +201,25 @@ private:
   std::vector<HistoryEntry> history_;
   size_t history_index_ = 0;
   LayoutResult layout_;
+  std::vector<Style> computed_styles_;
+  std::vector<DamageSnapshot> previous_paint_;
+  double previous_frame_width_ = 0, previous_frame_height_ = 0, previous_frame_scroll_ = 0;
+  bool force_full_damage_ = true;
+  uint64_t layout_document_signature_ = 0, layout_style_signature_ = 0,
+           layout_scroll_signature_ = 0, layout_resource_generation_ = 0;
+  double cached_layout_width_ = 0, cached_viewport_width_ = 0,
+         cached_layout_height_ = 0, cached_layout_scroll_ = -1;
+  uint64_t resource_generation_ = 0, layout_rebuild_count_ = 0;
+  bool has_layout_cache_ = false;
+  std::map<int, RunningAnimation> animations_;
+  std::map<std::pair<int, std::string>, RunningTransition> transitions_;
+  double animation_clock_ms_ = 0;
   std::unordered_map<int, double> local_scroll_;
   int scroll_drag_node_ = -1;
   bool scrollbar_pointer_ = false, suppress_click_ = false;
   double scroll_drag_start_y_ = 0, scroll_drag_start_offset_ = 0;
   double width_ = 1000, height_ = 700, scroll_ = 0, content_height_ = 0;
+  MediaEnvironment media_environment_;
   int hovered_ = -1, active_ = -1, focused_ = -1;
   int pointer_down_target_ = -1;
   bool pointer_click_pending_ = false, pointer_click_allowed_ = false;

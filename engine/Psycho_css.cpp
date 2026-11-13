@@ -270,6 +270,31 @@ void Stylesheet::parse(std::string_view input, int &order) {
         rules.push_back(std::move(r));
       }
       diagnostics.insert(diagnostics.end(), nested.diagnostics.begin(), nested.diagnostics.end());
+    } else if (starts(selector, "@keyframes") || starts(selector, "@-webkit-keyframes")) {
+      const size_t prefix = starts(selector, "@-webkit-keyframes") ? 18 : 10;
+      CssKeyframes animation;
+      animation.name = trim(selector.substr(prefix));
+      Stylesheet nested;
+      nested.parse(body, order);
+      for (const CssRule &rule : nested.rules) {
+        for (const std::string &part : split_css_top_level(rule.selector, ',')) {
+          const std::string key = lower(trim(part));
+          double offset = -1;
+          if (key == "from") offset = 0;
+          else if (key == "to") offset = 1;
+          else if (!key.empty() && key.back() == '%') {
+            try { offset = std::clamp(std::stod(key.substr(0, key.size() - 1)) / 100.0, 0.0, 1.0); }
+            catch (...) { offset = -1; }
+          }
+          if (offset >= 0 && animation.frames.size() < 64)
+            animation.frames.push_back({offset, rule.declarations});
+        }
+      }
+      std::stable_sort(animation.frames.begin(), animation.frames.end(),
+                       [](const CssKeyframe &a, const CssKeyframe &b) { return a.offset < b.offset; });
+      if (!animation.name.empty() && !animation.frames.empty() && keyframes.size() < 128)
+        keyframes.push_back(std::move(animation));
+      diagnostics.insert(diagnostics.end(), nested.diagnostics.begin(), nested.diagnostics.end());
     } else if (starts(selector, "@")) {
       if (diagnostics.size() < 100)
         diagnostics.push_back(
@@ -1058,6 +1083,8 @@ static void apply(Style &s, const std::map<std::string, std::string> &d, double 
   }
   if (auto v = get("overflow"))
     s.overflow = lower(trim(*v));
+  if (auto v = get("scrollbar-gutter"))
+    s.scrollbar_gutter = lower(trim(*v));
   if (auto v = get("overscroll-behavior"))
     s.overscroll_behavior = lower(trim(*v));
   if (auto v = get("opacity")) {
@@ -1189,6 +1216,12 @@ static void apply(Style &s, const std::map<std::string, std::string> &d, double 
   if (auto v = get("transform"))
     s.transform = *v;
 }
+void apply_style_overrides(Style &style,
+                          const std::map<std::string, std::string> &declarations,
+                          double viewport_width, double viewport_height) {
+  apply(style, declarations, viewport_width, style.root_font_size, viewport_width,
+        viewport_height);
+}
 static bool inherited_css_property(const std::string &property) {
   static const std::set<std::string> inherited = {
       "color", "font-family", "font-size", "font-style", "font-weight", "line-height",
@@ -1258,6 +1291,7 @@ static void inherit_style_property(Style &to, const Style &from, const std::stri
   else if (property == "position") to.position = from.position;
   else if (property == "z-index") { to.z_index = from.z_index; to.z_index_auto = from.z_index_auto; }
   else if (property == "overflow") to.overflow = from.overflow;
+  else if (property == "scrollbar-gutter") to.scrollbar_gutter = from.scrollbar_gutter;
   else if (property == "overscroll-behavior") to.overscroll_behavior = from.overscroll_behavior;
   else if (property == "opacity") to.opacity = from.opacity;
   else if (property == "filter") to.filter = from.filter;
@@ -1314,28 +1348,143 @@ static void inherit_style_property(Style &to, const Style &from, const std::stri
     for (int i=0;i<4;++i) if (property == std::string("border-")+side_names[i]+"-width") to.border[i]=from.border[i];
   } else if (auto found = from.raw.find(property); found != from.raw.end()) to.raw[property] = found->second;
 }
-static bool media_matches(const std::string &media, double viewport) {
+static bool media_matches(const std::string &media, double viewport_width,
+                          double viewport_height, const MediaEnvironment &environment) {
   if (media.empty())
     return true;
-  auto low = lower(media);
-  bool apply = true;
-  auto min = low.find("min-width:");
-  auto max = low.find("max-width:");
-  try {
-    if (min != std::string::npos)
-      apply = apply && viewport >= std::stod(low.substr(min + 10));
-    if (max != std::string::npos)
-      apply = apply && viewport <= std::stod(low.substr(max + 9));
-  } catch (...) {
-    apply = false;
+  const std::string source = lower(trim(media));
+  const size_t at = source.find("@media");
+  std::string query = trim(at == std::string::npos ? source : source.substr(at + 6));
+  auto number = [](std::string value, double &out) {
+    value = trim(value);
+    try {
+      size_t used = 0;
+      out = std::stod(value, &used);
+      const std::string unit = trim(value.substr(used));
+      return unit.empty() || unit == "px";
+    } catch (...) {
+      return false;
+    }
+  };
+  auto ratio = [&](const std::string &value, double &out) {
+    const size_t slash = value.find('/');
+    if (slash == std::string::npos) return number(value, out) && out > 0;
+    double numerator = 0, denominator = 0;
+    if (!number(value.substr(0, slash), numerator) ||
+        !number(value.substr(slash + 1), denominator) || denominator == 0)
+      return false;
+    out = numerator / denominator;
+    return out > 0;
+  };
+  auto resolution = [&](const std::string &value, double &out) {
+    try {
+      size_t used = 0;
+      const double amount = std::stod(value, &used);
+      const std::string unit = trim(value.substr(used));
+      if (amount <= 0) return false;
+      if (unit == "dppx") out = amount;
+      else if (unit == "dpi") out = amount / 96.0;
+      else if (unit == "dpcm") out = amount * 2.54 / 96.0;
+      else return false;
+      return true;
+    } catch (...) {
+      return false;
+    }
+  };
+  // CSS media query lists are ORed. For each query, all `and` conditions must
+  // hold. This deliberately implements a bounded feature set, not full MQ4.
+  size_t query_begin = 0;
+  while (query_begin <= query.size()) {
+    size_t query_end = query.find(',', query_begin);
+    if (query_end == std::string::npos) query_end = query.size();
+    std::string clause = trim(query.substr(query_begin, query_end - query_begin));
+    bool matches = true, negate = false;
+    if (clause.rfind("not ", 0) == 0) {
+      negate = true;
+      clause = trim(clause.substr(4));
+    }
+    if (clause.rfind("only ", 0) == 0) clause = trim(clause.substr(5));
+    size_t condition_begin = 0;
+    while (condition_begin < clause.size()) {
+      size_t condition_end = condition_begin;
+      int depth = 0;
+      for (; condition_end < clause.size(); ++condition_end) {
+        if (clause[condition_end] == '(') ++depth;
+        else if (clause[condition_end] == ')') --depth;
+        else if (depth == 0 && clause.compare(condition_end, 5, " and ") == 0) break;
+      }
+      std::string condition = trim(clause.substr(condition_begin, condition_end - condition_begin));
+      if (!condition.empty() && condition.front() == '(' && condition.back() == ')')
+        condition = trim(condition.substr(1, condition.size() - 2));
+      if (condition == "screen" || condition == "all" || condition.empty()) {
+        // These media types describe the engine's current presentation mode.
+      } else if (condition == "print") {
+        matches = false;
+      } else {
+        const size_t colon = condition.find(':');
+        if (colon == std::string::npos) {
+          matches = false;
+        } else {
+          const std::string feature = trim(condition.substr(0, colon));
+          const std::string value = trim(condition.substr(colon + 1));
+          double actual = 0, expected = 0;
+          if (feature == "width" || feature == "min-width" || feature == "max-width" ||
+              feature == "height" || feature == "min-height" || feature == "max-height") {
+            const bool is_width = feature.find("width") != std::string::npos;
+            actual = is_width ? viewport_width : viewport_height;
+            const bool valid = number(value, expected);
+            if (!valid) matches = false;
+            else if (feature.rfind("min-", 0) == 0) matches = matches && actual >= expected;
+            else if (feature.rfind("max-", 0) == 0) matches = matches && actual <= expected;
+            else matches = matches && std::fabs(actual - expected) < 0.01;
+          } else if (feature == "orientation") {
+            matches = matches && (value == (viewport_width >= viewport_height ? "landscape" : "portrait"));
+          } else if (feature == "aspect-ratio" || feature == "min-aspect-ratio" ||
+                     feature == "max-aspect-ratio") {
+            const double actual_ratio = viewport_height > 0 ? viewport_width / viewport_height : 0;
+            const bool valid = ratio(value, expected);
+            if (!valid || actual_ratio <= 0) matches = false;
+            else if (feature.rfind("min-", 0) == 0) matches = matches && actual_ratio >= expected;
+            else if (feature.rfind("max-", 0) == 0) matches = matches && actual_ratio <= expected;
+            else matches = matches && std::fabs(actual_ratio - expected) < 0.01;
+          } else if (feature == "resolution" || feature == "min-resolution" ||
+                     feature == "max-resolution") {
+            const bool valid = resolution(value, expected);
+            actual = environment.device_pixel_ratio;
+            if (!valid) matches = false;
+            else if (feature.rfind("min-", 0) == 0) matches = matches && actual >= expected;
+            else if (feature.rfind("max-", 0) == 0) matches = matches && actual <= expected;
+            else matches = matches && std::fabs(actual - expected) < 0.001;
+          } else if (feature == "prefers-reduced-motion") {
+            matches = matches && value == environment.prefers_reduced_motion;
+          } else if (feature == "prefers-color-scheme") {
+            matches = matches && value == environment.prefers_color_scheme;
+          } else if (feature == "prefers-contrast") {
+            matches = matches && value == environment.prefers_contrast;
+          } else if (feature == "forced-colors") {
+            matches = matches && value == environment.forced_colors;
+          } else {
+            matches = false;
+          }
+        }
+      }
+      if (condition_end == clause.size()) break;
+      condition_begin = condition_end + 5;
+    }
+    if (negate) matches = !matches;
+    if (matches) return true;
+    if (query_end == query.size()) break;
+    query_begin = query_end + 1;
   }
-  if (low.find("print") != std::string::npos)
-    apply = false;
-  return apply;
+  return false;
 }
 std::vector<Style> compute_styles(const Document &doc, const std::vector<Stylesheet> &sheets,
-                                  double viewport, double viewport_height, const SelectorState *selector_state) {
+                                  double viewport, double viewport_height,
+                                  const SelectorState *selector_state,
+                                  const MediaEnvironment *media_environment) {
   if (viewport_height < 0) viewport_height = viewport;
+  const MediaEnvironment default_media_environment;
+  const MediaEnvironment &environment = media_environment ? *media_environment : default_media_environment;
   std::vector<Style> styles(doc.nodes.size());
   Stylesheet ua;
   int ua_order = -1000000;
@@ -1394,6 +1543,7 @@ std::vector<Style> compute_styles(const Document &doc, const std::vector<Stylesh
       style.top = style.left = style.right = style.bottom = 0;
       style.has_top = style.has_left = style.has_right = style.has_bottom = false;
       style.overflow = "visible";
+      style.scrollbar_gutter = "auto";
       style.overscroll_behavior = "auto";
       style.opacity = 1;
       style.flex_direction = "row";
@@ -1428,7 +1578,7 @@ std::vector<Style> compute_styles(const Document &doc, const std::vector<Stylesh
       if (matches_selector(doc, id, rule.selector, selector_state)) ua_matched.push_back(&rule);
     for (const Stylesheet &sheet : sheets)
       for (const CssRule &rule : sheet.rules)
-        if (media_matches(rule.media, viewport) &&
+        if (media_matches(rule.media, viewport, viewport_height, environment) &&
             matches_selector(doc, id, rule.selector, selector_state)) author_matched.push_back(&rule);
     auto matched_specificity = [&](const CssRule *rule) {
       int best = 0;

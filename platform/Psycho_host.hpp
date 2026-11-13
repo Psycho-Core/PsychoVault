@@ -40,6 +40,7 @@ public:
   // I fetch the document, hand it to my engine, then fetch subresources.
   bool load(const std::string &input, std::string &error);
   void resize(double width, double height);
+  void set_media_environment(const MediaEnvironment &environment);
   void scroll(double y);
   void wheel(double x, double y, double delta);
   void scroll_key(const std::string &key);
@@ -96,6 +97,7 @@ private:
   // last handed over rather than comparing pixels.
   std::map<int, uint64_t> sent_media_;
   double width_ = 1000, height_ = 700, scroll_ = 0;
+  MediaEnvironment media_environment_;
   bool loaded_ = false;
 };
 } // namespace pv

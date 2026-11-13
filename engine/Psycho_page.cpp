@@ -1,5 +1,6 @@
 #include "Psycho_page.hpp"
 #include <chrono>
+#include <sstream>
 #include <thread>
 namespace pv {
 static constexpr int kDocument = -1, kLocation = -3, kStorageLocal = -5, kStorageSession = -6,
@@ -1477,6 +1478,40 @@ void Page::set_history(std::vector<HistoryEntry> entries, size_t index) {
   history_ = std::move(entries);
   history_index_ = history_.empty() ? 0 : std::min(index, history_.size() - 1);
 }
+void Page::set_viewport_environment(double width, double height,
+                                    const MediaEnvironment &environment) {
+  width_ = std::clamp(width, 1.0, 8192.0);
+  height_ = std::clamp(height, 1.0, 16384.0);
+  media_environment_ = environment;
+  media_environment_.device_pixel_ratio =
+      std::clamp(std::isfinite(environment.device_pixel_ratio) ? environment.device_pixel_ratio : 1.0,
+                 0.25, 8.0);
+  media_environment_.scrollbar_width =
+      std::clamp(std::isfinite(environment.scrollbar_width) ? environment.scrollbar_width : 8.0,
+                 0.0, 64.0);
+  auto valid_preference = [](const std::string &value,
+                            std::initializer_list<const char *> choices,
+                            const char *fallback) {
+    for (const char *choice : choices)
+      if (value == choice) return value;
+    return std::string(fallback);
+  };
+  media_environment_.prefers_reduced_motion = valid_preference(
+      environment.prefers_reduced_motion, {"reduce", "no-preference"}, "no-preference");
+  media_environment_.prefers_color_scheme = valid_preference(
+      environment.prefers_color_scheme, {"light", "dark"}, "light");
+  media_environment_.prefers_contrast = valid_preference(
+      environment.prefers_contrast, {"no-preference", "more", "less", "custom"}, "no-preference");
+  media_environment_.forced_colors = valid_preference(
+      environment.forced_colors, {"none", "active"}, "none");
+  dirty_ = true;
+  if (js_) {
+    js_->global().properties["innerWidth"] = js::Value(width_);
+    js_->global().properties["innerHeight"] = js::Value(height_);
+    js_->global().properties["devicePixelRatio"] =
+        js::Value(media_environment_.device_pixel_ratio);
+  }
+}
 Page::~Page() {
   delete js_->host();
 }
@@ -1489,7 +1524,20 @@ void Page::load(const Url &url, const std::string &html, const std::string &mime
   doc.content_type = mime;
   doc.parse(html);
   resources_.clear();
+  resource_generation_ = 0;
+  layout_document_signature_ = layout_style_signature_ = layout_scroll_signature_ = 0;
+  layout_resource_generation_ = 0;
+  has_layout_cache_ = false;
+  layout_rebuild_count_ = 0;
+  cached_layout_width_ = cached_viewport_width_ = cached_layout_height_ = 0;
+  cached_layout_scroll_ = -1;
   images_.clear();
+  computed_styles_.clear();
+  previous_paint_.clear();
+  previous_frame_width_ = previous_frame_height_ = previous_frame_scroll_ = 0;
+  force_full_damage_ = true;
+  animations_.clear();
+  transitions_.clear();
   requested_.clear();
   executed_.clear();
   listeners_.clear();
@@ -1503,6 +1551,10 @@ void Page::load(const Url &url, const std::string &html, const std::string &mime
   js_->global().properties["localStorage"] = js_->host_value(kStorageLocal, "Storage");
   js_->global().properties["sessionStorage"] = js_->host_value(kStorageSession, "Storage");
   js_->global().properties["history"] = js_->host_value(kHistory, "History");
+  js_->global().properties["innerWidth"] = js::Value(width_);
+  js_->global().properties["innerHeight"] = js::Value(height_);
+  js_->global().properties["devicePixelRatio"] =
+      js::Value(media_environment_.device_pixel_ratio);
   // A fresh document starts with one history entry, the page itself.
   history_.clear();
   history_.push_back(HistoryEntry{url.href(), js::Value::null()});
@@ -1747,6 +1799,8 @@ void Page::request(std::string input, ResourceType type) {
   requests.push_back({href, type});
 }
 void Page::resource(const Resource &res) {
+  force_full_damage_ = true;
+  ++resource_generation_;
   Resource stored = res;
   static constexpr uint8_t png_signature[8] = {137, 80, 78, 71, 13, 10, 26, 10};
   static constexpr uint8_t jpeg_signature[3] = {0xff, 0xd8, 0xff};
@@ -1885,6 +1939,224 @@ void Page::run_scripts() {
         execute_script(n.id);
     }
 }
+namespace {
+std::vector<std::string> css_words(const std::string &text) {
+  std::vector<std::string> out;
+  std::istringstream input(text);
+  std::string word;
+  while (input >> word) out.push_back(word);
+  return out;
+}
+double css_time_ms(const std::string &text, double fallback = 0) {
+  try {
+    size_t used = 0;
+    double value = std::stod(text, &used);
+    const std::string unit = lower(trim(text.substr(used)));
+    if (unit == "ms") return std::clamp(value, -60000.0, 60000.0);
+    if (unit == "s") return std::clamp(value * 1000.0, -60000.0, 60000.0);
+  } catch (...) {}
+  return fallback;
+}
+double easing_progress(const std::string &timing, double progress) {
+  progress = std::clamp(progress, 0.0, 1.0);
+  if (timing == "ease-in") return progress * progress;
+  if (timing == "ease-out") return 1 - (1 - progress) * (1 - progress);
+  if (timing == "ease-in-out")
+    return progress < 0.5 ? 2 * progress * progress
+                          : 1 - std::pow(-2 * progress + 2, 2) / 2;
+  if (timing == "ease")
+    return progress < 0.5 ? 4 * progress * progress * progress
+                          : 1 - std::pow(-2 * progress + 2, 3) / 2;
+  if (timing == "step-start") return 1;
+  if (timing == "step-end") return progress >= 1 ? 1 : 0;
+  if (timing.rfind("steps(", 0) == 0) {
+    const size_t close = timing.find(')');
+    if (close != std::string::npos) {
+      auto args = css_words(std::string(timing.substr(6, close - 6)));
+      std::string body = timing.substr(6, close - 6);
+      const size_t comma = body.find(',');
+      int count = 1;
+      try { count = std::max(1, std::stoi(body.substr(0, comma))); } catch (...) {}
+      const bool start = comma != std::string::npos && trim(body.substr(comma + 1)) == "start";
+      (void)args;
+      return std::clamp((std::floor(progress * count) + (start ? 1 : 0)) / count, 0.0, 1.0);
+    }
+  }
+  if (timing.rfind("cubic-bezier(", 0) == 0 && timing.back() == ')') {
+    std::vector<double> points;
+    std::string body = timing.substr(13, timing.size() - 14);
+    size_t begin = 0;
+    while (begin <= body.size()) {
+      size_t end = body.find(',', begin);
+      if (end == std::string::npos) end = body.size();
+      try { points.push_back(std::stod(trim(body.substr(begin, end - begin)))); }
+      catch (...) { return progress; }
+      if (end == body.size()) break;
+      begin = end + 1;
+    }
+    if (points.size() == 4) {
+      auto curve = [](double t, double p1, double p2) {
+        const double mt = 1 - t;
+        return 3 * mt * mt * t * p1 + 3 * mt * t * t * p2 + t * t * t;
+      };
+      double low = 0, high = 1, t = progress;
+      for (int i = 0; i < 20; ++i) {
+        const double x = curve(t, points[0], points[2]);
+        if (std::abs(x - progress) < 1e-6) break;
+        if (x < progress) low = t; else high = t;
+        t = (low + high) / 2;
+      }
+      return curve(t, points[1], points[3]);
+    }
+  }
+  return progress;
+}
+std::string style_property_value(const Style &style, const std::string &property) {
+  if (auto value = style.raw.find(property); value != style.raw.end()) return value->second;
+  if (property == "opacity") return std::to_string(style.opacity);
+  if (property == "color") {
+    const Color &c = style.color;
+    return "rgb(" + std::to_string(c.r) + " " + std::to_string(c.g) + " " +
+           std::to_string(c.b) + " / " + std::to_string(c.a * 100.0 / 255.0) + "%)";
+  }
+  if (property == "background-color") {
+    const Color &c = style.background;
+    return "rgb(" + std::to_string(c.r) + " " + std::to_string(c.g) + " " +
+           std::to_string(c.b) + " / " + std::to_string(c.a * 100.0 / 255.0) + "%)";
+  }
+  if (property == "width" && style.width >= 0) return std::to_string(style.width) + "px";
+  if (property == "height" && style.height >= 0) return std::to_string(style.height) + "px";
+  return {};
+}
+std::string interpolate_css_value(const std::string &property, const std::string &from,
+                                  const std::string &to, double progress) {
+  progress = std::clamp(progress, 0.0, 1.0);
+  if (progress <= 0) return from;
+  if (progress >= 1) return to;
+  if (property == "color" || property == "background-color") {
+    const Color a = parse_color(from), b = parse_color(to);
+    if (a.transparent && lower(trim(from)) != "transparent") return from;
+    if (b.transparent && lower(trim(to)) != "transparent") return from;
+    auto channel = [&](int x, int y) { return int(std::lround(x + (y - x) * progress)); };
+    const int r = channel(a.r, b.r), g = channel(a.g, b.g), blue = channel(a.b, b.b);
+    const int alpha = channel(a.a, b.a);
+    return "rgb(" + std::to_string(r) + " " + std::to_string(g) + " " +
+           std::to_string(blue) + " / " + std::to_string(alpha * 100.0 / 255.0) + "%)";
+  }
+  if (property == "opacity" || property == "width" || property == "height") {
+    try {
+      size_t used_a = 0, used_b = 0;
+      const double a = std::stod(from, &used_a), b = std::stod(to, &used_b);
+      std::string unit_a = lower(trim(from.substr(used_a)));
+      std::string unit_b = lower(trim(to.substr(used_b)));
+      if (unit_a.empty()) unit_a = unit_b;
+      if (unit_b.empty()) unit_b = unit_a;
+      if (unit_a == unit_b && (unit_a.empty() || unit_a == "px"))
+        return std::to_string(a + (b - a) * progress) + unit_a;
+    } catch (...) {}
+  }
+  return progress < 1 ? from : to;
+}
+std::vector<std::string> comma_items(const std::string &value) {
+  std::vector<std::string> out;
+  size_t begin = 0;
+  int depth = 0;
+  for (size_t at = 0; at <= value.size(); ++at) {
+    if (at < value.size() && value[at] == '(') ++depth;
+    else if (at < value.size() && value[at] == ')') --depth;
+    if (at == value.size() || (value[at] == ',' && depth == 0)) {
+      out.push_back(trim(value.substr(begin, at - begin)));
+      begin = at + 1;
+    }
+  }
+  return out;
+}
+void hash_combine(uint64_t &seed, uint64_t value) {
+  seed ^= value + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2);
+}
+void hash_text(uint64_t &seed, const std::string &value) {
+  hash_combine(seed, uint64_t(std::hash<std::string>{}(value)));
+}
+uint64_t document_layout_signature(const Document &doc) {
+  uint64_t hash = 0;
+  for (const Node &node : doc.nodes) {
+    hash_combine(hash, uint64_t(node.type));
+    hash_combine(hash, uint64_t(uint32_t(node.parent)));
+    hash_text(hash, node.name);
+    hash_text(hash, node.text);
+    for (const auto &[name, value] : node.attributes) {
+      hash_text(hash, name);
+      hash_text(hash, value);
+    }
+    for (int child : node.children) hash_combine(hash, uint64_t(uint32_t(child)));
+  }
+  return hash;
+}
+uint64_t styles_layout_signature(const std::vector<Style> &styles) {
+  uint64_t hash = 0;
+  for (const Style &style : styles) {
+    hash_text(hash, style.display);
+    hash_text(hash, style.font_family);
+    hash_text(hash, style.text_align);
+    hash_text(hash, style.weight);
+    hash_text(hash, style.box_sizing);
+    hash_text(hash, style.white_space);
+    hash_text(hash, style.text_overflow);
+    hash_text(hash, style.position);
+    hash_text(hash, style.overflow);
+    hash_text(hash, style.scrollbar_gutter);
+    hash_text(hash, style.overscroll_behavior);
+    hash_text(hash, style.flex_direction);
+    hash_text(hash, style.justify_content);
+    hash_text(hash, style.align_items);
+    hash_text(hash, style.align_self);
+    hash_text(hash, style.align_content);
+    hash_text(hash, style.flex_wrap);
+    hash_text(hash, style.grid_columns);
+    hash_text(hash, style.grid_rows);
+    hash_text(hash, style.grid_template_areas);
+    hash_text(hash, style.grid_column);
+    hash_text(hash, style.grid_row);
+    hash_text(hash, style.grid_area);
+    hash_text(hash, style.grid_auto_flow);
+    hash_text(hash, style.justify_items);
+    hash_text(hash, style.justify_self);
+    hash_text(hash, style.transform);
+    hash_text(hash, style.filter);
+    hash_text(hash, style.box_shadow);
+    hash_text(hash, style.background_image);
+    hash_combine(hash, style.color.bgra());
+    hash_combine(hash, style.background.bgra());
+    hash_combine(hash, style.border_color.bgra());
+    for (double value : {style.font_size, style.line_height, style.opacity, style.gap,
+                         style.width, style.height, style.min_width, style.max_width,
+                         style.min_height, style.max_height, style.root_font_size,
+                         style.viewport_width, style.viewport_height, style.top, style.left,
+                         style.right, style.bottom, style.flex_grow, style.flex_shrink,
+                         style.flex_basis, style.height_percent, style.row_gap})
+      hash_combine(hash, uint64_t(std::hash<double>{}(value)));
+    for (double value : style.margin) hash_combine(hash, uint64_t(std::hash<double>{}(value)));
+    for (double value : style.padding) hash_combine(hash, uint64_t(std::hash<double>{}(value)));
+    for (double value : style.border) hash_combine(hash, uint64_t(std::hash<double>{}(value)));
+    for (const std::string &layer : style.background_layers) hash_text(hash, layer);
+    for (const auto &[name, value] : style.raw) {
+      hash_text(hash, name);
+      hash_text(hash, value);
+    }
+    hash_combine(hash, uint64_t(style.bold) | (uint64_t(style.italic) << 1) |
+                           (uint64_t(style.underline) << 2) | (uint64_t(style.list_item) << 3));
+  }
+  return hash;
+}
+uint64_t local_scroll_signature(const std::unordered_map<int, double> &scrolls) {
+  uint64_t hash = 0;
+  for (const auto &[node, offset] : scrolls) {
+    hash_combine(hash, uint64_t(uint32_t(node)));
+    hash_combine(hash, uint64_t(std::hash<double>{}(offset)));
+  }
+  return hash;
+}
+}
 void Page::rebuild() {
   std::vector<Stylesheet> sheets;
   int order = 0;
@@ -1907,7 +2179,211 @@ void Page::rebuild() {
       }
     }
   const SelectorState selector_state{hovered_, focused_, active_};
-  auto styles = compute_styles(doc, sheets, width_, height_, &selector_state);
+  auto styles = compute_styles(doc, sheets, width_, height_, &selector_state,
+                               &media_environment_);
+  const double now = double(now_ms());
+  // I detect computed-value changes after selector/cascade recomputation, then
+  // interpolate only a conservative set of paint/layout scalar properties.
+  std::map<std::pair<int, std::string>, RunningTransition> next_transitions;
+  auto transition_spec = [&](const Style &style, const std::string &property,
+                             double &duration, double &delay, std::string &timing) {
+    duration = delay = 0;
+    timing = "linear";
+    auto shorthand = style.raw.find("transition");
+    bool found = false;
+    if (shorthand != style.raw.end()) {
+      for (const std::string &item : comma_items(shorthand->second)) {
+        auto words = css_words(item);
+        if (words.empty() || (words[0] != "all" && words[0] != property && words[0] != "none"))
+          continue;
+        std::vector<double> times;
+        for (const std::string &word : words) {
+          const double time = css_time_ms(word, std::numeric_limits<double>::quiet_NaN());
+          if (std::isfinite(time)) times.push_back(time);
+          else if (word == "linear" || word == "ease" || word == "ease-in" ||
+                   word == "ease-out" || word == "ease-in-out") timing = word;
+        }
+        if (!times.empty()) {
+          duration = std::max(0.0, times[0]);
+          if (times.size() > 1) delay = times[1];
+          found = true;
+          break;
+        }
+      }
+    }
+    if (!found) return false;
+    if (auto value = style.raw.find("transition-property"); value != style.raw.end())
+      if (value->second != "all" && value->second.find(property) == std::string::npos)
+        return false;
+    if (auto value = style.raw.find("transition-duration"); value != style.raw.end()) {
+      auto items = comma_items(value->second);
+      if (!items.empty()) duration = std::max(0.0, css_time_ms(items[0], 0));
+    }
+    if (auto value = style.raw.find("transition-delay"); value != style.raw.end()) {
+      auto items = comma_items(value->second);
+      if (!items.empty()) delay = css_time_ms(items[0], 0);
+    }
+    if (auto value = style.raw.find("transition-timing-function"); value != style.raw.end())
+      timing = trim(value->second);
+    return duration > 0;
+  };
+  if (media_environment_.prefers_reduced_motion != "reduce" &&
+      computed_styles_.size() == styles.size()) {
+    for (int node = 0; node < int(styles.size()); ++node) {
+      const Style &before = computed_styles_[size_t(node)];
+      const Style &after = styles[size_t(node)];
+      for (const char *property_name : {"opacity", "color", "background-color", "width", "height"}) {
+        const std::string property = property_name;
+        const std::string old_value = style_property_value(before, property);
+        const std::string new_value = style_property_value(after, property);
+        if (old_value.empty() || new_value.empty() || old_value == new_value) continue;
+        double duration = 0, delay = 0;
+        std::string timing;
+        if (!transition_spec(after, property, duration, delay, timing)) continue;
+        const auto key = std::make_pair(node, property);
+        RunningTransition current;
+        if (auto active = transitions_.find(key); active != transitions_.end() &&
+            active->second.to == new_value) {
+          current = active->second;
+        } else {
+          current = {property, timing, old_value, new_value, now, duration, delay};
+        }
+        next_transitions[key] = current;
+      }
+    }
+  }
+  transitions_ = std::move(next_transitions);
+  for (auto it = transitions_.begin(); it != transitions_.end();) {
+    const auto [node, property] = it->first;
+    RunningTransition &transition = it->second;
+    const double elapsed = now - transition.start_ms - transition.delay_ms;
+    double progress = elapsed <= 0 ? 0 : transition.duration_ms > 0
+                                               ? elapsed / transition.duration_ms : 1;
+    if (progress >= 1) {
+      it = transitions_.erase(it);
+      continue;
+    }
+    progress = easing_progress(transition.timing, progress);
+    apply_style_overrides(styles[size_t(node)],
+                          {{property, interpolate_css_value(property, transition.from,
+                                                            transition.to, progress)}},
+                          width_, height_);
+    ++it;
+  }
+
+  // Keyframes run against the page clock. One named animation per element is
+  // intentionally supported; fill, direction, delay and finite/infinite loops
+  // cover the common spinner/attention-indicator cases.
+  std::map<int, RunningAnimation> active_animations;
+  if (media_environment_.prefers_reduced_motion != "reduce") {
+    for (int node = 0; node < int(styles.size()); ++node) {
+      const Style &style = styles[size_t(node)];
+      std::string animation_name;
+      if (auto value = style.raw.find("animation-name"); value != style.raw.end())
+        animation_name = trim(value->second);
+      std::vector<std::string> shorthand;
+      if (auto value = style.raw.find("animation"); value != style.raw.end()) {
+        shorthand = css_words(value->second);
+        if (animation_name.empty())
+          for (const std::string &word : shorthand) {
+            if (std::isfinite(css_time_ms(word, std::numeric_limits<double>::quiet_NaN())))
+              continue;
+            if (word != "none" && word != "infinite" && word != "normal" &&
+                word != "reverse" && word != "alternate" && word != "alternate-reverse" &&
+                word != "forwards" && word != "backwards" && word != "both" &&
+                word != "linear" && word != "ease" && word != "ease-in" &&
+                word != "ease-out" && word != "ease-in-out") {
+              animation_name = word;
+              break;
+            }
+          }
+      }
+      if (animation_name.empty() || animation_name == "none") continue;
+      const CssKeyframes *keyframes = nullptr;
+      for (const Stylesheet &sheet : sheets)
+        for (const CssKeyframes &candidate : sheet.keyframes)
+          if (candidate.name == animation_name) keyframes = &candidate;
+      if (!keyframes || keyframes->frames.empty()) continue;
+      RunningAnimation animation;
+      animation.name = animation_name;
+      animation.frames = keyframes->frames;
+      for (const std::string &word : shorthand) {
+        const double time = css_time_ms(word, std::numeric_limits<double>::quiet_NaN());
+        if (std::isfinite(time)) {
+          if (animation.duration_ms == 0) animation.duration_ms = std::max(0.0, time);
+          else animation.delay_ms = time;
+        } else if (word == "linear" || word == "ease" || word == "ease-in" ||
+                   word == "ease-out" || word == "ease-in-out") animation.timing = word;
+        else if (word == "reverse" || word == "alternate" || word == "alternate-reverse")
+          animation.direction = word;
+        else if (word == "forwards" || word == "backwards" || word == "both")
+          animation.fill = word;
+        else if (word == "infinite") animation.iterations = -1;
+        else if (word != animation_name && word != "normal") {
+          try { animation.iterations = std::max(0.0, std::stod(word)); } catch (...) {}
+        }
+      }
+      if (auto value = style.raw.find("animation-duration"); value != style.raw.end())
+        animation.duration_ms = std::max(0.0, css_time_ms(value->second, 0));
+      if (auto value = style.raw.find("animation-delay"); value != style.raw.end())
+        animation.delay_ms = css_time_ms(value->second, 0);
+      if (auto value = style.raw.find("animation-timing-function"); value != style.raw.end())
+        animation.timing = trim(value->second);
+      if (auto value = style.raw.find("animation-iteration-count"); value != style.raw.end()) {
+        if (trim(value->second) == "infinite") animation.iterations = -1;
+        else try { animation.iterations = std::max(0.0, std::stod(value->second)); } catch (...) {}
+      }
+      if (auto value = style.raw.find("animation-direction"); value != style.raw.end())
+        animation.direction = trim(value->second);
+      if (auto value = style.raw.find("animation-fill-mode"); value != style.raw.end())
+        animation.fill = trim(value->second);
+      if (auto old = animations_.find(node); old != animations_.end() && old->second.name == animation.name)
+        animation.start_ms = old->second.start_ms;
+      else animation.start_ms = now;
+      active_animations[node] = std::move(animation);
+    }
+  }
+  animations_ = std::move(active_animations);
+  for (const auto &[node, animation] : animations_) {
+    const double elapsed = now - animation.start_ms - animation.delay_ms;
+    const double duration = animation.duration_ms;
+    if (duration <= 0 || animation.iterations == 0) continue;
+    const double total = animation.iterations < 0 ? std::numeric_limits<double>::infinity()
+                                                  : duration * animation.iterations;
+    if (elapsed < 0 && animation.fill != "backwards" && animation.fill != "both") continue;
+    if (elapsed >= total && animation.fill != "forwards" && animation.fill != "both") continue;
+    double progress = elapsed < 0 ? 0 : elapsed >= total ? 1 : std::fmod(elapsed, duration) / duration;
+    if (elapsed >= 0 && elapsed < total && animation.direction.find("alternate") == 0 &&
+        (int(std::floor(elapsed / duration)) & 1)) progress = 1 - progress;
+    if (animation.direction == "reverse" || animation.direction == "alternate-reverse")
+      progress = 1 - progress;
+    progress = easing_progress(animation.timing, progress);
+    std::set<std::string> properties;
+    for (const CssKeyframe &frame : animation.frames)
+      for (const auto &[property, value] : frame.declarations) {
+        (void)value;
+        if (property == "opacity" || property == "color" || property == "background-color" ||
+            property == "width" || property == "height") properties.insert(property);
+      }
+    std::map<std::string, std::string> overrides;
+    for (const std::string &property : properties) {
+      const CssKeyframe *before = nullptr, *after = nullptr;
+      for (const CssKeyframe &frame : animation.frames)
+        if (frame.declarations.count(property)) {
+          if (frame.offset <= progress) before = &frame;
+          if (frame.offset >= progress && !after) after = &frame;
+        }
+      const std::string base = style_property_value(styles[size_t(node)], property);
+      const std::string from = before ? before->declarations.at(property) : base;
+      const std::string to = after ? after->declarations.at(property) : from;
+      const double span = before && after ? after->offset - before->offset : 1.0;
+      const double local = before && after && span > 0 ? (progress - before->offset) / span : progress;
+      overrides[property] = interpolate_css_value(property, from, to,
+                                                    easing_progress(animation.timing, local));
+    }
+    apply_style_overrides(styles[size_t(node)], overrides, width_, height_);
+  }
+  computed_styles_ = styles;
   for (const Style &style : styles)
     for (const std::string &layer : style.background_layers) {
       const std::string lowered_layer = lower(layer);
@@ -1920,8 +2396,63 @@ void Page::rebuild() {
         url = url.substr(1, url.size() - 2);
       request(std::move(url), ResourceType::Image);
     }
-  Canvas measure{int(width_), int(height_)};
-  layout_ = layout_document(doc, styles, width_, height_, resources_, measure, scroll_, local_scroll_);
+  // Retain the previous layout when only an event arrived and neither the
+  // document, computed styles, viewport, scroll offsets nor resources changed.
+  // For a real reflow I still use the existing full-layout pass, then remember
+  // its inputs so the next state-only interaction can avoid repeating it.
+  bool stable_root_gutter = false, forced_root_scrollbar = false;
+  bool root_scrollbar_suppressed = false;
+  for (size_t i = 0; i < doc.nodes.size() && i < styles.size(); ++i)
+    if (doc.nodes[i].name == "html" || doc.nodes[i].name == "body") {
+      stable_root_gutter = stable_root_gutter ||
+          styles[i].scrollbar_gutter.find("stable") != std::string::npos;
+      forced_root_scrollbar = forced_root_scrollbar || styles[i].overflow == "scroll";
+      root_scrollbar_suppressed = root_scrollbar_suppressed ||
+          styles[i].overflow == "hidden" || styles[i].overflow == "clip";
+    }
+  const double gutter = media_environment_.scrollbar_width;
+  double layout_width = width_;
+  if (stable_root_gutter || forced_root_scrollbar ||
+      (!root_scrollbar_suppressed && gutter > 0 && layout_.height > height_ + 0.5))
+    layout_width = std::max(1.0, width_ - gutter);
+  const uint64_t document_signature = document_layout_signature(doc);
+  const uint64_t style_signature = styles_layout_signature(styles);
+  const uint64_t scroll_signature = local_scroll_signature(local_scroll_);
+  const bool needs_layout = !has_layout_cache_ ||
+      document_signature != layout_document_signature_ ||
+      style_signature != layout_style_signature_ ||
+      scroll_signature != layout_scroll_signature_ ||
+      resource_generation_ != layout_resource_generation_ ||
+      width_ != cached_viewport_width_ || height_ != cached_layout_height_ ||
+      scroll_ != cached_layout_scroll_ || layout_width != cached_layout_width_;
+  if (needs_layout) {
+    layout_width = width_;
+    if (stable_root_gutter || forced_root_scrollbar)
+      layout_width = std::max(1.0, width_ - gutter);
+    Canvas measure{int(layout_width), int(height_)};
+    layout_ = layout_document(doc, styles, layout_width, height_, resources_, measure,
+                              scroll_, local_scroll_);
+    ++layout_rebuild_count_;
+    // My shell scrollbar is a classic, non-overlay bar on the document edge.
+    // Reserve its width only when document scrolling is active.
+    if (!stable_root_gutter && !forced_root_scrollbar && !root_scrollbar_suppressed &&
+        gutter > 0 && layout_.height > height_ + 0.5) {
+      layout_width = std::max(1.0, width_ - gutter);
+      Canvas narrowed_measure{int(layout_width), int(height_)};
+      layout_ = layout_document(doc, styles, layout_width, height_, resources_,
+                                narrowed_measure, scroll_, local_scroll_);
+      ++layout_rebuild_count_;
+    }
+    layout_document_signature_ = document_signature;
+    layout_style_signature_ = style_signature;
+    layout_scroll_signature_ = scroll_signature;
+    layout_resource_generation_ = resource_generation_;
+    cached_layout_width_ = layout_width;
+    cached_viewport_width_ = width_;
+    cached_layout_height_ = height_;
+    cached_layout_scroll_ = scroll_;
+    has_layout_cache_ = true;
+  }
   content_height_ = layout_.height;
   std::erase_if(local_scroll_, [&](const auto &entry) {
     return !layout_.scroll_containers.count(entry.first);
@@ -1938,6 +2469,12 @@ Json Page::render(double width, double height, double scroll) {
   width_ = next_width;
   height_ = next_height;
   scroll_ = next_scroll;
+  if (js_) {
+    js_->global().properties["innerWidth"] = js::Value(width_);
+    js_->global().properties["innerHeight"] = js::Value(height_);
+    js_->global().properties["devicePixelRatio"] =
+        js::Value(media_environment_.device_pixel_ratio);
+  }
   if (dirty_) rebuild();
   const double clamped_scroll = std::min(scroll_, std::max(0.0, content_height_ - height_));
   if (clamped_scroll != scroll_) {
@@ -1963,6 +2500,7 @@ Json Page::render(double width, double height, double scroll) {
       continue;
     canvas_images_[id] = context.snapshot();
     canvas_revisions_[id] = context.revision;
+    force_full_damage_ = true;
   }
   Json frame = Json::make_object();
   frame.set("tag", "frame");
@@ -2047,7 +2585,72 @@ Json Page::render(double width, double height, double scroll) {
     }
     media_command(node, paint, at);
   }
+  std::vector<DamageSnapshot> current_paint;
+  current_paint.reserve(paint.array.size());
+  for (const Json &command : paint.array)
+    current_paint.push_back({command.dump(),
+        {command.num("x"), command.num("y"), command.num("w"), command.num("h")},
+        command.flag("fixed")});
+  std::vector<DamageSnapshot> damage_regions;
+  const bool viewport_changed = previous_frame_width_ != width_ ||
+      previous_frame_height_ != height_ || previous_frame_scroll_ != scroll_;
+  bool full_damage = force_full_damage_ || viewport_changed ||
+      previous_paint_.size() != current_paint.size();
+  auto add_damage = [&](Rect rect, bool fixed) {
+    const double clip_top = fixed ? 0 : scroll_;
+    const double clip_bottom = fixed ? height_ : scroll_ + height_;
+    const double left = std::max(0.0, rect.x), right = std::min(width_, rect.x + rect.w);
+    const double top = std::max(clip_top, rect.y), bottom = std::min(clip_bottom, rect.y + rect.h);
+    if (right <= left || bottom <= top) return;
+    Rect clipped{left, top, right - left, bottom - top};
+    for (DamageSnapshot &existing : damage_regions) {
+      if (existing.fixed != fixed ||
+          clipped.x > existing.rect.x + existing.rect.w + 2 ||
+          existing.rect.x > clipped.x + clipped.w + 2 ||
+          clipped.y > existing.rect.y + existing.rect.h + 2 ||
+          existing.rect.y > clipped.y + clipped.h + 2)
+        continue;
+      const double x = std::min(existing.rect.x, clipped.x);
+      const double y = std::min(existing.rect.y, clipped.y);
+      const double r = std::max(existing.rect.x + existing.rect.w, clipped.x + clipped.w);
+      const double b = std::max(existing.rect.y + existing.rect.h, clipped.y + clipped.h);
+      existing.rect = {x, y, r - x, b - y};
+      return;
+    }
+    damage_regions.push_back({{}, clipped, fixed});
+  };
+  if (!full_damage) {
+    for (size_t i = 0; i < current_paint.size(); ++i) {
+      if (previous_paint_[i].signature == current_paint[i].signature) continue;
+      add_damage(previous_paint_[i].rect, previous_paint_[i].fixed);
+      add_damage(current_paint[i].rect, current_paint[i].fixed);
+      if (damage_regions.size() > 64) {
+        full_damage = true;
+        break;
+      }
+    }
+  }
+  if (full_damage) {
+    damage_regions.clear();
+    damage_regions.push_back({{}, {0, scroll_, width_, height_}, false});
+  }
   frame.set("paint", std::move(paint));
+  Json damage = Json::make_array();
+  for (const DamageSnapshot &region : damage_regions) {
+    Json item = Json::make_object();
+    item.set("x", region.rect.x);
+    item.set("y", region.rect.y);
+    item.set("w", region.rect.w);
+    item.set("h", region.rect.h);
+    item.set("fixed", region.fixed);
+    damage.array.push_back(std::move(item));
+  }
+  frame.set("damage", std::move(damage));
+  previous_paint_ = std::move(current_paint);
+  previous_frame_width_ = width_;
+  previous_frame_height_ = height_;
+  previous_frame_scroll_ = scroll_;
+  force_full_damage_ = false;
   // The real laid-out box for each element. The paint list is not a layout
   // report: a box with no background paints nothing, so anything that needs a
   // box must read it from here.
@@ -3204,16 +3807,36 @@ void Page::submit_form(int form) {
   base->query = query;
   navigations.push_back(base->href());
 }
+bool Page::animation_pending() const {
+  const double now = double(now_ms());
+  for (const auto &[node, animation] : animations_) {
+    (void)node;
+    if (animation.iterations < 0 || animation.duration_ms <= 0 ||
+        now < animation.start_ms + animation.delay_ms +
+                  animation.duration_ms * animation.iterations)
+      return true;
+  }
+  for (const auto &[key, transition] : transitions_) {
+    (void)key;
+    if (now < transition.start_ms + transition.delay_ms + transition.duration_ms)
+      return true;
+  }
+  return false;
+}
 double Page::next_timer_delay() const {
-  if (js_->timers.empty())
-    return -1;
-  double now = double(now_ms()), best = 86400000;
-  for (auto &t : js_->timers)
-    best = std::min(best, std::max(0.0, t.due - now));
-  return best;
+  double best = js_->timers.empty() ? 86400000.0 : 86400000.0;
+  const double now = double(now_ms());
+  for (const auto &timer : js_->timers)
+    best = std::min(best, std::max(0.0, timer.due - now));
+  if (animation_pending()) best = std::min(best, 16.0);
+  return best >= 86400000.0 ? -1 : best;
 }
 void Page::tick() {
   media_tick();
+  if (animation_pending()) {
+    animation_clock_ms_ = double(now_ms());
+    dirty_ = true;
+  }
   run_due_timers();
 }
 bool Page::run_due_timers() {

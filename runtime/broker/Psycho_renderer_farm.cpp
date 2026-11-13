@@ -169,7 +169,8 @@ bool RendererProcessFarm::navigate(size_t renderer, const std::string &url,
                                    const Host::Fetcher &fetcher, Envelope &reply,
                                    Error &error, Json cookie_state,
                                    Json storage_state, Host::Poster poster,
-                                   RendererProcessClient::BridgeInvoker bridge) {
+                                   RendererProcessClient::BridgeInvoker bridge,
+                                   MediaEnvironment media_environment) {
   std::shared_ptr<Hosted> hosted;
   std::string executable;
   {
@@ -188,7 +189,7 @@ bool RendererProcessFarm::navigate(size_t renderer, const std::string &url,
   }
   if (hosted->client->navigate(url, fetcher, reply, error, std::move(cookie_state),
                                std::move(storage_state), std::move(poster),
-                               std::move(bridge)))
+                               std::move(bridge), media_environment))
     return true;
   if (error.code.rfind("process.pipe.", 0) != 0 &&
       error.code.rfind("process.read.", 0) != 0 &&
