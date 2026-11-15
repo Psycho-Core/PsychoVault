@@ -1054,6 +1054,11 @@ static void apply(Style &s, const std::map<std::string, std::string> &d, double 
   set_bound("max-height", s.max_height, s.max_height_expression, -1, "height");
   if (auto v = get("box-sizing"))
     s.box_sizing = *v;
+  if (auto v = get("object-fit")) {
+    const std::string value = lower(trim(*v));
+    if (value == "fill" || value == "contain" || value == "cover" || value == "none" || value == "scale-down")
+      s.object_fit = value;
+  }
   if (auto v = get("white-space"))
     s.white_space = *v;
   if (auto v = get("text-overflow"))
@@ -1228,7 +1233,7 @@ static std::optional<std::string> initial_css_value(const std::string &property)
       {"font-weight", "normal"}, {"line-height", "normal"}, {"text-align", "left"},
       {"text-decoration", "none"}, {"white-space", "normal"}, {"width", "auto"},
       {"height", "auto"}, {"min-width", "0"}, {"max-width", "none"},
-      {"min-height", "0"}, {"max-height", "none"}, {"box-sizing", "content-box"},
+      {"min-height", "0"}, {"max-height", "none"}, {"box-sizing", "content-box"}, {"object-fit", "fill"},
       {"position", "static"}, {"z-index", "auto"}, {"overflow", "visible"},
       {"overscroll-behavior", "auto"}, {"opacity", "1"},
       {"top", "auto"}, {"right", "auto"}, {"bottom", "auto"}, {"left", "auto"},
@@ -1280,6 +1285,7 @@ static void inherit_style_property(Style &to, const Style &from, const std::stri
   else if (property == "border-color") to.border_color = from.border_color;
   else if (property == "border-radius") to.radius = from.radius;
   else if (property == "box-sizing") to.box_sizing = from.box_sizing;
+  else if (property == "object-fit") to.object_fit = from.object_fit;
   else if (property == "position") to.position = from.position;
   else if (property == "z-index") { to.z_index = from.z_index; to.z_index_auto = from.z_index_auto; }
   else if (property == "overflow") to.overflow = from.overflow;
@@ -1529,6 +1535,7 @@ std::vector<Style> compute_styles(const Document &doc, const std::vector<Stylesh
       style.text_overflow = "clip";
       style.list_item = false;
       style.box_sizing = "content-box";
+      style.object_fit = "fill";
       style.position = "static";
       style.z_index = 0;
       style.z_index_auto = true;

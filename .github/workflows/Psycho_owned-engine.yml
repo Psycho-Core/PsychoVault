@@ -6,6 +6,9 @@ name: Build owned engine
 # docs/Psycho_BUILD-AND-RELEASE.md.
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - arena/d22644c3-psychovault
 permissions:
   contents: read
 
@@ -69,6 +72,16 @@ jobs:
             }
           }
           if ($code -ne 0) { exit $code }
+      - name: Verify reference-derived image contract
+        shell: pwsh
+        run: |
+          python tests/Psycho_p2_contract_tests.py --engine build/pv-engine.exe 2>&1 | Tee-Object build/p2-image-contract.txt
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            $detail = (Get-Content build/p2-image-contract.txt -Raw) -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            Write-Host "::error title=P2 image contract::$detail"
+            exit $code
+          }
       - name: Publish my failing check
         if: failure()
         shell: pwsh

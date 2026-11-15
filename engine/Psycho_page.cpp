@@ -1846,7 +1846,17 @@ void Page::resource(const Resource &res) {
     std::string head(stored.bytes.begin(),
                      stored.bytes.begin() + std::ptrdiff_t(std::min<size_t>(stored.bytes.size(), 512)));
     auto at = head.find("<svg");
-    return at != std::string::npos && head.find("<?xml") != std::string::npos;
+    if (at == std::string::npos ||
+        (at + 4 < head.size() && !std::isspace(static_cast<unsigned char>(head[at + 4])) &&
+         head[at + 4] != '>' && head[at + 4] != '/'))
+      return false;
+    // Standalone SVGs commonly start directly with <svg>, without an XML
+    // declaration. Only accept a leading root (or the existing XML-declared
+    // form), not arbitrary HTML containing an inline svg element.
+    std::string prefix = head.substr(0, at);
+    if (prefix.size() >= 3 && prefix.compare(0, 3, "\xEF\xBB\xBF") == 0)
+      prefix.erase(0, 3);
+    return trim(prefix).empty() || prefix.find("<?xml") != std::string::npos;
   };
   // WebP is a format I have not written a decoder for yet. I say so once per
   // file instead of leaving a silent hole where a picture should be.

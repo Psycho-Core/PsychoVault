@@ -11,7 +11,7 @@ struct Color {
 Color parse_color(std::string_view value);
 struct Style {
   std::string display = "block", font_family = "Segoe UI", text_align = "left", weight = "normal",
-              box_sizing = "content-box", white_space = "normal", text_overflow = "clip", position = "static",
+              box_sizing = "content-box", object_fit = "fill", white_space = "normal", text_overflow = "clip", position = "static",
               overflow = "visible", scrollbar_gutter = "auto", overscroll_behavior = "auto", flex_direction = "row",
               justify_content = "flex-start",
               align_items = "stretch", align_self = "auto", align_content = "stretch",

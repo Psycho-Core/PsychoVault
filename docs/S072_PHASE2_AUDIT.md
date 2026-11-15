@@ -2,7 +2,7 @@
 
 Audit date: 2026-11-01. Audited source: `246ab98974982f8e6137c8d618cb3b3170ffb54d` (S070 merge). S072 is an audit label, not a previously planned implementation step.
 
-**Later update:** the S071 comparison mechanism was added after this audit; see [S071_IMPLEMENTATION.md](S071_IMPLEMENTATION.md). The findings below are preserved as the historical assessment of the audited commit. The broader P2 exit gate remains open.
+**Later update:** the S071 comparison mechanism was added after this audit; see [S071_IMPLEMENTATION.md](S071_IMPLEMENTATION.md). The [image-contract follow-up](Psycho_P2_IMAGE_CONTRACT.md) adds limited independent assertions and fixes two image gaps. The findings below are preserved as the historical assessment of the audited commit. The broader P2 exit gate remains open.
 
 ## Verdict
 

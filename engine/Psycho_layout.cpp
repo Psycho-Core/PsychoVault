@@ -1600,18 +1600,45 @@ struct Layout {
           const double outer_y = cursor + cs.margin[0];
           const double outer_w = iw + horizontal_extra;
           const double outer_h = ih + vertical_extra;
-          out.paint.push_back({PaintCommand::Kind::Image,
-                               {outer_x + cs.border[3] + cs.padding[3],
-                                outer_y + cs.border[0] + cs.padding[0], iw, ih},
-                               0,
-                               child.attribute("alt"),
-                               cs.font_size,
-                               0,
-                               false,
-                               c,
-                               key, {}, {}});
-          out.boxes[c] = {outer_x, outer_y, outer_w, outer_h};
-          cursor += outer_h + cs.margin[0] + cs.margin[2];          return;
+          const Rect outer{outer_x, outer_y, outer_w, outer_h};
+          const Rect content{outer_x + cs.border[3] + cs.padding[3],
+                             outer_y + cs.border[0] + cs.padding[0], iw, ih};
+          // Replaced elements still paint their CSS box behind the image. The
+          // existing border model has one color; paint each specified side.
+          if (!cs.background.transparent)
+            out.paint.push_back({PaintCommand::Kind::Rect, outer, cs.background.bgra(), {}, 0, 0, false, c});
+          if (cs.border[0] > 0)
+            out.paint.push_back({PaintCommand::Kind::Rect, {outer_x, outer_y, outer_w, cs.border[0]}, cs.border_color.bgra(), {}, 0, 0, false, c});
+          if (cs.border[2] > 0)
+            out.paint.push_back({PaintCommand::Kind::Rect, {outer_x, outer_y + outer_h - cs.border[2], outer_w, cs.border[2]}, cs.border_color.bgra(), {}, 0, 0, false, c});
+          if (cs.border[3] > 0)
+            out.paint.push_back({PaintCommand::Kind::Rect, {outer_x, outer_y, cs.border[3], outer_h}, cs.border_color.bgra(), {}, 0, 0, false, c});
+          if (cs.border[1] > 0)
+            out.paint.push_back({PaintCommand::Kind::Rect, {outer_x + outer_w - cs.border[1], outer_y, cs.border[1], outer_h}, cs.border_color.bgra(), {}, 0, 0, false, c});
+
+          Rect image_rect = content;
+          const bool fit_intrinsic = natural_w > 0 && natural_h > 0 && iw > 0 && ih > 0 && cs.object_fit != "fill";
+          if (fit_intrinsic) {
+            double scale = 1;
+            if (cs.object_fit == "contain" || cs.object_fit == "scale-down")
+              scale = std::min(iw / natural_w, ih / natural_h);
+            else if (cs.object_fit == "cover")
+              scale = std::max(iw / natural_w, ih / natural_h);
+            if (cs.object_fit == "scale-down") scale = std::min(1.0, scale);
+            image_rect.w = natural_w * scale;
+            image_rect.h = natural_h * scale;
+            // CSS's initial object-position is 50% 50%.
+            image_rect.x += (iw - image_rect.w) / 2;
+            image_rect.y += (ih - image_rect.h) / 2;
+            out.paint.push_back({PaintCommand::Kind::PushClip, content, 0, {}, 0, 0, false, c});
+          }
+          out.paint.push_back({PaintCommand::Kind::Image, image_rect, 0, child.attribute("alt"),
+                               cs.font_size, 0, false, c, key, {}, {}});
+          if (fit_intrinsic)
+            out.paint.push_back({PaintCommand::Kind::PopClip, content, 0, {}, 0, 0, false, c});
+          out.boxes[c] = outer;
+          cursor += outer_h + cs.margin[0] + cs.margin[2];
+          return;
         }
         if (child.name == "canvas") {
           flush();
@@ -1742,8 +1769,11 @@ struct Layout {
         const auto &cs = child_style;
         if (cs.display == "none" || positioned(cs))
           continue;
-        bool is_block = doc.nodes[c].type == Node::Type::Element && cs.display != "inline" &&
-                        cs.display != "inline-block" && c != 0;
+        // Images use the replaced-element sizing and paint path even when
+        // display:block; the generic block path otherwise paints an empty box.
+        // This path still uses the engine's simplified vertical image flow.
+        bool is_block = doc.nodes[c].type == Node::Type::Element && doc.nodes[c].name != "img" &&
+                        cs.display != "inline" && cs.display != "inline-block" && c != 0;
         if (is_block) {
           flush();
           // Positive margins collapse to the largest; negative margins add to
