@@ -16,6 +16,17 @@ paste and composition still operate on the real value. Native tests cover a
 non-BMP character, selection, copy/cut, editing and composition, while frame
 contracts check inline and flex inputs and a visible placeholder.
 
+## Validation
+
+Linux GCC: 1,123 engine / 2,970 total native checks, 5/5 DOM/layout
+contracts, 24/24 hand-specified goldens, 18/18 owned goldens, and the existing
+image, responsive-image, focus and harness tests passed. Windows x64
+[run 43720117377](https://github.com/Psycho-Core/PsychoVault/actions/runs/43720117377)
+passed the build, native tests, both golden suites and all contract stages on
+commit `0b42859`. This automated run is not proof of physical IME or OS clipboard
+interaction. Its narrowly scoped push trigger was removed afterwards; it does
+not establish permission to dispatch the parked workflow manually.
+
 This is a bounded fix, not complete form-control or password conformance. It
 does not implement grapheme-cluster masking, native password reveal features,
 horizontal text scrolling, complete control appearance, validation, clipboard
