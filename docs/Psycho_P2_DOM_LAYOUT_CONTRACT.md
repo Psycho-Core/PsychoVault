@@ -17,4 +17,6 @@ This is a targeted P2 improvement, **not Phase 2 completion**. S050 diagnostics 
 
 GCC: 1,083 engine / 2,930 total checks; DOM/layout contracts 3/3; image contracts 4/4; golden self-tests 6/6; reference-diff self-tests 8/8; owned goldens 18/18; historical S050 marker smokes 5/5. Owned goldens are regression checks, not independent proof of correctness or complete S052–S069 coverage. Linux lacks the Windows text raster backend.
 
+Windows [run 43704602323](https://github.com/Psycho-Core/PsychoVault/actions/runs/43704602323) passed on commit `a55dcd2`: MSVC builds, native tests, owned goldens and their self-tests, image and DOM/layout contracts, automated native smoke and packaging. A temporary push trigger scoped to this branch started the run and was subsequently removed; this does not establish manual-dispatch permission.
+
 The P2 exit gate remains open: broad feature-set golden coverage and independently verified representative contracts are incomplete; physical Windows interaction, IME, multi-monitor DPI and performance are not demonstrated by the headless tests. S071's comparison harness does not imply screenshot parity.
