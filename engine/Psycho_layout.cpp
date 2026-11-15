@@ -201,6 +201,13 @@ struct Layout {
       const std::string attr = trim(node.attribute("width"));
       if (!attr.empty()) content = std::max(0.0, number_of(attr, content));
     }
+    // Checkable controls have an intrinsic content box even when they have no
+    // value or placeholder. Flex/grid measurement otherwise collapses them to
+    // their padding and border, leaving no room for the checked indicator.
+    const std::string input_type = lower(node.attribute("type", "text"));
+    if (content < 0 && node.name == "input" &&
+        (input_type == "checkbox" || input_type == "radio"))
+      content = 14;
     if (content < 0) {
       std::string text = doc.text_content(id);
       if (node.name == "input" || node.name == "textarea" || node.name == "select") {
@@ -1832,7 +1839,10 @@ struct Layout {
         (input_type == "text" || input_type == "search" || input_type == "url" ||
          input_type == "tel" || input_type == "email" || input_type == "password" ||
          input_type == "number");
+    const bool block_checkable = n.name == "input" &&
+        (input_type == "checkbox" || input_type == "radio");
     if (block_text_input) content_h = std::max(content_h, s.font_size);
+    if (block_checkable) content_h = std::max(content_h, 14.0);
     const double vertical_extra = s.padding[0] + s.padding[2] + s.border[0] + s.border[2];
     double min_height = std::max(0.0, resolved_bound(s, s.min_height_expression, s.min_height,
                                                     avail_h, 0, "height"));
@@ -1861,6 +1871,22 @@ struct Layout {
       out.paint.push_back({PaintCommand::Kind::Text, content_clip, s.color.bgra(), label,
                            s.font_size, 0, s.bold, id});
       out.paint.push_back({PaintCommand::Kind::PopClip, content_clip, 0, {}, 0, 0, false, id});
+    }
+    // Blockified controls (including flex, grid and positioned items) bypass
+    // the inline-control painter. Paint a geometric state indicator so it is
+    // visible even on platforms without a text rasterizer. Respect authored
+    // content dimensions, color, and appearance:none; the box itself is still
+    // painted by the normal CSS background and border machinery.
+    std::string checked_value;
+    auto appearance = s.raw.find("appearance");
+    if (block_checkable && n.get_attribute("checked", checked_value) && w > 0 && h > 0 &&
+        (appearance == s.raw.end() || lower(trim(appearance->second)) != "none")) {
+      const double side = std::min(w, h) * 0.55;
+      PaintCommand mark{PaintCommand::Kind::Rect,
+                        {inner_x + (w - side) / 2, inner_y + (h - side) / 2, side, side},
+                        s.color.bgra(), {}, 0, 0, false, id};
+      if (input_type == "radio") mark.radius = side / 2;
+      out.paint.push_back(std::move(mark));
     }
     double border_box = h + vertical_extra;
     double local_scroll = 0;

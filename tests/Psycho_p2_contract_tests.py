@@ -134,6 +134,24 @@ class P2ImageContractTests(unittest.TestCase):
                 if x != 0 or y >= 2:
                     self.assertEqual(pixels[(y * 8 + x) * 4:(y * 8 + x + 1) * 4], WHITE)
 
+    def test_flex_checkable_raster_tracks_click_state(self):
+        # Inspect actual pixels, not just :checked styling or DOM state. No
+        # text glyphs or platform-specific native theme are involved here.
+        def pixel(pixels, x, y):
+            return pixels[(y * 100 + x) * 4:(y * 100 + x + 1) * 4]
+        _, before = render("Psycho_flex_checkable.html", 100, 40)
+        _, after = render("Psycho_flex_checkable.html", 100, 40, ("click:10,10",))
+        _, again = render("Psycho_flex_checkable.html", 100, 40,
+                          ("click:10,10", "click:10,10", "click:70,10"))
+        ink = bytes((18, 52, 86, 255))
+        self.assertEqual(pixel(before, 10, 10), WHITE)
+        self.assertEqual(pixel(before, 30, 10), ink)
+        self.assertEqual(pixel(before, 50, 10), ink)
+        self.assertEqual(pixel(before, 70, 10), ink)
+        self.assertEqual(pixel(after, 10, 10), ink)
+        self.assertEqual(pixel(again, 10, 10), WHITE)
+        self.assertEqual(pixel(again, 70, 10), ink)
+
     def test_inherit_unset_initial_invalid_and_live_mutation(self):
         before, _ = render("Psycho_object_fit_mutation.html", 120, 220)
         after, _ = render("Psycho_object_fit_mutation.html", 120, 220, ("click:10,10",))
