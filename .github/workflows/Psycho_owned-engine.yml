@@ -79,6 +79,16 @@ jobs:
             Write-Host "::error title=P2 image contract::$detail"
             exit $code
           }
+      - name: Verify responsive image contract
+        shell: pwsh
+        run: |
+          python tests/Psycho_p2_responsive_image_tests.py --engine build/pv-engine.exe 2>&1 | Tee-Object build/p2-responsive-image.txt
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            $detail = (Get-Content build/p2-responsive-image.txt -Raw) -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            Write-Host "::error title=P2 responsive image contract::$detail"
+            exit $code
+          }
       - name: Verify reference-derived DOM and layout contracts
         shell: pwsh
         run: |

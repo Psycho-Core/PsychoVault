@@ -52,7 +52,8 @@ struct LayoutResult {
 LayoutResult layout_document(const Document &doc, const std::vector<Style> &styles, double width,
                              double height, const std::map<std::string, Resource> &resources,
                              Canvas &measure, double scroll_y = 0,
-                             const std::unordered_map<int, double> &scroll_offsets = {});
+                             const std::unordered_map<int, double> &scroll_offsets = {},
+                             const std::unordered_map<int, ImageSource> &image_sources = {});
 void paint_commands(Canvas &canvas, const std::vector<PaintCommand> &commands, double scroll_y,
                     const std::map<std::string, Image> &images);
 // Find in page. I search the text my layout actually paints, so a highlight

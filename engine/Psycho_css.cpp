@@ -1476,6 +1476,94 @@ static bool media_matches(const std::string &media, double viewport_width,
   }
   return false;
 }
+ImageSource select_image_source(const Node &node, double viewport_width, double viewport_height,
+                                const MediaEnvironment &environment) {
+  struct Candidate { std::string url; double descriptor; bool width; };
+  std::vector<Candidate> candidates;
+  const std::string src = trim(node.attribute("src"));
+  const std::string srcset = node.attribute("srcset");
+  // Avoid unbounded per-frame parsing of hostile attributes.
+  if (srcset.size() > 65536 || lower(srcset).find("data:") != std::string::npos) return {src, 1};
+  // This bounded subset accepts comma-separated ordinary URLs with one x or w
+  // descriptor, not the special comma/whitespace tokenization of data URLs.
+  // Invalid candidates are ignored rather than turning into requests.
+  for (const std::string &part : split(srcset, ',')) {
+    std::istringstream stream(trim(part));
+    std::string url, descriptor, extra;
+    if (!(stream >> url) || url.rfind("data:", 0) == 0) continue;
+    stream >> descriptor;
+    if (stream >> extra) continue;
+    double value = 1;
+    bool width = false;
+    if (!descriptor.empty()) {
+      const char unit = descriptor.back();
+      if (unit != 'x' && unit != 'w') continue;
+      const std::string number = descriptor.substr(0, descriptor.size() - 1);
+      try {
+        size_t used = 0;
+        value = std::stod(number, &used);
+        if (used != number.size() || !std::isfinite(value) || value <= 0) continue;
+      } catch (...) { continue; }
+      width = unit == 'w';
+      if (width && (number.empty() || number.find_first_not_of("0123456789") != std::string::npos)) continue;
+    }
+    if (!candidates.empty() && candidates.front().width != width) continue;
+    bool duplicate = false;
+    for (const auto &candidate : candidates)
+      if (candidate.descriptor == value) duplicate = true;
+    if (!duplicate) candidates.push_back({url, value, width});
+    if (candidates.size() >= 256) break;
+  }
+  if (candidates.empty()) return {src, 1};
+  const bool width_descriptors = candidates.front().width;
+  if (!width_descriptors && !src.empty()) {
+    bool has_one = false;
+    for (const auto &candidate : candidates) if (candidate.descriptor == 1) has_one = true;
+    if (!has_one) candidates.push_back({src, 1, false});
+  }
+  double source_size = viewport_width; // missing sizes defaults to 100vw
+  if (width_descriptors) {
+    std::string sizes = node.attribute("sizes");
+    if (sizes.size() > 65536) sizes.clear();
+    size_t start = 0;
+    int depth = 0;
+    for (size_t i = 0; i <= sizes.size(); ++i) {
+      const char c = i < sizes.size() ? sizes[i] : ',';
+      if (c == '(') ++depth;
+      else if (c == ')') --depth;
+      if (c != ',' || depth != 0) continue;
+      const std::string item = trim(sizes.substr(start, i - start));
+      start = i + 1;
+      std::string media, length = item;
+      if (!item.empty() && item[0] == '(') {
+        int nesting = 0;
+        size_t end = 0;
+        for (; end < item.size(); ++end) {
+          if (item[end] == '(') ++nesting;
+          else if (item[end] == ')' && --nesting == 0) break;
+        }
+        if (end == item.size()) continue;
+        media = item.substr(0, end + 1);
+        length = trim(item.substr(end + 1));
+      }
+      if (length.find('%') != std::string::npos || !media_matches(media, viewport_width, viewport_height, environment)) continue;
+      const double value = css_length(length, viewport_width, 16, 16, viewport_width, "width", -1, viewport_height);
+      if (std::isfinite(value) && value > 0) { source_size = value; break; }
+    }
+  }
+  const double target = std::max(0.01, environment.device_pixel_ratio);
+  const Candidate *best = nullptr;
+  double best_density = 0;
+  for (const auto &candidate : candidates) {
+    const double density = width_descriptors ? candidate.descriptor / source_size : candidate.descriptor;
+    if (!best || (best_density < target && density > best_density) ||
+        (density >= target && (best_density < target || density < best_density))) {
+      best = &candidate;
+      best_density = density;
+    }
+  }
+  return {best->url, best_density};
+}
 std::vector<Style> compute_styles(const Document &doc, const std::vector<Stylesheet> &sheets,
                                   double viewport, double viewport_height,
                                   const SelectorState *selector_state,
