@@ -47,14 +47,20 @@ struct Layout {
   Canvas &measure;
   const std::map<std::string, Resource> &resources;
   const std::unordered_map<int, double> &scroll_offsets;
+  const std::unordered_map<int, ImageSource> &image_sources;
   LayoutResult out;
   double viewport_width;
   double viewport_height = 720, scroll_y = 0;
   Layout(const Document &d, const std::vector<Style> &s, Canvas &c,
          const std::map<std::string, Resource> &r, double w, double scroll,
-         const std::unordered_map<int, double> &local_scrolls)
+         const std::unordered_map<int, double> &local_scrolls,
+         const std::unordered_map<int, ImageSource> &selected_images)
       : doc(d), styles(s), measure(c), resources(r), scroll_offsets(local_scrolls),
-        viewport_width(w), scroll_y(scroll) {}
+        image_sources(selected_images), viewport_width(w), scroll_y(scroll) {}
+  ImageSource image_source(const Node &node) const {
+    auto found = image_sources.find(node.id);
+    return found == image_sources.end() ? ImageSource{node.attribute("src"), 1} : found->second;
+  }
   double outer_extra(const Style &s) {
     return s.margin[1] + s.margin[3] + s.padding[1] + s.padding[3] + s.border[1] + s.border[3];
   }
@@ -187,10 +193,11 @@ struct Layout {
       content = std::max(0.0, specified - style.padding[1] - style.padding[3] -
                                     style.border[1] - style.border[3]);
     if (content < 0 && node.name == "img") {
-      auto url = resolve_url(doc.url, node.attribute("src"));
+      const ImageSource selected = image_source(node);
+      auto url = resolve_url(doc.url, selected.url);
       auto image = url ? resources.find(url->href()) : resources.end();
       content = image != resources.end() && image->second.ok && image->second.image_width > 0
-                    ? image->second.image_width : 120;
+                    ? image->second.image_width / selected.density : 120;
       const std::string attr = trim(node.attribute("width"));
       if (!attr.empty()) content = std::max(0.0, number_of(attr, content));
     }
@@ -1536,14 +1543,14 @@ struct Layout {
         }
         if (child.name == "img") {
           flush();
-          std::string source = child.attribute("src");
-          auto resolved = resolve_url(doc.url, source);
-          std::string key = resolved ? resolved->href() : source;
+          const ImageSource selected = image_source(child);
+          auto resolved = resolve_url(doc.url, selected.url);
+          std::string key = resolved ? resolved->href() : selected.url;
           auto found = resources.find(key);
           double natural_w = 0, natural_h = 0;
           if (found != resources.end() && found->second.ok && found->second.image_width > 0) {
-            natural_w = found->second.image_width;
-            natural_h = found->second.image_height;
+            natural_w = found->second.image_width / selected.density;
+            natural_h = found->second.image_height / selected.density;
           }
           auto attr_length = [&](const char *name) -> double {
             auto value = trim(child.attribute(name));
@@ -1949,8 +1956,9 @@ struct Layout {
 LayoutResult layout_document(const Document &doc, const std::vector<Style> &styles, double width,
                              double height, const std::map<std::string, Resource> &resources,
                              Canvas &measure, double scroll_y,
-                             const std::unordered_map<int, double> &scroll_offsets) {
-  Layout l(doc, styles, measure, resources, width, scroll_y, scroll_offsets);
+                             const std::unordered_map<int, double> &scroll_offsets,
+                             const std::unordered_map<int, ImageSource> &image_sources) {
+  Layout l(doc, styles, measure, resources, width, scroll_y, scroll_offsets, image_sources);
   // The canvas is white unless the body asks for something else. A missing
   // background is transparent, not black.
   const Style &body_style = styles[doc.body];

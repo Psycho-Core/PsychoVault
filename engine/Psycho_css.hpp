@@ -110,5 +110,10 @@ std::vector<Style> compute_styles(const Document &doc, const std::vector<Stylesh
 double css_length(const std::string &value, double parent, double font_size, double root_font,
                   double viewport_width, const std::string &property, double fallback,
                   double viewport_height = -1);
+// A focused responsive image candidate selection for img src/srcset/sizes.
+// Density converts decoded pixel dimensions into intrinsic CSS pixels.
+struct ImageSource { std::string url; double density = 1; };
+ImageSource select_image_source(const Node &node, double viewport_width, double viewport_height,
+                                const MediaEnvironment &environment);
 int specificity(std::string_view selector);
 } // namespace pv

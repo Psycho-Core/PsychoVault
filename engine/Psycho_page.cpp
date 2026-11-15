@@ -269,8 +269,9 @@ public:
       return out.valid();
     }
     if (n.name == "img") {
-      auto resolved = resolve_url(page.doc.url, n.attribute("src"));
-      std::string key = resolved ? resolved->href() : n.attribute("src");
+      const auto source = select_image_source(n, page.width_, page.height_, page.media_environment_);
+      auto resolved = resolve_url(page.doc.url, source.url);
+      std::string key = resolved ? resolved->href() : source.url;
       auto found = page.images_.find(key);
       if (found == page.images_.end() || !found->second.valid())
         return false;
@@ -1038,6 +1039,8 @@ public:
     }
     if (name == "href" || name == "src")
       return js::Value(n.attribute(name));
+    if (n.name == "img" && (name == "srcset" || name == "srcSet" || name == "sizes"))
+      return js::Value(n.attribute(name == "srcSet" ? "srcset" : name));
     if (n.name == "canvas" && (name == "width" || name == "height")) {
       auto it = page.canvases_.find(id);
       int bitmap = name == "width" ? (it == page.canvases_.end() ? 300 : it->second.width())
@@ -1404,8 +1407,9 @@ public:
         return true;
       }
     }
-    if (name == "href" || name == "src") {
-      n.set_attribute(name, value.to_string());
+    if (name == "href" || name == "src" ||
+        (n.name == "img" && (name == "srcset" || name == "srcSet" || name == "sizes"))) {
+      n.set_attribute(name == "srcSet" ? "srcset" : name, value.to_string());
       page.dirty_ = true;
       return true;
     }
@@ -1536,6 +1540,9 @@ void Page::set_viewport_environment(double width, double height,
   media_environment_.forced_colors = valid_preference(
       environment.forced_colors, {"none", "active"}, "none");
   dirty_ = true;
+  // A DPR-only change can select a different responsive image even when no
+  // CSS media rule changes, so cached layout/resource references are stale.
+  has_layout_cache_ = false;
   if (js_) {
     js_->global().properties["innerWidth"] = js::Value(width_);
     js_->global().properties["innerHeight"] = js::Value(height_);
@@ -1819,6 +1826,7 @@ void Page::install_media() {
   js_->global().properties["URL"] = url;
 }
 void Page::request(std::string input, ResourceType type) {
+  if (trim(input).empty()) return;
   auto u = resolve_url(doc.url, input);
   const bool internal = u && u->scheme == "psychovault" && !u->host.empty();
   if (!u || (!u->network() && !internal))
@@ -1961,7 +1969,7 @@ void Page::run_scripts() {
       // Lazy images are queued from their laid-out viewport box in render().
       // Eager images retain the usual load-time request behavior.
       if (lower(n.attribute("loading")) != "lazy")
-        request(n.attribute("src"), ResourceType::Image);
+        request(select_image_source(n, width_, height_, media_environment_).url, ResourceType::Image);
     }
     else if (n.name == "video" || n.name == "audio") {
       if (!n.attribute("src").empty())
@@ -2425,6 +2433,14 @@ void Page::rebuild() {
     apply_style_overrides(styles[size_t(node)], overrides, width_, height_);
   }
   computed_styles_ = styles;
+  std::unordered_map<int, ImageSource> image_sources;
+  for (const Node &node : doc.nodes) {
+    if (node.type != Node::Type::Element || node.name != "img") continue;
+    const auto source = select_image_source(node, width_, height_, media_environment_);
+    image_sources.emplace(node.id, source);
+    if (lower(node.attribute("loading")) != "lazy")
+      request(source.url, ResourceType::Image);
+  }
   for (const Style &style : styles)
     for (const std::string &layer : style.background_layers) {
       const std::string lowered_layer = lower(layer);
@@ -2472,7 +2488,7 @@ void Page::rebuild() {
       layout_width = std::max(1.0, width_ - gutter);
     Canvas measure{int(layout_width), int(height_)};
     layout_ = layout_document(doc, styles, layout_width, height_, resources_, measure,
-                              scroll_, local_scroll_);
+                              scroll_, local_scroll_, image_sources);
     ++layout_rebuild_count_;
     // My shell scrollbar is a classic, non-overlay bar on the document edge.
     // Reserve its width only when document scrolling is active.
@@ -2481,7 +2497,7 @@ void Page::rebuild() {
       layout_width = std::max(1.0, width_ - gutter);
       Canvas narrowed_measure{int(layout_width), int(height_)};
       layout_ = layout_document(doc, styles, layout_width, height_, resources_,
-                                narrowed_measure, scroll_, local_scroll_);
+                                narrowed_measure, scroll_, local_scroll_, image_sources);
       ++layout_rebuild_count_;
     }
     layout_document_signature_ = document_signature;
@@ -2532,7 +2548,7 @@ Json Page::render(double width, double height, double scroll) {
     auto box = layout_.boxes.find(node.id);
     if (box != layout_.boxes.end() && box->second.y + box->second.h >= scroll_ - height_ &&
         box->second.y <= scroll_ + 2 * height_)
-      request(node.attribute("src"), ResourceType::Image);
+      request(select_image_source(node, width_, height_, media_environment_).url, ResourceType::Image);
   }
   // I only copy pixels for a canvas that has been drawn on since the last frame.
   for (auto &[id, context] : canvases_) {

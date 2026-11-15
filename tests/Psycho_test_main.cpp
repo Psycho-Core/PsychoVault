@@ -2349,6 +2349,80 @@ int main() {
     CHECK(lazy_page.requests[0].url == "https://local.test/later.png");
     CHECK(lazy_page.requests[0].type == ResourceType::Image);
   }
+  // Responsive candidates must agree across selection, requests and paint;
+  // intrinsic size is the decoded size divided by the selected density.
+  {
+    Document document;
+    document.parse("<img id=i src='fallback.png' srcset='one.png 1x, two.png 2x, three.png 3x'>");
+    Node &node = document.nodes[document.by_id("i")];
+    MediaEnvironment environment;
+    environment.device_pixel_ratio = 1.5;
+    auto selected = select_image_source(node, 800, 600, environment);
+    CHECK(selected.url == "two.png" && close_to(selected.density, 2));
+    environment.device_pixel_ratio = 4;
+    CHECK(select_image_source(node, 800, 600, environment).url == "three.png");
+    node.set_attribute("srcset", "two.png 2x, malformed.png 0x, bad.png 12z");
+    environment.device_pixel_ratio = 1;
+    CHECK(select_image_source(node, 800, 600, environment).url == "fallback.png");
+    node.set_attribute("srcset", "small.png 400w, medium.png 800w, large.png 1600w");
+    node.set_attribute("sizes", "(max-width: 600px) 50vw, 400px");
+    selected = select_image_source(node, 600, 600, environment);
+    CHECK(selected.url == "small.png" && close_to(selected.density, 400.0 / 300.0));
+    environment.device_pixel_ratio = 2;
+    CHECK(select_image_source(node, 600, 600, environment).url == "medium.png");
+    CHECK(select_image_source(node, 1000, 600, environment).url == "medium.png");
+    node.set_attribute("sizes", "(max-width: 600px) 50vw, calc(50vw - 100px)");
+    CHECK(select_image_source(node, 1000, 600, environment).url == "medium.png");
+    node.set_attribute("srcset", "data:image/png;base64,AAAA 2x");
+    CHECK(select_image_source(node, 800, 600, environment).url == "fallback.png");
+
+    Page responsive;
+    responsive.set_viewport_environment(100, 100, environment);
+    responsive.load(*parse_url("https://local.test/"),
+      "<body style='margin:0'><img id=i src='one.png' srcset='two.png 2x'>"
+      "<button id=b>change</button><script>document.getElementById('b').addEventListener('click',"
+      "function(){document.getElementById('i').srcset='three.png 3x';});</script>");
+    CHECK(responsive.requests.size() == 1 && responsive.requests[0].url == "https://local.test/two.png");
+    Resource image;
+    image.url = "https://local.test/two.png";
+    image.mime = "image/png";
+    image.bytes.assign(fixtures::rgba_filters.begin(), fixtures::rgba_filters.end());
+    responsive.resource(image);
+    auto frame = responsive.render(100, 100, 0);
+    bool painted = false;
+    for (const auto &command : frame.at("paint").array)
+      if (int(command.num("kind")) == int(PaintCommand::Kind::Image) &&
+          command.str("url") == image.url && close_to(command.num("w"), 1.5) &&
+          close_to(command.num("h"), 2.5)) painted = true;
+    CHECK(painted);
+    // Clicking the button mutates srcset; the next render requests its new candidate.
+    const int button = responsive.doc.by_id("b");
+    for (const auto &box : frame.at("boxes").array)
+      if (int(box.num("node", -1)) == button)
+        responsive.click(box.num("x") + 2, box.num("y") + 2);
+    responsive.render(100, 100, 0);
+    CHECK(responsive.requests.size() >= 2 && responsive.requests.back().url == "https://local.test/three.png");
+    environment.device_pixel_ratio = 1;
+    responsive.set_viewport_environment(100, 100, environment);
+    responsive.render(100, 100, 0);
+    CHECK(responsive.requests.back().url == "https://local.test/one.png");
+
+    Page lazy_responsive;
+    environment.device_pixel_ratio = 2;
+    lazy_responsive.set_viewport_environment(100, 100, environment);
+    lazy_responsive.load(*parse_url("https://local.test/"),
+      "<body style='margin:0'><div style='height:700px'></div>"
+      "<img loading=lazy src='one.png' srcset='two.png 2x'></body>");
+    CHECK(lazy_responsive.requests.empty());
+    lazy_responsive.render(100, 100, 0);
+    CHECK(lazy_responsive.requests.empty());
+    lazy_responsive.render(100, 100, 600);
+    CHECK(lazy_responsive.requests.size() == 1 && lazy_responsive.requests[0].url == "https://local.test/two.png");
+    Page empty_source;
+    empty_source.load(*parse_url("https://local.test/"), "<img>");
+    empty_source.render(100, 100, 0);
+    CHECK(empty_source.requests.empty());
+  }
   {
     Page image_page;
     image_page.load(
