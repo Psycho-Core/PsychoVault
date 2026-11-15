@@ -8,7 +8,7 @@ int main(int argc, char **argv) {
     int width = 1000, height = 700;
     double scroll = 0;
     MediaEnvironment environment;
-    std::vector<std::string> actions;
+    std::vector<std::string> actions, inspect_selectors;
     std::map<std::string, Resource> resources;
     for (int i = 1; i < argc; ++i) {
       std::string a = argv[i];
@@ -33,6 +33,8 @@ int main(int argc, char **argv) {
         environment.prefers_reduced_motion = "reduce";
       else if (a == "--action")
         actions.push_back(next());
+      else if (a == "--inspect")
+        inspect_selectors.push_back(next());
       else if (a == "--resource") {
         auto spec = next();
         auto eq = spec.find('=');
@@ -47,7 +49,8 @@ int main(int argc, char **argv) {
       } else if (a == "--help") {
         std::cout << "PsychoVault owned engine renderer\n--input FILE --url "
                      "URL --width N --height N --out PNG --resource URL=FILE\n"
-                     "--scroll N --dpr N --reduced-motion --action hover:X,Y|click:X,Y|wheel:X,Y,DELTA|key:KEY|text:TEXT|render\n";
+                     "--scroll N --dpr N --reduced-motion --action hover:X,Y|click:X,Y|wheel:X,Y,DELTA|key:KEY|text:TEXT|render\n"
+                     "--inspect SELECTOR (repeatable; reports first matched element and its layout box)\n";
         return 0;
       } else if (a == "--input")
         input = next();
@@ -101,6 +104,31 @@ int main(int argc, char **argv) {
       } else throw std::runtime_error("unknown action: " + action);
     }
     auto frame = page.render(width, height, scroll);
+    if (!inspect_selectors.empty()) {
+      Json inspected = Json::make_array();
+      for (const auto &selector : inspect_selectors) {
+        const int node = page.doc.query_one(selector);
+        Json item = Json::make_object();
+        item.set("selector", selector);
+        item.set("found", node >= 0);
+        if (node >= 0) {
+          item.set("node", node);
+          item.set("tag", page.doc.nodes[node].name);
+          item.set("text", page.doc.text_content(node));
+          item.set("value", page.doc.nodes[node].attribute("value"));
+          bool has_box = false;
+          for (const auto &box : frame.at("boxes").array)
+            if (int(box.num("node", -1)) == node) {
+              item.set("box", box);
+              has_box = true;
+              break;
+            }
+          item.set("hasBox", has_box);
+        }
+        inspected.array.push_back(std::move(item));
+      }
+      frame.set("inspected", std::move(inspected));
+    }
     Canvas canvas(width, height, 0xffffffff);
     std::vector<PaintCommand> commands;
     for (auto &j : frame.at("paint").array) {
