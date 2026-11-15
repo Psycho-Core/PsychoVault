@@ -35,6 +35,9 @@ struct Document {
   void parse_fragment(int parent, std::string_view html);
 };
 bool is_void(std::string_view tag);
+// Render password text as one bullet per Unicode scalar; retain the underlying
+// value for editing and DOM APIs. This is not full grapheme-cluster handling.
+std::string control_display_value(const Node &node, std::string_view value);
 struct SelectorState {
   int hovered = -1, focused = -1, active = -1;
   bool focus_visible = true;

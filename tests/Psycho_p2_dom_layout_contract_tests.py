@@ -13,7 +13,7 @@ FIXTURES = ROOT / "tests/fixtures/p2"
 ENGINE = ROOT / "build" / ("pv-engine.exe" if sys.platform == "win32" else "pv-engine")
 
 
-def inspect(fixture, selectors, actions=(), resources=()):
+def render_frame(fixture, selectors, actions=(), resources=()):
     cmd = [str(ENGINE), "--input", str(FIXTURES / fixture), "--url", "https://s050.test/" + fixture,
            "--width", "1396", "--height", "834"]
     for selector in selectors:
@@ -25,8 +25,12 @@ def inspect(fixture, selectors, actions=(), resources=()):
     proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=60)
     if proc.returncode or proc.stderr.strip():
         raise AssertionError(f"engine exit {proc.returncode}; diagnostics: {proc.stderr}")
-    result = json.loads(proc.stdout)
-    return {item["selector"]: item for item in result["inspected"]}
+    return json.loads(proc.stdout)
+
+
+def inspect(fixture, selectors, actions=(), resources=()):
+    frame = render_frame(fixture, selectors, actions, resources)
+    return {item["selector"]: item for item in frame["inspected"]}
 
 
 def box(items, selector):
@@ -68,6 +72,39 @@ class DomLayoutContractTests(unittest.TestCase):
         self.assertEqual(items["#target"]["text"], "Initial target marker")
         self.assertEqual(items["#mutated"]["text"], "External script mutation marker")
         self.assertGreater(mutation["y"], target["y"])
+
+    def test_original_text_controls_flex_input_paints_and_edits_value(self):
+        selectors = ["#address"]
+        initial = render_frame("text-controls.html", selectors)
+        item = initial["inspected"][0]
+        self.assertTrue(item["found"] and item["hasBox"])
+        bounds = item["box"]
+        self.assertGreater(bounds["h"], 14)  # no longer only the padding and borders
+        def text_runs(frame, node):
+            return [c["text"] for c in frame["paint"] if c["kind"] == 2 and c["node"] == node]
+        self.assertEqual(text_runs(initial, item["node"]), ["https://example.test/"])
+        x, y = bounds["x"] + 2, bounds["y"] + bounds["h"] / 2
+        updated = render_frame("text-controls.html", selectors,
+                               actions=(f"click:{x},{y}", "key:End", "text:X"))
+        self.assertEqual(text_runs(updated, item["node"]), ["https://example.test/X"])
+        self.assertEqual(updated["inspected"][0]["value"], "https://example.test/X")
+
+    def test_password_paint_never_contains_the_underlying_value(self):
+        selectors = ["#inline", "#flex", "#hint"]
+        frame = render_frame("Psycho_password_input.html", selectors)
+        items = {item["selector"]: item for item in frame["inspected"]}
+        def text(frame, name):
+            node = items[name]["node"]
+            return [c["text"] for c in frame["paint"] if c["kind"] == 2 and c["node"] == node]
+        self.assertEqual(text(frame, "#inline"), ["•••"])
+        self.assertEqual(text(frame, "#flex"), ["••••••"])
+        self.assertEqual(text(frame, "#hint"), ["Enter password"])
+        flex_box = box(items, "#flex")
+        updated = render_frame("Psycho_password_input.html", selectors,
+                               actions=(f"click:{flex_box['x'] + 2},{flex_box['y'] + flex_box['h'] / 2}",
+                                        "key:End", "text:X"))
+        self.assertEqual(text(updated, "#flex"), ["•••••••"])
+        self.assertEqual(updated["inspected"][1]["value"], "secretX")
 
     def test_nested_scroll_and_position_anchors(self):
         selectors = [".shell", ".scroller", ".scroller p:nth-child(1)",
