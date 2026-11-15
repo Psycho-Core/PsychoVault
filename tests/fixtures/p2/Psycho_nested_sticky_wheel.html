@@ -1,0 +1,7 @@
+<!doctype html><style>
+html,body{margin:0;background:#fff}#spacer{height:30px}
+#scroll{width:100px;height:80px;overflow:auto}#before{height:25px}
+#pin{position:sticky;top:5px;height:20px;background:#123456}
+#following{height:200px;background:#abcdef}#outside{height:30px;background:#ff0000}
+</style><div id=spacer></div><div id=scroll><div id=before></div><div id=pin></div><div id=following></div></div><div id=outside></div>
+<script>document.getElementById('scroll').addEventListener('wheel',function(e){if(e.deltaY===30)e.preventDefault();document.title='wheel:'+e.deltaY;});</script>

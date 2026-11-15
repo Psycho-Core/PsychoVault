@@ -148,6 +148,7 @@ private:
     std::string type;
     js::Value fn;
     bool capture = false;
+    bool passive = false;
   };
   std::unique_ptr<js::Runtime> js_;
   std::function<void(js::Runtime &)> script_bootstrap_;
@@ -260,7 +261,8 @@ private:
   int hit(double x, double y) const;
   void submit_form(int form);
   void request_navigation(const std::string &input);
-  void add_listener(int node, const std::string &type, js::Value fn, bool capture = false);
+  void add_listener(int node, const std::string &type, js::Value fn, bool capture = false,
+                    bool passive = false);
   void remove_listener(int node, const std::string &type, js::Value fn, bool capture = false);
   void activate(int target);
   friend class PageHost;

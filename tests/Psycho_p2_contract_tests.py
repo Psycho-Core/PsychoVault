@@ -134,6 +134,20 @@ class P2ImageContractTests(unittest.TestCase):
                 if x != 0 or y >= 2:
                     self.assertEqual(pixels[(y * 8 + x) * 4:(y * 8 + x + 1) * 4], WHITE)
 
+    def test_nested_sticky_paint_and_cancelable_wheel(self):
+        def pixel(pixels, x, y):
+            return pixels[(y * 160 + x) * 4:(y * 160 + x + 1) * 4]
+        before, p0 = render("Psycho_nested_sticky_wheel.html", 160, 200)
+        canceled, pc = render("Psycho_nested_sticky_wheel.html", 160, 200, ("wheel:20,50,30",))
+        moved, p1 = render("Psycho_nested_sticky_wheel.html", 160, 200, ("wheel:20,50,40",))
+        self.assertEqual(canceled["title"], "wheel:30")
+        self.assertEqual(moved["title"], "wheel:40")
+        self.assertEqual(p0, pc)
+        self.assertEqual(pixel(p1, 20, 40), bytes((18, 52, 86, 255)))
+        self.assertEqual(pixel(p1, 20, 60), bytes((171, 205, 239, 255)))
+        self.assertEqual(pixel(p1, 20, 120), bytes((255, 0, 0, 255)))
+        self.assertNotEqual(p0, p1)
+
     def test_flex_checkable_raster_tracks_click_state(self):
         # Inspect actual pixels, not just :checked styling or DOM state. No
         # text glyphs or platform-specific native theme are involved here.

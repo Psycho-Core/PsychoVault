@@ -3800,6 +3800,29 @@ int main() {
     CHECK(close_to(box_in_frame(sticky, sticky_top, "sticky").y, 40));
     CHECK(close_to(box_in_frame(sticky, sticky_pinned, "sticky").y, 50));
     CHECK(close_to(box_in_frame(sticky, sticky_bottom, "sticky").y, 120));
+    Page nested_sticky;
+    nested_sticky.load(*parse_url("https://nested-sticky.test/"),
+      "<style>body{margin:0}#spacer{height:30px}"
+      "#scroll{width:100px;height:80px;overflow:auto}#before{height:25px}"
+      "#pin{position:sticky;top:5px;height:20px;background:#123456}"
+      "#following{height:200px;background:#abcdef}#outside{height:30px;background:#ff0000}</style>"
+      "<div id=spacer></div><div id=scroll><div id=before></div><div id=pin></div>"
+      "<div id=following></div></div><div id=outside></div>");
+    Json nested_before = nested_sticky.render(160, 200, 0);
+    CHECK(close_to(box_in_frame(nested_sticky, nested_before, "pin").y, 55));
+    CHECK(nested_sticky.wheel(20, 50, 40));
+    Json nested_after = nested_sticky.render(160, 200, 0);
+    CHECK(close_to(box_in_frame(nested_sticky, nested_after, "pin").y, 35));
+    CHECK(close_to(box_in_frame(nested_sticky, nested_after, "following").y, 35));
+    CHECK(close_to(box_in_frame(nested_sticky, nested_after, "outside").y, 110));
+    for (const char *name : {"pin", "following", "outside"}) {
+      bool aligned = false;
+      for (const Json &command : nested_after.at("paint").array)
+        if (int(command.num("node", -1)) == nested_sticky.doc.by_id(name) &&
+            int(command.num("kind", -1)) == int(PaintCommand::Kind::Rect))
+          aligned = close_to(command.num("y"), box_in_frame(nested_sticky, nested_after, name).y);
+      CHECK(aligned);
+    }
 
     Page fixed;
     fixed.load(*parse_url("https://fixed.test/"),
@@ -4067,6 +4090,45 @@ int main() {
     CHECK(frame_box(after_chain, outer_id).y == outer_before_contain.y);
     CHECK(frame_box(after_chain, tail_id).y < tail_before_chain.y);
     CHECK(frame_box(after_chain, inside_id).y < inner_before_chain.y);
+  }
+  {
+    // Wheel listeners see bubbling, pixel-mode coordinates and deltas before
+    // scrolling. Cancellation suppresses both local scrolling and the host's
+    // document fallback; an uncanceled event retains the existing default.
+    const std::string html =
+      "<style>body{margin:0}#box{height:80px;width:100px;overflow:auto}"
+      "#inside{width:80px;height:200px}#tail{height:400px}</style>"
+      "<div id=box><div id=inside></div></div><div id=tail></div>"
+      "<script>document.getElementById('inside').addEventListener('wheel',function(e){"
+      "e.preventDefault();document.getElementById('inside').setAttribute('data-prevented',e.defaultPrevented);"
+      "},{passive:true});document.getElementById('box').addEventListener('wheel',function(e){"
+      "document.title=[e.type,e.clientX,e.clientY,e.deltaY,e.deltaMode,e.bubbles,e.cancelable].join('|');"
+      "if(e.deltaY===30)e.preventDefault();});</script>";
+    Page wheel_events;
+    wheel_events.load(*parse_url("https://wheel.test/"), html);
+    Json before = wheel_events.render(160, 100, 0);
+    auto y_of = [&](const Json &frame) {
+      for (const Json &box : frame.at("boxes").array)
+        if (int(box.num("node", -1)) == wheel_events.doc.by_id("inside")) return box.num("y");
+      return -999.0;
+    };
+    CHECK(wheel_events.wheel(20, 20, 30));
+    CHECK(wheel_events.title() == "wheel|20|20|30|0|true|true");
+    CHECK(wheel_events.doc.nodes[wheel_events.doc.by_id("inside")].attribute("data-prevented") == "false");
+    CHECK(close_to(y_of(wheel_events.render(160, 100, 0)), y_of(before)));
+    CHECK(wheel_events.wheel(20, 20, 20));
+    CHECK(close_to(y_of(wheel_events.render(160, 100, 0)), y_of(before) - 20));
+    Host host([&](const std::string &url, ResourceType) {
+      Resource r; r.url = url; r.mime = "text/html"; r.text = html; return r;
+    }, [](HostEvent) {});
+    host.resize(160, 100);
+    std::string error;
+    CHECK(host.load("https://wheel.test/", error));
+    CHECK(close_to(host.scroll_position(), 0));
+    host.wheel(20, 20, 30);
+    CHECK(close_to(host.scroll_position(), 0));
+    host.wheel(120, 90, 40);
+    CHECK(close_to(host.scroll_position(), 40));
   }
   {
     // Reference-used DOM APIs: live data attributes, selector state and

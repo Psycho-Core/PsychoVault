@@ -116,6 +116,13 @@ static bool listener_capture_option(const js::Values &arguments) {
   }
   return false;
 }
+static bool listener_passive_option(const js::Values &arguments) {
+  if (arguments.size() < 3 || arguments[2].type != js::Value::Type::Object || !arguments[2].object)
+    return false;
+  const auto &properties = arguments[2].object->properties;
+  auto passive = properties.find("passive");
+  return passive != properties.end() && passive->second.truthy();
+}
 class PageHost : public js::Host {
 public:
   Page &page;
@@ -713,7 +720,8 @@ public:
           if (a.size() > 1) {
             const std::string type = a[0].to_string();
             const bool capture = listener_capture_option(a);
-            if (name == "addEventListener") page.add_listener(page.doc.root, type, a[1], capture);
+            if (name == "addEventListener")
+              page.add_listener(page.doc.root, type, a[1], capture, listener_passive_option(a));
             else page.remove_listener(page.doc.root, type, a[1], capture);
           }
           return js::Value();
@@ -1256,7 +1264,8 @@ public:
     if (name == "addEventListener")
       return r.make_native([this, id](js::Values &a) {
         if (a.size() > 1)
-          page.add_listener(id, a[0].to_string(), a[1], listener_capture_option(a));
+          page.add_listener(id, a[0].to_string(), a[1], listener_capture_option(a),
+                            listener_passive_option(a));
         return js::Value();
       });
     if (name == "removeEventListener")
@@ -1620,12 +1629,12 @@ void Page::request_navigation(const std::string &input) {
       navigations.push_back(u->href());
   }
 }
-void Page::add_listener(int node, const std::string &type, js::Value fn, bool capture) {
+void Page::add_listener(int node, const std::string &type, js::Value fn, bool capture, bool passive) {
   if (listeners_.size() >= 1024 || fn.type_of() != "function") return;
   for (const Listener &listener : listeners_)
     if (listener.node == node && listener.type == type && listener.fn.object == fn.object &&
         listener.capture == capture) return;
-  listeners_.push_back({node, type, fn, capture});
+  listeners_.push_back({node, type, fn, capture, passive});
   js_->root(fn.object);
 }
 void Page::remove_listener(int node, const std::string &type, js::Value fn, bool capture) {
@@ -3007,6 +3016,7 @@ bool Page::dispatch(int target, const std::string &type, js::Value event,
           });
       if (!still_registered) continue;
       js_->reset_fuel();
+      state->passive = listener.passive;
       try {
         js_->call(listener.fn, {event}, js_->host_value(node));
       } catch (js::JsError &error) {
@@ -3014,6 +3024,7 @@ bool Page::dispatch(int target, const std::string &type, js::Value event,
       } catch (std::exception &error) {
         diagnostics.push_back({"event", error.what()});
       }
+      state->passive = false;
       if (state->immediate) break;
     }
   };
@@ -3265,8 +3276,24 @@ void Page::pointer_move(double x, double y) {
 }
 bool Page::wheel(double x, double y, double delta) {
   if (dirty_) rebuild();
-  if (!std::isfinite(delta) || delta == 0) return false;
-  const int target = hit(x, y);
+  if (!std::isfinite(delta)) return false;
+  int target = hit(x, y);
+  if (target >= 0) {
+    js::Value event = js_->make_object();
+    event.object->properties["clientX"] = js::Value(x);
+    event.object->properties["clientY"] = js::Value(y);
+    event.object->properties["deltaX"] = js::Value(0);
+    event.object->properties["deltaY"] = js::Value(delta);
+    event.object->properties["deltaZ"] = js::Value(0);
+    event.object->properties["deltaMode"] = js::Value(0);
+    // A canceled event must also suppress the host's document-scroll fallback.
+    if (dispatch(target, "wheel", event, true, true)) return true;
+    if (dirty_) {
+      rebuild();
+      target = hit(x, y);
+    }
+  }
+  if (delta == 0) return false;
   double remaining = delta;
   bool changed = false;
   for (int node = target; node >= 0 && node < int(doc.nodes.size()); node = doc.nodes[node].parent) {
