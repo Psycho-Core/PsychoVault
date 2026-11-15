@@ -31,4 +31,12 @@ On Windows use `python` and `build/pv-engine.exe`; the manual-only owned-engine 
 | S068 | Canvas fill, clipping, save/restore and translation | Full paths, images, text and transforms |
 | S069 | Family/size/weight metadata with transparent text at 1x/2x | DirectWrite glyphs, fallback and physical DPI; see platform golden in [README](README.md) |
 
+## Results and discovery
+
+Linux GCC 12.2: 24/24 hand-specified goldens and 6/6 runner self-tests; 18/18 original owned goldens, 6/6 original runner self-tests, 8/8 reference-diff self-tests, all four existing contract suites, and **1,109 engine / 2,956 total** native checks. Linux does not rasterize text glyphs.
+
+The first Windows run [43717343094](https://github.com/Psycho-Core/PsychoVault/actions/runs/43717343094) **failed** both transparent-font cases (470 pixels each): `color:transparent` had an opaque alpha, so Windows drew black glyphs. The engine now preserves transparent black through inherited and `currentColor` text. The S062 Windows override had 23 black text pixels in a transparent input; after inspection it was removed in favor of the unchanged, already checked-in common baseline, with no threshold relaxation. Native regressions check the alpha and paint commands; the font goldens exercise actual Windows glyph drawing with zero alpha.
+
+The corrected [Windows run 43718257971](https://github.com/Psycho-Core/PsychoVault/actions/runs/43718257971) passed on commit `2d6d500`: MSVC builds, native tests, 18 owned and 24 hand-specified goldens and their self-tests, existing contract suites, native smoke and packaging. A temporary branch-only push trigger started the run and was removed afterward; manual-dispatch permission was not demonstrated.
+
 This table is a **scenario index**, not evidence that the full S052–S069 feature set is covered. These synthetic tests supplement, but do not replace, independent verification of S050 reference-derived fixtures. The Phase 2 gate remains open until the broader implementation, feature mapping and reference correctness have been resolved and demonstrated on Windows.

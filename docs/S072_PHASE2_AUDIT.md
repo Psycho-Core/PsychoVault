@@ -2,7 +2,7 @@
 
 Audit date: 2026-11-01. Audited source: `246ab98974982f8e6137c8d618cb3b3170ffb54d` (S070 merge). S072 is an audit label, not a previously planned implementation step.
 
-**Later update:** the S071 comparison mechanism was added after this audit; see [S071_IMPLEMENTATION.md](S071_IMPLEMENTATION.md). The [image-contract follow-up](Psycho_P2_IMAGE_CONTRACT.md) adds limited independent assertions and fixes two image gaps. The findings below are preserved as the historical assessment of the audited commit. The broader P2 exit gate remains open.
+**Later update:** the S071 comparison mechanism was added after this audit; see [S071_IMPLEMENTATION.md](S071_IMPLEMENTATION.md). Later [image](Psycho_P2_IMAGE_CONTRACT.md), [DOM/layout](Psycho_P2_DOM_LAYOUT_CONTRACT.md), [responsive image](Psycho_P2_RESPONSIVE_IMAGES.md) and [focus](Psycho_P2_FOCUS_VISIBLE.md) follow-ups add targeted fixes and independent checks. Twenty-four supplementary [hand-specified pixel scenarios](../tests/golden/INDEPENDENT.md) are green on Linux and Windows, but remain selective rather than full S052–S069 coverage. The findings below are preserved as the historical assessment of the audited commit. The broader P2 exit gate remains open.
 
 ## Verdict
 
