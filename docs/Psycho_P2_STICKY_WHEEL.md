@@ -22,7 +22,11 @@ and the sticky overlap.
 
 Linux validation: 1,161 engine and 3,008 total native checks; six image/paint
 contracts, seven DOM/layout contracts, focus and responsive-image contracts,
-18 owned goldens and 24 independent goldens passed.
+18 owned goldens and 24 independent goldens passed. Windows x64
+[run 43732626114](https://github.com/Psycho-Core/PsychoVault/actions/runs/43732626114)
+passed build, native tests, contracts, goldens, smokes and packaging on commit
+`4712cbd`. The temporary branch-only push trigger was removed afterwards; this
+does not establish manual workflow-dispatch permission or physical device tests.
 
 Limitations: sticky placement and stacking are still simplified; horizontal
 insets, full containing-block constraints, non-blockified sticky content,
