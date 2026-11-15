@@ -33,5 +33,6 @@ horizontal text scrolling, complete control appearance, validation, clipboard
 event semantics or OS-level clipboard/IME integration. Frame inspection and
 the DOM intentionally still expose the real value to the engine's trusted
 owner; masking is not encryption. Other flex controls, including buttons and
-checkboxes, are not fixed by this change. The Phase 2 golden and reference-render
-exit gate remains open.
+checkboxes, were not fixed by this change; see `Psycho_P2_CHECKABLE_CONTROLS.md`
+for the subsequent bounded checkbox/radio repair. The Phase 2 golden and
+reference-render exit gate remains open.

@@ -4237,6 +4237,54 @@ int main() {
     CHECK(controls.navigations.size() == 1 && controls.navigations[0].find("/send") != std::string::npos);
   }
   {
+    // A checkable control blockified by flex/grid/positioning must paint its
+    // checked state, not merely update its DOM attribute. These geometric
+    // indicators are testable even without a platform text rasterizer.
+    Page checks;
+    checks.load(*parse_url("https://check-paint.test/"),
+      "<style>body{margin:0}.row{display:flex;align-items:flex-start}"
+      ".grid{display:grid;grid-template-columns:40px}"
+      "input{color:#123456}#styled{width:20px;height:18px;padding:0;border:1px solid red}"
+      "#hidden-mark{appearance:none}#positioned{position:absolute;left:180px;top:0}</style>"
+      "<div class=row><input id=off type=checkbox><input id=on type=checkbox checked>"
+      "<input id=styled type=checkbox checked><input id=radio type=radio checked>"
+      "<input id=disabled type=checkbox disabled checked>"
+      "<input id=hidden-mark type=checkbox checked></div>"
+      "<div class=grid><input id=grid-check type=checkbox checked></div>"
+      "<input id=positioned type=checkbox checked>");
+    auto marks = [&](const Json &frame, const char *name) {
+      int count = 0;
+      for (const Json &command : frame.at("paint").array)
+        if (int(command.num("node", -1)) == checks.doc.by_id(name) &&
+            int(command.num("kind", -1)) == int(PaintCommand::Kind::Rect) &&
+            uint32_t(command.num("color", 0)) == 0xff123456u &&
+            command.num("w") > 0 && command.num("h") > 0) ++count;
+      return count;
+    };
+    auto frame = checks.render(400, 150, 0);
+    CHECK(marks(frame, "off") == 0);
+    CHECK(marks(frame, "on") == 1);
+    CHECK(marks(frame, "styled") == 1);
+    CHECK(marks(frame, "radio") == 1);
+    CHECK(marks(frame, "disabled") == 1);
+    CHECK(marks(frame, "hidden-mark") == 0);
+    CHECK(marks(frame, "grid-check") == 1);
+    CHECK(marks(frame, "positioned") == 1);
+    const Rect off = node_box(checks, "off");
+    const Rect styled = node_box(checks, "styled");
+    CHECK(off.w >= 14 && off.h >= 14);
+    CHECK(styled.w == 22 && styled.h == 20);
+    checks.click(off.x + off.w / 2, off.y + off.h / 2);
+    frame = checks.render(400, 150, 0);
+    CHECK(marks(frame, "off") == 1);
+    checks.click(off.x + off.w / 2, off.y + off.h / 2);
+    frame = checks.render(400, 150, 0);
+    CHECK(marks(frame, "off") == 0);
+    const Rect disabled = node_box(checks, "disabled");
+    checks.click(disabled.x + disabled.w / 2, disabled.y + disabled.h / 2);
+    CHECK(marks(checks.render(400, 150, 0), "disabled") == 1);
+  }
+  {
     // S062: selection offsets, pointer drag, editing history, clipboard operations,
     // caret paint and cancelable IME composition share one focused editor state.
     Page editor;
