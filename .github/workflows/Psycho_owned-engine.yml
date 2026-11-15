@@ -6,6 +6,9 @@ name: Build owned engine
 # docs/Psycho_BUILD-AND-RELEASE.md.
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - arena/1dfe13a6-psychovault
 permissions:
   contents: read
 
@@ -66,6 +69,20 @@ jobs:
             $report = Get-Content build/golden-results/report.json -Raw | ConvertFrom-Json
             foreach ($item in $report.cases) {
               if ($item.result -eq 'failed') { Write-Host "::error title=Golden $($item.id)::$($item.error)" }
+            }
+          }
+          if ($code -ne 0) { exit $code }
+      - name: Run hand-specified rendering goldens
+        shell: pwsh
+        run: |
+          python tests/Psycho_independent_golden_tests.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/Psycho_independent_goldens.py --engine build/pv-engine.exe --outdir build/independent-golden-results
+          $code = $LASTEXITCODE
+          if ($code -ne 0 -and (Test-Path build/independent-golden-results/report.json)) {
+            $report = Get-Content build/independent-golden-results/report.json -Raw | ConvertFrom-Json
+            foreach ($item in $report.cases) {
+              if ($item.result -eq 'failed') { Write-Host "::error title=Independent golden $($item.id)::$($item.error)" }
             }
           }
           if ($code -ne 0) { exit $code }
@@ -287,5 +304,7 @@ jobs:
             build/captures/*.txt
             build/golden-results/*.png
             build/golden-results/report.json
+            build/independent-golden-results/*.png
+            build/independent-golden-results/report.json
           if-no-files-found: warn
           retention-days: 14
