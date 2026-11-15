@@ -8,4 +8,6 @@ This is a practical heuristic, not a complete browser focus algorithm: platform/
 
 `tests/Psycho_p2_focus_contract_tests.py` checks CSS-derived pixels in eight initial/pointer/keyboard/text-edit/programmatic-focus scenarios; these expected colors are not captured engine baselines. Native tests cover selector-state distinction and the host scroll-key path. Linux GCC: **1,105 engine / 2,952 total checks**, focus contracts 1/1 (eight scenarios), responsive image contract 1/1, DOM/layout 3/3, image 4/4, golden self-tests 6/6, reference-diff self-tests 8/8 and owned goldens 18/18. Linux does not rasterize Windows text.
 
+Windows [run 43710107379](https://github.com/Psycho-Core/PsychoVault/actions/runs/43710107379) passed on commit `83f78c6`: MSVC build, engine tests, goldens and self-tests, all four contract suites, automated native smoke and packaging. A temporary branch-only push trigger started the run and was removed afterward; this does not establish manual-dispatch permission.
+
 The Phase 2 exit gate remains open: the owned golden suite is still a narrow sample of S052–S069, and representative reference-contract rendering has not been comprehensively validated.
