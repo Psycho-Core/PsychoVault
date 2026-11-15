@@ -492,6 +492,49 @@ int main() {
   CHECK(d.text_content(d.by_id("a")) == "Hello world");
   CHECK(d.query("li").size() == 2);
   CHECK(d.query("body > p.x").size() == 1);
+  // P2 contract: a paragraph must not close its containing main/div. A new
+  // block closes an existing paragraph, and button scope isolates inner p's.
+  {
+    Document paragraphs;
+    paragraphs.parse("<!doctype html><main id='main'><p id='first'>one</p>"
+                     "<div id='panel'><p id='second'>two</p><p id='third'>three</p></div>"
+                     "<p id='implicit'>four<span>x<div id='next'>five</div></main>");
+    const int main = paragraphs.by_id("main"), panel = paragraphs.by_id("panel");
+    const int first = paragraphs.by_id("first"), second = paragraphs.by_id("second");
+    const int third = paragraphs.by_id("third"), implicit = paragraphs.by_id("implicit");
+    const int next = paragraphs.by_id("next");
+    CHECK(main >= 0 && panel >= 0 && first >= 0 && second >= 0 && third >= 0 && implicit >= 0 && next >= 0);
+    CHECK(paragraphs.nodes[first].parent == main);
+    CHECK(paragraphs.nodes[panel].parent == main);
+    CHECK(paragraphs.nodes[second].parent == panel && paragraphs.nodes[third].parent == panel);
+    CHECK(paragraphs.nodes[implicit].parent == main && paragraphs.nodes[next].parent == main);
+    CHECK(paragraphs.text_content(panel) == "twothree");
+    CHECK(paragraphs.query("#panel > p").size() == 2);
+    Document scoped;
+    scoped.parse("<!doctype html><p id='outer'>a<button id='button'><p id='inner'>b</p>"
+                 "</button>c</p><div id='after'>d</div>");
+    int outer = scoped.by_id("outer"), button = scoped.by_id("button"), inner = scoped.by_id("inner");
+    CHECK(outer >= 0 && button >= 0 && inner >= 0);
+    CHECK(scoped.nodes[button].parent == outer && scoped.nodes[inner].parent == button);
+    CHECK(scoped.text_content(outer) == "abc");
+    Document roots;
+    roots.parse("<!doctype html><html lang='en'><head data-x='h'></head>"
+                "<body id='root' class='theme' style='margin:0'><div>content</div></body></html>");
+    CHECK(roots.nodes[roots.element("html")].attribute("lang") == "en");
+    CHECK(roots.nodes[roots.head].attribute("data-x") == "h");
+    CHECK(roots.nodes[roots.body].attribute("class") == "theme");
+    CHECK(roots.by_id("root") == roots.body);
+    CHECK(roots.nodes[roots.body].attribute("style") == "margin:0");
+    Page default_margin;
+    default_margin.load(*parse_url("https://local.test/"), "<!doctype html><div id='child'>x</div>");
+    Rect default_box = node_box(default_margin, "child");
+    CHECK(close_to(default_box.x, 8));
+    Page overridden_margin;
+    overridden_margin.load(*parse_url("https://local.test/"),
+                           "<!doctype html><body style='margin:0'><div id='child'>x</div></body>");
+    Rect override_box = node_box(overridden_margin, "child");
+    CHECK(close_to(override_box.x, 0));
+  }
   CHECK(js_eval("1+2*3") == "7");
   CHECK(js_eval("(function(x){return x*x})(7)") == "49");
   CHECK(js_eval("[1,2,3].map(x=>x*2).join(',')") == "2,4,6");
@@ -519,6 +562,29 @@ int main() {
       threw = true;
     }
     CHECK(threw);
+  }
+  // Auto-sized positioned reference UI badges must stay inside their
+  // containing block and anchor their actual border box to right/bottom.
+  {
+    Page positioned;
+    positioned.load(*parse_url("https://local.test/"),
+        "<!doctype html><style>body{margin:0}#parent{position:relative;width:200px;height:100px}"
+        "#badge{position:absolute;right:10px;bottom:5px;padding:4px}"
+        "#stretch{position:absolute;left:10px;right:20px;top:5px;bottom:25px}"
+        "#percentage{position:absolute;right:10px;width:50%;height:10px}"
+        "#borderbox{position:absolute;right:20px;width:40px;box-sizing:border-box;padding:8px;border:2px solid black}"
+        "</style><div id=parent><div id=badge>Badge</div><div id=stretch></div>"
+        "<div id=percentage></div><div id=borderbox></div></div>");
+    Rect parent = node_box(positioned, "parent"), badge = node_box(positioned, "badge");
+    Rect stretch = node_box(positioned, "stretch"), percentage = node_box(positioned, "percentage");
+    Rect borderbox = node_box(positioned, "borderbox");
+    CHECK(badge.w > 8 && badge.w < parent.w);
+    CHECK(close_to(badge.x + badge.w, parent.x + parent.w - 10));
+    CHECK(close_to(badge.y + badge.h, parent.y + parent.h - 5));
+    CHECK(close_to(stretch.x, parent.x + 10) && close_to(stretch.w, 170));
+    CHECK(close_to(stretch.y, parent.y + 5) && close_to(stretch.h, 70));
+    CHECK(close_to(percentage.w, 100) && close_to(percentage.x + percentage.w, parent.x + parent.w - 10));
+    CHECK(close_to(borderbox.w, 40) && close_to(borderbox.x + borderbox.w, parent.x + parent.w - 20));
   }
   // My own pattern engine, driven from script.
   CHECK(js_eval("/ab+c/.test('xabbbcy')") == "true");
@@ -1381,12 +1447,12 @@ int main() {
     // chosen option.
     Page page;
     page.load(*parse_url("https://forms.test/"),
-              "<!doctype html><form action='/go' method=get><input name=q value=v>"
+              "<!doctype html><form action='/go' method=get><input id=q-field name=q value=v>"
               "<input type=checkbox name=c checked>"
               "<select name=s multiple><option value=x selected>X</option>"
               "<option value=y selected>Y</option><option value=z>Z</option></select></form>");
-    page.render(800, 600, 0);
-    page.click(5, 5);
+    Rect q_field = node_box(page, "q-field");
+    page.click(q_field.x + 2, q_field.y + 2);
     page.key("Enter", "");
     CHECK(!page.navigations.empty());
     if (!page.navigations.empty()) {
