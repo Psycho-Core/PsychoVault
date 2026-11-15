@@ -41,7 +41,11 @@ std::string control_display_value(const Node &node, std::string_view value);
 struct SelectorState {
   int hovered = -1, focused = -1, active = -1;
   bool focus_visible = true;
+  int scope = -1;
 };
+// Reports whether the engine's bounded selector parser accepts the syntax;
+// this is not a complete CSS selector validator.
+bool selector_parseable(std::string_view selector);
 bool matches_selector(const Document &doc, int node, std::string_view selector,
                       const SelectorState *state = nullptr);
 bool form_control_valid(const Document &doc, int node);

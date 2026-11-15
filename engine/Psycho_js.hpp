@@ -44,6 +44,8 @@ struct Object {
   Function *function = nullptr;
   Env *closure = nullptr;
   std::function<Value(Values &)> native;
+  // Values retained by native closures are otherwise opaque to the collector.
+  std::vector<Value> native_roots;
   int host = -2;
   std::string host_type;
   // A typed array and its buffer are real bytes, not a list of numbers, so a
@@ -182,6 +184,11 @@ public:
   virtual ~Host() = default;
   virtual Value get(int id, const std::string &name) = 0;
   virtual bool set(int id, const std::string &name, const Value &value) = 0;
+  // Live host-backed own properties (e.g. DOMStringMap). Ordinary hosts have
+  // no enumerable own properties unless they opt in.
+  virtual std::vector<std::string> own_keys(int) { return {}; }
+  virtual bool has_own(int, const std::string &) { return false; }
+  virtual bool erase(int, const std::string &) { return true; }
   virtual Value call(int id, const std::string &name, Values &args) = 0;
   virtual void log(const std::string &text) = 0;
 };
@@ -194,6 +201,9 @@ public:
   Value evaluate(Expr &expr, Env &env, Value this_value);
   Value get_member(const Value &base, const std::string &key);
   bool set_member(const Value &base, const std::string &key, const Value &value);
+  std::vector<std::string> own_keys(const Value &base);
+  bool has_own(const Value &base, const std::string &key);
+  bool delete_member(const Value &base, const std::string &key);
   Value make_object(Object::Kind kind = Object::Kind::Plain);
   Value make_array(const Values &values = {});
   Value make_native(std::function<Value(Values &)> fn);

@@ -4069,6 +4069,46 @@ int main() {
     CHECK(frame_box(after_chain, inside_id).y < inner_before_chain.y);
   }
   {
+    // Reference-used DOM APIs: live data attributes, selector state and
+    // synchronous geometry after a script changes selector-sensitive styling.
+    Page dom_api;
+    dom_api.set_viewport_environment(300, 200, MediaEnvironment{});
+    dom_api.load(*parse_url("https://dom-api.test/"),
+      "<style>body{margin:0}#target{position:absolute;left:30px;top:40px;width:80px;height:30px}"
+      "#target[data-mode=wide]{width:120px}</style>"
+      "<div class=parent><div id=target data-user-id=7></div></div><script>"
+      "var e=document.getElementById('target'), d=e.dataset;"
+      "var a=e.getBoundingClientRect();d.userId=12;d.mode='wide';"
+      "var b=e.getBoundingClientRect();"
+      "document.title=[d===e.dataset,d.userId,e.getAttribute('data-user-id'),"
+      "e.matches('.parent > #target'),e.closest('.parent').className,"
+      "a.width,b.width,a.right,b.right,Object.keys(d).join(',')].join('|');"
+      "</script>");
+    CHECK(dom_api.title() == "true|12|12|true|parent|80|120|110|150|userId,mode");
+    CHECK(dom_api.doc.nodes[dom_api.doc.by_id("target")].attribute("data-mode") == "wide");
+    CHECK(dom_api.diagnostics.empty());
+
+    Page dom_detached;
+    dom_detached.load(*parse_url("https://dom-api.test/detached"),
+      "<script>var a=document.createElement('div');a.className='a';"
+      "var b=document.createElement('span');a.appendChild(b);"
+      "var first=b.closest('.a')===a, r=b.getBoundingClientRect();"
+      "a.dataset.panelName='open';var present=('panelName' in a.dataset);"
+      "var deleted=delete a.dataset.panelName;"
+      "document.title=[first,r.x,r.y,r.width,r.height,present,deleted,"
+      "a.hasAttribute('data-panel-name')].join('|');</script>");
+    CHECK(dom_detached.title() == "true|0|0|0|0|true|true|false");
+    CHECK(dom_detached.diagnostics.empty());
+
+    Page dom_gc;
+    dom_gc.load(*parse_url("https://dom-api.test/gc"),
+      "<div id=target data-mode=wide></div>"
+      "<script>var saved = document.getElementById('target').dataset.hasOwnProperty;</script>"
+      "<script>document.title = saved('mode') + ':' + saved('absent');</script>");
+    CHECK(dom_gc.title() == "true:false");
+    CHECK(dom_gc.diagnostics.empty());
+  }
+  {
     // UiPointerDelegationAndDefaultActions covers the DOM event capture/target/
     // bubble phases, pointer/mouse ordering, focus transitions, propagation and
     // default cancellation for links, typing and the existing control defaults.
