@@ -37,7 +37,18 @@ state, invalid syntax, layout before first paint and after mutations, hidden and
 detached boxes, multiline inline text, document and nested scroll, and fixed
 positioning. Their expected values come from the fixture CSS and specified
 interaction sequence rather than captured engine output. The existing Windows
-workflow already runs this contract file.
+workflow runs this contract file.
+
+Linux GCC validation: **1,130 engine / 2,977 total native checks**, DOM/layout
+contracts **7/7**, image contracts **4/4**, responsive-image and focus contracts
+**1/1** each, hand-specified goldens **24/24**, owned goldens **18/18**, golden
+self-tests **6/6** each, and reference-diff self-tests **8/8** passed.
+
+Windows x64 [run 43724690310](https://github.com/Psycho-Core/PsychoVault/actions/runs/43724690310)
+passed the MSVC build, native tests, both golden suites, all contract stages,
+native smokes and packaging on commit `d936fd4`. Its temporary branch-only
+push trigger was removed afterward; this is not proof of manual-dispatch
+permission or complete interactive/reference parity.
 
 ## Limits
 
