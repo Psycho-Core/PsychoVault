@@ -267,7 +267,7 @@ Implemented in `engine/Psycho_page.cpp` with a regression in `tests/Psycho_test_
 
 Linux validation: `python3 tools/Psycho_build.py --compiler gcc --target tests --outdir /tmp/pv-s063-build && /tmp/pv-s063-build/pv-tests` passed **973 engine checks / 2,820 total checks**. This validates only the targeted lazy-fetch behavior and existing suite; no Windows S063 build or Actions result is claimed.
 
-S063 remains open: `object-fit`, robust `srcset`/`sizes` selection, SVG CSS/style/path corpus coverage, and end-to-end favicon fetch/display/fallback lifecycle have not been implemented or verified.
+At this S063 snapshot, `object-fit`, robust `srcset`/`sizes` selection, SVG CSS/style/path corpus coverage, and end-to-end favicon fetch/display/fallback lifecycle were not implemented or verified. A later focused in-flow image-fit and external SVG detection follow-up is documented in [Psycho_P2_IMAGE_CONTRACT.md](Psycho_P2_IMAGE_CONTRACT.md); S063 remains open for the remaining features and broader cases.
 
 ## S064 follow-up — viewport media-query subset, 2026-11-01
 

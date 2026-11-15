@@ -1,0 +1,25 @@
+<!doctype html>
+<title>before</title>
+<style>
+html, body { margin: 0; background: white; }
+#trigger { width: 20px; height: 20px; background: #22aa44; }
+#parent { object-fit: contain; }
+img { width: 80px; height: 40px; }
+#inherited { object-fit: inherit; }
+#reset { object-fit: unset; }
+#initial { object-fit: initial; }
+#invalid { object-fit: unrecognised; }
+</style>
+<div id="trigger"></div>
+<div id="parent">
+<img id="inherited" src="https://s050.test/pixel.png">
+<img id="reset" src="https://s050.test/pixel.png">
+<img id="initial" src="https://s050.test/pixel.png">
+<img id="invalid" src="https://s050.test/pixel.png">
+</div>
+<script>
+document.getElementById('trigger').addEventListener('click',function(){
+  document.getElementById('inherited').style.setProperty('object-fit','cover');
+  document.title='changed';
+});
+</script>
