@@ -221,6 +221,7 @@ private:
   double width_ = 1000, height_ = 700, scroll_ = 0, content_height_ = 0;
   MediaEnvironment media_environment_;
   int hovered_ = -1, active_ = -1, focused_ = -1;
+  bool focus_visible_ = false, keyboard_modality_ = true;
   int pointer_down_target_ = -1;
   bool pointer_click_pending_ = false, pointer_click_allowed_ = false;
   double pointer_x_ = 0, pointer_y_ = 0;
@@ -253,7 +254,9 @@ private:
   void rebuild();
   bool dispatch(int target, const std::string &type, js::Value event,
                 bool bubbles = true, bool cancelable = true);
-  void set_focus(int target);
+  enum class FocusCause { Script, Pointer, Keyboard };
+  void set_focus(int target, FocusCause cause = FocusCause::Script);
+  void note_keyboard_modality();
   int hit(double x, double y) const;
   void submit_form(int form);
   void request_navigation(const std::string &input);

@@ -1,0 +1,10 @@
+<!doctype html>
+<html><head><title>P2 focus-visible contract</title><style>
+body{margin:0} .focusable,input{display:block;width:40px;height:20px;padding:0;margin:0;border:0;background:#dd2222}
+.focusable:focus,input:focus{background:#2233dd}
+.focusable:focus-visible,input:focus-visible{background:#22aa44}
+</style></head><body>
+<div id="first" class="focusable" tabindex="0"></div><div id="second" class="focusable" tabindex="0"></div><input id="editor" type="text">
+<script>document.getElementById('first').addEventListener('keydown',function(e){if(e.key==='Enter')document.getElementById('second').focus();});
+document.getElementById('second').addEventListener('click',function(){document.getElementById('first').focus();});</script>
+</body></html>

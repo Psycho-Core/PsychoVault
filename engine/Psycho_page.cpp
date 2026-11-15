@@ -1555,6 +1555,8 @@ Page::~Page() {
 }
 void Page::load(const Url &url, const std::string &html, const std::string &mime) {
   hovered_ = active_ = focused_ = -1;
+  focus_visible_ = false;
+  keyboard_modality_ = true;
   selections_.clear(); editor_history_.clear(); compositions_.clear(); clipboard_text_.clear();
   control_down_ = shift_down_ = selecting_text_ = editor_dragged_ = false;
   selection_node_ = -1; selection_anchor_ = 0;
@@ -2227,7 +2229,7 @@ void Page::rebuild() {
         }
       }
     }
-  const SelectorState selector_state{hovered_, focused_, active_};
+  const SelectorState selector_state{hovered_, focused_, active_, focus_visible_};
   auto styles = compute_styles(doc, sheets, width_, height_, &selector_state,
                                &media_environment_);
   const double now = double(now_ms());
@@ -2901,9 +2903,10 @@ bool Page::dispatch(int target, const std::string &type, js::Value event,
   dirty_ = true;
   return state->prevented;
 }
-void Page::set_focus(int target) {
+void Page::set_focus(int target, FocusCause cause) {
   if (target == focused_) return;
   const int previous = focused_;
+  const bool inherited_visibility = previous >= 0 ? focus_visible_ : keyboard_modality_;
   if (previous >= 0 && previous < int(doc.nodes.size())) {
     auto focusout = js_->make_object();
     focusout.object->properties["relatedTarget"] =
@@ -2915,6 +2918,9 @@ void Page::set_focus(int target) {
     dispatch(previous, "blur", blur, false, false);
   }
   focused_ = target >= 0 && target < int(doc.nodes.size()) ? target : -1;
+  focus_visible_ = focused_ >= 0 &&
+      (text_editor_control(doc.nodes[focused_]) || cause == FocusCause::Keyboard ||
+       (cause == FocusCause::Script && inherited_visibility));
   if (focused_ >= 0) {
     auto focusin = js_->make_object();
     focusin.object->properties["relatedTarget"] =
@@ -3138,10 +3144,11 @@ bool Page::wheel(double x, double y, double delta) {
   return changed;
 }
 bool Page::scroll_key(const std::string &key) {
-  if (dirty_) rebuild();
   const bool supported = key == "Home" || key == "End" || key == "PageUp" ||
       key == "PageDown" || key == "ArrowUp" || key == "ArrowDown";
   if (!supported) return false;
+  note_keyboard_modality();
+  if (dirty_) rebuild();
   const int target = focused_ >= 0 ? focused_ : doc.body;
   js::Value event = js_->make_object();
   event.object->properties["key"] = js::Value(key);
@@ -3151,6 +3158,7 @@ bool Page::scroll_key(const std::string &key) {
   return scroll_key_default(key, target);
 }
 void Page::pointer_down(double x, double y) {
+  keyboard_modality_ = false;
   if (dirty_) rebuild();
   suppress_click_ = false;
   scrollbar_pointer_ = false;
@@ -3218,7 +3226,7 @@ void Page::pointer_down(double x, double y) {
     mouse_prevented = dispatch(target, "mousedown", make_pointer_event());
   if (!pointer_prevented && !mouse_prevented && !is_disabled) {
     const int focus_target = focusable_element(doc, target);
-    set_focus(focus_target);
+    set_focus(focus_target, FocusCause::Pointer);
     if (focus_target >= 0 && text_editor_control(doc.nodes[focus_target])) {
       selection_node_ = focus_target;
       selection_anchor_ = caret_at(focus_target, x);
@@ -3296,6 +3304,7 @@ static int focusable_element(const Document &doc, int target) {
   return -1;
 }
 void Page::click(double x, double y) {
+  keyboard_modality_ = false;
   if (suppress_click_) { suppress_click_ = false; return; }
   if (pointer_click_pending_) {
     const bool allowed = pointer_click_allowed_;
@@ -3312,7 +3321,7 @@ void Page::click(double x, double y) {
   hovered_ = target;
   active_ = -1;
   const int focus_target = focusable_element(doc, target);
-  set_focus(focus_target);
+  set_focus(focus_target, FocusCause::Pointer);
   if (focus_target >= 0 && text_editor_control(doc.nodes[focus_target])) {
     const size_t caret = caret_at(focus_target, x);
     auto &selection = editor_selection(focus_target);
@@ -3679,7 +3688,13 @@ void Page::composition_cancel() {
   dispatch(node, "compositionend", event, true, false);
 }
 
+void Page::note_keyboard_modality() {
+  keyboard_modality_ = true;
+  if (focused_ >= 0 && !focus_visible_) { focus_visible_ = true; dirty_ = true; }
+}
 void Page::key(const std::string &key, const std::string &text) {
+  if ((!key.empty() || !text.empty()) && key != "Shift" && key != "Control" && key != "Alt" && key != "Meta")
+    note_keyboard_modality();
   const int event_target = focused_ >= 0 && focused_ < int(doc.nodes.size()) ? focused_ : doc.body;
   if (!key.empty() || !text.empty()) {
     std::string event_key = key.empty() ? text : key;
@@ -3776,7 +3791,7 @@ void Page::key(const std::string &key, const std::string &text) {
       auto current = std::find(tabbable.begin(), tabbable.end(), focused_);
       const size_t next = current == tabbable.end() || ++current == tabbable.end()
           ? 0 : size_t(current - tabbable.begin());
-      set_focus(tabbable[next]);
+      set_focus(tabbable[next], FocusCause::Keyboard);
     }
     return;
   }
