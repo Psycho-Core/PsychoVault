@@ -203,8 +203,10 @@ struct Layout {
     }
     if (content < 0) {
       std::string text = doc.text_content(id);
-      if (node.name == "input" || node.name == "textarea" || node.name == "select")
-        text = node.attribute("value").empty() ? node.attribute("placeholder") : node.attribute("value");
+      if (node.name == "input" || node.name == "textarea" || node.name == "select") {
+        const std::string value = node.attribute("value");
+        text = value.empty() ? node.attribute("placeholder") : control_display_value(node, value);
+      }
       content = measure.text_width(text, style.font_size, style.bold, style.font_family, style_font_weight(style));
       for (int child : node.children)
         if (doc.nodes[child].type == Node::Type::Element)
@@ -1720,7 +1722,7 @@ struct Layout {
             child.name == "textarea") {
           flush();
           std::string label = child.name == "button" || child.name == "textarea"
-              ? doc.text_content(c) : child.attribute("value");
+              ? doc.text_content(c) : control_display_value(child, child.attribute("value"));
           if (child.name == "input" && child.attribute("type") == "checkbox")
             label = child.get_attribute("checked", label) ? "[x]" : "[ ]";
           if (child.name == "select") {
@@ -1817,6 +1819,15 @@ struct Layout {
       flush();
     }
     double content_h = cursor - inner_y;
+    // Flex/grid/positioned children enter block() directly rather than the
+    // inline-control branch. Text inputs still need an intrinsic text height
+    // and a text command owned by the input so editing/caret paint can use it.
+    const std::string input_type = lower(n.attribute("type", "text"));
+    const bool block_text_input = n.name == "input" &&
+        (input_type == "text" || input_type == "search" || input_type == "url" ||
+         input_type == "tel" || input_type == "email" || input_type == "password" ||
+         input_type == "number");
+    if (block_text_input) content_h = std::max(content_h, s.font_size);
     const double vertical_extra = s.padding[0] + s.padding[2] + s.border[0] + s.border[2];
     double min_height = std::max(0.0, resolved_bound(s, s.min_height_expression, s.min_height,
                                                     avail_h, 0, "height"));
@@ -1837,6 +1848,15 @@ struct Layout {
         (specified_height >= 0 || percent_height_used)) h = std::max(0.0, h - vertical_extra);
     if (max_height >= 0) h = std::min(h, max_height);
     h = std::max({h, min_height, 0.0});
+    if (block_text_input && w > 0 && h > 0) {
+      const Rect content_clip{inner_x, inner_y, w, h};
+      out.paint.push_back({PaintCommand::Kind::PushClip, content_clip, 0, {}, 0, 0, false, id});
+      const std::string value = n.attribute("value");
+      const std::string label = value.empty() ? n.attribute("placeholder") : control_display_value(n, value);
+      out.paint.push_back({PaintCommand::Kind::Text, content_clip, s.color.bgra(), label,
+                           s.font_size, 0, s.bold, id});
+      out.paint.push_back({PaintCommand::Kind::PopClip, content_clip, 0, {}, 0, 0, false, id});
+    }
     double border_box = h + vertical_extra;
     double local_scroll = 0;
     double local_scroll_max = 0;

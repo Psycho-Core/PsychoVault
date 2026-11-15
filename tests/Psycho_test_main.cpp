@@ -4250,6 +4250,65 @@ int main() {
     CHECK(unicode_editor.edit_clipboard(true) == "😀");
     CHECK(unicode_editor.doc.nodes[unicode_field].attribute("value") == "ab");
 
+    // Password text is masked in paint frames, including while selected and
+    // edited; the actual DOM/editor value remains available to its owner.
+    Page password;
+    password.load(*parse_url("https://password.test/"),
+      "<input id=p type=password value='a😀b'><script>var p=document.getElementById('p');"
+      "p.focus();p.setSelectionRange(1,3);</script>");
+    const int password_id = password.doc.by_id("p");
+    auto password_frame = password.render(400, 100, 0);
+    bool masked = false, selection = false;
+    for (const Json &command : password_frame.at("paint").array) {
+      if (int(command.num("node", -1)) != password_id) continue;
+      if (int(command.num("kind", -1)) == int(PaintCommand::Kind::Text)) {
+        CHECK(command.str("text") == "•••");
+        masked = true;
+      }
+      if (uint32_t(command.num("color", 0)) == 0x803878d0u && command.num("w") > 0) selection = true;
+    }
+    CHECK(masked && selection);
+    CHECK(password.edit_clipboard(false).empty());
+    CHECK(password.edit_clipboard(true).empty());
+    CHECK(password.doc.nodes[password_id].attribute("value") == "a😀b");
+    password.key("", "X");
+    CHECK(password.doc.nodes[password_id].attribute("value") == "aXb");
+    password_frame = password.render(400, 100, 0);
+    for (const Json &command : password_frame.at("paint").array)
+      if (int(command.num("node", -1)) == password_id &&
+          int(command.num("kind", -1)) == int(PaintCommand::Kind::Text))
+        CHECK(command.str("text") == "•••");
+    password.composition_start();
+    password.composition_update("字", 3);
+    CHECK(password.doc.nodes[password_id].attribute("value") == "aX字b");
+    password_frame = password.render(400, 100, 0);
+    for (const Json &command : password_frame.at("paint").array)
+      if (int(command.num("node", -1)) == password_id &&
+          int(command.num("kind", -1)) == int(PaintCommand::Kind::Text))
+        CHECK(command.str("text") == "••••");
+    password.composition_cancel();
+    CHECK(password.doc.nodes[password_id].attribute("value") == "aXb");
+
+    Page flex_input;
+    flex_input.load(*parse_url("https://local.test/"),
+      "<style>body{margin:0}.row{display:flex}.row input{width:100px;padding:4px}</style>"
+      "<div class=row><input id=text value='Hello'><input id=pw type=password value='secret'></div>");
+    auto flex_frame = flex_input.render(400, 100, 0);
+    int seen_controls = 0;
+    for (const Json &command : flex_frame.at("paint").array)
+      if (int(command.num("kind", -1)) == int(PaintCommand::Kind::Text)) {
+        if (int(command.num("node", -1)) == flex_input.doc.by_id("text")) {
+          CHECK(command.str("text") == "Hello");
+          ++seen_controls;
+        } else if (int(command.num("node", -1)) == flex_input.doc.by_id("pw")) {
+          CHECK(command.str("text") == "••••••");
+          ++seen_controls;
+        }
+      }
+    CHECK(seen_controls == 2);
+    Rect flex_text_box = node_box(flex_input, "text");
+    CHECK(flex_text_box.h > 20);
+
     Page ime;
     ime.load(*parse_url("https://ime-editor.test/"),
       "<input id=ime value=abc><script>var f=document.getElementById('ime');"

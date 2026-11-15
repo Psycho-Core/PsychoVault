@@ -2582,11 +2582,12 @@ Json Page::render(double width, double height, double scroll) {
     if (editor_focused && command.node == focused_ && command.kind == PaintCommand::Kind::Text) {
       const size_t start_byte = utf16_to_byte(editor_text, editor_range.start);
       const size_t end_byte = utf16_to_byte(editor_text, editor_range.end);
-      const std::string before = editor_text.substr(0, start_byte);
+      const std::string before = control_display_value(doc.nodes[focused_], editor_text.substr(0, start_byte));
       const double before_width = text_measure.text_width(before, command.size, command.bold,
                                                            command.font_family, command.font_weight);
       if (editor_range.end > editor_range.start) {
-        const std::string selected = editor_text.substr(start_byte, end_byte - start_byte);
+        const std::string selected = control_display_value(doc.nodes[focused_],
+                                                               editor_text.substr(start_byte, end_byte - start_byte));
         const double selected_width = text_measure.text_width(selected, command.size, command.bold,
                                                                command.font_family, command.font_weight);
         if (selected_width > 0)
@@ -3474,7 +3475,7 @@ size_t Page::caret_at(int node, double x) const {
   for (uint32_t cp : utf8_decode(value)) {
     const size_t units = cp > 0xffff ? 2 : 1;
     const size_t next = best + units;
-    const std::string prefix = value.substr(0, utf16_to_byte(value, next));
+    const std::string prefix = control_display_value(doc.nodes[node], value.substr(0, utf16_to_byte(value, next)));
     const double position = text_x + measure.text_width(prefix, font_size, bold, font_family, font_weight);
     if (x < (previous + position) * 0.5) return best;
     best = next;
@@ -3605,6 +3606,9 @@ bool Page::editor_key(int node, const std::string &key, const std::string &text)
 std::string Page::edit_clipboard(bool cut) {
   const int node = focused_;
   if (node < 0 || node >= int(doc.nodes.size()) || !text_editor_control(doc.nodes[node])) return {};
+  // The default clipboard action must not export a password or delete it via
+  // cut. Preserve the existing clipboard contents when the action is refused.
+  if (doc.nodes[node].name == "input" && lower(doc.nodes[node].attribute("type")) == "password") return {};
   auto &selection = editor_selection(node);
   if (selection.start == selection.end) return {};
   const std::string value = editor_value(node);

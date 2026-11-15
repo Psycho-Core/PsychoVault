@@ -1,5 +1,15 @@
 #include "Psycho_dom.hpp"
 namespace pv {
+std::string control_display_value(const Node &node, std::string_view value) {
+  if (node.name != "input" || lower(node.attribute("type")) != "password")
+    return std::string(value);
+  std::string masked;
+  for (uint32_t cp : utf8_decode(value)) {
+    (void)cp;
+    masked += "\xe2\x80\xa2";
+  }
+  return masked;
+}
 bool Node::get_attribute(std::string_view key, std::string &value) const {
   for (auto &a : attributes)
     if (a.first == key) {
