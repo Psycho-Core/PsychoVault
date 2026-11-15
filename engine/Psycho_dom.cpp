@@ -614,6 +614,13 @@ static std::vector<std::vector<SimpleSelector>> parse_selector(std::string_view 
   }
   return groups;
 }
+bool selector_parseable(std::string_view selector) {
+  const auto groups = parse_selector(selector);
+  if (groups.empty()) return false;
+  for (const auto &group : groups)
+    if (group.empty() || group.front().relation != ' ') return false;
+  return true;
+}
 static bool match_chain(const Document &d, int n, const std::vector<SimpleSelector> &chain,
                         size_t i, const SelectorState *state);
 static bool is_self_or_ancestor(const Document &d, int candidate, int node) {
@@ -772,7 +779,9 @@ static bool match_simple(const Document &d, int n, const SimpleSelector &s,
     if (a[1] == "|=" && value != a[2] && !starts(value, a[2] + "-")) return false;
   }
   for (const std::string &pseudo : s.pseudos) {
-    if (pseudo == "root") {
+    if (pseudo == "scope") {
+      if (!state || state->scope != n) return false;
+    } else if (pseudo == "root") {
       if (node.parent < 0 || d.nodes[node.parent].type != Node::Type::Document) return false;
     } else if (pseudo == "first-child" || pseudo == "last-child" ||
                pseudo == "only-child" || starts(pseudo, "nth-child(")) {

@@ -1418,10 +1418,15 @@ struct Layout {
           if (box == out.boxes.end())
             out.boxes[run.node] = {tx, cursor, run.width, line_height};
           else {
+            // A text node may contribute several runs and several lines.
+            // Keep the union, not just the height of the last line, for hit
+            // testing and geometry queries on its inline ancestors.
+            const double right = std::max(box->second.x + box->second.w, tx + run.width);
+            const double bottom = std::max(box->second.y + box->second.h, cursor + line_height);
             box->second.x = std::min(box->second.x, tx);
             box->second.y = std::min(box->second.y, cursor);
-            box->second.w = std::max(box->second.w, tx + run.width - box->second.x);
-            box->second.h = std::max(box->second.h, line_height);
+            box->second.w = right - box->second.x;
+            box->second.h = bottom - box->second.y;
           }
           tx += run.width;
         }

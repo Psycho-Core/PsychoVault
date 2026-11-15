@@ -460,6 +460,8 @@ void Runtime::mark(Object *o) {
     for (auto &v : p->properties)
       if (v.second.type == Value::Type::Object && v.second.object)
         stack.push_back(v.second.object);
+    for (const auto &value : p->native_roots)
+      if (value.type == Value::Type::Object && value.object) stack.push_back(value.object);
     if (p->promise_result.type == Value::Type::Object && p->promise_result.object)
       stack.push_back(p->promise_result.object);
     for (auto &reaction : p->reactions) {
@@ -735,14 +737,16 @@ Value Runtime::get_member(const Value &base, const std::string &key) {
         });
       });
     }
-    if (key == "hasOwnProperty") {
-      auto props = base.object->properties;
-      return make_native([props](Values &a) {
-        auto name = a.empty() ? std::string() : a[0].to_string();
-        if (name == "length" && props.count("length")) return Value(true);
-        return Value(props.count(name) != 0 && name.compare(0, 4, "get:") != 0 &&
-                     name.compare(0, 4, "set:") != 0);
+    if (key == "hasOwnProperty" &&
+        !(base.object->kind == Object::Kind::Host && host_ && host_->has_own(base.object->host, key))) {
+      Value self = base;
+      Value method = make_native([this, self](Values &a) {
+        return Value(has_own(self, a.empty() ? std::string() : a[0].to_string()));
       });
+      // Native captures are opaque to the GC. Retain the receiver explicitly
+      // when the method is saved and invoked after a later collection.
+      method.object->native_roots.push_back(self);
+      return method;
     }
   }
   if (base.type == Value::Type::String) {
@@ -1190,6 +1194,25 @@ Value Runtime::get_member(const Value &base, const std::string &key) {
   }
   return Value();
 }
+std::vector<std::string> Runtime::own_keys(const Value &base) {
+  std::vector<std::string> keys;
+  if (base.type != Value::Type::Object || !base.object) return keys;
+  if (base.object->kind == Object::Kind::Host && host_) return host_->own_keys(base.object->host);
+  for (const auto &p : base.object->properties)
+    if (base.object->kind != Object::Kind::Array || p.first != "length") keys.push_back(p.first);
+  return keys;
+}
+bool Runtime::has_own(const Value &base, const std::string &key) {
+  if (base.type != Value::Type::Object || !base.object) return false;
+  if (base.object->kind == Object::Kind::Host && host_) return host_->has_own(base.object->host, key);
+  return base.object->properties.count(key) != 0 && key.compare(0, 4, "get:") != 0 &&
+         key.compare(0, 4, "set:") != 0;
+}
+bool Runtime::delete_member(const Value &base, const std::string &key) {
+  if (base.type != Value::Type::Object || !base.object) return true;
+  if (base.object->kind == Object::Kind::Host && host_) return host_->erase(base.object->host, key);
+  return base.object->properties.erase(key) != 0;
+}
 bool Runtime::set_member(const Value &base, const std::string &key, const Value &value) {
   if (base.type != Value::Type::Object || !base.object)
     return false;
@@ -1505,7 +1528,9 @@ Runtime::Flow Runtime::execute(const Stmt &s, Env &env, Value this_value) {
       if (!iterate(iterable, keys))
         throw JsError{Value("TypeError: value is not iterable")};
     } else if (iterable.type == Value::Type::Object && iterable.object) {
-      if (iterable.object->kind == Object::Kind::Array) {
+      if (iterable.object->kind == Object::Kind::Host && host_) {
+        for (const auto &key : host_->own_keys(iterable.object->host)) keys.emplace_back(key);
+      } else if (iterable.object->kind == Object::Kind::Array) {
         size_t n = size_t(iterable.object->properties["length"].to_number());
         for (size_t i = 0; i < n; ++i)
           keys.push_back(s.text == "of" ? iterable.object->properties[std::to_string(i)]
@@ -1704,6 +1729,8 @@ Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
                        ? evaluate(*e.left->right, env, this_value).to_string()
                        : e.left->text;
         if (base.type == Value::Type::Object && base.object) {
+          if (base.object->kind == Object::Kind::Host && host_)
+            return Value(delete_member(base, key));
           auto &props = base.object->properties;
           bool existed = props.erase(key) != 0;
           if (existed && base.object->kind == Object::Kind::Array && key != "length") {
@@ -1748,6 +1775,9 @@ Value Runtime::evaluate(Expr &e, Env &env, Value this_value) {
   }
   case Expr::Kind::Binary: {
     Value a = evaluate(*e.left, env, this_value), b = evaluate(*e.right, env, this_value);
+    if (e.text == "in" && b.type == Value::Type::Object && b.object &&
+        b.object->kind == Object::Kind::Host && host_)
+      return Value(host_->has_own(b.object->host, a.to_string()));
     return binary(e.text, a, b);
   }
   case Expr::Kind::Logical: {
@@ -2783,26 +2813,26 @@ void Runtime::install_builtins() {
   // explicitly.
   object.object->properties["keys"] = make_native([this](Values &a) {
     Values out;
-    if (!a.empty() && a[0].type == Value::Type::Object)
-      for (auto &p : a[0].object->properties)
-        if (a[0].object->kind != Object::Kind::Array || p.first != "length")
-          out.emplace_back(p.first);
+    if (!a.empty())
+      for (const auto &key : own_keys(a[0])) out.emplace_back(key);
     return make_array(out);
   });
   object.object->properties["values"] = make_native([this](Values &a) {
     Values out;
-    if (!a.empty() && a[0].type == Value::Type::Object)
-      for (auto &p : a[0].object->properties)
-        if (a[0].object->kind != Object::Kind::Array || p.first != "length")
-          out.push_back(p.second);
+    if (!a.empty())
+      for (const auto &key : own_keys(a[0]))
+        out.push_back(a[0].object->kind == Object::Kind::Host ? get_member(a[0], key)
+                                                              : a[0].object->properties.at(key));
     return make_array(out);
   });
   object.object->properties["entries"] = make_native([this](Values &a) {
     Values out;
-    if (!a.empty() && a[0].type == Value::Type::Object)
-      for (auto &p : a[0].object->properties)
-        if (a[0].object->kind != Object::Kind::Array || p.first != "length")
-          out.push_back(make_array({Value(p.first), p.second}));
+    if (!a.empty())
+      for (const auto &key : own_keys(a[0])) {
+        Value value = a[0].object->kind == Object::Kind::Host ? get_member(a[0], key)
+                                                              : a[0].object->properties.at(key);
+        out.push_back(make_array({Value(key), value}));
+      }
     return make_array(out);
   });
   object.object->properties["fromEntries"] = make_native([this](Values &a) {
@@ -2820,7 +2850,7 @@ void Runtime::install_builtins() {
     }
     return out;
   });
-  object.object->properties["assign"] = make_native([](Values &a) {
+  object.object->properties["assign"] = make_native([this](Values &a) {
     if (a.empty() || a[0].type != Value::Type::Object || !a[0].object)
       throw JsError{Value("TypeError: Object.assign target must be an object")};
     for (size_t i = 1; i < a.size(); ++i) {
@@ -2828,8 +2858,12 @@ void Runtime::install_builtins() {
         continue; // the language skips a null source rather than failing
       if (a[i].type != Value::Type::Object || !a[i].object)
         continue;
-      for (auto &p : a[i].object->properties)
-        a[0].object->properties[p.first] = p.second;
+      for (const auto &key : own_keys(a[i])) {
+        Value value = a[i].object->kind == Object::Kind::Host ? get_member(a[i], key)
+                                                               : a[i].object->properties.at(key);
+        if (a[0].object->kind == Object::Kind::Host) set_member(a[0], key, value);
+        else a[0].object->properties[key] = value;
+      }
     }
     return a[0];
   });
@@ -3810,8 +3844,9 @@ g.properties["setTimeout"] = make_native([this](Values &a) {
         a[0].object->properties["set:" + key] = t->second;
       return Value(true);
     });
-    reflect.object->properties["deleteProperty"] = make_native([](Values &a) {
+    reflect.object->properties["deleteProperty"] = make_native([this](Values &a) {
       if (a.size() >= 2 && a[0].type == Value::Type::Object && a[0].object) {
+        if (a[0].object->kind == Object::Kind::Host) return Value(delete_member(a[0], a[1].to_string()));
         a[0].object->properties.erase(a[1].to_string());
         return Value(true);
       }

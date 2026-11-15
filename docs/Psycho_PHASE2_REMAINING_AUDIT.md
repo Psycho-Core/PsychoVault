@@ -2,6 +2,11 @@
 
 Audited checkout: `553f4388ea59ec1ab3887dc194756525055251ab` (the merge of PR #127). Audit date: 2026-11-01. This is an inventory and proposed order of work, not an assertion that every browser-standard edge case is required for Phase 2. It does not change the plan or claim completion. The binding scope is [P2 in the master plan](Psycho_MASTER-PLAN.md#p2---engine-to-a-usable-rendering-baseline-the-chrome-side-part-one), the S050 reference consumers and the exit gate. Items marked **build** need code, **verify** need evidence, and **scope** need their relevance to the planned feature set/reference contract established before committing to full browser conformance.
 
+**Later update:** a targeted implementation of the four reference-used DOM APIs
+identified below is now documented in [Psycho_P2_DOM_APIS.md](Psycho_P2_DOM_APIS.md).
+The probe and backlog entries below remain the historical audit of `553f438`;
+they do not override that follow-up or imply full selector/CSSOM conformance.
+
 ## Bottom line
 
 Phase 2 is **not complete**, and its remaining work is not merely a request for the user to test. There are observable missing behaviors in the current engine, incomplete implementations of planned features, and insufficient independent coverage to decide whether all required behavior works. The developer can implement and automate much of this work; platform-dependent interactive tests are listed separately.

@@ -13,9 +13,9 @@ FIXTURES = ROOT / "tests/fixtures/p2"
 ENGINE = ROOT / "build" / ("pv-engine.exe" if sys.platform == "win32" else "pv-engine")
 
 
-def render_frame(fixture, selectors, actions=(), resources=()):
+def render_frame(fixture, selectors, actions=(), resources=(), width=1396, height=834, scroll=0):
     cmd = [str(ENGINE), "--input", str(FIXTURES / fixture), "--url", "https://s050.test/" + fixture,
-           "--width", "1396", "--height", "834"]
+           "--width", str(width), "--height", str(height), "--scroll", str(scroll)]
     for selector in selectors:
         cmd.extend(["--inspect", selector])
     for action in actions:
@@ -105,6 +105,28 @@ class DomLayoutContractTests(unittest.TestCase):
                                         "key:End", "text:X"))
         self.assertEqual(text(updated, "#flex"), ["•••••••"])
         self.assertEqual(updated["inspected"][1]["value"], "secretX")
+
+    def test_reference_dom_api_contract(self):
+        # Independently specified DOM reflection, live selector state and
+        # CSS border-box geometry before the first rendered frame.
+        frame = render_frame("Psycho_dom_apis.html", ["#results", "#box"], width=300, height=200)
+        result, box_item = frame["inspected"]
+        self.assertEqual(result["text"],
+                         "true|7|normal|undefined|12|settings|true|true|"
+                         "userId,mode,panelName|12,normal,settings|userId,mode,panelName,|"
+                         "false|false|true|yes|true|false|true|parent|true|true|true|true|0|"
+                         "true|true|true|true|true|true|30|40|80|30|30|40|110|70|120|80|0|true|"
+                         "10|20|0|20|0|20|true|wide|true|false")
+        self.assertEqual(box_item["box"]["w"], 120)
+
+    def test_reference_dom_geometry_in_document_and_nested_scroll(self):
+        options = {"width": 300, "height": 120, "scroll": 100}
+        before = render_frame("Psycho_dom_geometry_scroll.html", ["#results"],
+                              actions=("click:80,10",), **options)
+        after = render_frame("Psycho_dom_geometry_scroll.html", ["#results"],
+                             actions=("wheel:150,50,35", "click:80,10"), **options)
+        self.assertEqual(before["inspected"][0]["text"], "30|100|80|40|10|10|50|20|140|40")
+        self.assertEqual(after["inspected"][0]["text"], "30|100|80|40|10|10|50|20|140|5")
 
     def test_nested_scroll_and_position_anchors(self):
         selectors = [".shell", ".scroller", ".scroller p:nth-child(1)",

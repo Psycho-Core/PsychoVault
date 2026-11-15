@@ -6,7 +6,39 @@ namespace pv {
 static constexpr int kDocument = -1, kLocation = -3, kStorageLocal = -5, kStorageSession = -6,
                      kHistory = -7, kStyleBase = 1000000, kClassBase = 2000000,
                      kCanvasBase = 3000000, kGradientBase = 4000000,
-                     kMseBase = 5000000, kBufferBase = 6000000;
+                     kMseBase = 5000000, kBufferBase = 6000000, kDatasetBase = 7000000;
+// HTML data-* names are ASCII case-mapped; punctuation and non-ASCII bytes
+// remain unchanged. A dash followed by lowercase is not a valid setter key.
+static std::string data_property_name(std::string_view attribute) {
+  std::string name;
+  for (size_t i = 5; i < attribute.size(); ++i) {
+    const char c = attribute[i];
+    if (c == '-' && i + 1 < attribute.size() && attribute[i + 1] >= 'a' && attribute[i + 1] <= 'z')
+      name += char(attribute[++i] - 'a' + 'A');
+    else name += c;
+  }
+  return name;
+}
+static std::string data_attribute_name(std::string_view property, bool setter = false) {
+  std::string name = "data-";
+  for (size_t i = 0; i < property.size(); ++i) {
+    const unsigned char c = static_cast<unsigned char>(property[i]);
+    if (c == '-' && i + 1 < property.size() && property[i + 1] >= 'a' && property[i + 1] <= 'z') {
+      if (setter) throw js::JsError{js::Value("SyntaxError: dataset property contains dash followed by lowercase")};
+      return {};
+    }
+    if (c >= 'A' && c <= 'Z') { name += '-'; name += char(c - 'A' + 'a'); }
+    else {
+      if (!(c >= 128 || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+            c == '-' || c == '_' || c == '.' || c == ':')) {
+        if (setter) throw js::JsError{js::Value("InvalidCharacterError: invalid dataset property")};
+        return {};
+      }
+      name += char(c);
+    }
+  }
+  return name;
+}
 // Cookies expire against wall-clock seconds, which is what a date header uses.
 static double cookie_now() {
   return double(now_ms()) / 1000.0;
@@ -88,6 +120,35 @@ class PageHost : public js::Host {
 public:
   Page &page;
   explicit PageHost(Page &p) : page(p) {}
+  std::vector<std::string> own_keys(int id) override {
+    std::vector<std::string> keys;
+    if (id < kDatasetBase || id >= kDatasetBase + kMaxDomNodes) return keys;
+    const int node_id = id - kDatasetBase;
+    if (node_id >= int(page.doc.nodes.size())) return keys;
+    for (const auto &attribute : page.doc.nodes[node_id].attributes)
+      if (starts(attribute.first, "data-")) keys.push_back(data_property_name(attribute.first));
+    return keys;
+  }
+  bool has_own(int id, const std::string &name) override {
+    if (id < kDatasetBase || id >= kDatasetBase + kMaxDomNodes) return false;
+    const int node_id = id - kDatasetBase;
+    if (node_id >= int(page.doc.nodes.size())) return false;
+    const std::string attribute = data_attribute_name(name);
+    std::string value;
+    return !attribute.empty() && page.doc.nodes[node_id].get_attribute(attribute, value);
+  }
+  bool erase(int id, const std::string &name) override {
+    if (id < kDatasetBase || id >= kDatasetBase + kMaxDomNodes) return true;
+    const int node_id = id - kDatasetBase;
+    if (node_id >= int(page.doc.nodes.size())) return true;
+    const std::string attribute = data_attribute_name(name);
+    if (attribute.empty()) return true;
+    auto &attributes = page.doc.nodes[node_id].attributes;
+    const auto old_size = attributes.size();
+    std::erase_if(attributes, [&](const auto &entry) { return entry.first == attribute; });
+    if (attributes.size() != old_size) page.dirty_ = true;
+    return true;
+  }
   js::Value node(int id) {
     return page.js_->host_value(id, id == kDocument ? "Document" : "HTMLElement");
   }
@@ -560,6 +621,14 @@ public:
                                         : canvas_member(&it->second, name, id - kCanvasBase);
     }
     auto &d = page.doc;
+    if (id >= kDatasetBase && id < kDatasetBase + kMaxDomNodes) {
+      const int node_id = id - kDatasetBase;
+      const std::string attribute = data_attribute_name(name);
+      std::string value;
+      return node_id < int(d.nodes.size()) && !attribute.empty() &&
+                     d.nodes[node_id].get_attribute(attribute, value)
+                 ? js::Value(value) : js::Value();
+    }
     if (id == kStorageLocal || id == kStorageSession)
       return storage_get(id, name);
     if (id == kHistory)
@@ -1057,6 +1126,8 @@ public:
       return r.host_value(kStyleBase + id, "CSSStyleDeclaration");
     if (name == "classList")
       return r.host_value(kClassBase + id, "DOMTokenList");
+    if (name == "dataset" && n.type == Node::Type::Element)
+      return r.host_value(kDatasetBase + id, "DOMStringMap");
     if (name == "parentElement" || name == "parentNode")
       return n.parent >= 0 ? node(n.parent) : js::Value::null();
     if (name == "children" || name == "childNodes")
@@ -1110,6 +1181,69 @@ public:
         page.dirty_ = true;
         return js::Value();
       });
+    if ((name == "matches" || name == "closest") && n.type == Node::Type::Element)
+      return r.make_native([this, id, name](js::Values &a) {
+        if (a.empty()) throw js::JsError{js::Value("TypeError: selector argument is required")};
+        const std::string selector = a[0].to_string();
+        if (!selector_parseable(selector))
+          throw js::JsError{js::Value("SyntaxError: unsupported or invalid selector")};
+        const SelectorState state{page.hovered_, page.focused_, page.active_, page.focus_visible_, id};
+        int candidate = id;
+        while (candidate >= 0 && candidate < int(page.doc.nodes.size()) &&
+               page.doc.nodes[candidate].type == Node::Type::Element) {
+          if (matches_selector(page.doc, candidate, selector, &state))
+            return name == "matches" ? js::Value(true) : node(candidate);
+          if (name == "matches") break;
+          candidate = page.doc.nodes[candidate].parent;
+        }
+        return name == "matches" ? js::Value(false) : js::Value::null();
+      });
+    if (name == "getBoundingClientRect" && n.type == Node::Type::Element)
+      return r.make_native([this, id](js::Values &) {
+        // Layout is demand-driven: scripts can ask for geometry before the
+        // first frame or immediately after changing a style or DOM attribute.
+        if (page.dirty_ || !page.has_layout_cache_) page.rebuild();
+        Rect bounds{};
+        bool found = false;
+        auto include = [&](int candidate) {
+          const auto it = page.layout_.boxes.find(candidate);
+          if (it == page.layout_.boxes.end()) return;
+          Rect rect = it->second;
+          if (!page.layout_.fixed_boxes.count(candidate)) rect.y -= page.scroll_;
+          if (!found) { bounds = rect; found = true; return; }
+          const double right = std::max(bounds.x + bounds.w, rect.x + rect.w);
+          const double bottom = std::max(bounds.y + bounds.h, rect.y + rect.h);
+          bounds.x = std::min(bounds.x, rect.x);
+          bounds.y = std::min(bounds.y, rect.y);
+          bounds.w = right - bounds.x;
+          bounds.h = bottom - bounds.y;
+        };
+        include(id);
+        // Inline text runs are currently keyed by their text nodes rather than
+        // their containing span. Union their descendant boxes when no element
+        // box was generated. This reflects existing layout, not CSSOM's full
+        // fragmented-inline or transform model.
+        if (!found && id < int(page.computed_styles_.size()) &&
+            page.computed_styles_[id].display == "inline") {
+          std::vector<int> pending(page.doc.nodes[id].children.begin(), page.doc.nodes[id].children.end());
+          while (!pending.empty()) {
+            const int child = pending.back(); pending.pop_back();
+            include(child);
+            for (int descendant : page.doc.nodes[child].children) pending.push_back(descendant);
+          }
+        }
+        auto rect = page.js_->make_object();
+        rect.object->host_type = "DOMRect";
+        rect.object->properties["x"] = js::Value(bounds.x);
+        rect.object->properties["y"] = js::Value(bounds.y);
+        rect.object->properties["width"] = js::Value(bounds.w);
+        rect.object->properties["height"] = js::Value(bounds.h);
+        rect.object->properties["left"] = js::Value(bounds.x);
+        rect.object->properties["top"] = js::Value(bounds.y);
+        rect.object->properties["right"] = js::Value(bounds.x + bounds.w);
+        rect.object->properties["bottom"] = js::Value(bounds.y + bounds.h);
+        return rect;
+      });
     if (name == "querySelector")
       return r.make_native([this, id](js::Values &a) {
         int n = a.empty() ? -1 : page.doc.query_one(a[0].to_string(), id);
@@ -1152,6 +1286,14 @@ public:
   }
   bool set(int id, const std::string &name, const js::Value &value) override {
     auto &d = page.doc;
+    if (id >= kDatasetBase && id < kDatasetBase + kMaxDomNodes) {
+      const int node_id = id - kDatasetBase;
+      if (node_id < int(d.nodes.size())) {
+        d.nodes[node_id].set_attribute(data_attribute_name(name, true), value.to_string());
+        page.dirty_ = true;
+      }
+      return true;
+    }
     if (id >= kMseBase && id < kMseBase + 1000000) {
       auto it = page.mse_objects_.find(id - kMseBase);
       if (it == page.mse_objects_.end())
@@ -1353,6 +1495,7 @@ public:
     }
     if (name == "id") {
       n.set_attribute("id", value.to_string());
+      page.dirty_ = true;
       return true;
     }
     if (name == "className") {

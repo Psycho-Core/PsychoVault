@@ -1,0 +1,57 @@
+<!doctype html>
+<style>
+body { margin: 0; }
+#box { position:absolute; left:30px; top:40px; width:80px; height:30px; padding:0; border:0; }
+#box[data-mode="wide"] { width:120px; }
+#hidden { display:none; }
+#id-old { width:10px; height:10px; }
+#id-new { width:20px; height:10px; }
+#wrap { width:30px; font-size:10px; line-height:10px; }
+</style>
+<div id="parent" class="panel"><div id="box" class="item" data-user-id="7" data-mode="normal"><span id="inner">Hello</span></div></div>
+<div id="id-old"></div><div id="wrap"><span id="multiline">word word word word word word</span></div>
+<input id="check" type="checkbox" checked>
+<div id="hidden"></div><div id="results" style="display:none"></div>
+<script>
+var box = document.getElementById('box');
+var map = box.dataset;
+var result = [];
+result.push(map === box.dataset, map.userId, map.mode, typeof map.missing);
+map.userId = 12;
+box.setAttribute('data-panel-name', 'settings');
+result.push(box.getAttribute('data-user-id'), map.panelName, 'panelName' in map, map.hasOwnProperty('panelName'));
+result.push(Object.keys(map).join(','), Object.values(map).join(','));
+var keys = ''; for (var k in map) keys += k + ',';
+result.push(keys);
+delete map.userId;
+result.push(box.hasAttribute('data-user-id'), 'userId' in map, delete map.missing);
+Object.assign(map, {newKey:'yes'});
+result.push(box.getAttribute('data-new-key'));
+result.push(box.matches('.item[data-mode="normal"]'), box.matches('.other'), box.matches(':scope'),
+            box.closest('.panel').id, box.closest('.item') === box, box.closest('.absent') === null);
+var detached = document.createElement('div'); detached.className = 'orphan';
+result.push(detached.matches('.orphan'), detached.closest('.orphan') === detached,
+            detached.getBoundingClientRect().width);
+var bad = false; try { box.matches('['); } catch (e) { bad = true; }
+var missing = false; try { box.closest(); } catch (e) { missing = true; }
+var badkey = false; try { map['bad-key'] = 1; } catch (e) { badkey = true; }
+result.push(bad, missing, badkey);
+var check = document.getElementById('check'); check.focus();
+result.push(check.matches(':checked'), check.matches(':focus'), check.closest(':focus') === check);
+var before = box.getBoundingClientRect();
+map.mode = 'wide';
+var after = box.getBoundingClientRect();
+result.push(before.x, before.y, before.width, before.height, before.left, before.top, before.right, before.bottom,
+            after.width, before.width, document.getElementById('hidden').getBoundingClientRect().width,
+            document.getElementById('inner').getBoundingClientRect().width > 0);
+var changing = document.getElementById('id-old');
+result.push(changing.getBoundingClientRect().width);
+changing.id = 'id-new'; result.push(changing.getBoundingClientRect().width);
+changing.remove(); result.push(changing.getBoundingClientRect().width);
+document.body.appendChild(changing); result.push(changing.getBoundingClientRect().width);
+changing.style.display = 'none'; result.push(changing.getBoundingClientRect().width);
+changing.style.display = 'block'; result.push(changing.getBoundingClientRect().width);
+result.push(document.getElementById('multiline').getBoundingClientRect().height > 16);
+result.push(Object.assign({}, map).mode, Reflect.deleteProperty(map, 'newKey'), box.hasAttribute('data-new-key'));
+document.getElementById('results').textContent = result.join('|');
+</script>
