@@ -1482,7 +1482,8 @@ ImageSource select_image_source(const Node &node, double viewport_width, double 
   std::vector<Candidate> candidates;
   const std::string src = trim(node.attribute("src"));
   const std::string srcset = node.attribute("srcset");
-  if (lower(srcset).find("data:") != std::string::npos) return {src, 1};
+  // Avoid unbounded per-frame parsing of hostile attributes.
+  if (srcset.size() > 65536 || lower(srcset).find("data:") != std::string::npos) return {src, 1};
   // This bounded subset accepts comma-separated ordinary URLs with one x or w
   // descriptor, not the special comma/whitespace tokenization of data URLs.
   // Invalid candidates are ignored rather than turning into requests.
@@ -1511,6 +1512,7 @@ ImageSource select_image_source(const Node &node, double viewport_width, double 
     for (const auto &candidate : candidates)
       if (candidate.descriptor == value) duplicate = true;
     if (!duplicate) candidates.push_back({url, value, width});
+    if (candidates.size() >= 256) break;
   }
   if (candidates.empty()) return {src, 1};
   const bool width_descriptors = candidates.front().width;
@@ -1521,7 +1523,8 @@ ImageSource select_image_source(const Node &node, double viewport_width, double 
   }
   double source_size = viewport_width; // missing sizes defaults to 100vw
   if (width_descriptors) {
-    const std::string sizes = node.attribute("sizes");
+    std::string sizes = node.attribute("sizes");
+    if (sizes.size() > 65536) sizes.clear();
     size_t start = 0;
     int depth = 0;
     for (size_t i = 0; i <= sizes.size(); ++i) {

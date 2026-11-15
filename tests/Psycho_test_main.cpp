@@ -2375,6 +2375,8 @@ int main() {
     CHECK(select_image_source(node, 1000, 600, environment).url == "medium.png");
     node.set_attribute("srcset", "data:image/png;base64,AAAA 2x");
     CHECK(select_image_source(node, 800, 600, environment).url == "fallback.png");
+    node.set_attribute("srcset", std::string(65537, 'x'));
+    CHECK(select_image_source(node, 800, 600, environment).url == "fallback.png");
 
     Page responsive;
     responsive.set_viewport_environment(100, 100, environment);
