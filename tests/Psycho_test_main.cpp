@@ -1147,6 +1147,27 @@ int main() {
     CHECK(host.pump() == false);
   }
   // UiPseudoClassInteractionMatrix covers interaction state, structural pseudos,
+  // Keyboard navigation through the host's separate scroll-key path also
+  // enables focus-visible after a pointer-focused element.
+  {
+    Page focus;
+    focus.load(*parse_url("https://local.test/"),
+      "<style>body{margin:0}div{width:40px;height:20px;background:#dd2222}"
+      "div:focus-visible{background:#22aa44}</style><div id=focus tabindex=0></div>");
+    focus.render(100, 100, 0);
+    focus.click(10, 10);
+    auto color_of_focus = [&]() {
+      auto frame = focus.render(100, 100, 0);
+      for (const auto &paint : frame.at("paint").array)
+        if (int(paint.num("node", -1)) == focus.doc.by_id("focus") &&
+            int(paint.num("kind", -1)) == int(PaintCommand::Kind::Rect))
+          return uint32_t(paint.num("color"));
+      return uint32_t(0);
+    };
+    CHECK(color_of_focus() == 0xffdd2222u);
+    focus.scroll_key("ArrowDown");
+    CHECK(color_of_focus() == 0xff22aa44u);
+  }
   // selector specificity, origin/importance, and CSS-wide keywords.
   {
     Document selectors;
@@ -1159,6 +1180,11 @@ int main() {
     CHECK(matches_selector(selectors, selectors.by_id("four"), ":active", &state));
     CHECK(!matches_selector(selectors, selectors.by_id("one"), ":active", &state));
     CHECK(matches_selector(selectors, selectors.by_id("two"), ":focus", &state));
+    CHECK(matches_selector(selectors, selectors.by_id("two"), ":focus-visible", &state));
+    state.focus_visible = false;
+    CHECK(matches_selector(selectors, selectors.by_id("two"), ":focus", &state));
+    CHECK(!matches_selector(selectors, selectors.by_id("two"), ":focus-visible", &state));
+    state.focus_visible = true;
     CHECK(matches_selector(selectors, selectors.by_id("two"), ":checked", &state));
     CHECK(matches_selector(selectors, selectors.by_id("three"), ":disabled"));
     CHECK(matches_selector(selectors, selectors.by_id("two"), ":enabled"));

@@ -2,7 +2,7 @@
 
 Audit date: 2026-11-01. Status: **S050 audit complete; S051 and S052 Windows implementation gates passed; targeted S053-S069 subsets are implemented and Linux-tested locally. The combined S070 Windows automated build, tests and 18 golden cases also passed; S066/S067 performance and interactive Win32 behavior remain unvalidated. S070 has a targeted owned golden suite; S071's diff mechanism is implemented, while matching P3 views, parity and the broad P2 exit gate remain open.** See [S072_PHASE2_AUDIT.md](S072_PHASE2_AUDIT.md) for current evidence and gate disposition; dated per-step notes below preserve historical results. This is the ordered P2 input. It does not claim that the reference UI is implemented or visually matched.
 
-**Later follow-ups:** targeted [DOM/layout contracts](Psycho_P2_DOM_LAYOUT_CONTRACT.md) and [responsive image selection](Psycho_P2_RESPONSIVE_IMAGES.md) were added after the historical audit below. They narrow specific gaps; they do not close the broader Phase 2 exit gate.
+**Later follow-ups:** targeted [DOM/layout contracts](Psycho_P2_DOM_LAYOUT_CONTRACT.md), [responsive image selection](Psycho_P2_RESPONSIVE_IMAGES.md), and a [focus-visible modality heuristic](Psycho_P2_FOCUS_VISIBLE.md) were added after the historical audit below. They narrow specific gaps; they do not close the broader Phase 2 exit gate.
 
 ## Sources and scope
 

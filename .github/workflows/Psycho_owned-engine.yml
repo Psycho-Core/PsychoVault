@@ -89,6 +89,16 @@ jobs:
             Write-Host "::error title=P2 responsive image contract::$detail"
             exit $code
           }
+      - name: Verify focus interaction contract
+        shell: pwsh
+        run: |
+          python tests/Psycho_p2_focus_contract_tests.py --engine build/pv-engine.exe 2>&1 | Tee-Object build/p2-focus-contract.txt
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            $detail = (Get-Content build/p2-focus-contract.txt -Raw) -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            Write-Host "::error title=P2 focus contract::$detail"
+            exit $code
+          }
       - name: Verify reference-derived DOM and layout contracts
         shell: pwsh
         run: |

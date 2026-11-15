@@ -805,7 +805,8 @@ static bool match_simple(const Document &d, int n, const SimpleSelector &s,
       if (!state || state->focused != n) return false;
     } else if (pseudo == "focus-within" || pseudo == "focus-visible") {
       if (!state || state->focused < 0 ||
-          (pseudo == "focus-visible" ? state->focused != n : !is_self_or_ancestor(d, n, state->focused)))
+          (pseudo == "focus-visible" ? (state->focused != n || !state->focus_visible)
+                                     : !is_self_or_ancestor(d, n, state->focused)))
         return false;
     } else if (starts(pseudo, "not(") && pseudo.back() == ')') {
       static thread_local unsigned negation_depth = 0;
