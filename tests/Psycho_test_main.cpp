@@ -702,6 +702,20 @@ int main() {
     CHECK(color.r == 10 && color.g == 20 && color.b == 30 && color.a >= 127 && color.a <= 128);
     auto hsl = parse_color("hsl(210 50% 40%)");
     CHECK(hsl.r == 51 && hsl.g == 102 && hsl.b == 153);
+    auto transparent = parse_color("transparent");
+    CHECK(transparent.a == 0 && transparent.bgra() == 0);
+    Page transparent_text;
+    transparent_text.load(*parse_url("https://local.test/"),
+        "<div style='color:transparent'>Hidden <span style='color:currentColor'>text</span></div>");
+    const Json transparent_frame = transparent_text.render(200, 100, 0);
+    int transparent_runs = 0;
+    for (const Json &command : transparent_frame.at("paint").array)
+      if (int(command.num("kind", -1)) == int(PaintCommand::Kind::Text) &&
+          !command.str("text").empty()) {
+        CHECK(uint32_t(command.num("color")) == 0u);
+        ++transparent_runs;
+      }
+    CHECK(transparent_runs >= 2);
   }
   // UiCssMathFunctionsAndMixedUnits (S052): math and mixed units use the
   // parent/font/root/viewport bases, including deferred containing-block percentages.

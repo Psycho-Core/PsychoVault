@@ -3,7 +3,13 @@ namespace pv {
 Color parse_color(std::string_view v) {
   const std::string s = lower(trim(v));
   Color color;
-  if (s.empty() || s == "transparent" || s == "initial" || s == "unset" ||
+  if (s == "transparent") {
+    // `transparent` is transparent black even when used for text, borders or
+    // currentColor; the default Color sentinel has an opaque alpha.
+    color.a = 0;
+    return color;
+  }
+  if (s.empty() || s == "initial" || s == "unset" ||
       s == "inherit" || s == "currentcolor") return color;
   static const std::map<std::string, uint32_t> names = {
       {"black",0x000000},{"white",0xffffff},{"red",0xff0000},{"green",0x008000},
