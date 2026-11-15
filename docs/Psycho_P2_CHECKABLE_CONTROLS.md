@@ -18,7 +18,12 @@ for this implementation, not a browser screenshot or native-theme comparison.
 Linux GCC validation: 1,143 engine / 2,990 total checks; image and checkable
 contracts 5/5, DOM/layout contracts 7/7, focus and responsive-image contracts
 1/1 each, independent goldens 24/24, owned goldens 18/18 and both golden
-harness self-tests 6/6.
+harness self-tests 6/6. Windows x64
+[run 43728671267](https://github.com/Psycho-Core/PsychoVault/actions/runs/43728671267)
+passed the build, native tests, rendering contracts and goldens, smoke tests and
+packaging on commit `a612671`. The branch-only push trigger used for that run
+was removed in the next commit; this does not demonstrate manual-dispatch
+permission or physical input-device testing.
 
 This is a targeted repair, not full checkable-control conformance. Inline
 controls still use the older text-based painter; sizing and appearance are not
