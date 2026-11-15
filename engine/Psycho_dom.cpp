@@ -212,16 +212,14 @@ struct HtmlParser {
             bool self_close) {
     if (context < 0) {
       if (tag == "html") {
-        if (doc.element("html") < 0) {
-          int n = doc.create(Node::Type::Element, tag);
-          doc.append(doc.root, n);
-          stack.push_back(n);
-        } else
-          stack.push_back(doc.element("html"));
+        int h = ensure_html();
+        for (const auto &a : attrs) doc.nodes[h].set_attribute(a.first, a.second);
+        stack.push_back(h);
         return;
       }
       if (tag == "head") {
         int h = ensure_head();
+        for (const auto &a : attrs) doc.nodes[h].set_attribute(a.first, a.second);
         while (stack.size() > 1)
           stack.pop_back();
         stack.push_back(h);
@@ -229,6 +227,7 @@ struct HtmlParser {
       }
       if (tag == "body") {
         int b = ensure_body();
+        for (const auto &a : attrs) doc.nodes[b].set_attribute(a.first, a.second);
         stack.resize(1);
         stack.push_back(doc.element("html"));
         stack.push_back(b);
@@ -253,11 +252,15 @@ struct HtmlParser {
           stack.push_back(doc.body);
         }
       }
-      if (tag == "p")
-        close_named("p", {"address", "article", "aside", "blockquote", "div", "dl", "fieldset",
-                          "footer",  "form",    "h1",    "h2",         "h3",  "h4", "h5",
-                          "h6",      "header",  "hr",    "main",       "nav", "ol", "p",
-                          "pre",     "section", "table", "ul"});
+      // A new paragraph or block closes an *open paragraph*, not the
+      // surrounding block itself. Search only within button scope so a p in
+      // another table cell or nested button cannot close an outer paragraph.
+      static const std::set<std::string> p_closing_tags = {
+          "address", "article", "aside", "blockquote", "div", "dl", "fieldset",
+          "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header",
+          "hr", "main", "nav", "ol", "p", "pre", "section", "table", "ul"};
+      if (p_closing_tags.count(tag))
+        close_paragraph_in_scope();
       if (tag == "li")
         close_named("li", {"li"});
       if ((tag == "dt" || tag == "dd"))
@@ -274,6 +277,20 @@ struct HtmlParser {
     if (!is_void(tag) && !self_close)
       stack.push_back(n);
   }
+  bool close_paragraph_in_scope() {
+    static const std::set<std::string> boundaries = {
+        "html", "body", "table", "td", "th", "caption", "applet", "marquee",
+        "object", "template", "button"};
+    for (size_t i = stack.size(); i-- > 1;) {
+      const std::string &name = doc.nodes[stack[i]].name;
+      if (name == "p") {
+        stack.resize(i);
+        return true;
+      }
+      if (boundaries.count(name)) return false;
+    }
+    return false;
+  }
   void close_named(const std::string &, const std::set<std::string> &tags) {
     for (size_t i = stack.size(); i-- > 1;)
       if (tags.count(doc.nodes[stack[i]].name)) {
@@ -283,12 +300,11 @@ struct HtmlParser {
   }
   void close(const std::string &tag) {
     if (tag == "p" && context < 0) {
-      bool found = false;
-      for (size_t i = stack.size(); i-- > 1;)
-        if (doc.nodes[stack[i]].name == "p")
-          found = true;
-      if (!found)
+      if (!close_paragraph_in_scope()) {
         open("p", {}, false);
+        if (stack.size() > 1 && doc.nodes[top()].name == "p") stack.pop_back();
+      }
+      return;
     }
     for (size_t i = stack.size(); i-- > 1;)
       if (doc.nodes[stack[i]].name == tag) {

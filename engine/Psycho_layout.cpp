@@ -997,21 +997,39 @@ struct Layout {
     for (int child : children) {
       const Style &style = styles[child];
       Rect used = style.position == "fixed" ? Rect{0, 0, viewport_width, viewport_height} : containing;
-      double x = used.x + (style.has_left ? style.left : 0);
-      double y = used.y + (style.has_top ? style.top : 0);
+      const double x = used.x + (style.has_left ? style.left : 0);
+      const double y = used.y + (style.has_top ? style.top : 0);
       const double extra_w = outer_extra(style);
-      const double specified_width = resolved_width(style, used.w);
-      if (style.has_right && !style.has_left)
-        x = used.x + used.w - style.right - (specified_width >= 0 ? specified_width + extra_w : 0);
       const double extra_h = style.margin[0] + style.margin[2] + style.padding[0] +
                              style.padding[2] + style.border[0] + style.border[2];
+      const double specified_width = resolved_width(style, used.w);
       const double specified_height = resolved_height(style, used.h);
-      if (style.has_bottom && !style.has_top)
-        y = used.y + used.h - style.bottom -
-            (specified_height >= 0 ? specified_height + extra_h : 0);
+      const double available_w = std::max(0.0, used.w - (style.has_left ? style.left : 0.0) -
+                                                        (style.has_right ? style.right : 0.0));
+      double forced_w = -1, forced_h = -1;
+      if (specified_width < 0) {
+        // Two opposing offsets stretch an auto width; otherwise use the
+        // existing intrinsic measurement as a bounded shrink-to-fit estimate.
+        const double outer_w = style.has_left && style.has_right
+                                   ? available_w
+                                   : std::min(available_w, measure_w(child, available_w, depth + 1));
+        forced_w = std::max(0.0, outer_w - extra_w);
+      }
+      if (specified_height < 0 && style.height_percent < 0 && style.has_top && style.has_bottom)
+        forced_h = std::max(0.0, used.h - style.top - style.bottom - extra_h);
       const size_t from = out.paint.size();
-      block(child, x, y, std::max(0.0, used.w - (style.has_left ? style.left : 0.0)),
-            depth + 1, &used, -1, -1, used.h);
+      const double layout_available = specified_width >= 0 ? used.w : available_w;
+      block(child, x, y, layout_available, depth + 1, &used, forced_h, forced_w, used.h);
+      // Auto height, min/max constraints and border-box sizing can change the
+      // actual result, so anchor using the laid-out border box, not a guess.
+      const auto box = out.boxes.find(child);
+      if (box != out.boxes.end()) {
+        const double dx = style.has_right && !style.has_left
+            ? used.x + used.w - style.right - style.margin[1] - (box->second.x + box->second.w) : 0;
+        const double dy = style.has_bottom && !style.has_top
+            ? used.y + used.h - style.bottom - style.margin[2] - (box->second.y + box->second.h) : 0;
+        move_box(from, child, dx, dy);
+      }
       if (style.position == "fixed") mark_fixed(from, child);
     }
   }
