@@ -17,7 +17,11 @@ and its reduced-motion counterpart; it is not a full screenshot comparison.
 
 Linux GCC validation: 1,171 engine / 3,018 total native checks, seven
 image/paint contracts, seven DOM/layout contracts, focus and responsive-image
-contracts, 18 owned goldens and 24 independent goldens passed.
+contracts, 18 owned goldens and 24 independent goldens passed. Windows x64
+[run 44018882237](https://github.com/Psycho-Core/PsychoVault/actions/runs/44018882237)
+passed build, native tests, contracts, goldens, smokes and packaging on
+`fcd7ed7`. The temporary branch-only push trigger was restored afterwards; this
+does not establish manual-dispatch permission or physical DPI validation.
 
 This is not the requested performance architecture: each changing transform
 still changes the layout signature and runs full-document layout. The native
