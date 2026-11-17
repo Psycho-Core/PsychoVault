@@ -2229,13 +2229,44 @@ std::string style_property_value(const Style &style, const std::string &property
   }
   if (property == "width" && style.width >= 0) return std::to_string(style.width) + "px";
   if (property == "height" && style.height >= 0) return std::to_string(style.height) + "px";
+  if (property == "transform") return style.transform.empty() ? "none" : style.transform;
   return {};
+}
+// A bounded transform interpolation for the reference spinner: a single 2D
+// rotation, including none as the identity. Unsupported transform lists remain
+// discrete rather than pretending to implement CSS matrix decomposition.
+std::optional<double> single_rotation_degrees(const std::string &value) {
+  const std::string text = lower(trim(value));
+  if (text == "none") return 0.0;
+  const size_t open = text.find('(');
+  if (open == std::string::npos || text.back() != ')' ||
+      (trim(text.substr(0, open)) != "rotate" && trim(text.substr(0, open)) != "rotatez"))
+    return std::nullopt;
+  const std::string argument = trim(text.substr(open + 1, text.size() - open - 2));
+  try {
+    size_t used = 0;
+    double angle = std::stod(argument, &used);
+    const std::string unit = trim(argument.substr(used));
+    if (!std::isfinite(angle)) return std::nullopt;
+    if (unit == "rad") angle *= 180.0 / 3.14159265358979323846;
+    else if (unit == "turn") angle *= 360.0;
+    else if (unit == "grad") angle *= 0.9;
+    else if (unit != "deg" && !(unit.empty() && angle == 0)) return std::nullopt;
+    if (!std::isfinite(angle)) return std::nullopt;
+    return angle;
+  } catch (...) { return std::nullopt; }
 }
 std::string interpolate_css_value(const std::string &property, const std::string &from,
                                   const std::string &to, double progress) {
   progress = std::clamp(progress, 0.0, 1.0);
   if (progress <= 0) return from;
   if (progress >= 1) return to;
+  if (property == "transform") {
+    const auto a = single_rotation_degrees(from), b = single_rotation_degrees(to);
+    if (a && b)
+      return "rotate(" + std::to_string(*a + (*b - *a) * progress) + "deg)";
+    return progress < 0.5 ? from : to;
+  }
   if (property == "color" || property == "background-color") {
     const Color a = parse_color(from), b = parse_color(to);
     if (a.transparent && lower(trim(from)) != "transparent") return from;
@@ -2435,7 +2466,7 @@ void Page::rebuild() {
     for (int node = 0; node < int(styles.size()); ++node) {
       const Style &before = computed_styles_[size_t(node)];
       const Style &after = styles[size_t(node)];
-      for (const char *property_name : {"opacity", "color", "background-color", "width", "height"}) {
+      for (const char *property_name : {"opacity", "color", "background-color", "width", "height", "transform"}) {
         const std::string property = property_name;
         const std::string old_value = style_property_value(before, property);
         const std::string new_value = style_property_value(after, property);
@@ -2555,18 +2586,25 @@ void Page::rebuild() {
                                                   : duration * animation.iterations;
     if (elapsed < 0 && animation.fill != "backwards" && animation.fill != "both") continue;
     if (elapsed >= total && animation.fill != "forwards" && animation.fill != "both") continue;
-    double progress = elapsed < 0 ? 0 : elapsed >= total ? 1 : std::fmod(elapsed, duration) / duration;
-    if (elapsed >= 0 && elapsed < total && animation.direction.find("alternate") == 0 &&
-        (int(std::floor(elapsed / duration)) & 1)) progress = 1 - progress;
-    if (animation.direction == "reverse" || animation.direction == "alternate-reverse")
-      progress = 1 - progress;
-    progress = easing_progress(animation.timing, progress);
+    double iteration = 0, progress = 0;
+    if (elapsed >= total) {
+      // Preserve the final iteration's direction and fractional completion.
+      iteration = std::max(0.0, std::ceil(animation.iterations) - 1.0);
+      progress = animation.iterations - iteration;
+    } else if (elapsed >= 0) {
+      iteration = std::floor(elapsed / duration);
+      progress = std::fmod(elapsed, duration) / duration;
+    }
+    const bool odd_iteration = std::fmod(iteration, 2.0) >= 1.0;
+    const bool reverse = animation.direction == "reverse" || animation.direction == "alternate-reverse";
+    const bool alternate = animation.direction == "alternate" || animation.direction == "alternate-reverse";
+    if (reverse != (alternate && odd_iteration)) progress = 1 - progress;
     std::set<std::string> properties;
     for (const CssKeyframe &frame : animation.frames)
       for (const auto &[property, value] : frame.declarations) {
         (void)value;
         if (property == "opacity" || property == "color" || property == "background-color" ||
-            property == "width" || property == "height") properties.insert(property);
+            property == "width" || property == "height" || property == "transform") properties.insert(property);
       }
     std::map<std::string, std::string> overrides;
     for (const std::string &property : properties) {
@@ -2578,9 +2616,13 @@ void Page::rebuild() {
         }
       const std::string base = style_property_value(styles[size_t(node)], property);
       const std::string from = before ? before->declarations.at(property) : base;
-      const std::string to = after ? after->declarations.at(property) : from;
-      const double span = before && after ? after->offset - before->offset : 1.0;
-      const double local = before && after && span > 0 ? (progress - before->offset) / span : progress;
+      const std::string to = after ? after->declarations.at(property) : base;
+      const double from_offset = before ? before->offset : 0.0;
+      const double to_offset = after ? after->offset : 1.0;
+      const double span = to_offset - from_offset;
+      const double local = span > 0 ? (progress - from_offset) / span : 0;
+      // Timing is applied once per keyframe segment, not once to the global
+      // timeline and a second time to the segment.
       overrides[property] = interpolate_css_value(property, from, to,
                                                     easing_progress(animation.timing, local));
     }

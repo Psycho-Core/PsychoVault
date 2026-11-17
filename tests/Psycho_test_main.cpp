@@ -887,6 +887,71 @@ int main() {
     CHECK(close_to(painted_opacity(frame, reduced_page.doc.by_id("fade")), 0));
     CHECK(!reduced_page.animation_pending());
   }
+  {
+    // S065: sampled rotation must move continuously, including the reference
+    // spinner's full turn. Long durations and negative delays make these
+    // samples effectively deterministic without sleeping or assuming FPS.
+    Page spin;
+    spin.load(*parse_url("https://spin.test/"),
+      "<style>body{margin:0}@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(1turn)}}"
+      "@keyframes implicit{to{transform:rotate(200grad)}}"
+      "@keyframes eased{0%{transform:rotate(90deg)}50%{transform:rotate(180deg)}"
+      "100%{transform:rotate(360deg)}}"
+      "@keyframes fade{from{opacity:0}to{opacity:1}}"
+      "#spin,#implicit,#eased,#transition,#finish{width:20px;height:20px;background:#123456}"
+      "#spin{animation:spin 60s linear infinite;animation-delay:-15s}"
+      "#implicit{animation:implicit 60s linear infinite;animation-delay:-15s}"
+      "#eased{animation:eased 60s ease-in infinite;animation-delay:-15s}"
+      "#transition{transform:none;transition:transform 60s linear;transition-delay:-15s}"
+      "#transition:hover{transform:rotate(1turn)}"
+      "#finish{animation:fade 1s linear 2 alternate forwards;animation-delay:-3s}"
+      "</style><div id=spin></div><div id=implicit></div><div id=eased></div>"
+      "<div id=transition></div><div id=finish></div>");
+    auto rotation = [&](const Json &frame, const char *name) {
+      for (const Json &command : frame.at("paint").array)
+        if (int(command.num("node", -1)) == spin.doc.by_id(name) &&
+            int(command.num("kind", -1)) == int(PaintCommand::Kind::PopLayer))
+          return command.num("rotation");
+      return 0.0;
+    };
+    Json frame = spin.render(200, 200, 0);
+    CHECK(std::abs(rotation(frame, "spin") - 90) < 2);
+    CHECK(std::abs(rotation(frame, "implicit") - 45) < 2);
+    CHECK(std::abs(rotation(frame, "eased") - 112.5) < 2);
+    bool finished_at_zero = false;
+    for (const Json &command : frame.at("paint").array)
+      if (int(command.num("node", -1)) == spin.doc.by_id("finish") &&
+          int(command.num("kind", -1)) == int(PaintCommand::Kind::PopLayer))
+        finished_at_zero = close_to(command.num("opacity", 1), 0);
+    CHECK(finished_at_zero);
+    CHECK(spin.animation_pending());
+    const double first_rotation = rotation(frame, "spin");
+    const uint64_t before_tick_layouts = spin.layout_rebuild_count();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    spin.tick();
+    frame = spin.render(200, 200, 0);
+    CHECK(rotation(frame, "spin") > first_rotation + 0.1);
+    // This records the current cost honestly: rotation is not yet sampled on
+    // a retained compositor layer and still triggers whole-document layout.
+    CHECK(spin.layout_rebuild_count() > before_tick_layouts);
+    spin.pointer_move(5, 65);
+    frame = spin.render(200, 200, 0);
+    CHECK(std::abs(rotation(frame, "transition") - 90) < 2);
+
+    MediaEnvironment reduced;
+    reduced.prefers_reduced_motion = "reduce";
+    Page no_motion;
+    no_motion.set_viewport_environment(100, 100, reduced);
+    no_motion.load(*parse_url("https://spin.test/reduced"),
+      "<style>@keyframes spin{to{transform:rotate(1turn)}}"
+      "div{width:20px;height:20px;background:red;animation:spin 60s linear infinite;"
+      "animation-delay:-15s}</style><div id=x></div>");
+    frame = no_motion.render(100, 100, 0);
+    CHECK(!no_motion.animation_pending());
+    for (const Json &command : frame.at("paint").array)
+      if (int(command.num("node", -1)) == no_motion.doc.by_id("x"))
+        CHECK(close_to(command.num("rotation"), 0));
+  }
   // S066: unchanged interaction state reuses retained layout, while a visual
   // hover change emits only a bounded damaged region for partial presentation.
   {
