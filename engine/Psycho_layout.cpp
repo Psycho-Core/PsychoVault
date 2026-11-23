@@ -690,8 +690,7 @@ struct Layout {
             ? cs.margin[0] + cs.margin[2] + cs.padding[0] + cs.padding[2] + cs.border[0] + cs.border[2]
             : cs.margin[1] + cs.margin[3] + cs.padding[1] + cs.padding[3] + cs.border[1] + cs.border[3];
         double forced_cross = -1;
-        if (align == "stretch" && doc.nodes[entry.id].name != "img" &&
-            !cross_auto_start && !cross_auto_end &&
+        if (align == "stretch" && !cross_auto_start && !cross_auto_end &&
             (row ? cs.height < 0 && cs.height_percent < 0 : resolved_width(cs, inner_w) < 0))
           forced_cross = std::max(0.0, line.cross - non_content_cross);
 

@@ -82,11 +82,12 @@ def expected_fit_image() -> bytes:
 
 class P2ImageContractTests(unittest.TestCase):
     def test_blockified_images_keep_intrinsic_ratio_and_attributes(self):
-        frame, _ = render("Psycho_blockified_intrinsic_images.html", 100, 120)
+        frame, _ = render("Psycho_blockified_intrinsic_images.html", 100, 144)
         images = [c for c in frame["paint"] if c["kind"] == 3]
         self.assertEqual([(c["x"], c["y"], c["w"], c["h"]) for c in images],
                          [(0, 0, 20, 20), (0, 24, 10, 10),
-                          (0, 48, 14, 14), (10, 76, 2, 2), (0, 96, 1, 1)])
+                          (0, 48, 14, 14), (10, 76, 2, 2), (0, 96, 1, 1),
+                          (0, 120, 20, 24)])
 
     def test_blockified_images_paint_in_flex_grid_and_absolute_layout(self):
         frame, pixels = render("Psycho_blockified_images.html", 100, 72)
