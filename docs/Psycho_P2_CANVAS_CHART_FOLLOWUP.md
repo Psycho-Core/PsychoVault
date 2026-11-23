@@ -28,7 +28,11 @@ screenshots; nearest-neighbor is explicitly the current implementation policy.
 Linux GCC: 1,182 engine / 3,029 total native checks; eight image/paint
 contracts, seven DOM/layout contracts, focus and responsive-image contracts,
 18 owned goldens, 24 independent goldens and both golden harness self-tests
-passed.
+passed. Windows x64 [run 45131902005](https://github.com/Psycho-Core/PsychoVault/actions/runs/45131902005)
+passed the build, native tests (including the DirectWrite font-family check),
+contracts, goldens, smokes and packaging on `9f347c8`. The temporary branch-only
+push trigger was removed afterwards; this does not establish permission to
+dispatch the parked workflow manually.
 
 Still open: smoothing/filtering quality, comprehensive fractional-source and
 transform behavior against browser oracles, glyph outline `strokeText`, full
