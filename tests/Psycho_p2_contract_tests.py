@@ -23,7 +23,7 @@ WHITE = bytes((255, 255, 255, 255))
 
 
 def render(fixture: str, width: int, height: int, actions: tuple[str, ...] = (),
-           svg: bool = False):
+           svg: bool = False, reduced: bool = False):
     with tempfile.TemporaryDirectory() as folder:
         out = pathlib.Path(folder) / "render.png"
         command = [str(ENGINE), "--input", str(FIXTURES / fixture), "--url", "https://s050.test/page.html",
@@ -31,6 +31,8 @@ def render(fixture: str, width: int, height: int, actions: tuple[str, ...] = (),
                    "--width", str(width), "--height", str(height), "--out", str(out)]
         if svg:
             command.extend(["--resource", f"https://s050.test/mark.svg={FIXTURES / 'mark.svg'}"])
+        if reduced:
+            command.append("--reduced-motion")
         for action in actions:
             command.extend(["--action", action])
         proc = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=60)
@@ -133,6 +135,60 @@ class P2ImageContractTests(unittest.TestCase):
             for x in range(8):
                 if x != 0 or y >= 2:
                     self.assertEqual(pixels[(y * 8 + x) * 4:(y * 8 + x + 1) * 4], WHITE)
+
+    def test_canvas_crop_affine_clip_and_fill_rule_pixels(self):
+        frame, actual = render("Psycho_canvas_crop_winding.html", 40, 30)
+        self.assertEqual(frame["title"], "alpha:0.5")
+        red, green, blue = bytes((255, 0, 0, 255)), bytes((0, 255, 0, 255)), bytes((0, 0, 255, 255))
+        expected = bytearray(WHITE * (40 * 30))
+        def rect(x, y, w, h, color):
+            for py in range(y, y + h):
+                for px in range(x, x + w):
+                    at = (py * 40 + px) * 4
+                    expected[at:at + 4] = color
+        # Integer source clipping and negative dimensions grow without flipping.
+        rect(8, 0, 4, 4, red); rect(12, 0, 4, 4, green)
+        rect(0, 5, 4, 4, green); rect(4, 5, 4, 4, blue)
+        rect(8, 5, 4, 4, red); rect(12, 5, 4, 4, green)
+        # Current canvas sampling is nearest-neighbor; fractional source
+        # positions must not be rounded to an integer temporary crop first.
+        rect(16, 5, 2, 1, green); rect(18, 5, 2, 1, blue)
+        rect(20, 12, 4, 2, red); rect(20, 14, 4, 2, green)
+        rect(0, 12, 12, 12, red); rect(4, 16, 4, 4, WHITE)
+        rect(26, 0, 12, 10, blue)
+        if actual != expected:
+            pixel = next(i for i in range(40 * 30) if actual[i*4:i*4+4] != expected[i*4:i*4+4])
+            self.fail(f"pixel ({pixel % 40},{pixel // 40}) expected {list(expected[pixel*4:pixel*4+4])}, "
+                      f"got {list(actual[pixel*4:pixel*4+4])}")
+
+    def test_rotation_animation_paints_and_respects_reduced_motion(self):
+        # A 20x10 rectangle at (20,20) is rotated 90 degrees around (30,25)
+        # one quarter into a linear turn. These are independently specified
+        # interior pixels, not a screenshot captured from the engine.
+        def pixel(pixels, x, y):
+            return pixels[(y * 60 + x) * 4:(y * 60 + x + 1) * 4]
+        frame, animated = render("Psycho_spin_animation.html", 60, 60)
+        _, reduced = render("Psycho_spin_animation.html", 60, 60, reduced=True)
+        self.assertTrue(any(c["kind"] == 11 and 88 < c["rotation"] < 92 for c in frame["paint"]))
+        red = bytes((255, 0, 0, 255))
+        self.assertEqual(pixel(animated, 30, 17), red)
+        self.assertEqual(pixel(animated, 21, 25), WHITE)
+        self.assertEqual(pixel(reduced, 30, 17), WHITE)
+        self.assertEqual(pixel(reduced, 21, 25), red)
+
+    def test_nested_sticky_paint_and_cancelable_wheel(self):
+        def pixel(pixels, x, y):
+            return pixels[(y * 160 + x) * 4:(y * 160 + x + 1) * 4]
+        before, p0 = render("Psycho_nested_sticky_wheel.html", 160, 200)
+        canceled, pc = render("Psycho_nested_sticky_wheel.html", 160, 200, ("wheel:20,50,30",))
+        moved, p1 = render("Psycho_nested_sticky_wheel.html", 160, 200, ("wheel:20,50,40",))
+        self.assertEqual(canceled["title"], "wheel:30")
+        self.assertEqual(moved["title"], "wheel:40")
+        self.assertEqual(p0, pc)
+        self.assertEqual(pixel(p1, 20, 40), bytes((18, 52, 86, 255)))
+        self.assertEqual(pixel(p1, 20, 60), bytes((171, 205, 239, 255)))
+        self.assertEqual(pixel(p1, 20, 120), bytes((255, 0, 0, 255)))
+        self.assertNotEqual(p0, p1)
 
     def test_flex_checkable_raster_tracks_click_state(self):
         # Inspect actual pixels, not just :checked styling or DOM state. No

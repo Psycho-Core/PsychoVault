@@ -887,6 +887,71 @@ int main() {
     CHECK(close_to(painted_opacity(frame, reduced_page.doc.by_id("fade")), 0));
     CHECK(!reduced_page.animation_pending());
   }
+  {
+    // S065: sampled rotation must move continuously, including the reference
+    // spinner's full turn. Long durations and negative delays make these
+    // samples effectively deterministic without sleeping or assuming FPS.
+    Page spin;
+    spin.load(*parse_url("https://spin.test/"),
+      "<style>body{margin:0}@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(1turn)}}"
+      "@keyframes implicit{to{transform:rotate(200grad)}}"
+      "@keyframes eased{0%{transform:rotate(90deg)}50%{transform:rotate(180deg)}"
+      "100%{transform:rotate(360deg)}}"
+      "@keyframes fade{from{opacity:0}to{opacity:1}}"
+      "#spin,#implicit,#eased,#transition,#finish{width:20px;height:20px;background:#123456}"
+      "#spin{animation:spin 60s linear infinite;animation-delay:-15s}"
+      "#implicit{animation:implicit 60s linear infinite;animation-delay:-15s}"
+      "#eased{animation:eased 60s ease-in infinite;animation-delay:-15s}"
+      "#transition{transform:none;transition:transform 60s linear;transition-delay:-15s}"
+      "#transition:hover{transform:rotate(1turn)}"
+      "#finish{animation:fade 1s linear 2 alternate forwards;animation-delay:-3s}"
+      "</style><div id=spin></div><div id=implicit></div><div id=eased></div>"
+      "<div id=transition></div><div id=finish></div>");
+    auto rotation = [&](const Json &frame, const char *name) {
+      for (const Json &command : frame.at("paint").array)
+        if (int(command.num("node", -1)) == spin.doc.by_id(name) &&
+            int(command.num("kind", -1)) == int(PaintCommand::Kind::PopLayer))
+          return command.num("rotation");
+      return 0.0;
+    };
+    Json frame = spin.render(200, 200, 0);
+    CHECK(std::abs(rotation(frame, "spin") - 90) < 2);
+    CHECK(std::abs(rotation(frame, "implicit") - 45) < 2);
+    CHECK(std::abs(rotation(frame, "eased") - 112.5) < 2);
+    bool finished_at_zero = false;
+    for (const Json &command : frame.at("paint").array)
+      if (int(command.num("node", -1)) == spin.doc.by_id("finish") &&
+          int(command.num("kind", -1)) == int(PaintCommand::Kind::PopLayer))
+        finished_at_zero = close_to(command.num("opacity", 1), 0);
+    CHECK(finished_at_zero);
+    CHECK(spin.animation_pending());
+    const double first_rotation = rotation(frame, "spin");
+    const uint64_t before_tick_layouts = spin.layout_rebuild_count();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    spin.tick();
+    frame = spin.render(200, 200, 0);
+    CHECK(rotation(frame, "spin") > first_rotation + 0.1);
+    // This records the current cost honestly: rotation is not yet sampled on
+    // a retained compositor layer and still triggers whole-document layout.
+    CHECK(spin.layout_rebuild_count() > before_tick_layouts);
+    spin.pointer_move(5, 65);
+    frame = spin.render(200, 200, 0);
+    CHECK(std::abs(rotation(frame, "transition") - 90) < 2);
+
+    MediaEnvironment reduced;
+    reduced.prefers_reduced_motion = "reduce";
+    Page no_motion;
+    no_motion.set_viewport_environment(100, 100, reduced);
+    no_motion.load(*parse_url("https://spin.test/reduced"),
+      "<style>@keyframes spin{to{transform:rotate(1turn)}}"
+      "div{width:20px;height:20px;background:red;animation:spin 60s linear infinite;"
+      "animation-delay:-15s}</style><div id=x></div>");
+    frame = no_motion.render(100, 100, 0);
+    CHECK(!no_motion.animation_pending());
+    for (const Json &command : frame.at("paint").array)
+      if (int(command.num("node", -1)) == no_motion.doc.by_id("x"))
+        CHECK(close_to(command.num("rotation"), 0));
+  }
   // S066: unchanged interaction state reuses retained layout, while a visual
   // hover change emits only a bounded damaged region for partial presentation.
   {
@@ -3384,6 +3449,49 @@ int main() {
     CHECK(pixel(14, 14) == 0xffffffffu);
   }
   {
+    // S068 chart/page regressions: fractional and partially out-of-bounds
+    // source crops, negative dimensions, affine mapping and fill rules.
+    Canvas2D source(4, 2);
+    source.state.fill = 0xffff0000u; source.fill_rect(0, 0, 1, 2);
+    source.state.fill = 0xff00ff00u; source.fill_rect(1, 0, 1, 2);
+    source.state.fill = 0xff0000ffu; source.fill_rect(2, 0, 1, 2);
+    source.state.fill = 0xffffff00u; source.fill_rect(3, 0, 1, 2);
+    const Image image = source.snapshot();
+    Canvas2D target(32, 24);
+    target.state.fill = 0xffffffffu; target.fill_rect(0, 0, 32, 24);
+    auto pixel = [&](int x, int y) { return target.get_pixels(x, y, 1, 1); };
+    const std::vector<uint8_t> white{255,255,255,255}, red{255,0,0,255},
+        green{0,255,0,255}, blue{0,0,255,255};
+    target.draw_image_rect(image, -2, 0, 4, 1, 0, 0, 16, 4);
+    CHECK(pixel(2, 2) == white && pixel(9, 2) == red && pixel(14, 2) == green);
+    target.draw_image_rect(image, 3, 0, -2, 1, 0, 5, 8, 4);
+    CHECK(pixel(1, 6) == green && pixel(6, 6) == blue);
+    target.draw_image_rect(image, 0, 0, 2, 1, 16, 5, -8, 4);
+    CHECK(pixel(9, 6) == red && pixel(14, 6) == green);
+    target.draw_image_rect(image, 0.75, 0, 2, 1, 16, 5, 4, 1);
+    CHECK(pixel(16, 5) == green && pixel(18, 5) == blue);
+    target.save(); target.begin_path(); target.add_rect(20, 12, 4, 4); target.clip();
+    target.set_transform(0, 1, -1, 0, 24, 10);
+    target.draw_image_rect(image, 0, 0, 2, 1, 0, 0, 8, 4);
+    target.restore();
+    CHECK(pixel(21, 11) == white && pixel(21, 12) == red && pixel(21, 14) == green &&
+          pixel(21, 16) == white);
+    target.begin_path(); target.add_rect(0, 12, 12, 12); target.add_rect(4, 16, 4, 4);
+    target.state.fill = 0xffff0000u; target.fill(true);
+    CHECK(pixel(2, 14) == red && pixel(5, 17) == white);
+    target.begin_path(); target.add_rect(24, 0, 8, 8); target.add_rect(26, 2, 4, 4);
+    target.state.fill = 0xff0000ffu; target.fill();
+    CHECK(pixel(27, 3) == blue);
+    target.state.global_alpha = 0.5;
+    target.draw_image(image, 0, 0, 4, 2);
+    auto blend = pixel(0, 0);
+    CHECK(blend == std::vector<uint8_t>({255,127,127,255}));
+    const auto unchanged = pixel(5, 11);
+    target.draw_image_rect(image, 0, 0, 0, 1, 4, 10, 2, 2);
+    target.draw_image_rect(image, 0, 0, 1, 1, 4, 10, std::numeric_limits<double>::infinity(), 2);
+    CHECK(pixel(5, 11) == unchanged);
+  }
+  {
     // S068: Canvas ellipse uses rotation/start/end in the web API order.
     Page ellipse_page;
     ellipse_page.load(*parse_url("https://ellipse.test/"),
@@ -3442,6 +3550,31 @@ int main() {
     CHECK(canvas.line_dash().size() == 6);
     canvas.set_line_dash({-1});
     CHECK(canvas.line_dash().size() == 6);
+  }
+  {
+    // Canvas font shorthand passes the same family and numeric weight to
+    // measurement and glyph drawing; a slash line-height must not become part
+    // of the family name. Portable text metrics intentionally ignore families.
+    Canvas2D text(200, 50);
+    Canvas reference(200, 50, 0);
+    text.state.font = "600 20px/1.2 'Courier New', monospace";
+    const double canvas_width = text.text_width("iiiiWW");
+    CHECK(close_to(canvas_width, reference.text_width("iiiiWW", 20, false,
+                                                     "'Courier New', monospace", 600)));
+    text.state.font = "16px Arial";
+    CHECK(close_to(text.text_width("chart"), reference.text_width("chart", 16, false, "Arial", 400)));
+#ifdef _WIN32
+    const double arial_width = text.text_width("iiiiiiii");
+    text.state.text_baseline = "top";
+    text.fill_text(0, 0, "iiiiiiii");
+    const Image arial = text.snapshot();
+    text.resize(200, 50);
+    text.state.font = "16px 'Courier New'";
+    text.state.text_baseline = "top";
+    CHECK(std::abs(text.text_width("iiiiiiii") - arial_width) > 1);
+    text.fill_text(0, 0, "iiiiiiii");
+    CHECK(text.snapshot().pixels != arial.pixels);
+#endif
   }
 #ifdef _WIN32
   {
@@ -3800,6 +3933,29 @@ int main() {
     CHECK(close_to(box_in_frame(sticky, sticky_top, "sticky").y, 40));
     CHECK(close_to(box_in_frame(sticky, sticky_pinned, "sticky").y, 50));
     CHECK(close_to(box_in_frame(sticky, sticky_bottom, "sticky").y, 120));
+    Page nested_sticky;
+    nested_sticky.load(*parse_url("https://nested-sticky.test/"),
+      "<style>body{margin:0}#spacer{height:30px}"
+      "#scroll{width:100px;height:80px;overflow:auto}#before{height:25px}"
+      "#pin{position:sticky;top:5px;height:20px;background:#123456}"
+      "#following{height:200px;background:#abcdef}#outside{height:30px;background:#ff0000}</style>"
+      "<div id=spacer></div><div id=scroll><div id=before></div><div id=pin></div>"
+      "<div id=following></div></div><div id=outside></div>");
+    Json nested_before = nested_sticky.render(160, 200, 0);
+    CHECK(close_to(box_in_frame(nested_sticky, nested_before, "pin").y, 55));
+    CHECK(nested_sticky.wheel(20, 50, 40));
+    Json nested_after = nested_sticky.render(160, 200, 0);
+    CHECK(close_to(box_in_frame(nested_sticky, nested_after, "pin").y, 35));
+    CHECK(close_to(box_in_frame(nested_sticky, nested_after, "following").y, 35));
+    CHECK(close_to(box_in_frame(nested_sticky, nested_after, "outside").y, 110));
+    for (const char *name : {"pin", "following", "outside"}) {
+      bool aligned = false;
+      for (const Json &command : nested_after.at("paint").array)
+        if (int(command.num("node", -1)) == nested_sticky.doc.by_id(name) &&
+            int(command.num("kind", -1)) == int(PaintCommand::Kind::Rect))
+          aligned = close_to(command.num("y"), box_in_frame(nested_sticky, nested_after, name).y);
+      CHECK(aligned);
+    }
 
     Page fixed;
     fixed.load(*parse_url("https://fixed.test/"),
@@ -4067,6 +4223,45 @@ int main() {
     CHECK(frame_box(after_chain, outer_id).y == outer_before_contain.y);
     CHECK(frame_box(after_chain, tail_id).y < tail_before_chain.y);
     CHECK(frame_box(after_chain, inside_id).y < inner_before_chain.y);
+  }
+  {
+    // Wheel listeners see bubbling, pixel-mode coordinates and deltas before
+    // scrolling. Cancellation suppresses both local scrolling and the host's
+    // document fallback; an uncanceled event retains the existing default.
+    const std::string html =
+      "<style>body{margin:0}#box{height:80px;width:100px;overflow:auto}"
+      "#inside{width:80px;height:200px}#tail{height:400px}</style>"
+      "<div id=box><div id=inside></div></div><div id=tail></div>"
+      "<script>document.getElementById('inside').addEventListener('wheel',function(e){"
+      "e.preventDefault();document.getElementById('inside').setAttribute('data-prevented',e.defaultPrevented);"
+      "},{passive:true});document.getElementById('box').addEventListener('wheel',function(e){"
+      "document.title=[e.type,e.clientX,e.clientY,e.deltaY,e.deltaMode,e.bubbles,e.cancelable].join('|');"
+      "if(e.deltaY===30)e.preventDefault();});</script>";
+    Page wheel_events;
+    wheel_events.load(*parse_url("https://wheel.test/"), html);
+    Json before = wheel_events.render(160, 100, 0);
+    auto y_of = [&](const Json &frame) {
+      for (const Json &box : frame.at("boxes").array)
+        if (int(box.num("node", -1)) == wheel_events.doc.by_id("inside")) return box.num("y");
+      return -999.0;
+    };
+    CHECK(wheel_events.wheel(20, 20, 30));
+    CHECK(wheel_events.title() == "wheel|20|20|30|0|true|true");
+    CHECK(wheel_events.doc.nodes[wheel_events.doc.by_id("inside")].attribute("data-prevented") == "false");
+    CHECK(close_to(y_of(wheel_events.render(160, 100, 0)), y_of(before)));
+    CHECK(wheel_events.wheel(20, 20, 20));
+    CHECK(close_to(y_of(wheel_events.render(160, 100, 0)), y_of(before) - 20));
+    Host host([&](const std::string &url, ResourceType) {
+      Resource r; r.url = url; r.mime = "text/html"; r.text = html; return r;
+    }, [](HostEvent) {});
+    host.resize(160, 100);
+    std::string error;
+    CHECK(host.load("https://wheel.test/", error));
+    CHECK(close_to(host.scroll_position(), 0));
+    host.wheel(20, 20, 30);
+    CHECK(close_to(host.scroll_position(), 0));
+    host.wheel(120, 90, 40);
+    CHECK(close_to(host.scroll_position(), 40));
   }
   {
     // Reference-used DOM APIs: live data attributes, selector state and

@@ -156,14 +156,32 @@ struct Layout {
       const double parent_bottom = doc.nodes[id].parent >= 0 && out.boxes.count(doc.nodes[id].parent)
           ? out.boxes.at(doc.nodes[id].parent).y + out.boxes.at(doc.nodes[id].parent).h
           : std::max(out.height, viewport_height);
+      // The nearest scrolling ancestor, including overflow:hidden, defines the
+      // sticky scrollport even when it has no scrollable overflow. overflow:clip
+      // clips but does not establish a scrolling mechanism.
+      Rect scrollport{0, scroll_y, viewport_width, viewport_height};
+      for (int ancestor = doc.nodes[id].parent; ancestor >= 0;
+           ancestor = doc.nodes[ancestor].parent) {
+        const std::string &overflow = styles[ancestor].overflow;
+        if (overflow != "auto" && overflow != "scroll" && overflow != "hidden") continue;
+        auto clip = out.clips.find(ancestor);
+        if (clip != out.clips.end()) scrollport = clip->second;
+        break;
+      }
       double target_y = normal.y;
-      if (style.has_top) target_y = std::max(target_y, scroll_y + style.top);
+      if (style.has_top) target_y = std::max(target_y, scrollport.y + style.top);
       if (style.has_bottom)
-        target_y = std::min(target_y, scroll_y + viewport_height - style.bottom - normal.h);
+        target_y = std::min(target_y, scrollport.y + scrollport.h - style.bottom - normal.h);
       if (style.has_top || style.has_bottom)
         target_y = std::clamp(target_y, parent_top, std::max(parent_top, parent_bottom - normal.h));
       const double dy = target_y - normal.y;
-      if (dy != 0) move_box(range->second.first, id, 0, dy);
+      if (dy != 0) {
+        // Unlike relative layout, sticky adjustment runs after the whole page
+        // is painted. Move only this subtree, not every later sibling command.
+        for (size_t i = range->second.first; i < range->second.second && i < out.paint.size(); ++i)
+          if (!out.paint[i].fixed) out.paint[i].rect.y += dy;
+        shift_boxes(id, 0, dy);
+      }
     }
   }
   // I lay a box out for its height only, then throw the commands away.
@@ -171,13 +189,22 @@ struct Layout {
     auto saved_paint = std::move(out.paint);
     auto saved_boxes = std::move(out.boxes);
     auto saved_clips = std::move(out.clips);
+    auto saved_scroll_containers = std::move(out.scroll_containers);
+    auto saved_fixed_boxes = std::move(out.fixed_boxes);
+    auto saved_ranges = std::move(out.paint_ranges);
     out.paint.clear();
     out.boxes.clear();
     out.clips.clear();
+    out.scroll_containers.clear();
+    out.fixed_boxes.clear();
+    out.paint_ranges.clear();
     double h = block(id, 0, 0, available, depth + 1, nullptr);
     out.paint = std::move(saved_paint);
     out.boxes = std::move(saved_boxes);
     out.clips = std::move(saved_clips);
+    out.scroll_containers = std::move(saved_scroll_containers);
+    out.fixed_boxes = std::move(saved_fixed_boxes);
+    out.paint_ranges = std::move(saved_ranges);
     return h;
   }
   double measure_w(int id, double available, int depth) {
@@ -1829,6 +1856,31 @@ struct Layout {
         }
       }
       flush();
+    }
+    // Sticky boxes are positioned painting groups: draw direct in-flow sticky
+    // children after ordinary in-flow siblings, while still inside this box's
+    // clip. Move complete command groups and repair all descendant ranges.
+    std::vector<int> sticky_children;
+    for (int child : n.children)
+      if (styles[child].position == "sticky" && out.paint_ranges.count(child))
+        sticky_children.push_back(child);
+    std::sort(sticky_children.begin(), sticky_children.end(), [&](int a, int b) {
+      return out.paint_ranges.at(a).first < out.paint_ranges.at(b).first;
+    });
+    for (int child : sticky_children) {
+      const auto range = out.paint_ranges.at(child);
+      const size_t first = range.first, last = range.second, end = out.paint.size();
+      if (first < children_at || first >= last || last >= end) continue;
+      std::rotate(out.paint.begin() + first, out.paint.begin() + last, out.paint.end());
+      const size_t length = last - first, distance = end - last;
+      for (auto &[node, r] : out.paint_ranges) {
+        (void)node;
+        if (r.first >= first && r.second <= last) {
+          r.first += distance; r.second += distance;
+        } else if (r.first >= last && r.second <= end) {
+          r.first -= length; r.second -= length;
+        }
+      }
     }
     double content_h = cursor - inner_y;
     // Flex/grid/positioned children enter block() directly rather than the

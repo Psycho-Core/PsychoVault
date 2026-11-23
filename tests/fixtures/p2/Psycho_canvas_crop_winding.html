@@ -1,0 +1,18 @@
+<!doctype html><style>html,body{margin:0;background:#fff}#source{display:none}</style>
+<canvas id=source width=4 height=1></canvas><canvas id=output width=40 height=30></canvas>
+<script>
+var s=document.getElementById('source'), a=s.getContext('2d');
+a.fillStyle='#ff0000';a.fillRect(0,0,1,1);a.fillStyle='#00ff00';a.fillRect(1,0,1,1);
+a.fillStyle='#0000ff';a.fillRect(2,0,1,1);a.fillStyle='#ffff00';a.fillRect(3,0,1,1);
+var c=document.getElementById('output').getContext('2d');
+c.fillStyle='#ffffff';c.fillRect(0,0,40,30);
+c.drawImage(s,-2,0,4,1,0,0,16,4);
+c.drawImage(s,3,0,-2,1,0,5,8,4);
+c.drawImage(s,0,0,2,1,16,5,-8,4);
+c.drawImage(s,0.75,0,2,1,16,5,4,1);
+c.save();c.beginPath();c.rect(20,12,4,4);c.clip();c.setTransform(0,1,-1,0,24,10);
+c.drawImage(s,0,0,2,1,0,0,8,4);c.restore();
+c.beginPath();c.rect(0,12,12,12);c.rect(4,16,4,4);c.fillStyle='#ff0000';c.fill('evenodd');
+c.beginPath();c.rect(26,0,12,10);c.rect(30,2,4,4);c.fillStyle='#0000ff';c.fill();
+c.globalAlpha=0.5;c.globalAlpha=3;document.title='alpha:'+c.globalAlpha;
+</script>
