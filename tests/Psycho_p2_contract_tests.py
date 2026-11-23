@@ -81,6 +81,35 @@ def expected_fit_image() -> bytes:
 
 
 class P2ImageContractTests(unittest.TestCase):
+    def test_blockified_images_keep_intrinsic_ratio_and_attributes(self):
+        frame, _ = render("Psycho_blockified_intrinsic_images.html", 100, 120)
+        images = [c for c in frame["paint"] if c["kind"] == 3]
+        self.assertEqual([(c["x"], c["y"], c["w"], c["h"]) for c in images],
+                         [(0, 0, 20, 20), (0, 24, 10, 10),
+                          (0, 48, 14, 14), (10, 76, 2, 2), (0, 96, 1, 1)])
+
+    def test_blockified_images_paint_in_flex_grid_and_absolute_layout(self):
+        frame, pixels = render("Psycho_blockified_images.html", 100, 72)
+        images = [c for c in frame["paint"] if c["kind"] == 3]
+        self.assertEqual([(c["x"], c["y"], c["w"], c["h"]) for c in images],
+                         [(5, 0, 10, 10), (0, 24, 20, 10), (10, 52, 20, 10)])
+        self.assertEqual([c["url"] for c in images], ["https://s050.test/pixel.png"] * 3)
+        # Independent pixel oracle: the 2x2 source checker is stretched into
+        # three known rectangles; contain leaves gray letterboxing in flex.
+        expected = bytearray(WHITE * (100 * 72))
+        def rect(x, y, w, h, color):
+            for row in range(y, y + h):
+                for col in range(x, x + w):
+                    offset = (row * 100 + col) * 4
+                    expected[offset:offset + 4] = color
+        rect(0, 0, 20, 10, BACKGROUND)
+        for x, y, w in ((5, 0, 10), (0, 24, 20), (10, 52, 20)):
+            rect(x, y, w // 2, 5, BLUE)
+            rect(x + w // 2, y, w // 2, 5, ORANGE)
+            rect(x, y + 5, w // 2, 5, ORANGE)
+            rect(x + w // 2, y + 5, w // 2, 5, BLUE)
+        self.assertEqual(pixels, bytes(expected))
+
     def test_fit_boxes_clipping_and_entire_pixel_canvas(self):
         self.assertEqual(decode_png(FIXTURES / "pixel.png"), (2, 2, BLUE + ORANGE + ORANGE + BLUE))
         frame, actual = render("Psycho_object_fit_contract.html", 120, 240)
