@@ -10,4 +10,6 @@ This is not the S063 or Phase 2 exit gate. Complex replaced sizing, min/max cons
 
 ## Validation
 
-Linux: `pv-tests` passed 1,182 engine / 3,029 total checks; image contract 10/10, DOM/layout 7/7, responsive image 1/1 and focus 1/1 passed. All 18 owned and 24 independent golden cases and their test harnesses passed. The independent image expectations are not a substitute for the full S052–S069 matrix or supported-Windows gate.
+Linux: `pv-tests` passed 1,182 engine / 3,029 total checks; image contract 10/10, DOM/layout 7/7, responsive image 1/1 and focus 1/1 passed. All 18 owned and 24 independent golden cases and their test harnesses passed.
+
+Windows: [run 45240678384](https://github.com/Psycho-Core/PsychoVault/actions/runs/45240678384) passed the build, native tests, contracts, goldens, smoke checks and packaging on commit `2adf0ab`. The temporary branch-only push trigger was subsequently removed; this run does not establish manual-dispatch permission. The independent image expectations and existing suites are not a substitute for the full S052–S069 matrix or the Phase 2 gate.
