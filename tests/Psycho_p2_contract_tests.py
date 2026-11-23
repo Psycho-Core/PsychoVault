@@ -136,6 +136,31 @@ class P2ImageContractTests(unittest.TestCase):
                 if x != 0 or y >= 2:
                     self.assertEqual(pixels[(y * 8 + x) * 4:(y * 8 + x + 1) * 4], WHITE)
 
+    def test_canvas_crop_affine_clip_and_fill_rule_pixels(self):
+        frame, actual = render("Psycho_canvas_crop_winding.html", 40, 30)
+        self.assertEqual(frame["title"], "alpha:0.5")
+        red, green, blue = bytes((255, 0, 0, 255)), bytes((0, 255, 0, 255)), bytes((0, 0, 255, 255))
+        expected = bytearray(WHITE * (40 * 30))
+        def rect(x, y, w, h, color):
+            for py in range(y, y + h):
+                for px in range(x, x + w):
+                    at = (py * 40 + px) * 4
+                    expected[at:at + 4] = color
+        # Integer source clipping and negative dimensions grow without flipping.
+        rect(8, 0, 4, 4, red); rect(12, 0, 4, 4, green)
+        rect(0, 5, 4, 4, green); rect(4, 5, 4, 4, blue)
+        rect(8, 5, 4, 4, red); rect(12, 5, 4, 4, green)
+        # Current canvas sampling is nearest-neighbor; fractional source
+        # positions must not be rounded to an integer temporary crop first.
+        rect(16, 5, 2, 1, green); rect(18, 5, 2, 1, blue)
+        rect(20, 12, 4, 2, red); rect(20, 14, 4, 2, green)
+        rect(0, 12, 12, 12, red); rect(4, 16, 4, 4, WHITE)
+        rect(26, 0, 12, 10, blue)
+        if actual != expected:
+            pixel = next(i for i in range(40 * 30) if actual[i*4:i*4+4] != expected[i*4:i*4+4])
+            self.fail(f"pixel ({pixel % 40},{pixel // 40}) expected {list(expected[pixel*4:pixel*4+4])}, "
+                      f"got {list(actual[pixel*4:pixel*4+4])}")
+
     def test_rotation_animation_paints_and_respects_reduced_motion(self):
         # A 20x10 rectangle at (20,20) is rotated 90 degrees around (30,25)
         # one quarter into a linear turn. These are independently specified

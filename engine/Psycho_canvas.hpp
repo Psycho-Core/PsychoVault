@@ -54,7 +54,7 @@ public:
                    bool clockwise, double rotation = 0);
   void add_quadratic(double cx, double cy, double x, double y);
   void add_bezier(double c1x, double c1y, double c2x, double c2y, double x, double y);
-  void fill();
+  void fill(bool even_odd = false);
   void stroke();
   void clip(bool even_odd = false);
   void fill_rect(double x, double y, double w, double h);

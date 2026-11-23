@@ -1,6 +1,6 @@
 # S068 — Canvas 2D subset
 
-**Status:** A focused software Canvas 2D subset is implemented and covered by Linux and Windows automated tests. It is not full Canvas 2D conformance; see remaining work below.
+**Status:** A focused software Canvas 2D subset is implemented and covered by Linux and Windows automated tests. It is not full Canvas 2D conformance; see remaining work below. The later [chart/page follow-up](Psycho_P2_CANVAS_CHART_FOLLOWUP.md) improves fill rules, image cropping and Canvas font selection; limitations listed here describe the earlier S068 snapshot.
 
 ## Implemented
 

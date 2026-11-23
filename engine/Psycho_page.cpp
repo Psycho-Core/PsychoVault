@@ -426,8 +426,8 @@ public:
         return js::Value();
       });
     if (name == "fill")
-      return r.make_native([c](js::Values &) {
-        c->fill();
+      return r.make_native([c](js::Values &a) {
+        c->fill(!a.empty() && lower(a[0].to_string()) == "evenodd");
         return js::Value();
       });
     if (name == "stroke")
@@ -1350,7 +1350,8 @@ public:
         return true;
       }
       if (name == "globalAlpha") {
-        c.state.global_alpha = std::clamp(value.to_number(), 0.0, 1.0);
+        const double alpha = value.to_number();
+        if (std::isfinite(alpha) && alpha >= 0 && alpha <= 1) c.state.global_alpha = alpha;
         return true;
       }
       if (name == "font") {

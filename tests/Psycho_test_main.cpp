@@ -3449,6 +3449,49 @@ int main() {
     CHECK(pixel(14, 14) == 0xffffffffu);
   }
   {
+    // S068 chart/page regressions: fractional and partially out-of-bounds
+    // source crops, negative dimensions, affine mapping and fill rules.
+    Canvas2D source(4, 2);
+    source.state.fill = 0xffff0000u; source.fill_rect(0, 0, 1, 2);
+    source.state.fill = 0xff00ff00u; source.fill_rect(1, 0, 1, 2);
+    source.state.fill = 0xff0000ffu; source.fill_rect(2, 0, 1, 2);
+    source.state.fill = 0xffffff00u; source.fill_rect(3, 0, 1, 2);
+    const Image image = source.snapshot();
+    Canvas2D target(32, 24);
+    target.state.fill = 0xffffffffu; target.fill_rect(0, 0, 32, 24);
+    auto pixel = [&](int x, int y) { return target.get_pixels(x, y, 1, 1); };
+    const std::vector<uint8_t> white{255,255,255,255}, red{255,0,0,255},
+        green{0,255,0,255}, blue{0,0,255,255};
+    target.draw_image_rect(image, -2, 0, 4, 1, 0, 0, 16, 4);
+    CHECK(pixel(2, 2) == white && pixel(9, 2) == red && pixel(14, 2) == green);
+    target.draw_image_rect(image, 3, 0, -2, 1, 0, 5, 8, 4);
+    CHECK(pixel(1, 6) == green && pixel(6, 6) == blue);
+    target.draw_image_rect(image, 0, 0, 2, 1, 16, 5, -8, 4);
+    CHECK(pixel(9, 6) == red && pixel(14, 6) == green);
+    target.draw_image_rect(image, 0.75, 0, 2, 1, 16, 5, 4, 1);
+    CHECK(pixel(16, 5) == green && pixel(18, 5) == blue);
+    target.save(); target.begin_path(); target.add_rect(20, 12, 4, 4); target.clip();
+    target.set_transform(0, 1, -1, 0, 24, 10);
+    target.draw_image_rect(image, 0, 0, 2, 1, 0, 0, 8, 4);
+    target.restore();
+    CHECK(pixel(21, 11) == white && pixel(21, 12) == red && pixel(21, 14) == green &&
+          pixel(21, 16) == white);
+    target.begin_path(); target.add_rect(0, 12, 12, 12); target.add_rect(4, 16, 4, 4);
+    target.state.fill = 0xffff0000u; target.fill(true);
+    CHECK(pixel(2, 14) == red && pixel(5, 17) == white);
+    target.begin_path(); target.add_rect(24, 0, 8, 8); target.add_rect(26, 2, 4, 4);
+    target.state.fill = 0xff0000ffu; target.fill();
+    CHECK(pixel(27, 3) == blue);
+    target.state.global_alpha = 0.5;
+    target.draw_image(image, 0, 0, 4, 2);
+    auto blend = pixel(0, 0);
+    CHECK(blend == std::vector<uint8_t>({255,127,127,255}));
+    const auto unchanged = pixel(5, 11);
+    target.draw_image_rect(image, 0, 0, 0, 1, 4, 10, 2, 2);
+    target.draw_image_rect(image, 0, 0, 1, 1, 4, 10, std::numeric_limits<double>::infinity(), 2);
+    CHECK(pixel(5, 11) == unchanged);
+  }
+  {
     // S068: Canvas ellipse uses rotation/start/end in the web API order.
     Page ellipse_page;
     ellipse_page.load(*parse_url("https://ellipse.test/"),
@@ -3507,6 +3550,31 @@ int main() {
     CHECK(canvas.line_dash().size() == 6);
     canvas.set_line_dash({-1});
     CHECK(canvas.line_dash().size() == 6);
+  }
+  {
+    // Canvas font shorthand passes the same family and numeric weight to
+    // measurement and glyph drawing; a slash line-height must not become part
+    // of the family name. Portable text metrics intentionally ignore families.
+    Canvas2D text(200, 50);
+    Canvas reference(200, 50, 0);
+    text.state.font = "600 20px/1.2 'Courier New', monospace";
+    const double canvas_width = text.text_width("iiiiWW");
+    CHECK(close_to(canvas_width, reference.text_width("iiiiWW", 20, false,
+                                                     "'Courier New', monospace", 600)));
+    text.state.font = "16px Arial";
+    CHECK(close_to(text.text_width("chart"), reference.text_width("chart", 16, false, "Arial", 400)));
+#ifdef _WIN32
+    const double arial_width = text.text_width("iiiiiiii");
+    text.state.text_baseline = "top";
+    text.fill_text(0, 0, "iiiiiiii");
+    const Image arial = text.snapshot();
+    text.resize(200, 50);
+    text.state.font = "16px 'Courier New'";
+    text.state.text_baseline = "top";
+    CHECK(std::abs(text.text_width("iiiiiiii") - arial_width) > 1);
+    text.fill_text(0, 0, "iiiiiiii");
+    CHECK(text.snapshot().pixels != arial.pixels);
+#endif
   }
 #ifdef _WIN32
   {

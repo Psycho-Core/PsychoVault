@@ -4,33 +4,56 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <sstream>
 
 namespace pv {
 namespace {
 constexpr double kTau = 6.28318530717958647692;
 
-double font_size_of(std::string_view font) {
+struct CanvasFont {
   double size = 10;
-  size_t at = 0;
-  while (at < font.size()) {
-    if (std::isdigit(static_cast<unsigned char>(font[at]))) {
-      char *end = nullptr;
-      std::string piece(font.substr(at));
-      double value = std::strtod(piece.c_str(), &end);
-      if (end && *end == 'p')
-        return std::clamp(value, 1.0, 400.0);
-      if (end && *end)
-        at += size_t(end - piece.c_str());
-      else
+  int weight = 400;
+  std::string family = "sans-serif";
+};
+CanvasFont canvas_font(std::string_view font) {
+  CanvasFont result;
+  // This deliberately parses the common px shorthand, not the entire CSS
+  // font grammar. Preserve the family list for both measuring and painting.
+  size_t start = 0, end = std::string_view::npos;
+  while (start < font.size()) {
+    if (std::isdigit(static_cast<unsigned char>(font[start])) || font[start] == '.') {
+      const std::string piece(font.substr(start));
+      char *tail = nullptr;
+      const double value = std::strtod(piece.c_str(), &tail);
+      const size_t consumed = size_t(tail - piece.c_str());
+      if (consumed && std::isfinite(value) && value > 0 && piece.size() >= consumed + 2 &&
+          (piece[consumed] == 'p' || piece[consumed] == 'P') &&
+          (piece[consumed + 1] == 'x' || piece[consumed + 1] == 'X')) {
+        result.size = std::clamp(value, 1.0, 400.0);
+        end = start + consumed + 2;
         break;
-    } else
-      ++at;
+      }
+      start += std::max<size_t>(1, consumed);
+    } else ++start;
   }
-  return size;
-}
-bool font_bold(std::string_view font) {
-  return font.find("bold") != std::string_view::npos || font.find("700") != std::string_view::npos ||
-         font.find("800") != std::string_view::npos || font.find("900") != std::string_view::npos;
+  if (end == std::string_view::npos) return result;
+  std::istringstream prefix{std::string(font.substr(0, start))};
+  std::string word;
+  while (prefix >> word) {
+    word = lower(word);
+    if (word == "bold") result.weight = 700;
+    else if (word.size() == 3 && word[1] == '0' && word[2] == '0' && word[0] >= '1' && word[0] <= '9')
+      result.weight = (word[0] - '0') * 100;
+  }
+  while (end < font.size() && std::isspace(static_cast<unsigned char>(font[end]))) ++end;
+  if (end < font.size() && font[end] == '/') {
+    ++end;
+    while (end < font.size() && std::isspace(static_cast<unsigned char>(font[end]))) ++end;
+    while (end < font.size() && !std::isspace(static_cast<unsigned char>(font[end]))) ++end;
+  }
+  const std::string family = trim(font.substr(end));
+  if (!family.empty()) result.family = family;
+  return result;
 }
 } // namespace
 
@@ -185,9 +208,10 @@ void Canvas2D::fill_polygon_gradient(std::vector<Point> points, const Gradient &
   }
 }
 
-void Canvas2D::fill() {
+void Canvas2D::fill(bool even_odd) {
   ++revision;
   Canvas::PathClip region;
+  region.even_odd = even_odd;
   for (const auto &contour : path)
     if (contour.size() >= 3) region.contours.push_back(contour);
   if (current.size() >= 3) region.contours.push_back(current);
@@ -328,8 +352,9 @@ void Canvas2D::clear_rect(double x, double y, double w, double h) {
 }
 
 void Canvas2D::draw_text(double x, double y, std::string_view text, uint32_t color) {
-  const double size = font_size_of(state.font);
-  const double width = surface.text_width(text, size, font_bold(state.font));
+  const CanvasFont font = canvas_font(state.font);
+  const double size = font.size;
+  const double width = surface.text_width(text, size, font.weight >= 700, font.family, font.weight);
   double left = x;
   if (state.text_align == "center") left -= width / 2;
   else if (state.text_align == "right" || state.text_align == "end") left -= width;
@@ -342,7 +367,7 @@ void Canvas2D::draw_text(double x, double y, std::string_view text, uint32_t col
   const int bitmap_width = std::clamp(int(std::ceil(width)) + 8, 1, 8192);
   const int bitmap_height = std::clamp(int(std::ceil(size * 2)) + 8, 1, 8192);
   Canvas glyphs(bitmap_width, bitmap_height, 0x00000000u);
-  glyphs.text(4, 4, text, size, color, font_bold(state.font));
+  glyphs.text(4, 4, text, size, color, font.weight >= 700, font.family, font.weight);
   Image image;
   image.width = bitmap_width;
   image.height = bitmap_height;
@@ -361,74 +386,65 @@ void Canvas2D::stroke_text(double x, double y, std::string_view text) {
 }
 
 double Canvas2D::text_width(std::string_view text) const {
-  return surface.text_width(text, font_size_of(state.font), font_bold(state.font));
+  const CanvasFont font = canvas_font(state.font);
+  return surface.text_width(text, font.size, font.weight >= 700, font.family, font.weight);
 }
 
 void Canvas2D::draw_image(const Image &source, double x, double y, double w, double h) {
+  draw_image_rect(source, 0, 0, source.width, source.height, x, y, w, h);
+}
+
+void Canvas2D::draw_image_rect(const Image &source, double sx, double sy, double sw, double sh,
+                               double x, double y, double w, double h) {
   ++revision;
-  if (!source.valid() || w == 0 || h == 0 || state.global_alpha <= 0) return;
+  if (!source.valid() || !std::isfinite(state.global_alpha) || state.global_alpha <= 0 ||
+      state.global_alpha > 1 || !std::isfinite(sx) || !std::isfinite(sy) || !std::isfinite(sw) || !std::isfinite(sh) ||
+      !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(w) || !std::isfinite(h) ||
+      !std::isfinite(state.a) || !std::isfinite(state.b) || !std::isfinite(state.c) ||
+      !std::isfinite(state.d) || !std::isfinite(state.e) || !std::isfinite(state.f)) return;
+  // Negative dimensions grow the rectangle in the opposite direction; they
+  // do not flip the image. Canvas transforms remain responsible for flipping.
+  if (sw < 0) { sx += sw; sw = -sw; }
+  if (sh < 0) { sy += sh; sh = -sh; }
+  if (w < 0) { x += w; w = -w; }
+  if (h < 0) { y += h; h = -h; }
+  if (!(sw > 0 && sh > 0 && w > 0 && h > 0) || !std::isfinite(sx + sw) ||
+      !std::isfinite(sy + sh) || !std::isfinite(x + w) || !std::isfinite(y + h)) return;
   const double determinant = state.a * state.d - state.b * state.c;
-  if (std::abs(determinant) < 1e-12) return;
+  if (!std::isfinite(determinant) || std::abs(determinant) < 1e-12) return;
   const std::vector<Point> corners{map(x, y), map(x + w, y), map(x + w, y + h), map(x, y + h)};
   double min_x = corners[0].x, max_x = corners[0].x;
   double min_y = corners[0].y, max_y = corners[0].y;
   for (const Point &point : corners) {
+    if (!std::isfinite(point.x) || !std::isfinite(point.y)) return;
     min_x = std::min(min_x, point.x); max_x = std::max(max_x, point.x);
     min_y = std::min(min_y, point.y); max_y = std::max(max_y, point.y);
   }
-  const int x0 = std::clamp(int(std::floor(std::max(min_x, surface.clip.x))), 0, surface.width);
-  const int y0 = std::clamp(int(std::floor(std::max(min_y, surface.clip.y))), 0, surface.height);
-  const int x1 = std::clamp(int(std::ceil(std::min(max_x, surface.clip.x + surface.clip.w))), 0, surface.width);
-  const int y1 = std::clamp(int(std::ceil(std::min(max_y, surface.clip.y + surface.clip.h))), 0, surface.height);
+  const int x0 = int(std::floor(std::clamp(std::max(min_x, surface.clip.x), 0.0, double(surface.width))));
+  const int y0 = int(std::floor(std::clamp(std::max(min_y, surface.clip.y), 0.0, double(surface.height))));
+  const int x1 = int(std::ceil(std::clamp(std::min(max_x, surface.clip.x + surface.clip.w), 0.0, double(surface.width))));
+  const int y1 = int(std::ceil(std::clamp(std::min(max_y, surface.clip.y + surface.clip.h), 0.0, double(surface.height))));
   for (int py = y0; py < y1; ++py)
     for (int px = x0; px < x1; ++px) {
       const double dx = px + 0.5 - state.e, dy = py + 0.5 - state.f;
       const double user_x = (state.d * dx - state.c * dy) / determinant;
       const double user_y = (-state.b * dx + state.a * dy) / determinant;
       const double u = (user_x - x) / w, v = (user_y - y) / h;
-      if (u < 0 || u >= 1 || v < 0 || v >= 1) continue;
-      const int sx = std::clamp(int(u * source.width), 0, source.width - 1);
-      const int sy = std::clamp(int(v * source.height), 0, source.height - 1);
-      const size_t offset = (size_t(sy) * source.width + sx) * 4;
+      if (!(u >= 0 && u < 1 && v >= 0 && v < 1)) continue;
+      const double sample_x = sx + u * sw, sample_y = sy + v * sh;
+      // Out-of-bounds source pixels proportionally trim the destination, not
+      // stretch the surviving crop or replace it with transparent black.
+      if (!(sample_x >= 0 && sample_x < source.width &&
+            sample_y >= 0 && sample_y < source.height)) continue;
+      const int source_x = int(std::floor(sample_x));
+      const int source_y = int(std::floor(sample_y));
+      const size_t offset = (size_t(source_y) * source.width + source_x) * 4;
       const uint32_t alpha = uint32_t(std::lround(source.pixels[offset + 3] * state.global_alpha));
       if (!alpha) continue;
       const uint32_t color = (alpha << 24) | (uint32_t(source.pixels[offset + 2]) << 16) |
           (uint32_t(source.pixels[offset + 1]) << 8) | source.pixels[offset];
       surface.pixel(px, py, color);
     }
-}
-
-void Canvas2D::draw_image_rect(const Image &source, double sx, double sy, double sw, double sh,
-                               double x, double y, double w, double h) {
-  ++revision;
-  if (!source.valid() || !std::isfinite(sx) || !std::isfinite(sy) || !std::isfinite(sw) ||
-      !std::isfinite(sh) || sw <= 0 || sh <= 0 || sw > 8192 || sh > 8192 ||
-      sx < -8192 || sy < -8192 || sx > 16384 || sy > 16384 ||
-      std::ceil(sw) * std::ceil(sh) * 4 > double(kMaxImageRawBytes))
-    return;
-  // I sample the source rectangle into a temporary image so the rest of my
-  // pipeline only ever has to blit whole pictures.
-  int ix = int(std::floor(sx)), iy = int(std::floor(sy));
-  int iw = std::max(1, int(std::ceil(sw))), ih = std::max(1, int(std::ceil(sh)));
-  Image piece;
-  piece.width = iw;
-  piece.height = ih;
-  piece.pixels.assign(size_t(iw) * size_t(ih) * 4, 0);
-  for (int row = 0; row < ih; ++row) {
-    const int sample_y = iy + row;
-    if (sample_y < 0 || sample_y >= source.height) continue;
-    for (int column = 0; column < iw; ++column) {
-      const int sample_x = ix + column;
-      if (sample_x < 0 || sample_x >= source.width) continue;
-      const uint8_t *from = &source.pixels[(size_t(sample_y) * source.width + sample_x) * 4];
-      uint8_t *to = &piece.pixels[(size_t(row) * iw + column) * 4];
-      to[0] = from[0];
-      to[1] = from[1];
-      to[2] = from[2];
-      to[3] = from[3];
-    }
-  }
-  draw_image(piece, x, y, w, h);
 }
 
 void Canvas2D::add_round_rect(double x, double y, double w, double h, double radius) {
