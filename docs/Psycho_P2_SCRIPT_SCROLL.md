@@ -10,7 +10,9 @@ Direct positioned descendants are painted after in-flow children, so they now mo
 
 ## Validation
 
-On Linux, the native suite passed 1,185 engine / 3,032 total checks; the DOM/layout contracts passed 8/8, paint/image contracts 11/11, responsive-image and focus contracts 1/1 each. All 18 owned and 24 independent golden cases and their harness self-tests passed. These checks do not prove complete S059 or the Phase 2 exit gate.
+On Linux, the native suite passed 1,185 engine / 3,032 total checks; the DOM/layout contracts passed 8/8, paint/image contracts 11/11, responsive-image and focus contracts 1/1 each. All 18 owned and 24 independent golden cases and their harness self-tests passed.
+
+[Windows run 45431206060](https://github.com/Psycho-Core/PsychoVault/actions/runs/45431206060) passed build, native tests, contracts, goldens, smoke checks and packaging on commit `d2ad8c7`. The temporary branch-only push trigger was subsequently removed; it does not demonstrate manual workflow-dispatch permission. These checks do not prove complete S059 or the Phase 2 exit gate.
 
 ## Remaining work
 
