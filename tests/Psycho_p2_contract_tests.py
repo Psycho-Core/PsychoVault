@@ -81,6 +81,21 @@ def expected_fit_image() -> bytes:
 
 
 class P2ImageContractTests(unittest.TestCase):
+    def test_scripted_scroll_clips_and_paints_positioned_child(self):
+        _, initial = render("Psycho_script_scroll.html", 140, 220)
+        _, scrolled = render("Psycho_script_scroll.html", 140, 220, actions=("click:20,130",))
+        def pixel(image, x, y):
+            at = (y * 140 + x) * 4
+            return image[at:at + 4]
+        red = bytes((204, 0, 0, 255))
+        green = bytes((0, 170, 0, 255))
+        self.assertEqual(pixel(initial, 10, 0), red)
+        self.assertEqual(pixel(initial, 10, 22), green)
+        self.assertEqual(pixel(scrolled, 10, 0), green)
+        self.assertEqual(pixel(scrolled, 10, 10), red)
+        self.assertEqual(pixel(scrolled, 10, 42), red)
+        self.assertEqual(pixel(scrolled, 10, 82), red)
+
     def test_blockified_images_keep_intrinsic_ratio_and_attributes(self):
         frame, _ = render("Psycho_blockified_intrinsic_images.html", 100, 144)
         images = [c for c in frame["paint"] if c["kind"] == 3]

@@ -1996,14 +1996,17 @@ struct Layout {
     double border_box = h + vertical_extra;
     double local_scroll = 0;
     double local_scroll_max = 0;
+    const bool scroll_container = s.overflow == "scroll" || s.overflow == "auto" ||
+                                  s.overflow == "hidden";
     const bool scrollable = s.overflow == "scroll" ||
                             (s.overflow == "auto" && content_h > h + 0.5);
-    if (scrollable && h > 0) {
+    if (scroll_container && h > 0) {
       local_scroll_max = std::max(0.0, content_h - h);
       if (auto stored = scroll_offsets.find(id); stored != scroll_offsets.end())
         local_scroll = std::clamp(stored->second, 0.0, local_scroll_max);
       if (local_scroll > 0) {
-        shift_range(children_at, 0, -local_scroll);
+        for (size_t i = children_at; i < out.paint.size(); ++i)
+          if (!out.paint[i].fixed) out.paint[i].rect.y -= local_scroll;
         for (int child : doc.nodes[id].children) shift_boxes(child, 0, -local_scroll);
       }
     }
@@ -2026,8 +2029,17 @@ struct Layout {
                            {}, {}, {}});
     // Anything positioned is measured against the nearest positioned box.
     double box_w = w + s.padding[1] + s.padding[3] + s.border[1] + s.border[3];
+    const size_t positioned_at = out.paint.size();
     place_positioned(id, s, cb ? *cb : Rect{0, 0, viewport_width, viewport_height}, left, top,
                      box_w, border_box, depth);
+    // Positioned descendants are painted after in-flow children. Scroll them
+    // with the same scrollport, while viewport-fixed descendants stay fixed.
+    if (local_scroll > 0) {
+      for (size_t i = positioned_at; i < out.paint.size(); ++i)
+        if (!out.paint[i].fixed) out.paint[i].rect.y -= local_scroll;
+      for (int child : doc.nodes[id].children)
+        if (positioned(styles[child])) shift_boxes(child, 0, -local_scroll);
+    }
     // A relative box keeps its place in the flow but paints where it is told.
     if (clips_children) {
       const Rect clip_rect{left + s.border[3], top + s.border[0],
@@ -2068,25 +2080,30 @@ struct Layout {
       outline.node = id;
       out.paint.push_back(std::move(outline));
     }
-    if (scrollable && h > 0) {
-      const double track_width = 7;
+    if (scroll_container && h > 0) {
       const Rect viewport{left + s.border[3], top + s.border[0],
                           w + s.padding[1] + s.padding[3],
                           h + s.padding[0] + s.padding[2]};
-      const Rect track{viewport.x + viewport.w - track_width, viewport.y,
-                       track_width, viewport.h};
-      const double thumb_height = std::min(track.h,
-          std::max(14.0, track.h * track.h / std::max(content_h, track.h)));
-      const double thumb_travel = std::max(0.0, track.h - thumb_height);
-      const double thumb_y = track.y + (local_scroll_max > 0
-          ? thumb_travel * local_scroll / local_scroll_max : 0);
-      const Rect thumb{track.x, thumb_y, track.w, thumb_height};
+      Rect track{}, thumb{};
+      if (scrollable) {
+        const double track_width = 7;
+        track = {viewport.x + viewport.w - track_width, viewport.y, track_width, viewport.h};
+        const double thumb_height = std::min(track.h,
+            std::max(14.0, track.h * track.h / std::max(content_h, track.h)));
+        const double thumb_travel = std::max(0.0, track.h - thumb_height);
+        const double thumb_y = track.y + (local_scroll_max > 0
+            ? thumb_travel * local_scroll / local_scroll_max : 0);
+        thumb = {track.x, thumb_y, track.w, thumb_height};
+      }
+      const double content_extent = std::max(viewport.h, content_h + s.padding[0] + s.padding[2]);
       out.scroll_containers[id] = {viewport, track, thumb, local_scroll, local_scroll_max,
-                                   content_h, s.overscroll_behavior};
-      out.paint.push_back({PaintCommand::Kind::Rect, track,
-                           0x30607080u, {}, 0, 0, false, id, {}, {}, {}});
-      out.paint.push_back({PaintCommand::Kind::Rect, thumb,
-                           0xff71869au, {}, 0, 0, false, id, {}, {}, {}});
+                                   content_extent, s.overscroll_behavior, s.overflow != "hidden"};
+      if (scrollable) {
+        out.paint.push_back({PaintCommand::Kind::Rect, track,
+                             0x30607080u, {}, 0, 0, false, id, {}, {}, {}});
+        out.paint.push_back({PaintCommand::Kind::Rect, thumb,
+                             0xff71869au, {}, 0, 0, false, id, {}, {}, {}});
+      }
     }
     if (effect_layer) {
       PaintCommand layer;

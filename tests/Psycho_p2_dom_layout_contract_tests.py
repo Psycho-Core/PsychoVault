@@ -41,6 +41,26 @@ def box(items, selector):
 
 
 class DomLayoutContractTests(unittest.TestCase):
+    def test_scripted_vertical_scroll_clamps_and_moves_positioned_content(self):
+        selectors = ["#auto", "#a-content", "#absolute", "#fixed", "#hidden", "#h-content", "#clip", "#c-content"]
+        def run(*actions):
+            frame = render_frame("Psycho_script_scroll.html", selectors, actions=actions, width=140, height=220)
+            return frame, {item["selector"]: item for item in frame["inspected"]}
+        initial, before = run()
+        self.assertEqual(initial["title"], "0|40|100|0|40|100|0")
+        moved, after = run("click:20,130")
+        self.assertEqual(moved["title"], "25.5|40|100|30|40|100|0")
+        for selector, distance in (("#a-content", 25.5), ("#absolute", 25.5),
+                                   ("#h-content", 30), ("#c-content", 0), ("#fixed", 0)):
+            with self.subTest(selector=selector):
+                self.assertAlmostEqual(box(after, selector)["y"], box(before, selector)["y"] - distance)
+        clamped, _ = run("click:20,130", "click:20,150")
+        self.assertEqual(clamped["title"], "60|40|100|0|40|100|0")
+        reset, _ = run("click:20,130", "click:20,170")
+        self.assertEqual(reset["title"], "0|40|100|0|40|100|0")
+        resized, _ = run("click:20,150", "click:20,190")
+        self.assertEqual(resized["title"], "10|40|50|0|40|100|0")
+
     def test_chrome_reference_flex_and_grid_horizontal_tracks(self):
         # Chrome 157 on Windows, run 43703135149. Horizontal dimensions do not
         # depend on glyph rasterization; vertical metrics are intentionally not
