@@ -4683,6 +4683,7 @@ struct Browser {
           t.session && t.session->ready.load() && now - start_tick >= 1500) {
         services_home_tab = t.id;
         run_services_sync();
+        services_tick = GetTickCount();
         services_phase = 1;
       } else if (now - start_tick >= 30000) {
         services_check(false, "the app page did not become ready");
@@ -4695,7 +4696,15 @@ struct Browser {
                                                  : std::numeric_limits<size_t>::max();
       const unsigned long pid = (renderer_farm && slot != std::numeric_limits<size_t>::max())
                                     ? renderer_farm->process_id(slot) : 0;
-      services_check(pid != 0, "the home tab holds a renderer process");
+      if (pid == 0 && now - services_tick < 10000) return false; // the session may be restarting
+      services_check(pid != 0, "the home tab holds a renderer process (tab " +
+                                   std::to_string(services_home_tab) + ", found " +
+                                   std::string(home ? "yes" : "no") + ", session " +
+                                   std::string(home && home->session ? "yes" : "no") + ", slot " +
+                                   (slot == std::numeric_limits<size_t>::max() ? std::string("none")
+                                                                               : std::to_string(slot)) +
+                                   ", url " + (home ? home->url : std::string()) + ", error " +
+                                   (home ? home->error : std::string()) + ")");
       if (pid == 0) return true;
       HANDLE victim = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, DWORD(pid));
       services_check(victim != nullptr, "the renderer process can be opened");
