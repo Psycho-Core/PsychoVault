@@ -24,6 +24,7 @@
 #include "../runtime/focus/Psycho_focus.hpp"
 #include "../runtime/internal/Psycho_internal.hpp"
 #include "../runtime/private/Psycho_private.hpp"
+#include "../runtime/tabs/Psycho_tabs.hpp"
 #include "../runtime/app/Psycho_instance.hpp"
 #include "../runtime/broker/Psycho_renderer_farm.hpp"
 #include "../runtime/renderer/Psycho_renderer_main.hpp"
@@ -869,7 +870,7 @@ struct Browser {
   Profile profile;
   std::vector<Tab> tabs;
   std::vector<std::shared_ptr<Session>> retired_sessions;
-  int active = 0, next_id = 1;
+  int active = 0;
   uint64_t generation = 0;
   std::string address, home_search, status = "Ready", profile_error;
   bool address_focus = false, home_focus = false, settings = false, panel_bookmarks = false,
@@ -923,7 +924,7 @@ struct Browser {
   int smoke_bridge_stage = 0;
   int smoke_bridge_source_tab = -1;
   DWORD smoke_bridge_stage_tick = 0;
-  bool smoke = false, expect_image = false;
+  bool smoke = false, expect_image = false, smoke_tabs = false, smoke_tabs_done = false;
   DWORD start_tick = 0;
   // S037 in production: the private-session policy is consulted before any
   // extension starts. Private windows run none unless the user flips the switch
@@ -934,6 +935,10 @@ struct Browser {
   }
   explicit Browser(bool private_mode = false, const std::string &directory = {})
       : private_mode(private_mode) {
+    {
+      rt::Error attach_error;
+      tab_model.attach_window(kWindowId, attach_error);
+    }
     profile =
         Profile::open(directory.empty() ? default_profile_directory() : directory, private_mode);
     profile_error = profile.error;
@@ -1392,9 +1397,80 @@ struct Browser {
     for (auto &session : retired_sessions) join(session);
     retired_sessions.clear();
   }
+  // S026 in production: the TabModel is the one authority on tab ids, order,
+  // pinning, muting, the active tab and the recently-closed stack. The shell's
+  // `tabs` vector holds each tab's own state (session, frame, history) and is
+  // put back in the model's order after every change.
+  rt::TabModel tab_model;
+  int model_open(const std::string &label, int index) {
+    rt::Error error;
+    return tab_model.open_tab(kWindowId, label, index, error);
+  }
+  int model_position(int tab_id) const {
+    const std::vector<int> order = tab_model.order(kWindowId);
+    for (size_t i = 0; i < order.size(); ++i)
+      if (order[i] == tab_id) return int(i);
+    return -1;
+  }
+  void apply_model_order() {
+    int active_id = (active >= 0 && active < int(tabs.size())) ? tabs[size_t(active)].id : -1;
+    std::vector<Tab> ordered;
+    ordered.reserve(tabs.size());
+    for (int id : tab_model.order(kWindowId)) {
+      for (auto &tab : tabs)
+        if (tab.id == id) {
+          ordered.push_back(std::move(tab));
+          break;
+        }
+    }
+    // A tab the model does not know would be lost with its session; keep it last.
+    for (auto &tab : tabs) {
+      bool placed = false;
+      for (const auto &done : ordered) placed = placed || done.id == tab.id;
+      if (!placed) ordered.push_back(std::move(tab));
+    }
+    tabs = std::move(ordered);
+    for (auto &tab : tabs)
+      if (const rt::Tab *known = tab_model.find(tab.id)) {
+        tab.pinned = known->pinned;
+        tab.muted = known->muted;
+      }
+    active = 0;
+    for (size_t i = 0; i < tabs.size(); ++i)
+      if (tabs[i].id == active_id) active = int(i);
+  }
+  void forget_all_tabs() {
+    rt::Error error;
+    tab_model.forget_all(kWindowId, error);
+    tabs.clear();
+  }
+  void trim_closed_data() {
+    std::set<int> remembered;
+    for (const auto &entry : tab_model.closed()) remembered.insert(entry.tab_id);
+    for (auto it = closed_data.begin(); it != closed_data.end();)
+      it = remembered.count(it->first) ? std::next(it) : closed_data.erase(it);
+  }
+  void remember_closed_tab(const Tab &tab) {
+    ClosedTab closed;
+    closed.url = tab.url;
+    closed.title = tab.title;
+    closed.history = tab.history_urls();
+    closed.index = tab.history_index();
+    closed.pinned = tab.pinned;
+    closed.muted = tab.muted;
+    closed_data[tab.id] = std::move(closed);
+    rt::Error error;
+    tab_model.close_tab(tab.id, error);
+    trim_closed_data();
+  }
   void new_tab(std::string url = "psychovault://newtab", bool focus = true) {
     Tab t;
-    t.id = next_id++;
+    t.id = model_open(url, -1);
+    if (t.id < 0) return;
+    {
+      rt::Error activate_error;
+      tab_model.activate(t.id, activate_error);
+    }
     t.url = url;
     t.title = app_ui_url(url) ? "New Tab" : url;
     t.started = !starts(url, "http://") && !starts(url, "https://");
@@ -1418,23 +1494,12 @@ struct Browser {
     }
     if (tabs.size() <= 1) {
       stop_session(current());
-      tabs.clear();
+      forget_all_tabs();
       new_tab();
       save_session();
       return;
     }
-    if (!tabs[size_t(index)].url.empty()) {
-      ClosedTab closed;
-      closed.url = tabs[size_t(index)].url;
-      closed.title = tabs[size_t(index)].title;
-      closed.history = tabs[size_t(index)].history_urls();
-      closed.index = tabs[size_t(index)].history_index();
-      closed.pinned = tabs[size_t(index)].pinned;
-      closed.muted = tabs[size_t(index)].muted;
-      closed_tabs.push_back(std::move(closed));
-      if (closed_tabs.size() > 20)
-        closed_tabs.erase(closed_tabs.begin());
-    }
+    remember_closed_tab(tabs[size_t(index)]);
     stop_session(tabs[size_t(index)]);
     tabs.erase(tabs.begin() + index);
     if (index < active)
@@ -1448,6 +1513,10 @@ struct Browser {
       return;
     active = index;
     Tab &tab = current();
+    {
+      rt::Error activate_error;
+      tab_model.activate(tab.id, activate_error);
+    }
     sync_focus();
     sync_address();
     settings = starts(tab.url, "psychovault://settings");
@@ -2417,7 +2486,7 @@ struct Browser {
     size_t index = 0;
     bool pinned = false, muted = false;
   };
-  std::vector<ClosedTab> closed_tabs;
+  std::map<int, ClosedTab> closed_data; // keyed by the TabModel's closed tab id
   // One workspace is one named set of tabs. The live workspace is re-captured
   // from the tab strip every save, so the disk copy is never out of date.
   struct Workspace {
@@ -3592,8 +3661,9 @@ struct Browser {
           // stack, my saved session is cleared, and I land on a clean tab.
           for (auto &tab : tabs)
             stop_session(tab);
-          tabs.clear();
-          closed_tabs.clear();
+          forget_all_tabs();
+          closed_data.clear();
+          tab_model.clear_closed();
           profile.session_tabs.clear();
           save_session();
           crashed_last = recovery_dismissed = false;
@@ -4156,17 +4226,17 @@ struct Browser {
   void load_workspace_tabs(Workspace &w) {
     for (auto &tab : tabs)
       stop_session(tab);
-    tabs.clear();
+    forget_all_tabs();
     for (auto &u : w.tabs)
       new_tab(u, false);
     if (tabs.empty())
       new_tab();
     for (size_t i = 0; i < tabs.size(); ++i) {
-      if (i < w.pinned.size())
-        tabs[i].pinned = w.pinned[i] == '1';
-      if (i < w.muted.size())
-        tabs[i].muted = w.muted[i] == '1';
+      rt::Error flag_error;
+      if (i < w.pinned.size()) tab_model.set_pinned(tabs[i].id, w.pinned[i] == '1', flag_error);
+      if (i < w.muted.size()) tab_model.set_muted(tabs[i].id, w.muted[i] == '1', flag_error);
     }
+    apply_model_order();
     active = std::clamp(w.active, 0, int(tabs.size()) - 1);
     select_tab(active);
   }
@@ -4217,21 +4287,10 @@ struct Browser {
       return;
     }
     for (auto &tab : tabs) {
-      if (!tab.url.empty()) {
-        ClosedTab closed;
-        closed.url = tab.url;
-        closed.title = tab.title;
-        closed.history = tab.history_urls();
-        closed.index = tab.history_index();
-        closed.pinned = tab.pinned;
-        closed.muted = tab.muted;
-        closed_tabs.push_back(std::move(closed));
-      }
+      remember_closed_tab(tab);
       stop_session(tab);
     }
-    while (closed_tabs.size() > 20)
-      closed_tabs.erase(closed_tabs.begin());
-    tabs.clear();
+    forget_all_tabs();
     std::string target = profile.panic_url.empty() ? profile.home_page : profile.panic_url;
     new_tab(target.empty() ? "psychovault://newtab" : target);
     status = "Panic - Ctrl+Shift+T brings my tabs back";
@@ -4287,12 +4346,14 @@ struct Browser {
     else if (id == "palette-reopen") reopen_tab();
     else if (id == "palette-duplicate") {
       Tab t;
-      t.id = next_id++;
+      t.id = model_open(current().url, active + 1);
+      if (t.id < 0) return;
       t.url = current().url;
       t.title = current().title;
       t.started = false;
-      tabs.insert(tabs.begin() + active + 1, std::move(t));
-      select_tab(active + 1);
+      const int place = model_position(t.id);
+      tabs.insert(tabs.begin() + place, std::move(t));
+      select_tab(place);
     } else if (id == "palette-pin") tab_set_pinned(active, !current().pinned);
     else if (id == "palette-mute") tab_set_muted(active, !current().muted);
     else if (id == "palette-back") back();
@@ -4379,12 +4440,14 @@ struct Browser {
     else if (id == "menu-duplicate" && menu_tab >= 0 &&
              menu_tab < int(tabs.size())) {
       Tab t;
-      t.id = next_id++;
+      t.id = model_open(tabs[size_t(menu_tab)].url, menu_tab + 1);
+      if (t.id < 0) return;
       t.url = tabs[size_t(menu_tab)].url;
       t.title = tabs[size_t(menu_tab)].title;
       t.started = false;
-      tabs.insert(tabs.begin() + menu_tab + 1, std::move(t));
-      active = menu_tab + 1;
+      const int place = model_position(t.id);
+      tabs.insert(tabs.begin() + place, std::move(t));
+      active = place;
       select_tab(active);
     } else if (id == "menu-close-others") {
       for (int i = int(tabs.size()) - 1; i >= 0; --i)
@@ -4421,14 +4484,101 @@ struct Browser {
       }
     }
   }
+  // --smoke-tabs: drives the tab and history models through the real shell code
+  // paths (pin, move, close, reopen, history) and reports every disagreement
+  // between the strip, the TabModel and the per-tab WebContents. No network.
+  Json run_tab_model_smoke() {
+    std::vector<std::string> failures;
+    auto check = [&](bool ok, const std::string &what) {
+      if (!ok) failures.push_back(what);
+    };
+    auto consistent = [&](const std::string &when) {
+      const std::vector<int> order = tab_model.order(kWindowId);
+      bool same = order.size() == tabs.size();
+      for (size_t i = 0; same && i < tabs.size(); ++i) same = order[i] == tabs[i].id;
+      check(same, when + ": strip order differs from the model");
+      std::set<int> ids;
+      for (const auto &tab : tabs) ids.insert(tab.id);
+      check(ids.size() == tabs.size(), when + ": duplicate tab ids");
+      const bool in_range = active >= 0 && active < int(tabs.size());
+      check(in_range, when + ": active index out of range");
+      const rt::Tab *model_active = tab_model.active_in(kWindowId);
+      check(in_range && model_active && model_active->id == tabs[size_t(active)].id,
+            when + ": active tab differs from the model");
+    };
+    const size_t base = tabs.size();
+    consistent("start");
+    for (const char *name : {"one", "two", "three"}) {
+      (void)name;
+      new_tab("psychovault://settings", false);
+    }
+    consistent("open");
+    check(tabs.size() == base + 3, "three tabs were not opened");
+    const int target_id = tabs.back().id;
+    {
+      rt::Error e;
+      rt::WebContents &web = tabs.back().nav();
+      check(web.visit("http://three.test/a", e) > 0 && web.commit("a", "", e), "first commit");
+      check(web.visit("http://three.test/b", e) > 0 && web.commit("b", "", e), "second commit");
+      check(web.history().size() == 2 && web.index() == 1, "two commits make two entries");
+      check(web.visit("http://three.test/b", e) > 0 && web.pending() &&
+                web.pending()->kind == rt::NavKind::Reload,
+            "the address on screen reloads");
+      check(web.commit("b", "", e) && web.history().size() == 2, "a reload does not grow history");
+      check(web.go_back(e) > 0 && web.commit("a", "", e) && web.index() == 0, "back lands on the first entry");
+      check(web.go_forward(e) > 0 && web.commit("b", "", e) && web.index() == 1, "forward returns");
+      check(web.visit("http://three.test/c", e) > 0 && web.fail("nav.load", "refused", e) &&
+                web.history().size() == 2 && web.index() == 1,
+            "a failed load leaves history alone");
+    }
+    tab_set_pinned(int(tabs.size()) - 1, true);
+    consistent("pin");
+    check(!tabs.empty() && tabs.front().id == target_id && tabs.front().pinned,
+          "a pinned tab moves to the front");
+    {
+      const int mover = tabs.back().id;
+      move_tab(int(tabs.size()) - 1, -int(tabs.size()));
+      consistent("move");
+      check(tabs.front().id == target_id && tabs.front().pinned,
+            "an unpinned tab was dragged in front of a pinned one");
+      check(mover > 0, "mover id");
+    }
+    tab_set_pinned(0, false);
+    consistent("unpin");
+    int victim = -1;
+    for (size_t i = 0; i < tabs.size(); ++i)
+      if (tabs[i].id == target_id) victim = int(i);
+    check(victim >= 0, "target tab still exists");
+    const size_t before_close = tabs.size();
+    if (victim >= 0) close_tab(victim);
+    consistent("close");
+    check(tabs.size() == before_close - 1 && tab_model.closed().size() >= 1, "close removes one tab and remembers it");
+    reopen_tab();
+    consistent("reopen");
+    check(tabs.size() == before_close, "reopen restores the tab");
+    const int reopened_id = tabs.empty() ? -1 : tabs[size_t(active)].id;
+    check(reopened_id > 0 && reopened_id != target_id, "a reopened tab gets a fresh id");
+    if (active >= 0 && active < int(tabs.size())) {
+      const Tab &back = tabs[size_t(active)];
+      check(back.web && back.web->history().size() == 2 && back.web->index() == 1,
+            "reopen restores the tab's history and position");
+    }
+    check(tab_model.closed().empty(), "reopen consumes the closed entry");
+    Json report = Json::make_object();
+    report.set("result", failures.empty() ? "passed" : "failed");
+    Json list = Json::make_array();
+    for (const auto &failure : failures) list.array.push_back(Json(failure));
+    report.set("failures", std::move(list));
+    report.set("tabs", double(tabs.size()));
+    return report;
+  }
   void swap_tabs(int a, int b) {
     if (a == b || a < 0 || b < 0 || a >= int(tabs.size()) || b >= int(tabs.size()))
       return;
-    std::swap(tabs[size_t(a)], tabs[size_t(b)]);
-    if (active == a)
-      active = b;
-    else if (active == b)
-      active = a;
+    // The model decides where the tab may land (pinned tabs stay a prefix).
+    rt::Error move_error;
+    tab_model.move_within_window(kWindowId, tabs[size_t(a)].id, b, move_error);
+    apply_model_order();
     save_session();
   }
   void move_tab(int index, int delta) {
@@ -4438,16 +4588,26 @@ struct Browser {
   }
   // Ctrl+Shift+T undoes the most recent close, back stack and all.
   void reopen_tab() {
-    if (closed_tabs.empty()) {
+    if (tab_model.closed().empty()) {
       status = "No closed tab to bring back";
       return;
     }
-    ClosedTab restore = std::move(closed_tabs.back());
-    closed_tabs.pop_back();
+    const int closed_id = tab_model.closed().back().tab_id;
+    rt::Error reopen_error;
+    const int id = tab_model.reopen_last(reopen_error);
+    if (id < 0) {
+      status = "I could not bring that tab back";
+      return;
+    }
+    ClosedTab restore;
+    if (auto found = closed_data.find(closed_id); found != closed_data.end()) {
+      restore = std::move(found->second);
+      closed_data.erase(found);
+    }
     Tab t;
-    t.id = next_id++;
-    t.url = restore.url;
-    t.title = restore.title;
+    t.id = id;
+    t.url = restore.url.empty() ? std::string("psychovault://newtab") : restore.url;
+    t.title = restore.title.empty() ? std::string("New Tab") : restore.title;
     {
       std::vector<rt::HistoryEntry> entries;
       const std::vector<std::string> urls =
@@ -4460,19 +4620,26 @@ struct Browser {
       rt::Error restore_error;
       t.nav().restore(entries, int(std::min(restore.index, entries.size() - 1)), restore_error);
     }
-    t.pinned = restore.pinned;
-    t.muted = restore.muted;
+    if (const rt::Tab *known = tab_model.find(id)) {
+      t.pinned = known->pinned;
+      t.muted = known->muted;
+    }
     t.started = false;
-    tabs.push_back(std::move(t));
-    active = int(tabs.size()) - 1;
+    const int place = std::clamp(model_position(id), 0, int(tabs.size()));
+    tabs.insert(tabs.begin() + place, std::move(t));
+    active = place;
     select_tab(active);
   }
   void tab_set_pinned(int index, bool pinned) {
-    tabs[size_t(index)].pinned = pinned;
+    rt::Error pin_error;
+    tab_model.set_pinned(tabs[size_t(index)].id, pinned, pin_error);
+    apply_model_order(); // pinned tabs are a prefix, so the order can change
     save_session();
     InvalidateRect(hwnd, nullptr, FALSE);
   }
   void tab_set_muted(int index, bool muted) {
+    rt::Error mute_error;
+    tab_model.set_muted(tabs[size_t(index)].id, muted, mute_error);
     tabs[size_t(index)].muted = muted;
     if (tabs[size_t(index)].session)
       tabs[size_t(index)].session->muted.store(muted);
@@ -4949,6 +5116,16 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       if (b) b->sync_focus();
     }
     if (b) b->reap_sessions();
+    if (b && b->smoke && b->smoke_tabs) {
+      if (!b->smoke_tabs_done && GetTickCount() - b->start_tick >= 1500) {
+        b->smoke_tabs_done = true;
+        const Json report = b->run_tab_model_smoke();
+        std::string write_error;
+        write_file_atomic(b->capture_path + ".tabs.json", report.dump() + "\n", write_error);
+        PostQuitMessage(report.str("result") == "passed" ? 0 : 1);
+      }
+      return 0;
+    }
     if (b && b->smoke && !b->smoke_bridge_url.empty()) {
       const DWORD now = GetTickCount();
       auto write_flow_report = [&](bool passed, const std::string &reason) {
@@ -5427,12 +5604,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
   b.expect_image = expect_image;
   b.capture_path = capture;
   b.smoke_bridge_url = smoke_bridge_url;
+  b.smoke_tabs = command.smoke_tabs;
   b.start_tick = GetTickCount();
   if (private_mode) {
-    b.tabs.clear();
+    b.forget_all_tabs();
     b.new_tab("psychovault://newtab", false);
   } else if (b.profile.restore_tabs && !b.profile.session_tabs.empty()) {
-    b.tabs.clear();
+    b.forget_all_tabs();
     // The session file mirrors the active workspace; a workspace store with
     // entries takes precedence because it is the richer record.
     const auto &source_tabs =
@@ -5442,11 +5620,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     for (auto &u : source_tabs)
       b.new_tab(u, false);
     for (size_t i = 0; i < b.tabs.size(); ++i) {
+      rt::Error flag_error;
       if (i < b.profile.session_pinned.size())
-        b.tabs[i].pinned = b.profile.session_pinned[i] == '1';
+        b.tab_model.set_pinned(b.tabs[i].id, b.profile.session_pinned[i] == '1', flag_error);
       if (i < b.profile.session_muted.size())
-        b.tabs[i].muted = b.profile.session_muted[i] == '1';
+        b.tab_model.set_muted(b.tabs[i].id, b.profile.session_muted[i] == '1', flag_error);
     }
+    b.apply_model_order();
     b.active = std::clamp(b.profile.session_active, 0, int(b.tabs.size()) - 1);
     b.sync_address();
     b.settings = starts(b.current().url, "psychovault://settings");

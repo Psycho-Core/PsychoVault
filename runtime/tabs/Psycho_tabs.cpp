@@ -200,6 +200,24 @@ bool TabModel::close_tab(int tab_id, Error &error) {
   return true;
 }
 
+bool TabModel::forget_all(int window_id, Error &error) {
+  error = Error{};
+  auto it = windows_.find(window_id);
+  if (it == windows_.end()) {
+    error = fail("tabs.window-missing", "window " + std::to_string(window_id) +
+                                            " is not in my tab model");
+    return false;
+  }
+  for (int id : it->second.order) {
+    auto tab = tabs_.find(id);
+    if (tab != tabs_.end() && tab->second.group_id != -1) groups_.erase(tab->second.group_id);
+    tabs_.erase(id);
+  }
+  it->second.order.clear();
+  it->second.active = -1;
+  return true;
+}
+
 bool TabModel::activate(int tab_id, Error &error) {
   error = Error{};
   Found found = lookup(tab_id);

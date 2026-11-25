@@ -2961,6 +2961,24 @@ int run_runtime_bus_tests(int &shared) {
     RT_CHECK(defaults.history().size() == 100);
   }
 
+  // S026 additions the shell relies on: forgetting a window's tabs without
+  // remembering them, and clearing the closed stack.
+  {
+    TabModel model;
+    Error e;
+    RT_CHECK(model.attach_window(1, e));
+    const int a = model.open_tab(1, "a", -1, e);
+    const int b = model.open_tab(1, "b", -1, e);
+    RT_CHECK(a > 0 && b > a && model.close_tab(b, e) && model.closed().size() == 1);
+    model.clear_closed();
+    RT_CHECK(model.closed().empty());
+    RT_CHECK(model.forget_all(1, e) && model.order(1).empty() && model.closed().empty());
+    RT_CHECK(model.active_in(1) == nullptr && model.find(a) == nullptr);
+    RT_CHECK(!model.forget_all(9, e) && e.code == "tabs.window-missing");
+    const int c = model.open_tab(1, "c", -1, e);
+    RT_CHECK(c > b && model.active_in(1) && model.active_in(1)->id == c);
+  }
+
   // S028 bare-page lookup: only a registered page with no path, query or
   // fragment names a document; lookalikes and guesses name nothing.
   {
@@ -3247,6 +3265,17 @@ int run_runtime_bus_tests(int &shared) {
     RT_CHECK(rejected({"--smoke", "--capture", "out.png", "--smoke-bridge-url",
                        "https://example.test/", "--smoke-bridge-url",
                        "https://example.org/"}, "commandline.duplicate-option"));
+    RT_CHECK(rejected({"--smoke-tabs"}, "commandline.smoke-tabs-mode"));
+    RT_CHECK(rejected({"--smoke", "--smoke-tabs"}, "commandline.smoke-tabs-mode"));
+    RT_CHECK(rejected({"--smoke", "--capture", "o.png", "--smoke-tabs", "--smoke-tabs"},
+                      "commandline.duplicate-option"));
+    {
+      CommandLineOptions tabs_options;
+      Error tabs_error;
+      RT_CHECK(parse_command_line({"--smoke", "--capture", "o.png", "--smoke-tabs"},
+                                  tabs_options, tabs_error) &&
+               tabs_options.smoke_tabs);
+    }
     RT_CHECK(rejected({"--private", "--private"}, "commandline.duplicate-option"));
     RT_CHECK(rejected({"--profile", "one", "--profile", "two"},
                       "commandline.duplicate-option"));

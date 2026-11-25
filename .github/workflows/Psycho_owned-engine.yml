@@ -177,6 +177,19 @@ jobs:
           Write-Host "version $a"
           Write-Host "nettest $b"
           if ($a -eq $b) { throw "the version and nettest captures are identical" }
+      - name: Exercise my tab and history models in the running shell
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build/captures | Out-Null
+          $out = Join-Path $env:GITHUB_WORKSPACE 'build/captures/tabs-smoke.png'
+          $report = "$out.tabs.json"
+          Remove-Item -Force $report -ErrorAction SilentlyContinue
+          $p = Start-Process -FilePath '.\build\PsychoVault.exe' -ArgumentList @('--smoke', '--smoke-tabs', '--capture', $out, '--profile', 'build/tabs-profile') -PassThru
+          if (-not $p.WaitForExit(90000)) { try { $p.Kill($true) } catch {}; throw 'the tab model smoke did not finish' }
+          if (Test-Path $report) { Write-Host (Get-Content $report -Raw) }
+          if ($p.ExitCode -ne 0) { throw "the tab model smoke exited $($p.ExitCode)" }
+          if (-not (Test-Path $report)) { throw 'the tab model smoke wrote no report' }
+          if ((Get-Content $report -Raw | ConvertFrom-Json).result -ne 'passed') { throw 'the tab model smoke did not pass' }
       - name: Exercise my app address bridge to a fetched page in one running app
         id: s045_flow
         shell: pwsh

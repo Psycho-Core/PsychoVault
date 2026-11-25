@@ -66,6 +66,11 @@ public:
 
   int open_tab(int window_id, const std::string &label, int index, Error &error);
   bool close_tab(int tab_id, Error &error);   // remembers me on the closed stack
+  // Drop every tab (and group) in a window WITHOUT remembering them: a profile
+  // reset or a workspace swap is not the user closing tabs. The window stays
+  // attached and empty. Refuses unknown windows ("tabs.window-missing").
+  bool forget_all(int window_id, Error &error);
+  void clear_closed() { closed_.clear(); }     // "clear browsing data" forgets the stack too
   bool activate(int tab_id, Error &error);    // active tabs are never discarded
   const Tab *active_in(int window_id) const;
 

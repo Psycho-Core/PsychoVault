@@ -16,6 +16,7 @@ struct CommandLineOptions {
   bool private_mode = false;
   bool diagnostics = false;
   bool smoke = false;
+  bool smoke_tabs = false; // test-only: exercise the tab and history models, no network
   bool expect_image = false;
 };
 
