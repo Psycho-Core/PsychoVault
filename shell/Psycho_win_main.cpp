@@ -5006,10 +5006,19 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       if (!b->capture_path.empty())
         capture(hwnd, b->capture_path);
       bool web = starts(b->current().url, "http://") || starts(b->current().url, "https://");
+      bool failed_internal = false;
+      // An internal page that never produced a frame is a failed smoke too.
+      const bool internal_page =
+          !app_ui_url(b->current().url) && starts(b->current().url, "psychovault://") &&
+          (!diagnostics_page_name(b->current().url).empty());
+      if (internal_page && (b->current().frame.type != Json::Type::Object ||
+                            !b->current().error.empty()))
+        failed_internal = true;
       bool failed =
-          web && (b->current().frame.type != Json::Type::Object || !b->current().error.empty() ||
+          failed_internal ||
+          (web && (b->current().frame.type != Json::Type::Object || !b->current().error.empty() ||
                   !b->current().session || !b->current().session->ready ||
-                  (b->expect_image && b->current().images.empty()));
+                  (b->expect_image && b->current().images.empty())));
       if (failed) {
         // I record exactly why my smoke gate failed so CI shows a real reason
         // instead of a bare exit code.

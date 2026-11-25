@@ -496,6 +496,132 @@ int run_runtime_bus_tests(int &shared) {
     RT_CHECK(fetch_calls == 1 && rendered.payload.find("frame") != nullptr);
   }
 
+  // The renderer admits the diagnostics pages it must render (S038) ...
+  {
+    struct Pipe {
+      std::mutex mutex;
+      std::condition_variable ready;
+      std::deque<std::string> bytes;
+    } child_to_broker, broker_to_child;
+    auto read = [](Pipe &pipe, std::string &bytes, Error &error) {
+      std::unique_lock lock(pipe.mutex);
+      if (!pipe.ready.wait_for(lock, std::chrono::seconds(2),
+                               [&] { return !pipe.bytes.empty(); })) {
+        error = {"test.pipe.timeout", "timed out waiting for IPC bytes"};
+        return false;
+      }
+      bytes = std::move(pipe.bytes.front());
+      pipe.bytes.pop_front();
+      error = Error{};
+      return true;
+    };
+    auto write = [](Pipe &pipe, const std::string &bytes, Error &error) {
+      {
+        std::lock_guard lock(pipe.mutex);
+        pipe.bytes.push_back(bytes);
+      }
+      pipe.ready.notify_one();
+      error = Error{};
+      return true;
+    };
+    Schemas schemas = Schemas::stock();
+    ProcessTransport child(
+        capabilities_for(Role::Renderer), schemas,
+        [&](std::string &bytes, Error &error) { return read(broker_to_child, bytes, error); },
+        [&](const std::string &bytes, Error &error) {
+          return write(child_to_broker, bytes, error);
+        }, true);
+    ProcessTransport broker(
+        capabilities_for(Role::Broker), schemas,
+        [&](std::string &bytes, Error &error) { return read(child_to_broker, bytes, error); },
+        [&](const std::string &bytes, Error &error) {
+          return write(broker_to_child, bytes, error);
+        }, true);
+    RendererWorker worker(child, broker_fetcher(child));
+    Error worker_error;
+    bool worker_served = false;
+    std::thread child_thread([&] { worker_served = worker.serve_one(worker_error); });
+    RendererProcessClient client(broker);
+    int fetch_calls = 0;
+    Host::Fetcher fetch = [&](const std::string &url, ResourceType) {
+      ++fetch_calls;
+      Resource resource;
+      resource.url = url;
+      resource.mime = "text/html";
+      resource.text = "<html><body><h1>broker fetched document</h1></body></html>";
+      return resource;
+    };
+    Envelope rendered;
+    Error error;
+    const bool navigated = client.navigate("psychovault://version", fetch, rendered, error);
+    child_thread.join();
+    RT_CHECK(navigated && worker_served && !worker_error && rendered.is_response &&
+             rendered.payload.flag("ok"));
+    RT_CHECK(fetch_calls == 1 && rendered.payload.find("frame") != nullptr);
+  }
+
+  {
+    struct Pipe {
+      std::mutex mutex;
+      std::condition_variable ready;
+      std::deque<std::string> bytes;
+    } child_to_broker, broker_to_child;
+    auto read = [](Pipe &pipe, std::string &bytes, Error &error) {
+      std::unique_lock lock(pipe.mutex);
+      if (!pipe.ready.wait_for(lock, std::chrono::seconds(2),
+                               [&] { return !pipe.bytes.empty(); })) {
+        error = {"test.pipe.timeout", "timed out waiting for IPC bytes"};
+        return false;
+      }
+      bytes = std::move(pipe.bytes.front());
+      pipe.bytes.pop_front();
+      error = Error{};
+      return true;
+    };
+    auto write = [](Pipe &pipe, const std::string &bytes, Error &error) {
+      {
+        std::lock_guard lock(pipe.mutex);
+        pipe.bytes.push_back(bytes);
+      }
+      pipe.ready.notify_one();
+      error = Error{};
+      return true;
+    };
+    Schemas schemas = Schemas::stock();
+    ProcessTransport child(
+        capabilities_for(Role::Renderer), schemas,
+        [&](std::string &bytes, Error &error) { return read(broker_to_child, bytes, error); },
+        [&](const std::string &bytes, Error &error) {
+          return write(child_to_broker, bytes, error);
+        }, true);
+    ProcessTransport broker(
+        capabilities_for(Role::Broker), schemas,
+        [&](std::string &bytes, Error &error) { return read(child_to_broker, bytes, error); },
+        [&](const std::string &bytes, Error &error) {
+          return write(broker_to_child, bytes, error);
+        }, true);
+    RendererWorker worker(child, broker_fetcher(child));
+    Error worker_error;
+    bool worker_served = false;
+    std::thread child_thread([&] { worker_served = worker.serve_one(worker_error); });
+    RendererProcessClient client(broker);
+    int fetch_calls = 0;
+    Host::Fetcher fetch = [&](const std::string &url, ResourceType) {
+      ++fetch_calls;
+      Resource resource;
+      resource.url = url;
+      resource.mime = "text/html";
+      resource.text = "<html><body><h1>broker fetched document</h1></body></html>";
+      return resource;
+    };
+    Envelope rendered;
+    Error error;
+    (void)client.navigate("psychovault://settings", fetch, rendered, error);
+    child_thread.join();
+    // ... and still refuses a registered page it has no business rendering.
+    RT_CHECK(worker_served && !rendered.payload.flag("ok") && fetch_calls == 0);
+  }
+
 #ifndef _WIN32
   // The production process farm must fail closed on platforms without its
   // Windows launcher; it must never report fake in-memory workers as children.
