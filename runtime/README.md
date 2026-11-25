@@ -4,7 +4,7 @@ P1 runtime components now exist here. The Windows shell launches isolated render
 
 - `broker/` - window host, tab model, navigation, sessions, permissions, downloads, update service, dialogs, tray, menus.
 - `ipc/` - typed channel definitions, schemas, capability handles, the framed message bus.
-- `renderer/` - engine-owning worker and private renderer-child entry point compiled into `PsychoVault.exe`; ordinary web-tab routing is wired in the Windows shell source, but Windows build and live-shell launch remain unverified.
+- `renderer/` - engine-owning worker and private renderer-child entry point compiled into `PsychoVault.exe`; ordinary web-tab routing is wired in the Windows shell and was verified by Windows run 42334940299.
 - `preload/` - the curated `window.psycho` bridge exposed to UI and internal pages.
 - `services/` - network, storage, vault, extension host and proxy service wrappers around `platform/`.
 - `tests/` - integration harnesses: IPC round-trip, process supervision, navigation, crash recovery.
@@ -53,8 +53,8 @@ proof, not visual parity. S045 and the S046 Windows acceptance gate passed.
   two Windows child handles/transports, grows on demand for concurrent tab
   leases, keeps per-child I/O locks so a network wait does not hold the farm
   registry lock, and replaces exited workers under a three-restart budget. The
-  shell now routes ordinary web sessions through those leases; the Windows
-  launch and app-level route remain unverified in this Linux run.
+  shell now routes ordinary web sessions through those leases; Windows run
+  42334940299 verified the launch and the app-level route.
 - `renderer/Psycho_renderer_worker.*` is an engine-owning worker over
   `ProcessTransport`: it retains its `Host` after navigation and accepts typed
   resize, scroll, click and key commands, returning the latest frame and any
@@ -96,9 +96,9 @@ proof, not visual parity. S045 and the S046 Windows acceptance gate passed.
   the gate first, and `invalidate()` closes it after a reported renderer
   failure. Tests exercise a real in-process `WebContents`, `Supervisor`, and
   `CrashService` path, including failed and throwing probes. The process seam is
-  still fake: the shell does not currently create renderers through this broker,
-  and no production caller wires the qualification adapters or crash
-  invalidation. S043 itself does not prove OS isolation; that evidence is from
+  still fake: the shell creates renderers through `RendererProcessFarm`, which admits a
+  child after one startup navigation, not through this harness, and no production caller
+  wires the qualification adapters or crash invalidation. S049 owns that. S043 itself does not prove OS isolation; that evidence is from
   the separate S046 Windows acceptance run 42334940299, which passed the real
   process, replacement, measured IPC, profile-file denial, and socket-denial
   checks. S043 added 57 checks; S023 fail-closed seam tests added 4 more
@@ -120,8 +120,9 @@ proof, not visual parity. S045 and the S046 Windows acceptance gate passed.
   Windows-only acceptance code in `Psycho_runtime_tests.cpp` attempts a read of a
   real profile fixture and connects to a real local listening socket from the
   child AppContainer, recording measured navigation IPC timings and replacing a
-  terminated process. It is implemented but unrun here; empirical denial and
-  restart results are therefore not yet available.
+  terminated process. Windows run 42334940299 ran it: profile read denied, socket connect
+  denied, terminated child replaced. A positive control (the broker reads the same file and
+  connects to the same listener) was added on 2026-11-25 and needs a Windows run.
 
 - `app/Psycho_instance.*` (S023, decision core done): the singleton model as an
   auditable state machine - primary takes the lock, a second launch forwards
@@ -133,8 +134,8 @@ proof, not visual parity. S045 and the S046 Windows acceptance gate passed.
   thread with a clean quit path. `shell/Psycho_win_main.cpp` now calls this
   lifecycle before creating the Browser, dispatches forwarded URLs to the
   primary UI thread, blocks close on failed persistence, and releases the lock
-  during graceful shutdown. Portable contracts pass; Windows compilation and
-  real multi-process behavior remain unverified here.
+  during graceful shutdown. Portable contracts pass; the Windows build compiled and ran in run
+  42334940299, but second-launch forwarding between two real processes has no recorded evidence.
 
 - `window/Psycho_window.*` (S024, rules done): my BrowserWindow equivalent's
   decisions - creation with clamping into monitor work areas, cross-monitor
@@ -356,7 +357,7 @@ proof, not visual parity. S045 and the S046 Windows acceptance gate passed.
   profile, flags and hash facts verbatim, or a named refusal if no provider is
   wired - I never invent a version or hash. Both calls are schema-registered
   and broker-service-backed, exposed only to the diagnostics renderer bridge;
-  web and shell pages still receive no diagnostics facade. 29 new checks
+  web and shell pages still receive no diagnostics facade. As of 2026-11-25 the shell serves `psychovault://nettest` and `psychovault://version` as plain HTML from `Psycho_diagnostics_page.*`; nettest shows every stage unavailable until P4 wires probes, and version shows only the facts the shell knows (version, profile mode, flags) with no hashes. 29 new checks
   (2350 total).
 
 - `crash/Psycho_crash.*` (S039, crash recovery contract): renderer crashes

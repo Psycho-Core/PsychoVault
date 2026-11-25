@@ -12,7 +12,7 @@ This replaces every earlier plan in this repository. `docs/Psycho_PLAN.md`, `Psy
 - Proton VPN that authenticates, connects, proxies my traffic and fails closed, and a general extension engine so I can add other Chrome/Firefox (MV3/MV2) extensions myself.
 - No Chromium, no Electron, no WebView, no Gecko, no renamed browser.
 
-The one thing I will not promise is a date for "every website on earth renders pixel-identical to Chrome". That is a moving standards target tens of millions of lines deep; nobody delivers it quickly and anyone who says otherwise is selling something. What I will deliver is the real thing growing in milestones I can prove, each milestone a working installer I can try.
+The one thing I will not promise is a date for "every website on earth renders pixel-identical to Chrome". That is a moving standards target tens of millions of lines deep; nobody delivers it quickly and anyone who says otherwise is selling something. What I will deliver is the real thing growing in milestones I can prove. Each milestone ends in a runnable build with evidence; an installer exists only from P10 onward, so earlier milestones are development builds.
 
 ## 2. Why the last attempt failed - plainly
 
@@ -45,6 +45,17 @@ The P1 exit gate passed in Windows Actions run [42334940299](https://github.com/
 S045's same-app acceptance passed in that run: address entry in the engine-rendered `psychovault://newtab/` page invoked the curated bridge, retained the source tab, opened the local fixture as a second tab, and verified that its renderer completed loading and painted an image. The run preserved the flow report and app/fixture captures as artifacts. The final branch cleanup commit `94f896d` only removed the temporary branch-scoped workflow trigger after this successful run; it did not change the acceptance implementation.
 
 **P1 runtime acceptance is complete.** This does not claim reference parity or completion of P2/P3; later-milestone implementation and parity work remain outstanding.
+
+### P1 and plan audit - 2026-11-25
+
+I audited the plan and P1 against the code. On Linux `pv-tests` passed 1185 engine checks and 3032 total checks before my changes, and 1185 / 3040 after. I could not run Windows code here. What I found and what I did:
+
+- The P1 exit gate holds: run 42334940299 is green on `7265f7e`, and its log shows two real renderer processes, measured IPC (about 35 ms and 31 ms), `ISOLATION_PROFILE_READ=denied SOCKET_CONNECT=denied` and a killed child replaced. Branch runs through 2026-11-24 repeated the app-flow and renderer-child steps and passed; those commits are not in the current history, so I cannot show a Windows run of the current tip.
+- The isolation test had no positive control, so a "denied" could have meant a bad path. I added a control: the unsandboxed broker must read the same file and connect to the same listener before the child is probed (`ISOLATION_CONTROL=` line in the output). It needs a Windows run to take effect.
+- `--diagnostics` opened `psychovault://nettest`, which the shell rejected as an invalid URL, and no `nettest` or `version` page existed in the app. The shell now serves both from the S038 service. nettest shows every stage as unavailable because no probe adapters exist until P4.
+- Most of S024-S040 and S043 are contracts with no production caller. S047-S049 now own that wiring.
+- The plan contradicted itself in five places, fixed above: the P3 exit gate (needs P6/P7 services), the P8 entry gate (circular through M6 and M7), the installer-per-milestone claim, the CI rule versus S046, and the S020 process list versus the architecture. The decision log that S012 asked for did not exist; it is `docs/Psycho_DECISIONS.md`.
+- Stale text corrected in `Psycho_ARCHITECTURE.md`, `runtime/README.md` and `Psycho_PHASE2_REMAINING_AUDIT.md` (audit date). The Test262 numbers in `Psycho_CONFORMANCE.md` predate the P2 engine work and have not been re-run.
 
 ### P2 status — 2026-11-07
 
@@ -104,7 +115,7 @@ Interim rule: while the engine cannot yet render the full chrome UI, I may ship 
 4. Every feature and setting in `docs/Psycho_FEATURE-INVENTORY.md` gets an implementation and an acceptance test. A control that does nothing is a bug, not a placeholder.
 5. Proton VPN is proven by behaviour: sign-in, connect, real proxied traffic, fail-closed, teardown.
 6. The product ships as an **installer**, never as a portable exe.
-7. No GitHub Actions builds until the milestone gates in section 6 say the outputs are worth building. Workflows are parked to manual dispatch in this change.
+7. No GitHub Actions builds until the milestone gates in section 6 say the outputs are worth building. Workflows are parked to manual dispatch in this change. One recorded exception: a gate that needs a Windows run (S046 and the P2 gates) may use a temporary push trigger on a work branch, removed before merge, named in the commit message and logged in `docs/Psycho_DECISIONS.md` (D005).
 8. Evidence, not adjectives: every claim carries a test name and its output. Passed, failed, blocked and not run are reported separately.
 9. Documents are written in my voice; the reference repository is read-only reference, never imported code.
 
@@ -122,7 +133,23 @@ Interim rule: while the engine cannot yet render the full chrome UI, I may ship 
 | **M8 - Product** | Vault migration, updater with signed manifests, installer repair/upgrade, accessibility, performance budgets | Upgrade/rollback tests, migration fixtures, measured budgets |
 | **M9 - Release** | Signed installer on Releases, notes and checksums | Clean-machine install test, then publish |
 
-Each milestone ends with a runnable build and evidence; milestones after P10 may be packaged as installers. M1 is a developer build, not an installer. I must not describe the product as installable before the installer exists.
+Each milestone ends with a runnable build and evidence. M1 to M7 are development builds, not installers; the installer is built in P10 and first appears in M8. I must not describe the product as installable before the installer exists.
+
+### Milestone to phase map
+
+| Milestone | Phases it closes | What decides it |
+| --- | --- | --- |
+| M1 | P0, P1 (plus open wiring S047-S049) | P1 exit gate |
+| M2 | P2, P3 (chrome, new tab, and the markup of all ten settings categories) | P2 and P3 exit gates |
+| M3 | P4, plus the documentation tier of P5 | P4 exit gate and the P5 documentation tier |
+| M4 | P6 and the settings-facing steps of P7 (S141, S145, S160, S161, S164, S165) | every one of the 125 settings controls changes real state |
+| M5 | The rest of P7 | P7 exit gate |
+| M6 | P8 | P8 exit gate |
+| M7 | P9 | P9 exit gate |
+| M8 | P10, P11 | P10 and P11 exit gates; vault migration lands in P6 and is re-verified here |
+| M9 | P12, P13 | P12 exit gate, then a published release |
+
+P14 (Android) is outside this table until the Windows milestones are met.
 
 ## 6. The steps
 
@@ -148,7 +175,7 @@ Rules for reading this list: an `S` number is one unit of work with one piece of
 
 ### P1 - Runtime foundation (my Electron, privileged side)
 
-- **S020** Create `runtime/` with the process/thread model: one broker process, N renderer processes, one network service, one storage service, one extension host, one GPU/compositor thread.
+- **S020** Create `runtime/` with the process/thread model: one broker process, N renderer processes. The network service, storage service and compositor are broker threads or modules at M1 and the network service becomes its own process at M8; the extension host is a process per extension from P8 (see `docs/Psycho_ARCHITECTURE.md` section 2).
 - **S021** Define the message bus: framed length-prefixed messages, typed channel IDs, capability handles, per-channel schema validation, back-pressure, structured errors.
 - **S022** Implement process launch/supervision: create renderer with a job object and restricted token, heartbeat, timeout, kill, restart, crash attribution.
 - **S023** Implement the singleton app model: single-instance lock, second-launch argument forwarding, graceful quit, session save.
@@ -176,7 +203,13 @@ Rules for reading this list: an `S` number is one unit of work with one piece of
 - **S045** Build a minimum real app-UI vertical slice in `ui/` (HTML/CSS/JS) rendered by the owned engine, with a curated bridge for address entry and tab actions. First verify the engine can render this deliberately small page; pull any required engine capability into P1 rather than assuming it exists. Keep the native shell to OS window/input/presentation duties; prove one screenshot at a reference viewport and a local web page in the same running app. This is an architecture/flow proof, not a claim of visual parity; full parity remains M2/P3.
 - **S046** Run the complete Windows acceptance path and preserve its output: build the one launchable executable, run `pv-tests`, exercise the real app vertical slice, terminate/recover a renderer, measure process IPC, and empirically test profile-file and socket denial. Record unsupported or failed checks honestly; do not close P1 on portable-model tests alone.
 
+- **S047** Give the broker services a production caller in the shell, each with a Windows check: S031 dialogs, clipboard, tray and menus; S032 shortcut registry; S033 IME and dead keys; S034 focus and activation; S035 downloads; S036 permissions; S037 private sessions. The shell currently does these itself with direct Win32 calls, so none of the S031-S037 contracts governs real behavior yet.
+- **S048** Replace the shell's own tab, navigation and window state with the S024-S028 models and present frames through the S025 surface registry. The shell currently keeps its own `Tab` struct and hardcodes the `psychovault://newtab` page instead of using the S028 registry.
+- **S049** Enforce renderer admission and recovery in production: `RendererProcessFarm::acquire` admits a child only after the S043 harness qualifies it, crashes go through S039 (crash page, bounded retry, persisted record), and services log through S040. Today the farm admits a child after one startup navigation.
+
 **Exit gate:** the browser starts from one user-launchable executable; its visible app UI is an engine-rendered HTML page; ordinary tabs are owned by real brokered renderer processes; browser actions and page output cross the production IPC boundary; two real renderers run and one is killed/replaced; measured IPC and empirical Windows profile-file/socket denial evidence pass. The actual app flow and all evidence must be demonstrated by the Windows acceptance run. This gate is intentionally stronger than a process-farm startup probe.
+
+**P1 status (audit 2026-11-25):** the exit gate passed in Windows run 42334940299 (see the acceptance update in section 2). The step list is not finished. Wired and evidenced: S021, S022, S023, S041, S044, S045, S046, and S029/S030 through the renderer worker. Contract and unit tests only, with no production caller in the shell: S024-S028, S031-S040, S043. S038's pages `psychovault://nettest` and `psychovault://version` are now served by the shell (nettest reports every stage unavailable until P4 supplies probes); that change has Linux tests and still needs a Windows run. S047-S049 carry the remaining wiring and must finish before S081 starts.
 
 ### P2 - Engine to a usable rendering baseline (the "Chrome side", part one)
 
@@ -194,7 +227,7 @@ Order matters: my own UI's CSS comes first, then the web's common CSS, then the 
 - **S059** Scrolling: wheel, scrollbar rendering and dragging, keyboard scroll, smooth scrolling policy, scroll anchoring, nested scroll, overscroll behaviour. A targeted vertical subset is implemented and Linux-tested (931 engine checks / 2,778 total checks); scrolling is immediate and full anchor preservation, horizontal scrolling and browser scroll semantics remain open (see `Psycho_ENGINE-GAPS.md`).
 - **S060** Hit testing and event dispatch: pointer, mouse, keyboard, focus, hover/active state machines, capture/bubble, default actions, `preventDefault/stopPropagation`. A targeted event subset is implemented and Linux-tested (937 engine checks / 2,784 total checks); pointer capture APIs, full keyboard defaults and complete DOM event semantics remain open (see `Psycho_ENGINE-GAPS.md`).
 - **S061** Forms and controls rendered by the engine: `input` types used by my UI (text, checkbox, radio, range, number, password, search, file trigger), `select` popup, `textarea`, `button`, `label`, validation states, `:focus-visible`, disabled states. Targeted labels, checkbox/radio state, select value/index and keyboard selection, basic validity and a [focus-visible modality heuristic](Psycho_P2_FOCUS_VISIBLE.md) are implemented. Dedicated range/file/select-popup UI, complete type semantics, full constraint validation and complete focus behavior remain open (see `Psycho_ENGINE-GAPS.md`).
-- **S062** Selection, caret, and text editing: click/drag/word/line selection, caret blink, clipboard cut/copy/paste, undo/redo basics, IME integration with S033. A targeted subset is implemented and Linux-tested (968 engine checks / 2,815 total): UTF-16 selection APIs, click/drag selection, caret/selection paint, editing/navigation, undo/redo, native clipboard forwarding, and composition preedit/commit/cancel. Word/line gestures, full TSF candidate placement, dead keys and rich clipboard remain open (see `Psycho_ENGINE-GAPS.md`).
+- **S062** Selection, caret, and text editing: click/drag/word/line selection, caret blink, clipboard cut/copy/paste, undo/redo basics, IME integration with S033 (the Windows IME path stays the shell's own until S047 wires the S033 service). A targeted subset is implemented and Linux-tested (968 engine checks / 2,815 total): UTF-16 selection APIs, click/drag selection, caret/selection paint, editing/navigation, undo/redo, native clipboard forwarding, and composition preedit/commit/cancel. Word/line gestures, full TSF candidate placement, dead keys and rich clipboard remain open (see `Psycho_ENGINE-GAPS.md`).
 - **S063** Images and SVG: decode paths, scaling, lazy loading, `srcset`/`sizes`, SVG shapes/paths/styles, favicon pipeline. Targeted lazy loading, in-flow image `object-fit`/box painting, declaration-free external SVG detection and a bounded `srcset`/`sizes` candidate-selection subset are implemented. Full responsive-image semantics, advanced SVG/CSS conformance, full replaced-element layout and favicon lifecycle remain incomplete ([image contract](Psycho_P2_IMAGE_CONTRACT.md), [responsive image increment](Psycho_P2_RESPONSIVE_IMAGES.md)).
 - **S064** Media queries and viewport: width/height/aspect/`prefers-*`, scrollbars affecting layout, zoom levels, `devicePixelRatio` handling. Implemented and regression-tested for viewport/resolution media queries, profile-driven preferences, classic scrollbar gutter layout, browser zoom/DPI DPR, and JS viewport values; remaining advanced media-query grammar and nested/native scrollbar details are recorded in `Psycho_ENGINE-GAPS.md`.
 - **S065** Animation basics: transitions with timing functions and `animation` keyframes, driven off the compositor clock, respecting reduced motion. Targeted opacity/color/size transitions and single-name keyframes now run from the host pump with reduced-motion suppression; broader property/event/list semantics remain open (see `Psycho_ENGINE-GAPS.md`).
@@ -214,7 +247,7 @@ Order matters: my own UI's CSS comes first, then the web's common CSS, then the 
 - **S080** Author `ui/` as plain HTML/CSS/JS: design tokens (colours, spacing, radii, typography) taken from the screenshots and the legacy stylesheet.
 - **S081** Build the app frame: rail, tab strip, omnibox, status bar, update banner, panel container, resizer, at the reference geometry (84px chrome, 44px rail, 22px status bar, 330px panel).
 - **S082** Build the new-tab page: logo, greeting, search box, speed-dial tiles, service rail icons, empty states.
-- **S083** Build the ten settings categories with all 125 interactive controls, exact defaults/types/labels and persistence from `docs/Psycho_FEATURE-INVENTORY.md`, grouping and copy from the reference. Include the eight dynamic editors and all six clear-data actions; a visible control is not complete until its state, effect, validation, disabled/error state and reset scope are wired.
+- **S083** Build the ten settings categories with all 125 interactive controls, exact defaults/types/labels and persistence from `docs/Psycho_FEATURE-INVENTORY.md`, grouping and copy from the reference. Include the eight dynamic editors and all six clear-data actions; a visible control is not complete until its state, effect, validation, disabled/error state and reset scope are wired. Order matters: P3 builds the markup and the typed bridge calls, but persistence arrives with S141-S145 (P6) and effects with the P7 steps, so a control whose backing service does not exist yet is listed in the parity matrix as present-and-unwired with the owning step, not counted as done.
 - **S084** Build dialogs: confirmations, prompts, file pickers, permission prompts, error dialogs, with focus traps and keyboard control.
 - **S085** Build the panels: downloads, extensions, performance, vault, history, bookmarks, workspaces, command palette, find bar, translate.
 - **S086** Build the tab strip behaviours: drag to reorder, drag out to window, new-tab button, close, pin, mute, context menu.
@@ -226,7 +259,7 @@ Order matters: my own UI's CSS comes first, then the web's common CSS, then the 
 - **S092** Interaction regression: scripted keyboard/mouse journeys for tabs, settings, palette, panels.
 - **S093** Retire the Win32-drawn chrome scaffolding completely.
 
-**Exit gate:** side-by-side screenshots of old and new settings pages are hard to tell apart, and every control changes real state.
+**Exit gate:** side-by-side screenshots of old and new chrome, new-tab and all ten settings pages are hard to tell apart at the reference sizes, every control whose backing service exists changes real state, and every other control is listed with the step that will wire it. "Every one of the 125 controls changes real state" is the M4 gate, not this one.
 
 ### P4 - Network service (real web, part one)
 
@@ -250,7 +283,7 @@ Order matters: my own UI's CSS comes first, then the web's common CSS, then the 
 ### P5 - Documents, scripts and the modern web (part two)
 
 - **S120** HTML parser completeness: quirks handling, foster parenting, tables, templates, foreign content, encoding sniffing, fragment parsing.
-- **S121** DOM API breadth driven by real pages: tree mutation, attributes/dataset, classList, forms, text, ranges, traversal, `NodeList`, live collections.
+- **S121** DOM API breadth driven by real pages (builds on the reference-used `dataset`, `closest`, `matches` and `getBoundingClientRect` already added in P2, see `Psycho_P2_DOM_APIS.md`; this step covers the rest): tree mutation, attributes/dataset, classList, forms, text, ranges, traversal, `NodeList`, live collections.
 - **S122** Events: full event model with capturing, passive listeners, focus/blur, pointer/touch basics, `beforeunload` policy, `hashchange`/`popstate` routing.
 - **S123** Script loading and execution order: parser-blocking vs deferred vs async, module scripts, inline handlers, error propagation, CSP hooks.
 - **S124** JS engine level 1: ES2015 classes, modules, template literals, destructuring, spread, default/rest params, arrow scoping, `let/const` TDZ, generators/iterators, `for...of`.
@@ -266,7 +299,7 @@ Order matters: my own UI's CSS comes first, then the web's common CSS, then the 
 - **S134** Accessibility baseline: role/name computation for my own UI, tab order, screen-reader exposure of controls, high-contrast mode.
 - **S135** Site corpus workstream: a curated list of real pages (documentation, shopping, social, video, mail, maps), each with a screenshot, a failure list and a fix list, re-run after every engine change.
 
-**Exit gate:** at least the documentation tier and the settings/new-tab UI render correctly, and the corpus list shows which sites work, which partly work and which fail - published honestly.
+**Exit gate:** at least the documentation tier renders correctly, the P3 settings/new-tab regression suite still passes on the P5 engine, and the corpus list shows which sites work, which partly work and which fail - published honestly.
 
 ### P6 - Storage, profile and migration
 
@@ -306,10 +339,12 @@ Order matters: my own UI's CSS comes first, then the web's common CSS, then the 
 ### P8 - Extension engine (general, MV3 + legacy MV2)
 
 **Entry gate: a published completion audit of everything before this point**
-(M0-M7 exit gates all green, conformance counts published, one clean full
-build, every test passing, the evidence table filled in). Extensions start
-only when that audit exists - by the standing rule that audit comes first,
-then build and test, then extension work.
+(the P0 to P7 exit gates, which close milestones M1 to M5, all green; conformance
+counts published; one clean full build; every test passing; the evidence table
+filled in). Extensions start only when that audit exists - by the standing rule
+that audit comes first, then build and test, then extension work. Milestones M6
+(extensions) and M7 (Proton) are what P8 and P9 deliver, so they cannot be
+entry conditions.
 
 - **S170** Manifest parsing/validation for MV2 and MV3, permissions, host permissions, CSP, web-accessible resources, `key` handling, stable IDs.
 - **S171** Install pipeline: directory install, CRX3 unpacking with signature check, enable/disable/remove/restore, update check, provenance record.
@@ -419,4 +454,4 @@ then build and test, then extension work.
 
 ## 10. First action after this plan
 
-Start P1/S020-S021: create `runtime/` with the broker/renderer skeleton and the typed IPC bus, and the `psychovault://nettest` host path so the first real-network evidence can be produced on my machine. No CI, no release, no public claim until M1's installer installs on my machine.
+P1's exit gate is met and P2 is in progress. The next actions, in order: finish the P2 gate (Windows-green golden suite and reference-derived fixtures, see `Psycho_PHASE2_REMAINING_AUDIT.md`), run the Windows check for the new `psychovault://nettest` and `psychovault://version` pages, then do S047-S049 before S081. No release and no public claim until the installer exists and installs on a clean machine (P10).

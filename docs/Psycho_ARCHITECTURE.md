@@ -15,7 +15,7 @@ PsychoVault-Setup-<version>.exe          (my installer, my payload format)
   └── %LOCALAPPDATA%\PsychoVault\profile\...  (my data: settings, history, vault)
 ```
 
-The user-facing install remains one `PsychoVault-Setup-<version>.exe`, and the installed browser has one launchable `PsychoVault.exe`. The broker starts renderer workers by re-launching that same image with a private `--pv-renderer-child` argument; Windows gives each child a separate restricted process and AppContainer. There is no separate renderer executable for the user or installer to manage. Nothing is portable-only, nothing unpacks to a temp folder and vanishes, and the extension payload is part of the installed product. Implementation status: the current Windows shell code launches two same-image renderer children and exercises brokered startup-frame probes; regular page tabs still use the legacy in-process session path. The AppContainer's profile-file/socket denials and real-process crash recovery remain unverified until a Windows run.
+The user-facing install remains one `PsychoVault-Setup-<version>.exe`, and the installed browser has one launchable `PsychoVault.exe`. The broker starts renderer workers by re-launching that same image with a private `--pv-renderer-child` argument; Windows gives each child a separate restricted process and AppContainer. There is no separate renderer executable for the user or installer to manage. Nothing is portable-only, nothing unpacks to a temp folder and vanishes, and the extension payload is part of the installed product. Implementation status (audit 2026-11-25): the Windows shell launches two same-image renderer children and gives each ordinary web tab a leased child, so tab navigation, input, resize and rendered output cross process IPC. Windows run 42334940299 verified the AppContainer profile-file and socket denials and the kill-and-replace recovery. The shell still keeps its own tab, window and service code beside the runtime models; S047-S049 in the master plan own that wiring.
 
 ## 2. Process model
 
@@ -58,7 +58,7 @@ The legacy inventory recorded 21 preload namespaces and 105 IPC handlers. Those 
 
 ### 3.2 IPC contract
 
-- Framing: 4-byte length, 2-byte channel id, payload (CBOR-style minimal encoder written here, not third-party).
+- Framing: a little-endian u32 length followed by one JSON object (my own parser and writer in `engine/`, nothing third-party). The channel is a typed enum checked against the sender's capability mask, not a free-form string. I chose JSON over a binary encoding so every message is inspectable in logs and tests; if a measured cost appears I will change it and record the decision.
 - Every message carries a capability handle. The broker checks the handle against the sender's process identity before dispatch.
 - Requests are async with cancellation; events are fire-and-forget; both have back-pressure counters.
 - Errors are structured: `{ code, stage, detail, retryable }` so the UI can say something true.

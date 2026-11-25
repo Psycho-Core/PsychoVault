@@ -12,6 +12,7 @@
 #include "../permissions/Psycho_permissions.hpp"
 #include "../private/Psycho_private.hpp"
 #include "../diagnostics/Psycho_diagnostics.hpp"
+#include "../diagnostics/Psycho_diagnostics_page.hpp"
 #include "../crash/Psycho_crash.hpp"
 #include "../commandline/Psycho_commandline.hpp"
 #include "../logging/Psycho_logging.hpp"
@@ -593,6 +594,26 @@ int run_runtime_bus_tests(int &shared) {
     const std::string profile_file_arg(
         reinterpret_cast<const char *>(profile_file_utf8.data()),
         profile_file_utf8.size());
+    // Positive control: the unsandboxed broker must be able to read this same
+    // file and connect to this same listener. Without it, a child "denial" could
+    // just be a bad path or a dead socket.
+    {
+      HANDLE control_file = CreateFileW(profile_file.c_str(), GENERIC_READ,
+                                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+      RT_CHECK(control_file != INVALID_HANDLE_VALUE);
+      char control_byte = 0;
+      DWORD control_read = 0;
+      RT_CHECK(ReadFile(control_file, &control_byte, 1, &control_read, nullptr) != FALSE &&
+               control_read == 1);
+      CloseHandle(control_file);
+      SOCKET control_socket = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+      RT_CHECK(control_socket != INVALID_SOCKET);
+      RT_CHECK(connect(control_socket, reinterpret_cast<sockaddr *>(&loopback),
+                       sizeof(loopback)) == 0);
+      closesocket(control_socket);
+      std::cout << "ISOLATION_CONTROL=broker_can_read_and_connect\n";
+    }
     Envelope isolation_reply;
     RT_CHECK(farm.probe_isolation(1, profile_file_arg, "127.0.0.1",
                                   ntohs(loopback.sin_port), isolation_reply, error));
@@ -2742,6 +2763,57 @@ int run_runtime_bus_tests(int &shared) {
                  "function");
     AppHost web(77, nullptr, {bus, {}});
     RT_CHECK(web.page_world().run("typeof psycho").string == "undefined");
+  }
+
+  // S038 pages: psychovault://nettest and psychovault://version render as plain
+  // HTML that reports exactly what the service said. Unwired stages read as
+  // unavailable (never passed), values are escaped, and a missing version
+  // source shows no facts.
+  {
+    Error e;
+    DiagnosticsService unwired({});
+    const std::string nettest = render_nettest_page(unwired.run_nettest());
+    size_t at = 0;
+    bool in_order = true;
+    for (const auto &name : DiagnosticsService::stage_names()) {
+      const size_t found = nettest.find(">" + name + " - ", at);
+      if (found == std::string::npos) { in_order = false; break; }
+      at = found;
+    }
+    RT_CHECK(in_order);
+    RT_CHECK(nettest.find("passed") == std::string::npos);
+    RT_CHECK(nettest.find("diagnostics.unavailable") != std::string::npos);
+    RT_CHECK(nettest.find("<script") == std::string::npos);
+
+    DiagnosticStageResult hostile;
+    hostile.name = "dns";
+    hostile.ok = true;
+    hostile.detail = "<img src=x onerror=alert(1)> & \"quoted\"";
+    const std::string escaped = render_nettest_page({hostile});
+    RT_CHECK(escaped.find("<img") == std::string::npos &&
+             escaped.find("&lt;img") != std::string::npos &&
+             escaped.find("&amp;") != std::string::npos &&
+             escaped.find("&quot;quoted&quot;") != std::string::npos &&
+             escaped.find("passed") != std::string::npos);
+    DiagnosticStageResult failed;
+    failed.name = "tls";
+    failed.detail = "handshake refused";
+    RT_CHECK(render_nettest_page({failed}).find("failed") != std::string::npos);
+
+    VersionInfo info;
+    info.runtime_version = "0.12.0";
+    info.engine_version = "0.12.0";
+    info.profile = "private";
+    info.flags = {"--private"};
+    const std::string version = render_version_page(true, info, Error{});
+    RT_CHECK(version.find("0.12.0") != std::string::npos &&
+             version.find("--private") != std::string::npos &&
+             version.find("none provided") != std::string::npos);
+    Error refusal{"diagnostics.version-failed", "no source"};
+    const std::string missing = render_version_page(false, VersionInfo{}, refusal);
+    RT_CHECK(missing.find("diagnostics.version-failed") != std::string::npos &&
+             missing.find("0.12.0") == std::string::npos);
+    (void)e;
   }
 
   // S039 renderer recovery: persist each attributed crash/hang, replace the

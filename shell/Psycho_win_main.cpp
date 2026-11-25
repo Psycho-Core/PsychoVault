@@ -14,6 +14,7 @@
 #include "../platform/Psycho_download.hpp"
 #include "../platform/Psycho_sandbox.hpp"
 #include "../runtime/commandline/Psycho_commandline.hpp"
+#include "../runtime/diagnostics/Psycho_diagnostics_page.hpp"
 #include "../runtime/app/Psycho_instance.hpp"
 #include "../runtime/broker/Psycho_renderer_farm.hpp"
 #include "../runtime/renderer/Psycho_renderer_main.hpp"
@@ -108,6 +109,21 @@ static bool app_ui_url(const std::string &text) {
          (parsed->path.empty() || parsed->path == "/") && parsed->query.empty() &&
          parsed->fragment.empty();
 }
+// psychovault://nettest and psychovault://version are served by the broker from
+// the S038 diagnostics service (P1). Returns the page name, or "" for any other
+// address, including a lookalike with a path, query or fragment.
+static std::string diagnostics_page_name(const std::string &text) {
+  auto parsed = parse_url(text);
+  if (!parsed || parsed->scheme != "psychovault" ||
+      !(parsed->path.empty() || parsed->path == "/") || !parsed->query.empty() ||
+      !parsed->fragment.empty())
+    return "";
+  return (parsed->host == "nettest" || parsed->host == "version") ? parsed->host
+                                                                   : std::string();
+}
+// Facts the broker supplies to psychovault://version; set once in wWinMain.
+static pv::rt::VersionInfo g_version_info;
+static bool g_version_known = false;
 static std::filesystem::path shell_path(const std::string &text) {
   int n = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()),
                               nullptr, 0);
@@ -537,7 +553,7 @@ void Session::run() {
     return;
   }
   auto initial_url = parse_url(url);
-  const bool app_page = app_ui_url(url);
+  const bool app_page = app_ui_url(url) || !diagnostics_page_name(url).empty();
   if (!initial_url || (!initial_url->network() && !app_page)) {
     fail("Invalid URL");
     return;
@@ -585,6 +601,34 @@ void Session::run() {
   };
   Host::Fetcher fetcher = [&](const std::string &link, ResourceType type) {
     auto parsed = parse_url(link);
+    if (const std::string diagnostics = diagnostics_page_name(link); !diagnostics.empty()) {
+      // S038: no probe adapters are wired in P1, so nettest reports every stage
+      // as unavailable. The real network stages arrive with P4.
+      Resource resource;
+      resource.url = parsed->href();
+      resource.mime = "text/html; charset=utf-8";
+      resource.ok = true;
+      resource.status = 200;
+      if (diagnostics == "nettest") {
+        resource.text = rt::render_nettest_page(rt::DiagnosticsService({}).run_nettest());
+      } else {
+        rt::DiagnosticsService::Seams seams;
+        if (g_version_known) {
+          seams.version_info = [](rt::VersionInfo &out, rt::Error &) {
+            out = g_version_info;
+            return true;
+          };
+        }
+        rt::DiagnosticsService versioned(std::move(seams));
+        rt::VersionInfo info;
+        rt::Error version_error;
+        const bool known = versioned.version(info, version_error);
+        resource.text = rt::render_version_page(known, info, version_error);
+      }
+      resource.broker_cookie_state = jar->renderer_state_for(document_url, profile_now());
+      resource.broker_storage_state = storage->origin_state(document_url.origin());
+      return resource;
+    }
     if (parsed && parsed->scheme == "psychovault" && parsed->host == "newtab" &&
         parsed->query.empty() && parsed->fragment.empty()) {
       Resource resource;
@@ -1213,7 +1257,8 @@ struct Browser {
     status = !tab.error.empty() ? tab.error : tab.loading ? "Loading " + tab.url : tab.url;
     update_find();
     if ((!tab.started && (starts(tab.url, "http://") || starts(tab.url, "https://"))) ||
-        (app_ui_url(tab.url) && !tab.session && tab.frame.type == Json::Type::Null)) {
+        ((app_ui_url(tab.url) || !diagnostics_page_name(tab.url).empty()) &&
+         !tab.session && tab.frame.type == Json::Type::Null)) {
       navigate(tab.url, false);
     } else if (tab.session) {
       Json j = Json::make_object();
@@ -1285,7 +1330,7 @@ struct Browser {
       settings = starts(target, "psychovault://settings");
       sync_address();
     }
-    const bool app_page = app_ui_url(target);
+    const bool app_page = app_ui_url(target) || !diagnostics_page_name(target).empty();
     if ((starts(target, "psychovault://") && !app_page) || target == "about:blank") {
       tab.loading = false;
       tab.recorded = true;
@@ -4914,6 +4959,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
       ? default_profile_directory() : command.profile_directory;
   const std::vector<std::string> startup_urls =
       rt::command_line_startup_urls(command);
+  // Facts for psychovault://version. Only things I actually know are listed; no
+  // build hashes are computed yet, so the page says none were provided.
+  g_version_info.runtime_version = PSYCHO_VAULT_VERSION;
+  g_version_info.engine_version = PSYCHO_VAULT_VERSION;
+  g_version_info.profile = command.profile_directory.empty() ? "default" : "custom";
+  if (private_mode) g_version_info.profile = "private";
+  if (private_mode) g_version_info.flags.push_back("--private");
+  if (command.diagnostics) g_version_info.flags.push_back("--diagnostics");
+  g_version_known = true;
 
   auto dispatch_forwarded = [](const rt::LaunchRequest &request) {
     auto *launch = new ForwardedLaunch;
