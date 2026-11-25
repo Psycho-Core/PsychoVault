@@ -3612,6 +3612,49 @@ void Page::click(double x, double y) {
     toggle_media(n);
     return;
   }
+  // S061: a click on a range input sets its value from where the thumb would sit.
+  for (int n = target; n >= 0 && n < int(doc.nodes.size()); n = doc.nodes[n].parent) {
+    const Node &node = doc.nodes[n];
+    if (node.type != Node::Type::Element || node.name != "input" ||
+        lower(node.attribute("type")) != "range")
+      continue;
+    auto box = layout_.boxes.find(n);
+    if (box == layout_.boxes.end()) break;
+    auto number = [&](const char *name, double fallback) {
+      try {
+        size_t used = 0;
+        const std::string text = node.attribute(name);
+        const double value = std::stod(text, &used);
+        return used > 0 && std::isfinite(value) ? value : fallback;
+      } catch (...) {
+        return fallback;
+      }
+    };
+    const double lo = number("min", 0);
+    double hi = number("max", 100);
+    if (hi <= lo) hi = lo + 100;
+    const std::string step_text = lower(node.attribute("step"));
+    const double step = step_text == "any" ? 0 : std::max(0.0, number("step", 1)) > 0 ? number("step", 1) : 1;
+    const Rect &r = box->second;
+    const double thumb = std::min(14.0, r.h);
+    const double span = std::max(1.0, r.w - thumb);
+    double value = lo + std::clamp((x - r.x - thumb / 2) / span, 0.0, 1.0) * (hi - lo);
+    if (step > 0) value = lo + std::round((value - lo) / step) * step;
+    value = std::clamp(value, lo, hi);
+    std::string text = std::to_string(value);
+    if (value == std::floor(value)) text = std::to_string(static_cast<long long>(value));
+    else {
+      while (!text.empty() && text.back() == '0') text.pop_back();
+      if (!text.empty() && text.back() == '.') text.pop_back();
+    }
+    if (text != node.attribute("value")) {
+      doc.nodes[n].set_attribute("value", text);
+      dirty_ = true;
+      dispatch(n, "input", js_->make_object(), true, false);
+      dispatch(n, "change", js_->make_object(), true, false);
+    }
+    return;
+  }
   if (target >= 0) activate(target);
 }
 std::string Page::editor_value(int node) const {

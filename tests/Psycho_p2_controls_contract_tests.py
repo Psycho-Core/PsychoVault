@@ -81,6 +81,24 @@ class ControlContractTests(unittest.TestCase):
         self.assertEqual(pixel(pixels, box["x"] + 53, box["y"] + box["h"] / 2), ACCENT, "thumb centre")
         self.assertEqual(pixel(pixels, box["x"] + 150, track_y), TRACK, "bare track beyond the thumb")
 
+    def test_clicking_a_range_sets_its_value(self):
+        # value = min + fraction * (max - min), fraction from the click against the
+        # thumb travel (width minus the 14px thumb): the centre of a 200px range is 50.
+        boxes, _ = render(("--action", "click:100,8"))
+        self.assertEqual(self.value_of("#r", ("--action", "click:100,8")), "50")
+        self.assertEqual(self.value_of("#r", ("--action", "click:7,8")), "0")
+        self.assertEqual(self.value_of("#r", ("--action", "click:199,8")), "100")
+
+    def value_of(self, selector, extra):
+        with tempfile.TemporaryDirectory() as directory:
+            cmd = [str(ENGINE), "--input", str(FIXTURE), "--url", "https://controls.test/page.html",
+                   "--width", str(WIDTH), "--height", str(HEIGHT),
+                   "--out", str(pathlib.Path(directory) / "c.png"), "--inspect", selector, *extra]
+            proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=60)
+            if proc.returncode or proc.stderr.strip():
+                raise AssertionError(f"engine exit {proc.returncode}; diagnostics: {proc.stderr}")
+            return json.loads(proc.stdout)["inspected"][0]["value"]
+
     def test_select_has_a_chevron(self):
         boxes, pixels = render()
         box = boxes["#s"]

@@ -800,8 +800,17 @@ struct Layout {
         }
       return parts;
     };
-    auto parse_axis = [&](const std::string &text, size_t &start, size_t &span) {
+    // Negative lines count back from the last line of the explicit grid (n tracks
+    // have n+1 lines), so -1 is that last line and `1 / -1` spans every explicit track.
+    const size_t explicit_column_tracks =
+        std::max(area_columns, track_sizes(s.grid_columns, inner_w, s.gap).size());
+    const size_t explicit_row_tracks =
+        std::max(area_rows.size(), track_sizes(s.grid_rows, inner_h, row_gap).size());
+    auto parse_axis = [&](const std::string &text, size_t &start, size_t &span, size_t explicit_count) {
       const auto parts = split_slash(text);
+      auto resolve = [&](long line) {
+        return line > 0 ? line : std::max<long>(1, long(explicit_count) + 2 + line); // n tracks have n+1 lines
+      };
       auto value = [](const std::string &raw, long &line, size_t &span_value, bool &is_span) {
         const auto words = tokens(lower(trim(raw)));
         if (words.empty() || words[0] == "auto") return false;
@@ -825,16 +834,19 @@ struct Layout {
       const bool second_valid = parts.size() > 1 &&
           value(parts[1], second_line, second_span, second_is_span);
       if (first_valid && !first_is_span) {
-        start = first_line > 0 ? size_t(first_line - 1) : size_t(std::max<long>(0, 1000 + first_line));
+        const long first_position = resolve(first_line);
+        start = size_t(first_position - 1);
         if (second_valid) {
           if (second_is_span) span = second_span;
-          else if (second_line > 0) span = size_t(std::clamp<long>(second_line - first_line, 1, 12));
+          else span = size_t(std::clamp<long>(resolve(second_line) - first_position, 1, 12));
         }
         return true;
       }
       if (first_is_span) span = first_span;
-      if (second_valid && !second_is_span && second_line > 0) {
-        start = size_t(second_line - 1);
+      if (second_valid && !second_is_span) {
+        // `span N / end-line`: the item ends at that line and starts N tracks before it.
+        const long end_position = resolve(second_line);
+        start = size_t(std::max<long>(0, end_position - long(span) - 1));
         return true;
       }
       return false;
@@ -855,17 +867,20 @@ struct Layout {
           const auto area_parts = split_slash(area_name);
           if (area_parts.size() >= 4) {
             size_t row = 0, row_span = 1, col = 0, col_span = 1;
-            const bool has_row = parse_axis(area_parts[0] + " / " + area_parts[2], row, row_span);
-            const bool has_col = parse_axis(area_parts[1] + " / " + area_parts[3], col, col_span);
+            const bool has_row = parse_axis(area_parts[0] + " / " + area_parts[2], row, row_span,
+                                            explicit_row_tracks);
+            const bool has_col = parse_axis(area_parts[1] + " / " + area_parts[3], col, col_span,
+                                            explicit_column_tracks);
             if (has_row) { place.row = row; place.row_span = row_span; place.fixed_row = true; }
             if (has_col) { place.col = col; place.col_span = col_span; place.fixed_col = true; }
           }
         }
       }
       if (!style.grid_row.empty() && lower(style.grid_row) != "auto")
-        place.fixed_row = parse_axis(style.grid_row, place.row, place.row_span);
+        place.fixed_row = parse_axis(style.grid_row, place.row, place.row_span, explicit_row_tracks);
       if (!style.grid_column.empty() && lower(style.grid_column) != "auto")
-        place.fixed_col = parse_axis(style.grid_column, place.col, place.col_span);
+        place.fixed_col = parse_axis(style.grid_column, place.col, place.col_span,
+                                     explicit_column_tracks);
       explicit_rows = std::max(explicit_rows, place.row + place.row_span);
       explicit_columns = std::max(explicit_columns, place.col + place.col_span);
     }
@@ -881,6 +896,7 @@ struct Layout {
       column_count = std::max(column_count, (items.size() + flow_rows - 1) / flow_rows);
     }
     column_count = std::min<size_t>(column_count, 144);
+    const size_t explicit_column_count = columns.size();
     if (columns.empty()) {
       const double share = std::max(0.0, inner_w - s.gap * (column_count - 1)) / column_count;
       columns.assign(column_count, share);
@@ -890,6 +906,13 @@ struct Layout {
       const double implicit = std::max(0.0, inner_w - occupied) /
                               std::max<size_t>(1, column_count - columns.size());
       columns.resize(column_count, implicit);
+    }
+    // Implicit columns take grid-auto-columns when it is given (cycled in order).
+    if (!s.grid_auto_columns.empty()) {
+      const auto autos = track_sizes(s.grid_auto_columns, inner_w, s.gap);
+      if (!autos.empty())
+        for (size_t c = explicit_column_count; c < columns.size(); ++c)
+          columns[c] = autos[(c - explicit_column_count) % autos.size()];
     }
 
     const size_t row_capacity = std::min<size_t>(144, column_flow
@@ -964,6 +987,7 @@ struct Layout {
       row_count = std::max(row_count, place.row + place.row_span);
     row_count = std::min(row_count, row_capacity);
     if (rows.size() > row_count) row_count = std::min(rows.size(), row_capacity);
+    const size_t explicit_row_count = rows.size();
     rows.resize(row_count, 0);
     if (rows.empty()) rows.push_back(0);
     struct Cell { int id; size_t row, col, row_span, col_span; double width, height; };
@@ -977,6 +1001,21 @@ struct Layout {
       cells.push_back({items[i], place.row, place.col, place.row_span, place.col_span, width, height});
       if (place.row_span == 1 && place.row < rows.size())
         rows[place.row] = std::max(rows[place.row], height);
+    }
+    // Implicit rows take grid-auto-rows: a plain length is the row's exact height,
+    // anything else (minmax, auto) is only a minimum under the content height.
+    if (!s.grid_auto_rows.empty()) {
+      const auto autos = track_sizes(s.grid_auto_rows, inner_h, row_gap);
+      const auto words = tokens(s.grid_auto_rows);
+      if (!autos.empty() && !words.empty())
+        for (size_t r = explicit_row_count; r < rows.size(); ++r) {
+          const size_t pick = (r - explicit_row_count) % autos.size();
+          const std::string &word = words[std::min(pick, words.size() - 1)];
+          const bool exact = word.find("minmax") == std::string::npos &&
+                             word.find("fr") == std::string::npos &&
+                             word != "auto" && word.find("content") == std::string::npos;
+          rows[r] = exact ? autos[pick] : std::max(rows[r], autos[pick]);
+        }
     }
     for (const Cell &cell : cells) {
       if (cell.row_span <= 1 || cell.row + cell.row_span > rows.size()) continue;
@@ -1447,6 +1486,10 @@ struct Layout {
     } else {
       std::vector<Run> line;
       double line_width = 0, line_height = 0;
+      // Inline-blocks are placed as they arrive, left to right; text-align moves
+      // them with the text when the line ends.
+      struct LineBlock { size_t from, to; int id; };
+      std::vector<LineBlock> line_blocks;
       auto flush = [&]() {
         if (line.empty() && line_height <= 0)
           return;
@@ -1487,6 +1530,13 @@ struct Layout {
           tx += std::max(0.0, (inner_w - line_width) / 2);
         else if (s.text_align == "right")
           tx += std::max(0.0, inner_w - line_width);
+        if (tx != inner_x)
+          for (const LineBlock &placed : line_blocks) {
+            for (size_t i = placed.from; i < placed.to && i < out.paint.size(); ++i)
+              out.paint[i].rect.x += tx - inner_x;
+            shift_boxes(placed.id, tx - inner_x, 0);
+          }
+        line_blocks.clear();
         for (auto &run : line) {
           if (run.text == "\n") {
             continue;
@@ -1794,7 +1844,9 @@ struct Layout {
           if (line_width > 0 && line_width + bw > inner_w + 0.5)
             flush();
           double bx = inner_x + line_width;
+          const size_t block_from = out.paint.size();
           block(c, bx, cursor, bw, dep + 1);
+          line_blocks.push_back({block_from, out.paint.size(), c});
           auto found = out.boxes.find(c);
           line_width += bw;
           line_height = std::max(line_height, found == out.boxes.end() ? 0.0 : found->second.h);
@@ -2164,12 +2216,131 @@ struct Layout {
     return border_box + s.margin[0] + s.margin[2];
   }
 };
+// CSS 2.1 section 8.3.1 margin collapsing between a block and its first or last
+// in-flow block child, and through an empty block. Done as a pass over the
+// resolved styles: the child's margin moves onto the parent (or the empty block's
+// two margins fold into its bottom one) so the existing sibling collapsing in
+// block() then yields the CSS result. Returns true and fills `adjusted` only when
+// some margin changed, so ordinary documents pay no copy.
+static bool collapse_vertical_margins(const Document &doc, const std::vector<Style> &styles,
+                                      std::vector<Style> &adjusted) {
+  struct Margins { double top, bottom; };
+  std::unordered_map<int, Margins> changed;
+  auto percent = [&](int id, const char *side) {
+    auto it = styles[id].raw.find(side);
+    return it != styles[id].raw.end() && it->second.find('%') != std::string::npos;
+  };
+  auto top_of = [&](int id) {
+    auto it = changed.find(id);
+    return it != changed.end() ? it->second.top : styles[id].margin[0];
+  };
+  auto bottom_of = [&](int id) {
+    auto it = changed.find(id);
+    return it != changed.end() ? it->second.bottom : styles[id].margin[2];
+  };
+  auto set = [&](int id, double top, double bottom) { changed[id] = {top, bottom}; };
+  auto fold = [](double a, double b) {
+    return std::max({0.0, a, b}) + std::min({0.0, a, b});
+  };
+  auto out_of_flow = [&](int id) {
+    const Style &st = styles[id];
+    return st.position == "absolute" || st.position == "fixed";
+  };
+  auto plain_block = [&](int id) {
+    const Node &node = doc.nodes[id];
+    const Style &st = styles[id];
+    return node.type == Node::Type::Element && st.display == "block" && !out_of_flow(id) &&
+           st.overflow == "visible" && !percent(id, "margin-top") && !percent(id, "margin-bottom");
+  };
+  auto blank = [&](int id) {
+    const Node &node = doc.nodes[id];
+    if (node.type == Node::Type::Comment) return true;
+    if (node.type != Node::Type::Text) return false;
+    return node.text.find_first_not_of(" \t\r\n\f") == std::string::npos;
+  };
+  // The first (last) child that takes part in margin adjacency, or -1 when the
+  // first thing in the box is inline content or a box that does not collapse.
+  auto edge_child = [&](int id, bool first) {
+    const auto &kids = doc.nodes[id].children;
+    for (size_t i = 0; i < kids.size(); ++i) {
+      const int kid = kids[first ? i : kids.size() - 1 - i];
+      if (blank(kid)) continue;
+      const Node &node = doc.nodes[kid];
+      if (node.type != Node::Type::Element) return -1;
+      if (styles[kid].display == "none" || out_of_flow(kid)) continue;
+      return plain_block(kid) ? kid : -1;
+    }
+    return -1;
+  };
+  auto is_empty = [&](int id) {
+    if (!plain_block(id)) return false;
+    const Style &st = styles[id];
+    if (st.padding[0] != 0 || st.padding[2] != 0 || st.border[0] != 0 || st.border[2] != 0)
+      return false;
+    if (st.height >= 0 || !st.height_expression.empty() || st.height_percent >= 0 ||
+        st.min_height > 0 || !st.min_height_expression.empty())
+      return false;
+    if (doc.nodes[id].name == "img" || doc.nodes[id].name == "input") return false;
+    for (int kid : doc.nodes[id].children)
+      if (!blank(kid)) return false;
+    return true;
+  };
+  std::function<void(int, int)> visit = [&](int id, int depth) {
+    if (id < 0 || id >= int(doc.nodes.size()) || depth > kMaxDomDepth) return;
+    for (int kid : doc.nodes[id].children)
+      if (doc.nodes[kid].type == Node::Type::Element) visit(kid, depth + 1);
+    if (doc.nodes[id].type != Node::Type::Element || styles[id].display == "none") return;
+    if (is_empty(id)) {
+      // An empty block's own margins collapse together (and through it).
+      set(id, 0, fold(top_of(id), bottom_of(id)));
+      return;
+    }
+    if (!plain_block(id) && id != doc.body) return;
+    const Style &st = styles[id];
+    if (st.display != "block") return;
+    if (st.padding[0] == 0 && st.border[0] == 0 && !percent(id, "padding-top")) {
+      const int first = edge_child(id, true);
+      if (first >= 0) {
+        const double merged = fold(top_of(id), top_of(first));
+        set(id, merged, bottom_of(id));
+        set(first, 0, bottom_of(first));
+      }
+    }
+    const bool height_auto = st.height < 0 && st.height_expression.empty() &&
+                             st.height_percent < 0 && st.min_height <= 0 &&
+                             st.min_height_expression.empty();
+    if (height_auto && st.padding[2] == 0 && st.border[2] == 0 && !percent(id, "padding-bottom")) {
+      const int last = edge_child(id, false);
+      if (last >= 0 && last != edge_child(id, true)) {
+        const double merged = fold(bottom_of(id), bottom_of(last));
+        set(id, top_of(id), merged);
+        set(last, top_of(last), 0);
+      } else if (last >= 0) {
+        // One child: its bottom margin also reaches the parent's bottom.
+        const double merged = fold(bottom_of(id), bottom_of(last));
+        set(id, top_of(id), merged);
+        set(last, top_of(last), 0);
+      }
+    }
+  };
+  if (doc.body >= 0) visit(doc.body, 0);
+  if (changed.empty()) return false;
+  adjusted = styles;
+  for (const auto &[id, margins] : changed) {
+    adjusted[size_t(id)].margin[0] = margins.top;
+    adjusted[size_t(id)].margin[2] = margins.bottom;
+  }
+  return true;
+}
 LayoutResult layout_document(const Document &doc, const std::vector<Style> &styles, double width,
                              double height, const std::map<std::string, Resource> &resources,
                              Canvas &measure, double scroll_y,
                              const std::unordered_map<int, double> &scroll_offsets,
                              const std::unordered_map<int, ImageSource> &image_sources) {
-  Layout l(doc, styles, measure, resources, width, scroll_y, scroll_offsets, image_sources);
+  std::vector<Style> collapsed_styles;
+  const std::vector<Style> &used_styles =
+      collapse_vertical_margins(doc, styles, collapsed_styles) ? collapsed_styles : styles;
+  Layout l(doc, used_styles, measure, resources, width, scroll_y, scroll_offsets, image_sources);
   // The canvas is white unless the body asks for something else. A missing
   // background is transparent, not black.
   const Style &body_style = styles[doc.body];

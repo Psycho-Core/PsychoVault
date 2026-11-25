@@ -1208,6 +1208,10 @@ static void apply(Style &s, const std::map<std::string, std::string> &d, double 
     s.grid_columns = *v;
   if (auto v = get("grid-template-areas"))
     s.grid_template_areas = *v;
+  if (auto v = get("grid-auto-rows"))
+    s.grid_auto_rows = trim(*v);
+  if (auto v = get("grid-auto-columns"))
+    s.grid_auto_columns = trim(*v);
   if (auto v = get("grid-auto-flow"))
     s.grid_auto_flow = lower(*v);
   if (auto v = get("grid-column"))
@@ -1253,6 +1257,7 @@ static std::optional<std::string> initial_css_value(const std::string &property)
       {"justify-items", "stretch"}, {"justify-self", "auto"},
       {"grid-template-columns", "none"}, {"grid-template-rows", "none"},
       {"grid-template-areas", "none"}, {"grid-auto-flow", "row"},
+      {"grid-auto-rows", "auto"}, {"grid-auto-columns", "auto"},
       {"grid-column", "auto"}, {"grid-row", "auto"}, {"grid-area", "auto"},
       {"order", "0"}};
   if (property == "margin" || property.rfind("margin-", 0) == 0 ||
@@ -1333,6 +1338,8 @@ static void inherit_style_property(Style &to, const Style &from, const std::stri
   else if (property == "grid-template-rows") to.grid_rows = from.grid_rows;
   else if (property == "grid-template-areas") to.grid_template_areas = from.grid_template_areas;
   else if (property == "grid-auto-flow") to.grid_auto_flow = from.grid_auto_flow;
+  else if (property == "grid-auto-rows") to.grid_auto_rows = from.grid_auto_rows;
+  else if (property == "grid-auto-columns") to.grid_auto_columns = from.grid_auto_columns;
   else if (property == "grid-column") to.grid_column = from.grid_column;
   else if (property == "grid-row") to.grid_row = from.grid_row;
   else if (property == "grid-area") to.grid_area = from.grid_area;
@@ -1657,6 +1664,8 @@ std::vector<Style> compute_styles(const Document &doc, const std::vector<Stylesh
       style.grid_columns.clear();
       style.grid_rows.clear();
       style.grid_template_areas.clear();
+      style.grid_auto_rows.clear();
+      style.grid_auto_columns.clear();
       style.grid_column.clear();
       style.grid_row.clear();
       style.grid_area.clear();

@@ -16,6 +16,7 @@ struct Style {
               justify_content = "flex-start",
               align_items = "stretch", align_self = "auto", align_content = "stretch",
               flex_wrap = "nowrap", grid_columns, grid_rows, grid_template_areas,
+              grid_auto_rows, grid_auto_columns,
               grid_column, grid_row, grid_area, grid_auto_flow = "row",
               justify_items = "stretch", justify_self = "auto", transform, filter, box_shadow,
               // Background layers keep their CSS text until layout has the box and resources.
