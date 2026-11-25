@@ -4721,13 +4721,12 @@ struct Browser {
       const Tab *t = find_tab(services_home_tab);
       const bool back = recorded && t && !t->loading && t->error.empty() &&
                         t->frame.type == Json::Type::Object && t->session &&
-                        t->session->ready.load() && crash_service->records().back().restart_attempts >= 1;
+                        t->session->ready.load() && crash_service->records().back().restart_attempts >= 1 &&
+                        crash_service->restarts_for_tab(services_home_tab) == 0; // WM_DONE marks it stable
       if (back) {
         const rt::CrashRecord &record = crash_service->records().back();
         services_check(record.tab_id == services_home_tab, "the crash record names the tab");
         services_check(record.kind == rt::RendererFailureKind::Crash, "it is recorded as a crash");
-        services_check(crash_service->restarts_for_tab(services_home_tab) == 0,
-                       "a stable reload clears the restart count");
         namespace fs = std::filesystem;
         std::error_code ec;
         const fs::path crash_log = fs::path(shell_path(profile.directory)) / "logs" / "crash.log";
@@ -4735,7 +4734,8 @@ struct Browser {
                        "the crash was written to crash.log");
         services_phase = 3;
       } else if (now - services_tick >= 40000) {
-        services_check(false, recorded ? "the crashed tab did not come back" : "no crash was recorded");
+        services_check(false, recorded ? "the crashed tab did not come back and become stable"
+                                       : "no crash was recorded");
         return true;
       }
       return false;
