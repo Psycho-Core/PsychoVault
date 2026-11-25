@@ -25,6 +25,7 @@
 #include "../runtime/internal/Psycho_internal.hpp"
 #include "../runtime/private/Psycho_private.hpp"
 #include "../runtime/tabs/Psycho_tabs.hpp"
+#include "../runtime/window/Psycho_window.hpp"
 #include "../runtime/app/Psycho_instance.hpp"
 #include "../runtime/broker/Psycho_renderer_farm.hpp"
 #include "../runtime/renderer/Psycho_renderer_main.hpp"
@@ -171,6 +172,32 @@ static std::string diagnostics_page_name(const std::string &text) {
 // Facts the broker supplies to psychovault://version; set once in wWinMain.
 static pv::rt::VersionInfo g_version_info;
 static bool g_version_known = false;
+// S024 in production: the shell asks WindowRules where the first window may open
+// and routes minimize/maximize/restore through it; the OS still owns dragging,
+// DPI and fullscreen (see the plan for what stays open).
+static std::string utf8_of_wide(std::wstring_view text);
+static std::vector<rt::WindowRules::Monitor> enumerate_monitors() {
+  std::vector<rt::WindowRules::Monitor> monitors;
+  EnumDisplayMonitors(
+      nullptr, nullptr,
+      [](HMONITOR monitor, HDC, LPRECT, LPARAM data) -> BOOL {
+        MONITORINFOEXW info{};
+        info.cbSize = sizeof(info);
+        if (!GetMonitorInfoW(monitor, &info)) return TRUE;
+        auto &out = *reinterpret_cast<std::vector<rt::WindowRules::Monitor> *>(data);
+        rt::WindowRules::Monitor entry;
+        entry.id = utf8_of_wide(info.szDevice);
+        entry.work_area = {info.rcWork.left, info.rcWork.top,
+                           info.rcWork.right - info.rcWork.left,
+                           info.rcWork.bottom - info.rcWork.top};
+        // The primary monitor goes first so it wins ties.
+        if (info.dwFlags & MONITORINFOF_PRIMARY) out.insert(out.begin(), std::move(entry));
+        else out.push_back(std::move(entry));
+        return TRUE;
+      },
+      reinterpret_cast<LPARAM>(&monitors));
+  return monitors;
+}
 static std::filesystem::path shell_path(const std::string &text) {
   int n = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()),
                               nullptr, 0);
@@ -1402,6 +1429,22 @@ struct Browser {
   // `tabs` vector holds each tab's own state (session, frame, history) and is
   // put back in the model's order after every change.
   rt::TabModel tab_model;
+  rt::WindowRules *window_rules = nullptr;
+  int window_rules_id = -1;
+  // Window state goes through the rules; the apply seam only touches the real
+  // window when it disagrees, so a WM_SIZE that reports the new state cannot loop.
+  void window_command(const char *command) {
+    if (!window_rules || window_rules_id < 0) return;
+    const std::string name = command;
+    if (name == "minimize") window_rules->minimize(window_rules_id);
+    else if (name == "maximize") window_rules->maximize(window_rules_id);
+    else if (name == "restore") window_rules->restore(window_rules_id);
+  }
+  void window_size_changed(WPARAM kind) {
+    if (kind == SIZE_MINIMIZED) window_command("minimize");
+    else if (kind == SIZE_MAXIMIZED) window_command("maximize");
+    else if (kind == SIZE_RESTORED) window_command("restore");
+  }
   int model_open(const std::string &label, int index) {
     rt::Error error;
     return tab_model.open_tab(kWindowId, label, index, error);
@@ -3645,9 +3688,9 @@ struct Browser {
         } else if (h.action == "setting-check-update") {
           check_for_update();
         } else if (h.action == "minimize")
-          ShowWindow(hwnd, SW_MINIMIZE);
+          window_command("minimize");
         else if (h.action == "maximize")
-          ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE);
+          window_command(IsZoomed(hwnd) ? "restore" : "maximize");
         else if (h.action == "close-window")
           PostMessageW(hwnd, WM_CLOSE, 0, 0);
         else if (h.action == "find-bar")
@@ -4819,6 +4862,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   case WM_SIZE: {
     if (auto b = browser(hwnd)) {
       b->window_minimized(wp == SIZE_MINIMIZED);
+      b->window_size_changed(wp);
       b->resize(LOWORD(lp), HIWORD(lp));
     }
     return 0;
@@ -5631,10 +5675,53 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     b.sync_address();
     b.settings = starts(b.current().url, "psychovault://settings");
   }
+  {
+    std::string identity_error;
+    if (!rt::windows_taskbar_identity(identity_error))
+      b.log_event("window", rt::LogLevel::Warn, "taskbar-identity.failed",
+                  {{"detail", identity_error}});
+  }
+  static HWND rules_window = nullptr; // the apply seam below runs after creation
+  rt::WindowRules window_rules(rt::WindowRules::Seams{
+      enumerate_monitors,
+      [](const rt::WindowRecord &record) {
+        HWND target = rules_window;
+        if (!target) return;
+        switch (record.state) {
+        case rt::WindowState::Maximized:
+          if (!IsZoomed(target)) ShowWindow(target, SW_MAXIMIZE);
+          break;
+        case rt::WindowState::Minimized:
+          if (!IsIconic(target)) ShowWindow(target, SW_MINIMIZE);
+          break;
+        case rt::WindowState::Normal:
+          if (IsZoomed(target) || IsIconic(target)) ShowWindow(target, SW_RESTORE);
+          break;
+        case rt::WindowState::Fullscreen:
+          break; // not wired: the shell has no fullscreen mode yet
+        }
+      }});
+  // First placement: centred on the primary work area and clamped inside it, so
+  // a smaller or rearranged display never opens the window off screen.
+  rt::WinRect first{0, 0, 1440, 940};
+  {
+    const auto monitors = enumerate_monitors();
+    if (!monitors.empty()) {
+      const rt::WinRect &work = monitors.front().work_area;
+      first.x = work.x + (work.w - first.w) / 2;
+      first.y = work.y + (work.h - first.h) / 2;
+    }
+  }
+  std::string rules_error;
+  const int rules_id = window_rules.create("PsychoVault", first, rules_error);
+  const rt::WinRect placed = window_rules.find(rules_id)->bounds;
   HWND hwnd =
       CreateWindowExW(0, wc.lpszClassName, L"PsychoVault",
                       WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU,
-                      CW_USEDEFAULT, CW_USEDEFAULT, 1440, 940, nullptr, nullptr, inst, &b);
+                      placed.x, placed.y, placed.w, placed.h, nullptr, nullptr, inst, &b);
+  rules_window = hwnd;
+  b.window_rules = &window_rules;
+  b.window_rules_id = rules_id;
   if (!hwnd) {
     renderer_farm = nullptr;
     hosted_renderers.shutdown();
