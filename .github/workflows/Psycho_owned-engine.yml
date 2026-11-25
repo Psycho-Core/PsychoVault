@@ -160,10 +160,15 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force build/captures | Out-Null
           foreach ($page in 'version', 'nettest') {
-            $out = "build/captures/diagnostics-$page.png"
-            .\build\PsychoVault.exe --smoke --url "psychovault://$page" --capture $out --profile build/test-profile
-            if ($LASTEXITCODE -ne 0) { throw "diagnostics page $page exited $LASTEXITCODE" }
+            $out = Join-Path $env:GITHUB_WORKSPACE "build/captures/diagnostics-$page.png"
+            Remove-Item -Force $out -ErrorAction SilentlyContinue
+            # The browser is a GUI-subsystem program, so PowerShell would not wait
+            # for it; start it explicitly and wait for its real exit code.
+            $p = Start-Process -FilePath '.\build\PsychoVault.exe' -ArgumentList @('--smoke', '--url', "psychovault://$page", '--capture', $out, '--profile', 'build/test-profile') -PassThru
+            if (-not $p.WaitForExit(90000)) { try { $p.Kill($true) } catch {}; throw "psychovault://$page did not finish" }
+            if ($p.ExitCode -ne 0) { throw "psychovault://$page exited $($p.ExitCode)" }
             if (-not (Test-Path $out) -or (Get-Item $out).Length -lt 2000) { throw "no usable capture for psychovault://$page" }
+            Write-Host "psychovault://$page captured, $((Get-Item $out).Length) bytes"
           }
       - name: Exercise my app address bridge to a fetched page in one running app
         id: s045_flow
