@@ -103,6 +103,16 @@ jobs:
             Write-Host "::error title=P2 responsive image contract::$detail"
             exit $code
           }
+      - name: Verify default control painting contract
+        shell: pwsh
+        run: |
+          python tests/Psycho_p2_controls_contract_tests.py --engine build/pv-engine.exe 2>&1 | Tee-Object build/p2-controls.txt
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            $detail = (Get-Content build/p2-controls.txt -Raw) -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            Write-Host "::error title=P2 controls contract::$detail"
+            exit $code
+          }
       - name: Verify focus interaction contract
         shell: pwsh
         run: |

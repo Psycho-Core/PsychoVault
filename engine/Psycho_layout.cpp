@@ -1805,8 +1805,14 @@ struct Layout {
           flush();
           std::string label = child.name == "button" || child.name == "textarea"
               ? doc.text_content(c) : control_display_value(child, child.attribute("value"));
-          if (child.name == "input" && child.attribute("type") == "checkbox")
-            label = child.get_attribute("checked", label) ? "[x]" : "[ ]";
+          // S061: checkboxes, radios and ranges are painted from geometry, not
+          // text, so they look the same with or without a text rasterizer and
+          // carry their state (checked, value) on screen.
+          const std::string ctype =
+              child.name == "input" ? lower(child.attribute("type", "text")) : std::string();
+          const bool checkable = ctype == "checkbox" || ctype == "radio";
+          const bool range = ctype == "range";
+          if (checkable || range) label.clear();
           if (child.name == "select") {
             int option = -1;
             for (int o : child.children)
@@ -1817,46 +1823,78 @@ struct Layout {
             if (option >= 0)
               label = doc.text_content(option);
           }
-          if (label.empty())
+          if (label.empty() && !checkable && !range)
             label = child.attribute("placeholder");
           const double specified_width = resolved_width(cs, inner_w);
           double cw = specified_width >= 0
                           ? specified_width
+                          : checkable ? 13.0
+                          : range     ? 129.0
                           : std::max(80.0, measure.text_width(label, cs.font_size, cs.bold, cs.font_family, style_font_weight(cs)) +
                                                 cs.padding[1] + cs.padding[3] + 16),
                  ch = cs.height >= 0             ? cs.height
                       : child.name == "textarea" ? 80
+                      : checkable                ? 13.0
+                      : range                    ? 16.0
                                                  : cs.font_size + cs.padding[0] + cs.padding[2] +
                                                        cs.border[0] + cs.border[2];
-          if (!cs.background.transparent)
-            out.paint.push_back({PaintCommand::Kind::Rect,
-                                 {inner_x, cursor, cw, ch},
-                                 cs.background.bgra(),
-                                 {},
-                                 0,
-                                 0,
-                                 false,
-                                 c,
-                                 {}, {}, {}});
-          out.paint.push_back({PaintCommand::Kind::Border,
-                               {inner_x, cursor, cw, ch},
-                               cs.border_color.bgra(),
-                               {},
-                               0,
-                               1,
-                               false,
-                               c,
-                               {}, {}, {}});
-          out.paint.push_back(
-              {PaintCommand::Kind::Text,
-               {inner_x + cs.padding[3] + 4, cursor + cs.padding[0] + 2, cw - 8, ch - 4},
-               cs.color.bgra(),
-               label,
-               cs.font_size,
-               0,
-               cs.bold,
-               c,
-               {}, {}});
+          const Rect control_box{inner_x, cursor, cw, ch};
+          const double radius = ctype == "radio" ? std::min(cw, ch) / 2 : cs.radius;
+          auto shape = [&](PaintCommand::Kind kind, Rect rect, uint32_t color, double corner) {
+            PaintCommand command{kind, rect, color, {}, 0, 1, false, c, {}, {}, {}};
+            command.radius = corner;
+            out.paint.push_back(std::move(command));
+          };
+          if (range) {
+            // Track, filled portion and thumb from min / max / value.
+            const double lo = number_of(child.attribute("min", "0"), 0);
+            double hi = number_of(child.attribute("max", "100"), 100);
+            if (hi <= lo) hi = lo + 100;
+            const double value = number_of(child.attribute("value", ""), lo + (hi - lo) / 2);
+            const double fraction = std::clamp((value - lo) / (hi - lo), 0.0, 1.0);
+            const double thumb = std::min(14.0, ch);
+            const double track_h = 4;
+            const double track_y = cursor + (ch - track_h) / 2;
+            const double thumb_x = inner_x + fraction * std::max(0.0, cw - thumb);
+            shape(PaintCommand::Kind::Rect, {inner_x, track_y, cw, track_h}, 0xffc8ccd0, 2);
+            if (fraction > 0)
+              shape(PaintCommand::Kind::Rect,
+                    {inner_x, track_y, thumb_x - inner_x + thumb / 2, track_h}, 0xff1a73e8, 2);
+            shape(PaintCommand::Kind::Rect, {thumb_x, cursor + (ch - thumb) / 2, thumb, thumb},
+                  0xff1a73e8, thumb / 2);
+          } else {
+            shape(PaintCommand::Kind::Rect, control_box,
+                  cs.background.transparent ? 0xffffffff : cs.background.bgra(), radius);
+            shape(PaintCommand::Kind::Border, control_box, cs.border_color.bgra(), radius);
+          }
+          if (checkable && child.get_attribute("checked", label)) {
+            const double side = std::min(cw, ch) * 0.55;
+            shape(PaintCommand::Kind::Rect,
+                  {inner_x + (cw - side) / 2, cursor + (ch - side) / 2, side, side},
+                  cs.color.bgra(), ctype == "radio" ? side / 2 : 0);
+          }
+          if (!checkable && !range) {
+            const double chevron = child.name == "select" ? 18.0 : 0.0;
+            out.paint.push_back(
+                {PaintCommand::Kind::Text,
+                 {inner_x + cs.padding[3] + 4, cursor + cs.padding[0] + 2, cw - 8 - chevron, ch - 4},
+                 cs.color.bgra(),
+                 label,
+                 cs.font_size,
+                 0,
+                 cs.bold,
+                 c,
+                 {}, {}});
+          }
+          if (child.name == "select") {
+            // A down-pointing chevron drawn as shrinking rows.
+            const double mid_x = inner_x + cw - 12, top = cursor + ch / 2 - 2;
+            for (int row = 0; row < 4; ++row) {
+              const double half = 4.5 - row;
+              shape(PaintCommand::Kind::Rect, {mid_x - half, top + row, half * 2, 1},
+                    cs.color.bgra(), 0);
+            }
+          }
           out.boxes[c] = {inner_x, cursor, cw, ch};
           cursor += ch + cs.margin[0] + cs.margin[2];
           return;
