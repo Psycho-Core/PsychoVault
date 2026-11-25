@@ -1084,8 +1084,37 @@ static void apply(Style &s, const std::map<std::string, std::string> &d, double 
       }
     }
   }
-  if (auto v = get("overflow"))
-    s.overflow = lower(trim(*v));
+  {
+    // overflow takes one or two values (x then y), and overflow-x / overflow-y set
+    // one axis. The engine scrolls vertically, so the box's overflow is the y value;
+    // when only x is non-visible, y computes to auto (CSS Overflow 3), and a visible x
+    // beside a scrolling y computes to auto too. Both axes clip.
+    const std::string *shorthand = get("overflow");
+    const std::string *longhand_x = get("overflow-x");
+    const std::string *longhand_y = get("overflow-y");
+    if (shorthand || longhand_x || longhand_y) {
+      std::string overflow_x = "visible", overflow_y = "visible";
+      if (shorthand) {
+        std::vector<std::string> words;
+        std::string word;
+        for (char c : lower(trim(*shorthand))) {
+          if (std::isspace(static_cast<unsigned char>(c))) {
+            if (!word.empty()) words.push_back(word);
+            word.clear();
+          } else word += c;
+        }
+        if (!word.empty()) words.push_back(word);
+        if (!words.empty()) {
+          overflow_x = words[0];
+          overflow_y = words.size() > 1 ? words[1] : words[0];
+        }
+      }
+      if (longhand_x) overflow_x = lower(trim(*longhand_x));
+      if (longhand_y) overflow_y = lower(trim(*longhand_y));
+      s.overflow = overflow_y != "visible" ? overflow_y
+                   : overflow_x != "visible" ? std::string("auto") : std::string("visible");
+    }
+  }
   if (auto v = get("scrollbar-gutter"))
     s.scrollbar_gutter = lower(trim(*v));
   if (auto v = get("overscroll-behavior"))

@@ -56,6 +56,15 @@ CASES = {
     "image": {"steps": ["S063"], "image": True, "rects": [(0, 0, 40, 20, YELLOW), (10, 0, 10, 10, CYAN), (20, 0, 10, 10, ORANGE), (10, 10, 10, 10, ORANGE), (20, 10, 10, 10, CYAN)]},
     "motion_reduced": {"fixture": "motion", "steps": ["S065"], "reduced": True, "rects": [(0, 0, 40, 30, GREEN)]},
     "canvas": {"steps": ["S068"], "rects": [(0, 0, 80, 60, RED), (10, 10, 30, 20, GREEN), (40, 30, 20, 20, BLUE)], "canvas": True},
+    # Worked out from CSS 2.1 8.3.1: the empty block's 15px margins collapse through it and with the
+    # 20px first-child margin of #p, leaving 20px between #a and #c; #b's 5px collapses with #p's 0.
+    "collapse": {"steps": ["S054"], "rects": [(0, 0, 40, 10, RED), (0, 30, 40, 10, GREEN), (0, 45, 40, 10, BLUE)]},
+    # Three items in a two-column, 40px-track grid with 20px implicit rows and a 10px gap.
+    "gridauto": {"steps": ["S056"], "rects": [(0, 0, 40, 20, RED), (50, 0, 40, 20, GREEN), (0, 30, 40, 20, BLUE)]},
+    # 1/-1 spans all three 30px columns; 2/3 is the middle column of the next row.
+    "gridlines": {"steps": ["S056"], "rects": [(0, 0, 90, 10, YELLOW), (30, 10, 30, 10, RED)]},
+    # A 40px inline-block centred in the 160px viewport starts at x = 60.
+    "aligncenter": {"steps": ["S054"], "rects": [(60, 0, 40, 10, BLUE)]},
     "font_1x": {"fixture": "font", "steps": ["S069"], "rects": [(0, 0, 80, 30, RED)], "font": True},
     "font_2x": {"fixture": "font", "steps": ["S064", "S069"], "dpr": 2, "rects": [(0, 0, 80, 30, RED)], "font": True},
 }

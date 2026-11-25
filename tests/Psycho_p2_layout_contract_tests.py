@@ -86,6 +86,26 @@ class InlineTests(unittest.TestCase):
         self.assertEqual(got["#d"][0], 0)               # left-aligned stays put
 
 
+class OverflowTests(unittest.TestCase):
+    PAGE = "<div id=s style='width:100px;height:50px;{css}'><div id=c style='height:200px'></div></div>"
+
+    def test_every_overflow_form_clips_and_scrolls_vertically(self):
+        # overflow-y, the one- and two-value shorthand and overflow-x all make a scroll
+        # container (a visible axis beside a non-visible one computes to auto), so a
+        # 30px wheel moves the 200px child up by 30 inside its 50px box.
+        for css in ("overflow-y:auto", "overflow:auto", "overflow-y:scroll", "overflow-x:hidden",
+                    "overflow:hidden auto"):
+            with self.subTest(css=css):
+                got = boxes(self.PAGE.format(css=css), ["#s", "#c"], 300, 200,
+                            extra=("--action", "wheel:10,10,30"))
+                self.assertEqual(got["#s"], (0, 0, 100, 50))
+                self.assertEqual(got["#c"], (0, -30, 100, 200))
+
+    def test_visible_overflow_does_not_scroll(self):
+        got = boxes(self.PAGE.format(css=""), ["#s", "#c"], 300, 200, extra=("--action", "wheel:10,10,30"))
+        self.assertEqual(got["#c"][1], 0)
+
+
 class FlexGridTests(unittest.TestCase):
     def test_flex_shrink_distributes_the_overflow(self):
         got = boxes("<div style='display:flex;width:200px'><div id=a style='width:150px;height:10px'></div>"
