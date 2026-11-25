@@ -53,3 +53,7 @@ I moved tab history to `WebContents`, tab order and state to `TabModel`, and win
 ## D011 - P1 closed (recorded 2026-11-25)
 
 P1 is closed on its original exit gate plus the production wiring. What decided it was a Windows step that drives the services in the running shell (`--smoke-services`), not the unit tests: it found four defects in work I had already described as done (the diagnostics pages refused by the renderer, the IME schema, the dead-renderer lease release, the restart-stable signal). The lesson I am keeping: a service with a passing unit test and a clean compile is not wired until a step on the target platform has used it. Open items are consumers that do not exist yet (S031 surfaces, S035, S036) and the S025 design question (D009).
+
+## D012 - P2 closed under a scoped reading of the gate (recorded 2026-11-25)
+
+The P2 gate says the golden suite covers "the S052-S069 feature set". Read as every property in every specification, that is never finished. I read it as each step's behavior as my reference UI and the documentation tier need it, listed the exclusions per step with an owning phase in `docs/Psycho_P2_GATE_AUDIT.md`, and closed P2 on that reading after fixing five defects the probes found. The cost: per-corner radii, filter blur, horizontal scrolling and table layout are not there, and a settings page that needs them will find out in P3. The check I did not do is render real reference pages, because they do not exist yet. Windows run 45722428997 is the evidence.

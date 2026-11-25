@@ -1,5 +1,7 @@
 # Phase 2: remaining build and verification audit
 
+> **Superseded 2026-11-25** by [Psycho_P2_GATE_AUDIT.md](Psycho_P2_GATE_AUDIT.md), which re-audits the exit gate after the work below and the fixes since. This file stays as the historical backlog.
+
 Audited checkout: `553f4388ea59ec1ab3887dc194756525055251ab` (the merge of PR #127). Audit date: on or after 2026-11-16 (the audited commit's date; this file previously said 2026-11-01, which is earlier than that commit). This is an inventory and proposed order of work, not an assertion that every browser-standard edge case is required for Phase 2. It does not change the plan or claim completion. The binding scope is [P2 in the master plan](Psycho_MASTER-PLAN.md#p2---engine-to-a-usable-rendering-baseline-the-chrome-side-part-one), the S050 reference consumers and the exit gate. Items marked **build** need code, **verify** need evidence, and **scope** need their relevance to the planned feature set/reference contract established before committing to full browser conformance.
 
 **Later update:** a targeted implementation of the four reference-used DOM APIs
