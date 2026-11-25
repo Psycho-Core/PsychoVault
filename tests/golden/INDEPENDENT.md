@@ -1,6 +1,6 @@
 # Hand-specified Phase 2 pixel goldens
 
-These 24 deterministic 160×100 scenarios supplement the [owned-baseline suite](README.md). `tools/Psycho_independent_goldens.py` constructs each expected RGBA image from explicit, hand-specified rectangles and compares **every pixel**, without recording the engine's output as the expectation. It checks image dimensions, renderer diagnostics and selected event/title, damage, compositor and paint-command metadata. On mismatch it writes the actual, expected and difference PNGs and `report.json`; it never edits fixtures or expected definitions. Tests do not depend on third-party packages.
+These 28 deterministic 160×100 scenarios supplement the [owned-baseline suite](README.md). `tools/Psycho_independent_goldens.py` constructs each expected RGBA image from explicit, hand-specified rectangles and compares **every pixel**, without recording the engine's output as the expectation. It checks image dimensions, renderer diagnostics and selected event/title, damage, compositor and paint-command metadata. On mismatch it writes the actual, expected and difference PNGs and `report.json`; it never edits fixtures or expected definitions. Tests do not depend on third-party packages.
 
 ```sh
 python3 tools/Psycho_build.py --compiler gcc --target engine --outdir /tmp/pv-engine
@@ -14,9 +14,9 @@ On Windows use `python` and `build/pv-engine.exe`; the manual-only owned-engine 
 |---|---|---|
 | S052 | Inherited custom property, `calc()` mixing px and percent, percentage size and padding | Full units, `min`/`max`/`clamp`, colors and shorthand grammar |
 | S053 | `:nth-child`, `:not`, `!important`, hover states | Full cascade, selectors and inheritance |
-| S054 | Adjacent margin collapse, border-box padding, overflow clip | Parent/empty collapse, intrinsic sizes, all percentage/overflow cases |
+| S054 | Adjacent margin collapse, border-box padding, overflow clip; margin collapse through a parent and an empty block (`collapse`); text-align on inline-blocks (`aligncenter`) | Parent/empty collapse, intrinsic sizes, all percentage/overflow cases |
 | S055 | Flex order, wrap and gap | Full axis/baseline, intrinsic, shrink and constraint behavior |
-| S056 | Named areas, fixed tracks, span and gap | Auto-placement, implicit tracks and complete grid sizing |
+| S056 | Named areas, fixed tracks, span and gap; implicit rows from `grid-auto-rows` (`gridauto`); `1 / -1` and `2 / 3` lines (`gridlines`) | Auto-placement, implicit tracks and complete grid sizing |
 | S057 | Absolute overlap, z-order, clipped descendant and fixed viewport offset | Sticky, transformed containing blocks and all stacking cases |
 | S058 | Translation and opacity compositing | Radius, gradients, shadows, filters, rotate/scale and full hit testing |
 | S059 | Nested viewport before/after wheel, clip, project scrollbar/thumb placement | Horizontal, anchor preservation, smooth policy and dragging |
