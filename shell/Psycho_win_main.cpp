@@ -951,7 +951,7 @@ struct Browser {
   int smoke_bridge_stage = 0;
   int smoke_bridge_source_tab = -1;
   DWORD smoke_bridge_stage_tick = 0;
-  bool smoke = false, expect_image = false, smoke_tabs = false, smoke_tabs_done = false;
+  bool smoke = false, expect_image = false, smoke_tabs = false, smoke_tabs_done = false, smoke_services = false;
   DWORD start_tick = 0;
   // S037 in production: the private-session policy is consulted before any
   // extension starts. Private windows run none unless the user flips the switch
@@ -1358,8 +1358,10 @@ struct Browser {
     rt::Error error;
     rt::Error focus_error;
     const bool modal = focus_service && focus_service->modal_open(kWindowId, focus_error);
-    if (!dialog_service->run(request, result, error))
+    if (!dialog_service->run(request, result, error)) {
+      ++dialog_refusals;
       log_event("dialog", rt::LogLevel::Warn, "message.refused", {{"code", error.code}});
+    }
     if (modal) focus_service->modal_close(kWindowId, focus_error);
   }
   // A leased renderer exited and the farm replaced it. The page it held is gone,
@@ -4527,6 +4529,222 @@ struct Browser {
       }
     }
   }
+  // --smoke-services: the checks the other smokes cannot make. It drives the
+  // broker services through the shell's own code (clipboard, dialog and modality,
+  // IME, shortcuts, focus, window state, taskbar identity), then kills the
+  // renderer a tab holds and requires the crash path to record it, log it and
+  // bring the tab back. Phases are driven from the timer; failures accumulate.
+  int services_phase = 0;
+  DWORD services_tick = 0;
+  int services_home_tab = -1;
+  std::vector<std::string> services_failures;
+  void services_check(bool ok, const std::string &what) {
+    if (!ok) services_failures.push_back(what);
+  }
+  static inline bool g_dialog_seen = false, g_dialog_modal = false, g_dialog_second_refused = false;
+  static inline Browser *g_services_browser = nullptr;
+  static void CALLBACK services_dialog_timer(HWND, UINT, UINT_PTR id, DWORD) {
+    Browser *b = g_services_browser;
+    HWND dialog = FindWindowW(L"#32770", L"PsychoVault page");
+    if (!b || !dialog) return;
+    g_dialog_seen = true;
+    g_dialog_modal = b->focus_service && b->focus_service->is_modal(kWindowId) &&
+                     b->dialog_service && b->dialog_service->busy(kWindowId);
+    // A second dialog while one is up must be refused, not stacked or blocked.
+    const size_t refused_before = b->dialog_refusals;
+    b->page_message_dialog("second dialog");
+    g_dialog_second_refused = b->dialog_refusals == refused_before + 1;
+    KillTimer(nullptr, id);
+    PostMessageW(dialog, WM_CLOSE, 0, 0);
+  }
+  size_t dialog_refusals = 0;
+  void run_services_sync() {
+    Tab *home = find_tab(services_home_tab);
+    services_check(home && home->session && home->session->ready.load(), "home tab has a ready renderer");
+    // --- taskbar identity
+    {
+      PWSTR identity = nullptr;
+      const HRESULT result = GetCurrentProcessExplicitAppUserModelID(&identity);
+      services_check(SUCCEEDED(result) && identity &&
+                         std::wstring(identity) == L"PsychoCore.PsychoVault.Browser",
+                     "the taskbar identity is set");
+      if (identity) CoTaskMemFree(identity);
+    }
+    // --- shortcuts: registry resolution and command effects
+    services_check(resolve_shortcut('T', true, false, false) == "tab.new", "Ctrl+T resolves to tab.new");
+    services_check(resolve_shortcut('T', true, true, false) == "tab.reopen", "Ctrl+Shift+T resolves to tab.reopen");
+    services_check(resolve_shortcut(VK_F5, false, false, false) == "page.reload", "F5 resolves to page.reload");
+    services_check(resolve_shortcut('Z', true, false, false).empty(), "an unbound chord resolves to nothing");
+    {
+      const size_t before = tabs.size();
+      services_check(run_shortcut("tab.new") && tabs.size() == before + 1, "tab.new opens a tab");
+      services_check(run_shortcut("tab.close") && tabs.size() == before, "tab.close closes it");
+      const bool muted = current().muted;
+      services_check(run_shortcut("tab.mute") && current().muted != muted, "tab.mute toggles");
+      run_shortcut("tab.mute");
+      const double zoom = current().zoom;
+      services_check(run_shortcut("zoom.in") && current().zoom > zoom, "zoom.in zooms");
+      services_check(run_shortcut("zoom.reset") && std::abs(current().zoom - 1.0) < 1e-9, "zoom.reset resets");
+    }
+    if (Tab *back = find_tab(services_home_tab)) {
+      const size_t index = size_t(back - tabs.data());
+      select_tab(int(index));
+    }
+    // --- clipboard: accepted, recorded, bounded, and on the OS clipboard
+    if (clipboard_service) {
+      const uint64_t before = clipboard_service->generation();
+      page_clipboard_write(current(), "psychovault smoke");
+      services_check(clipboard_service->generation() == before + 1 &&
+                         !clipboard_service->last_writer().empty(),
+                     "a page clipboard write is accepted and attributed");
+      bool read_back = false;
+      if (OpenClipboard(hwnd)) {
+        if (HANDLE data = GetClipboardData(CF_UNICODETEXT)) {
+          if (auto *text = static_cast<const wchar_t *>(GlobalLock(data))) {
+            read_back = std::wstring(text) == L"psychovault smoke";
+            GlobalUnlock(data);
+          }
+        }
+        CloseClipboard();
+        services_check(read_back, "the OS clipboard holds the written text");
+      }
+      page_clipboard_write(current(), std::string(size_t(2) << 20, 'x'));
+      services_check(clipboard_service->generation() == before + 1, "an oversized write is refused");
+    } else {
+      services_check(false, "clipboard service exists");
+    }
+    // --- IME: valid text passes, malformed text never reaches the page
+    if (ime && current().session) {
+      const int id = current().id;
+      composition_start();
+      services_check(page_composing && ime->composing(id), "composition starts");
+      composition_update("ab", 2);
+      services_check(ime->composition(id) && ime->composition(id)->preedit == "ab", "preedit is accepted");
+      composition_update(std::string("\xff\xfe"), 0);
+      services_check(ime->composition(id) && ime->composition(id)->preedit == "ab", "malformed preedit is refused");
+      composition_commit("xy");
+      services_check(!page_composing && !ime->composing(id), "commit ends the composition");
+      composition_start();
+      composition_commit(std::string("\xc3\x28"));
+      services_check(!page_composing && !ime->composing(id), "a malformed commit ends as a cancel");
+    } else {
+      services_check(false, "IME service and a live session exist");
+    }
+    // --- focus
+    if (focus_service) {
+      services_check(focus_service->focused_tab(kWindowId) == current().id, "the focused tab is the current tab");
+      services_check(focus_service->active_window() == kWindowId || focus_service->active_window() == -1,
+                     "the window is known to the focus service");
+    }
+    // --- dialog + modality: the timer closes the box once it is up
+    if (dialog_service && focus_service) {
+      g_services_browser = this;
+      g_dialog_seen = g_dialog_modal = g_dialog_second_refused = false;
+      SetTimer(nullptr, 0, 150, services_dialog_timer);
+      page_message_dialog("psychovault smoke dialog");
+      services_check(g_dialog_seen, "the message dialog appeared");
+      services_check(g_dialog_modal, "the window was modal while the dialog was up");
+      services_check(g_dialog_second_refused, "a second dialog was refused");
+      services_check(!focus_service->is_modal(kWindowId) && !dialog_service->busy(kWindowId),
+                     "modality ends with the dialog");
+    }
+  }
+  void run_services_window() {
+    // --- window state through WindowRules, and occlusion through FocusService
+    if (window_rules && window_rules_id >= 0 && focus_service) {
+      ShowWindow(hwnd, SW_MINIMIZE);
+      const rt::WindowRecord *record = window_rules->find(window_rules_id);
+      services_check(record && record->state == rt::WindowState::Minimized, "minimize reaches WindowRules");
+      services_check(focus_service->visibility_of(current().id) == rt::PageVisibility::Hidden,
+                     "a minimized window hides its tabs");
+      ShowWindow(hwnd, SW_RESTORE);
+      record = window_rules->find(window_rules_id);
+      services_check(record && record->state == rt::WindowState::Normal, "restore reaches WindowRules");
+      services_check(focus_service->visibility_of(current().id) != rt::PageVisibility::Hidden,
+                     "a restored window shows its tabs");
+    } else {
+      services_check(false, "window rules and focus service exist");
+    }
+  }
+  // Returns true when finished (report ready).
+  bool services_busy = false; // a modal dialog pumps messages, so the timer can re-enter
+  bool services_step(DWORD now) {
+    if (services_busy) return false;
+    struct Busy {
+      bool &flag;
+      explicit Busy(bool &f) : flag(f) { flag = true; }
+      ~Busy() { flag = false; }
+    } busy(services_busy);
+    Tab *home = find_tab(services_home_tab);
+    switch (services_phase) {
+    case 0: { // wait for the app page to be live
+      const Tab &t = current();
+      if (app_ui_url(t.url) && !t.loading && t.error.empty() && t.frame.type == Json::Type::Object &&
+          t.session && t.session->ready.load() && now - start_tick >= 1500) {
+        services_home_tab = t.id;
+        run_services_sync();
+        services_phase = 1;
+      } else if (now - start_tick >= 30000) {
+        services_check(false, "the app page did not become ready");
+        return true;
+      }
+      return false;
+    }
+    case 1: { // kill the renderer this tab holds
+      const size_t slot = home && home->session ? home->session->published_slot.load()
+                                                 : std::numeric_limits<size_t>::max();
+      const unsigned long pid = (renderer_farm && slot != std::numeric_limits<size_t>::max())
+                                    ? renderer_farm->process_id(slot) : 0;
+      services_check(pid != 0, "the home tab holds a renderer process");
+      if (pid == 0) return true;
+      HANDLE victim = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, DWORD(pid));
+      services_check(victim != nullptr, "the renderer process can be opened");
+      if (!victim) return true;
+      TerminateProcess(victim, 0);
+      WaitForSingleObject(victim, 5000);
+      CloseHandle(victim);
+      services_tick = now;
+      services_phase = 2;
+      return false;
+    }
+    case 2: { // the crash path must record it and bring the tab back
+      const bool recorded = crash_service && !crash_service->records().empty();
+      const Tab *t = find_tab(services_home_tab);
+      const bool back = recorded && t && !t->loading && t->error.empty() &&
+                        t->frame.type == Json::Type::Object && t->session &&
+                        t->session->ready.load() && crash_service->records().back().restart_attempts >= 1;
+      if (back) {
+        const rt::CrashRecord &record = crash_service->records().back();
+        services_check(record.tab_id == services_home_tab, "the crash record names the tab");
+        services_check(record.kind == rt::RendererFailureKind::Crash, "it is recorded as a crash");
+        services_check(crash_service->restarts_for_tab(services_home_tab) == 0,
+                       "a stable reload clears the restart count");
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        const fs::path crash_log = fs::path(shell_path(profile.directory)) / "logs" / "crash.log";
+        services_check(fs::exists(crash_log, ec) && fs::file_size(crash_log, ec) > 0,
+                       "the crash was written to crash.log");
+        services_phase = 3;
+      } else if (now - services_tick >= 40000) {
+        services_check(false, recorded ? "the crashed tab did not come back" : "no crash was recorded");
+        return true;
+      }
+      return false;
+    }
+    default:
+      run_services_window();
+      return true;
+    }
+  }
+  Json services_report() const {
+    Json report = Json::make_object();
+    report.set("result", services_failures.empty() ? "passed" : "failed");
+    Json list = Json::make_array();
+    for (const auto &failure : services_failures) list.array.push_back(Json(failure));
+    report.set("failures", std::move(list));
+    report.set("phase", double(services_phase));
+    return report;
+  }
   // --smoke-tabs: drives the tab and history models through the real shell code
   // paths (pin, move, close, reopen, history) and reports every disagreement
   // between the strip, the TabModel and the per-tab WebContents. No network.
@@ -5160,6 +5378,16 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       if (b) b->sync_focus();
     }
     if (b) b->reap_sessions();
+    if (b && b->smoke && b->smoke_services) {
+      if (!b->smoke_tabs_done && b->services_step(GetTickCount())) {
+        b->smoke_tabs_done = true;
+        const Json report = b->services_report();
+        std::string write_error;
+        write_file_atomic(b->capture_path + ".services.json", report.dump() + "\n", write_error);
+        PostQuitMessage(report.str("result") == "passed" ? 0 : 1);
+      }
+      return 0;
+    }
     if (b && b->smoke && b->smoke_tabs) {
       if (!b->smoke_tabs_done && GetTickCount() - b->start_tick >= 1500) {
         b->smoke_tabs_done = true;
@@ -5649,6 +5877,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
   b.capture_path = capture;
   b.smoke_bridge_url = smoke_bridge_url;
   b.smoke_tabs = command.smoke_tabs;
+  b.smoke_services = command.smoke_services;
   b.start_tick = GetTickCount();
   if (private_mode) {
     b.forget_all_tabs();

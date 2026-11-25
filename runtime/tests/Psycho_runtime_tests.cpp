@@ -3265,6 +3265,7 @@ int run_runtime_bus_tests(int &shared) {
     RT_CHECK(rejected({"--smoke", "--capture", "out.png", "--smoke-bridge-url",
                        "https://example.test/", "--smoke-bridge-url",
                        "https://example.org/"}, "commandline.duplicate-option"));
+    RT_CHECK(rejected({"--smoke-services"}, "commandline.smoke-services-mode"));
     RT_CHECK(rejected({"--smoke-tabs"}, "commandline.smoke-tabs-mode"));
     RT_CHECK(rejected({"--smoke", "--smoke-tabs"}, "commandline.smoke-tabs-mode"));
     RT_CHECK(rejected({"--smoke", "--capture", "o.png", "--smoke-tabs", "--smoke-tabs"},

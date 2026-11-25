@@ -173,6 +173,9 @@ bool parse_command_line(const std::vector<std::string> &arguments,
     } else if (argument == "--diagnostics") {
       if (!once(argument)) return false;
       options.diagnostics = true;
+    } else if (argument == "--smoke-services") {
+      if (!once(argument)) return false;
+      options.smoke_services = true;
     } else if (argument == "--smoke-tabs") {
       if (!once(argument)) return false;
       options.smoke_tabs = true;
@@ -192,6 +195,9 @@ bool parse_command_line(const std::vector<std::string> &arguments,
       (!options.smoke || options.capture_path.empty()))
     return refuse(error, "commandline.smoke-bridge-mode",
                   "--smoke-bridge-url requires --smoke and --capture");
+  if (options.smoke_services && (!options.smoke || options.capture_path.empty()))
+    return refuse(error, "commandline.smoke-services-mode",
+                  "--smoke-services requires --smoke and --capture");
   if (options.smoke_tabs && (!options.smoke || options.capture_path.empty()))
     return refuse(error, "commandline.smoke-tabs-mode",
                   "--smoke-tabs requires --smoke and --capture");

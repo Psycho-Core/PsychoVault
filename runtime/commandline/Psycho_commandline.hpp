@@ -17,6 +17,7 @@ struct CommandLineOptions {
   bool diagnostics = false;
   bool smoke = false;
   bool smoke_tabs = false; // test-only: exercise the tab and history models, no network
+  bool smoke_services = false; // test-only: exercise broker services and crash recovery
   bool expect_image = false;
 };
 
