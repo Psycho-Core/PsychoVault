@@ -192,6 +192,13 @@ void RendererProcessFarm::release(size_t renderer) {
   }
   std::lock_guard<std::mutex> io_lock(released->io_mutex);
   if (!released->leased) return;
+  // A session that finds its renderer dead ends and releases its lease before the
+  // monitor looks. If the child is gone at release, that is a failed lease: the
+  // tab lost its page and must be told, the same as when the monitor sees it.
+  if (released->process.process && !child_process_running_platform(released->process)) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    failed_leases_.push_back(renderer);
+  }
   stop(*released);
   released->leased = false;
   released->retired = false;
