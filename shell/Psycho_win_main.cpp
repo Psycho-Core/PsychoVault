@@ -139,6 +139,7 @@ struct Tab {
   std::shared_ptr<Session> session;
   std::map<std::string, Image> images;
   size_t image_bytes = 0;
+  DWORD frame_tick = 0; // when the first frame of this load arrived
 };
 struct Hit {
   Rect rect;
@@ -1368,6 +1369,15 @@ struct Browser {
   // so the tab goes through the crash service: record, message, bounded retry.
   void recover_failed_renderers() {
     if (!renderer_farm || !crash_service) return;
+    // A replacement counts as stable once it has shown a page for five seconds
+    // without failing; rendering a frame alone would let a page that kills its
+    // renderer right after load restart forever. (WM_DONE only fires when a
+    // session ends, so it cannot be the signal.)
+    const DWORD now = GetTickCount();
+    for (const auto &tab : tabs)
+      if (tab.error.empty() && tab.frame.type == Json::Type::Object && tab.frame_tick != 0 &&
+          now - tab.frame_tick >= 5000 && crash_service->restarts_for_tab(tab.id) > 0)
+        crash_service->renderer_stable(tab.id);
     for (size_t slot : renderer_farm->take_failed_leases()) {
       log_event("renderer", rt::LogLevel::Warn, "lease.failed",
                 {{"slot", std::to_string(slot)}});
@@ -1627,6 +1637,7 @@ struct Browser {
     tab.recorded = false;
     tab.error.clear();
     tab.frame = Json();
+    tab.frame_tick = 0;
     tab.images.clear();
     tab.image_bytes = 0;
     tab.scroll = 0;
@@ -5213,6 +5224,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
           tab->recorded = true;
           auto final_url = tab->frame.str("url", tab->url);
           b->nav_commit(*tab, tab->title);
+          tab->frame_tick = GetTickCount();
           if (!final_url.empty() && final_url != tab->url) {
             tab->url = final_url;
             rt::Error replace_error;
@@ -5363,7 +5375,6 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     Tab *tab = b ? b->find_tab(int(up->tab)) : nullptr;
     if (tab && up->generation == tab->generation) {
       tab->loading = false;
-      if (tab->error.empty() && b->crash_service) b->crash_service->renderer_stable(tab->id);
       if (tab == &b->current()) {
         b->status = !tab->error.empty() ? tab->error : tab->url;
         InvalidateRect(hwnd, nullptr, FALSE);
