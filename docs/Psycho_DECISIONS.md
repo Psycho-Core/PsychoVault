@@ -39,3 +39,13 @@ The plan had milestones M1-M9 and phases P0-P14 with no mapping, and two gates (
 I wired every P1 service that has something in the shell to govern (shortcuts, page clipboard and dialogs, page IME, focus, internal page lookup, private extension policy, renderer admission, crash recovery, logging). I did not wire S035 downloads or S036 permissions because the shell and engine have no code path that produces a download or a permission request; the wiring belongs with the feature that creates one. I moved S048 (replace the shell's tab, window and navigation state with the runtime models) to the front of P3 as S080a, because it rewrites the state 100+ call sites use and I cannot verify it without a Windows UI loop.
 
 Cost: P1 still has two runtime models (S024-S027) that no running code uses. Update, same day: manual dispatch gives me a Windows run (D005 covered push triggers; dispatch needs no exception), and run 45618222141 passed with this wiring. The deferral of S048 therefore rests on size and behavior differences (the shell keeps 512 history entries, the model keeps 100), not on being unable to verify.
+
+## D009 - S025 is a presentation design question, not a wiring task (recorded 2026-11-25)
+
+S025 describes the engine painting pixels into a shared surface that the broker composites. The shell works differently: the renderer sends paint commands over IPC and the broker draws them with DirectWrite and Direct2D into its own back buffer, with clipped repaint (S066). The surface registry's present path copies a whole frame, so wiring it into the shell as it stands would cost a copy per frame and lose the clipped repaint, for no new guarantee: page code already never touches the window handle.
+
+The real choice is between keeping commands (the broker parses and draws untrusted display lists) and moving rasterization into the sandboxed renderer (pixels cross the boundary, the broker only blits). That belongs with the P2/P3 rendering work, where the cost can be measured. Until then `SurfaceRegistry` and `Compositor` stay tested and unused, and S025 is not claimed as wired.
+
+## D010 - S048 done with the history bound kept at 512 (recorded 2026-11-25)
+
+I moved tab history to `WebContents`, tab order and state to `TabModel`, and window state to `WindowRules`. The shell kept 512 history entries per tab and the model defaulted to 100; I made the bound a parameter and kept 512 so nothing changed for the user. Side effects I accepted: a navigation that fails or is stopped no longer leaves a history entry (it used to be added at the start), and the recently-closed stack is 25 instead of 20. Run 45665192375 verifies the models agree with the strip.
