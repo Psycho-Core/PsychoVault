@@ -170,6 +170,13 @@ jobs:
             if (-not (Test-Path $out) -or (Get-Item $out).Length -lt 2000) { throw "no usable capture for psychovault://$page" }
             Write-Host "psychovault://$page captured, $((Get-Item $out).Length) bytes"
           }
+          # Two different pages must not produce the same pixels; identical
+          # captures mean a blank or stuck window, not two rendered pages.
+          $a = (Get-FileHash build/captures/diagnostics-version.png).Hash
+          $b = (Get-FileHash build/captures/diagnostics-nettest.png).Hash
+          Write-Host "version $a"
+          Write-Host "nettest $b"
+          if ($a -eq $b) { throw "the version and nettest captures are identical" }
       - name: Exercise my app address bridge to a fetched page in one running app
         id: s045_flow
         shell: pwsh
