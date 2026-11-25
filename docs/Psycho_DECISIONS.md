@@ -49,3 +49,7 @@ The real choice is between keeping commands (the broker parses and draws untrust
 ## D010 - S048 done with the history bound kept at 512 (recorded 2026-11-25)
 
 I moved tab history to `WebContents`, tab order and state to `TabModel`, and window state to `WindowRules`. The shell kept 512 history entries per tab and the model defaulted to 100; I made the bound a parameter and kept 512 so nothing changed for the user. Side effects I accepted: a navigation that fails or is stopped no longer leaves a history entry (it used to be added at the start), and the recently-closed stack is 25 instead of 20. Run 45665192375 verifies the models agree with the strip.
+
+## D011 - P1 closed (recorded 2026-11-25)
+
+P1 is closed on its original exit gate plus the production wiring. What decided it was a Windows step that drives the services in the running shell (`--smoke-services`), not the unit tests: it found four defects in work I had already described as done (the diagnostics pages refused by the renderer, the IME schema, the dead-renderer lease release, the restart-stable signal). The lesson I am keeping: a service with a passing unit test and a clean compile is not wired until a step on the target platform has used it. Open items are consumers that do not exist yet (S031 surfaces, S035, S036) and the S025 design question (D009).
