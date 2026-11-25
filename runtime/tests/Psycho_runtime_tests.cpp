@@ -2979,6 +2979,21 @@ int run_runtime_bus_tests(int &shared) {
     RT_CHECK(c > b && model.active_in(1) && model.active_in(1)->id == c);
   }
 
+  // Regression: the IME preedit command carries a caret offset. The process
+  // schema once refused it ("field 'caret' is not allowed"), so no composition
+  // update ever reached a page. Found by the Windows services smoke.
+  {
+    Schemas schemas = Schemas::stock();
+    Json update = Json::make_object();
+    update.set("tag", Json("compositionupdate"));
+    update.set("text", Json("ab"));
+    update.set("caret", Json(2));
+    Error e;
+    RT_CHECK(schemas.validate("renderer:input", update, e));
+    update.set("caret", Json("two")); // still typed
+    RT_CHECK(!schemas.validate("renderer:input", update, e));
+  }
+
   // S028 bare-page lookup: only a registered page with no path, query or
   // fragment names a document; lookalikes and guesses name nothing.
   {

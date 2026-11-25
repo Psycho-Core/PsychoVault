@@ -134,6 +134,7 @@ Schemas Schemas::stock() {
                                   {"prefersContrast", T::String, false},
                                   {"forcedColors", T::String, false},
                                   {"key", T::String, false}, {"text", T::String, false},
+                                  {"caret", T::Number, false}, // compositionupdate's cursor offset
                                   {"cookie_state", T::Array, false},
                                   {"storage_state", T::Object, false},
                                   {"images", T::Array, false},
