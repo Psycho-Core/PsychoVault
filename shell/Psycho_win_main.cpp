@@ -18,6 +18,11 @@
 #include "../runtime/crash/Psycho_crash.hpp"
 #include "../runtime/logging/Psycho_logging.hpp"
 #include "../runtime/services/Psycho_services.hpp"
+#include "../runtime/keys/Psycho_keys.hpp"
+#include "../runtime/ime/Psycho_ime.hpp"
+#include "../runtime/focus/Psycho_focus.hpp"
+#include "../runtime/internal/Psycho_internal.hpp"
+#include "../runtime/private/Psycho_private.hpp"
 #include "../runtime/app/Psycho_instance.hpp"
 #include "../runtime/broker/Psycho_renderer_farm.hpp"
 #include "../runtime/renderer/Psycho_renderer_main.hpp"
@@ -106,23 +111,22 @@ struct Hit {
 struct MenuLine {
   std::string label, action;
 };
+// S028 in production: which of my pages an address names is decided by the
+// registry, not by string matching in the shell.
+static const rt::InternalRegistry &internal_registry() {
+  static const rt::InternalRegistry registry = rt::InternalRegistry::stock();
+  return registry;
+}
 static bool app_ui_url(const std::string &text) {
-  auto parsed = parse_url(text);
-  return parsed && parsed->scheme == "psychovault" && parsed->host == "newtab" &&
-         (parsed->path.empty() || parsed->path == "/") && parsed->query.empty() &&
-         parsed->fragment.empty();
+  return rt::plain_internal_page(internal_registry(), text) == "newtab";
 }
 // psychovault://nettest and psychovault://version are served by the broker from
 // the S038 diagnostics service (P1). Returns the page name, or "" for any other
 // address, including a lookalike with a path, query or fragment.
 static std::string diagnostics_page_name(const std::string &text) {
-  auto parsed = parse_url(text);
-  if (!parsed || parsed->scheme != "psychovault" ||
-      !(parsed->path.empty() || parsed->path == "/") || !parsed->query.empty() ||
-      !parsed->fragment.empty())
-    return "";
-  return (parsed->host == "nettest" || parsed->host == "version") ? parsed->host
-                                                                   : std::string();
+  const std::string name = rt::plain_internal_page(internal_registry(), text);
+  const rt::InternalPage *page = name.empty() ? nullptr : internal_registry().find(name);
+  return page && page->category == "diagnostics" ? name : std::string();
 }
 // Facts the broker supplies to psychovault://version; set once in wWinMain.
 static pv::rt::VersionInfo g_version_info;
@@ -882,6 +886,13 @@ struct Browser {
   DWORD smoke_bridge_stage_tick = 0;
   bool smoke = false, expect_image = false;
   DWORD start_tick = 0;
+  // S037 in production: the private-session policy is consulted before any
+  // extension starts. Private windows run none unless the user flips the switch
+  // (there is no UI for that yet, so today a private window runs none).
+  rt::PrivateSession private_session;
+  bool extension_workers_allowed() const {
+    return !private_mode || private_session.may_run_extensions();
+  }
   explicit Browser(bool private_mode = false, const std::string &directory = {})
       : private_mode(private_mode) {
     profile =
@@ -914,7 +925,7 @@ struct Browser {
     // My launch check is cheap and off-thread; the banner only shows on news.
     if (!private_mode)
       check_for_update();
-    if (!private_mode) {
+    if (extension_workers_allowed()) {
       std::string storage_error;
       extensions.load_storage(profile.directory, storage_error);
       load_bundled_extensions();
@@ -1230,6 +1241,14 @@ struct Browser {
       }
       return false;
     };
+    bind_shortcuts();
+    init_ime();
+    focus_service = std::make_unique<rt::FocusService>(rt::FocusService::Seams{});
+    {
+      rt::Error focus_error;
+      focus_service->window_opened(kWindowId, focus_error);
+    }
+    sync_focus();
     crash_service = std::make_unique<rt::CrashService>(std::move(seams));
     rt::ClipboardService::Seams clip_seams;
     clip_seams.apply = [this](const std::string &text) { write_clipboard(text); };
@@ -1266,8 +1285,11 @@ struct Browser {
     request.from_shell = false;
     rt::DialogResult result;
     rt::Error error;
+    rt::Error focus_error;
+    const bool modal = focus_service && focus_service->modal_open(kWindowId, focus_error);
     if (!dialog_service->run(request, result, error))
       log_event("dialog", rt::LogLevel::Warn, "message.refused", {{"code", error.code}});
+    if (modal) focus_service->modal_close(kWindowId, focus_error);
   }
   // A leased renderer exited and the farm replaced it. The page it held is gone,
   // so the tab goes through the crash service: record, message, bounded retry.
@@ -1300,6 +1322,7 @@ struct Browser {
     }
   }
   void stop_session(Tab &tab) {
+    if (ime) ime->surface_closed(tab.id);
     if (!tab.session) return;
     tab.session->request_stop();
     retired_sessions.push_back(std::move(tab.session));
@@ -1345,6 +1368,7 @@ struct Browser {
       sync_address();
       settings = starts(url, "psychovault://settings");
     }
+    sync_focus();
   }
   void close_tab(int index) {
     if (index < 0 || index >= int(tabs.size()))
@@ -1386,6 +1410,7 @@ struct Browser {
       return;
     active = index;
     Tab &tab = current();
+    sync_focus();
     sync_address();
     settings = starts(tab.url, "psychovault://settings");
     status = !tab.error.empty() ? tab.error : tab.loading ? "Loading " + tab.url : tab.url;
@@ -3102,26 +3127,111 @@ struct Browser {
     command.set("tag", cut ? "cut" : "copy");
     current().session->send(command);
   }
-  void composition_start() {
-    if (address_focus || home_focus || panel_focus || !current().session) return;
-    Json command = Json::make_object(); command.set("tag", "compositionstart");
-    current().session->send(command); page_composing = true;
+  // S033 in production for page text fields: every platform composition string
+  // passes the ImeService (valid UTF-8, bounded, caret on a character boundary,
+  // one composition per tab, commit delivered exactly once) before the page sees
+  // it. Windows still composes dead keys itself, so those reach me as WM_CHAR,
+  // and the system draws the candidate window, so S033's placement law is not
+  // exercised here. The address and search fields are not routed through it yet.
+  // S034 in production: the FocusService is the one record of which window is
+  // active, which tab is focused and whether a dialog holds the window modal.
+  // The shell keeps its own tab vector in step with it (S048 replaces that).
+  static constexpr int kWindowId = 1;
+  std::unique_ptr<rt::FocusService> focus_service;
+  std::set<int> focus_tabs;
+  void sync_focus() {
+    if (!focus_service) return;
+    rt::Error error;
+    std::set<int> live;
+    for (const auto &tab : tabs) live.insert(tab.id);
+    for (auto it = focus_tabs.begin(); it != focus_tabs.end();) {
+      if (!live.count(*it)) {
+        focus_service->tab_closed(kWindowId, *it, error);
+        it = focus_tabs.erase(it);
+      } else {
+        ++it;
+      }
+    }
+    for (const auto &tab : tabs)
+      if (!focus_tabs.count(tab.id) && focus_service->tab_opened(kWindowId, tab.id, false, error))
+        focus_tabs.insert(tab.id);
+    if (!tabs.empty() && active >= 0 && active < int(tabs.size()))
+      focus_service->focus_tab(kWindowId, current().id, error); // refused while a dialog is up
   }
-  void composition_update(const std::string &text, size_t caret) {
-    if (!page_composing || !current().session) return;
-    Json command = Json::make_object(); command.set("tag", "compositionupdate");
-    command.set("text", text); command.set("caret", double(caret));
+  void window_activated(bool activated) {
+    if (!focus_service || !activated) return;
+    rt::Error error;
+    focus_service->focus_window(kWindowId, error);
+  }
+  void window_minimized(bool minimized) {
+    if (!focus_service) return;
+    rt::Error error;
+    focus_service->set_occluded(kWindowId, minimized, error);
+  }
+  std::unique_ptr<rt::ImeService> ime;
+  bool ime_forward_update = false;
+  std::string ime_commit_text;
+  void init_ime() {
+    rt::ImeService::Seams seams;
+    seams.on_preedit = [this](int, const rt::Composition &composition) {
+      if (!ime_forward_update || !page_composing || !current().session) return;
+      Json command = Json::make_object();
+      command.set("tag", "compositionupdate");
+      command.set("text", composition.preedit);
+      command.set("caret", double(composition.caret));
+      current().session->send(command);
+    };
+    seams.on_commit = [this](int, const std::string &text) { ime_commit_text = text; };
+    ime = std::make_unique<rt::ImeService>(std::move(seams));
+  }
+  void send_composition_tag(const char *tag, const std::string &text = {}) {
+    if (!current().session) return;
+    Json command = Json::make_object();
+    command.set("tag", tag);
+    if (std::string(tag) == "compositioncommit") command.set("text", text);
     current().session->send(command);
   }
+  void composition_start() {
+    if (address_focus || home_focus || panel_focus || !current().session || !ime) return;
+    rt::Error error;
+    if (!ime->begin(current().id, error)) {
+      log_event("ime", rt::LogLevel::Warn, "begin.refused", {{"code", error.code}});
+      return;
+    }
+    send_composition_tag("compositionstart");
+    page_composing = true;
+  }
+  void composition_update(const std::string &text, size_t caret) {
+    if (!page_composing || !current().session || !ime) return;
+    rt::Error error;
+    ime_forward_update = true;
+    const bool ok = ime->update(current().id, text, caret, error);
+    ime_forward_update = false;
+    if (!ok) log_event("ime", rt::LogLevel::Warn, "update.refused", {{"code", error.code}});
+  }
   void composition_commit(const std::string &text) {
-    if (!page_composing || !current().session) return;
-    Json command = Json::make_object(); command.set("tag", "compositioncommit");
-    command.set("text", text); current().session->send(command); page_composing = false;
+    if (!page_composing || !current().session || !ime) return;
+    ime_commit_text.clear();
+    rt::Error error;
+    if (!ime->commit(current().id, text, error)) {
+      // A malformed or oversized result never reaches the page; end the
+      // composition as a cancel so both sides agree it is over.
+      log_event("ime", rt::LogLevel::Warn, "commit.refused", {{"code", error.code}});
+      rt::Error ignored;
+      ime->cancel(current().id, ignored);
+      send_composition_tag("compositioncancel");
+    } else {
+      send_composition_tag("compositioncommit", ime_commit_text);
+    }
+    ime_commit_text.clear();
+    page_composing = false;
   }
   void composition_cancel() {
-    if (!page_composing || !current().session) return;
-    Json command = Json::make_object(); command.set("tag", "compositioncancel");
-    current().session->send(command); page_composing = false;
+    if (!page_composing || !current().session || !ime) return;
+    rt::Error error;
+    if (ime->composing(current().id)) ime->cancel(current().id, error);
+    send_composition_tag("compositioncancel");
+    page_composing = false;
   }
   void key_up(WPARAM wp) {
     if (address_focus || home_focus || !current().session) return;
@@ -3565,6 +3675,91 @@ struct Browser {
       current().session->send(j);
     }
   }
+  // S032 in production. One registry, bound once; the key handler asks it first.
+  rt::ShortcutRegistry shortcuts;
+  void bind_shortcuts() {
+    rt::Error error;
+    if (!rt::bind_stock_shortcuts(shortcuts, error))
+      log_event("keys", rt::LogLevel::Error, "bind.failed", {{"code", error.code}});
+  }
+  std::string resolve_shortcut(WPARAM wp, bool ctrl, bool shift, bool alt) const {
+    std::string token;
+    if ((wp >= 'A' && wp <= 'Z') || (wp >= '0' && wp <= '9')) token = std::string(1, char(wp));
+    else if (wp == VK_OEM_PLUS || wp == VK_ADD) token = "=";
+    else if (wp == VK_OEM_MINUS || wp == VK_SUBTRACT) token = "-";
+    else if (wp == VK_TAB) token = "Tab";
+    else if (wp == VK_LEFT) token = "Left";
+    else if (wp == VK_RIGHT) token = "Right";
+    else if (wp == VK_F5) token = "F5";
+    if (token.empty()) return "";
+    rt::KeyEvent event;
+    event.ctrl = ctrl;
+    event.shift = shift;
+    event.alt = alt;
+    event.key = token;
+    rt::KeyContext context;
+    context.editable_focused = address_focus || home_focus || panel_focus || find_open;
+    return shortcuts.resolve(event, context);
+  }
+  // Returns false when the command does not apply right now, so the key falls
+  // through to ordinary handling exactly as an unbound key would.
+  bool run_shortcut(const std::string &command) {
+    if (command == "app.palette") {
+      palette_open = !palette_open;
+      palette_text.clear();
+      palette_caret = 0;
+      palette_index = 0;
+    } else if (command == "app.panic") {
+      panic();
+    } else if (command == "tab.reopen") {
+      reopen_tab();
+    } else if (command == "tab.next" || command == "tab.previous") {
+      if (tabs.size() <= 1) return false;
+      const int step = command == "tab.next" ? 1 : -1;
+      select_tab((active + step + int(tabs.size())) % int(tabs.size()));
+      return true;
+    } else if (command == "tab.move-left" || command == "tab.move-right") {
+      move_tab(active, command == "tab.move-left" ? -1 : 1);
+    } else if (command == "tab.mute") {
+      tab_set_muted(active, !current().muted);
+      return true;
+    } else if (command == "find.open") {
+      open_find();
+      return true;
+    } else if (command == "zoom.in") {
+      set_zoom(current().zoom * 1.1);
+      return true;
+    } else if (command == "zoom.out") {
+      set_zoom(current().zoom / 1.1);
+      return true;
+    } else if (command == "zoom.reset") {
+      set_zoom(1.0);
+      return true;
+    } else if (command == "panel.downloads") {
+      panel_downloads = !panel_downloads;
+      panel_bookmarks = panel_history = false;
+    } else if (command == "address.focus") {
+      address_focus = true;
+      address_caret = address.size();
+    } else if (command == "tab.new") {
+      new_tab();
+      return true;
+    } else if (command == "tab.close") {
+      close_tab(active);
+      return true;
+    } else if (command == "page.reload") {
+      navigate(current().url, false);
+      return true;
+    } else if (command == "bookmark.add") {
+      profile.bookmark(current().title, current().url);
+      save_profile();
+      status = "Bookmark saved";
+    } else {
+      return false;
+    }
+    InvalidateRect(hwnd, nullptr, FALSE);
+    return true;
+  }
   void key(UINT, WPARAM wp, LPARAM) {
     bool ctrl = GetKeyState(VK_CONTROL) < 0;
     bool shift = GetKeyState(VK_SHIFT) < 0;
@@ -3573,18 +3768,14 @@ struct Browser {
       InvalidateRect(hwnd, nullptr, FALSE);
       return;
     }
-    if (ctrl && shift && wp == 'P') {
-      palette_open = !palette_open;
-      palette_text.clear();
-      palette_caret = 0;
-      palette_index = 0;
-      InvalidateRect(hwnd, nullptr, FALSE);
-      return;
-    }
-    if (ctrl && shift && wp == 'Q') {
-      panic();
-      InvalidateRect(hwnd, nullptr, FALSE);
-      return;
+    // S032: the broker's registry claims a chord before any other handling. While
+    // the command palette is open only the palette and panic chords are claimed,
+    // as before; every other key is the palette's to consume.
+    {
+      const std::string command = resolve_shortcut(wp, ctrl, shift, GetKeyState(VK_MENU) < 0);
+      if (!command.empty() && (!palette_open || command == "app.palette" || command == "app.panic") &&
+          run_shortcut(command))
+        return;
     }
     if (palette_open) {
       auto matches = palette_matches();
@@ -3613,41 +3804,6 @@ struct Browser {
       InvalidateRect(hwnd, nullptr, FALSE);
       return;
     }
-    if (ctrl && shift && wp == 'T') {
-      reopen_tab();
-      InvalidateRect(hwnd, nullptr, FALSE);
-      return;
-    }
-    if (ctrl && wp == VK_TAB && tabs.size() > 1) {
-      int step = shift ? -1 : 1;
-      select_tab((active + step + int(tabs.size())) % int(tabs.size()));
-      return;
-    }
-    if (ctrl && shift && (wp == VK_LEFT || wp == VK_RIGHT)) {
-      move_tab(active, wp == VK_LEFT ? -1 : 1);
-      InvalidateRect(hwnd, nullptr, FALSE);
-      return;
-    }
-    if (ctrl && wp == 'M') {
-      tab_set_muted(active, !current().muted);
-      return;
-    }
-    if (ctrl && wp == 'F') {
-      open_find();
-      return;
-    }
-    if (ctrl && (wp == VK_OEM_PLUS || wp == VK_ADD || wp == '=')) {
-      set_zoom(current().zoom * 1.1);
-      return;
-    }
-    if (ctrl && (wp == VK_OEM_MINUS || wp == VK_SUBTRACT)) {
-      set_zoom(current().zoom / 1.1);
-      return;
-    }
-    if (ctrl && wp == '0') {
-      set_zoom(1.0);
-      return;
-    }
     if (find_open && !address_focus && !home_focus) {
       if (wp == VK_ESCAPE) {
         close_find();
@@ -3674,41 +3830,6 @@ struct Browser {
     }
     if (ctrl && wp == 'V') {
       paste();
-      return;
-    }
-    if (ctrl && wp == 'J') {
-      panel_downloads = !panel_downloads;
-      panel_bookmarks = panel_history = false;
-      InvalidateRect(hwnd, nullptr, FALSE);
-      return;
-    }
-    if (ctrl && wp == 'L') {
-      address_focus = true;
-      address_caret = address.size();
-      InvalidateRect(hwnd, nullptr, FALSE);
-      return;
-    }
-    if (ctrl && wp == 'T') {
-      new_tab();
-      return;
-    }
-    if (ctrl && wp == 'W') {
-      close_tab(active);
-      return;
-    }
-    if (ctrl && wp == 'R') {
-      navigate(current().url, false);
-      return;
-    }
-    if (ctrl && wp == 'D') {
-      profile.bookmark(current().title, current().url);
-      save_profile();
-      status = "Bookmark saved";
-      InvalidateRect(hwnd, nullptr, FALSE);
-      return;
-    }
-    if (wp == VK_F5) {
-      navigate(current().url, false);
       return;
     }
     if (wp == VK_ESCAPE) {
@@ -4469,10 +4590,15 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return 0;
   }
   case WM_SIZE: {
-    if (auto b = browser(hwnd))
+    if (auto b = browser(hwnd)) {
+      b->window_minimized(wp == SIZE_MINIMIZED);
       b->resize(LOWORD(lp), HIWORD(lp));
+    }
     return 0;
   }
+  case WM_ACTIVATE:
+    if (auto b = browser(hwnd)) b->window_activated(LOWORD(wp) != WA_INACTIVE);
+    return DefWindowProcW(hwnd, msg, wp, lp);
   case WM_PAINT:
     paint(hwnd);
     return 0;
@@ -4758,6 +4884,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
       }
       if (b) b->recover_failed_renderers();
+      if (b) b->sync_focus();
     }
     if (b) b->reap_sessions();
     if (b && b->smoke && !b->smoke_bridge_url.empty()) {

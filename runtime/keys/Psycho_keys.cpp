@@ -121,4 +121,36 @@ std::string ShortcutRegistry::resolve(const KeyEvent &event,
   return ""; // unclaimed: the key belongs to the focused content
 }
 
+const std::vector<StockShortcut> &stock_shortcuts() {
+  static const std::vector<StockShortcut> table = {
+      {"Ctrl+Shift+P", "app.palette"},
+      {"Ctrl+Shift+Q", "app.panic"},
+      {"Ctrl+Shift+T", "tab.reopen"},
+      {"Ctrl+Tab", "tab.next"},
+      {"Ctrl+Shift+Tab", "tab.previous"},
+      {"Ctrl+Shift+Left", "tab.move-left"},
+      {"Ctrl+Shift+Right", "tab.move-right"},
+      {"Ctrl+M", "tab.mute"},
+      {"Ctrl+F", "find.open"},
+      {"Ctrl+=", "zoom.in"},
+      {"Ctrl+-", "zoom.out"},
+      {"Ctrl+0", "zoom.reset"},
+      {"Ctrl+J", "panel.downloads"},
+      {"Ctrl+L", "address.focus"},
+      {"Ctrl+T", "tab.new"},
+      {"Ctrl+W", "tab.close"},
+      {"Ctrl+R", "page.reload"},
+      {"Ctrl+D", "bookmark.add"},
+      {"F5", "page.reload"},
+  };
+  return table;
+}
+
+bool bind_stock_shortcuts(ShortcutRegistry &registry, Error &error) {
+  for (const StockShortcut &entry : stock_shortcuts())
+    if (!registry.bind(KeyScope::App, entry.accelerator, entry.command, error))
+      return false;
+  return true;
+}
+
 } // namespace pv::rt

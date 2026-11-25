@@ -33,3 +33,9 @@ Update, 2026-11-25: S049 and part of S047 (page clipboard writes and message dia
 ## D007 - Milestones map onto phases in one table (recorded 2026-11-25)
 
 The plan had milestones M1-M9 and phases P0-P14 with no mapping, and two gates (P3 and P8) that could not be met in the order written. The mapping now lives in section 5 of the master plan.
+
+## D008 - P1 closed on wiring what has a consumer; S048 moved to P3 (recorded 2026-11-25)
+
+I wired every P1 service that has something in the shell to govern (shortcuts, page clipboard and dialogs, page IME, focus, internal page lookup, private extension policy, renderer admission, crash recovery, logging). I did not wire S035 downloads or S036 permissions because the shell and engine have no code path that produces a download or a permission request; the wiring belongs with the feature that creates one. I moved S048 (replace the shell's tab, window and navigation state with the runtime models) to the front of P3 as S080a, because it rewrites the state 100+ call sites use and I cannot verify it without a Windows UI loop.
+
+Cost: P1 still has two runtime models (S024-S027) that no running code uses. Risk: none of this wiring has run on Windows. P1 closes when one owned-engine Windows run passes with these changes.

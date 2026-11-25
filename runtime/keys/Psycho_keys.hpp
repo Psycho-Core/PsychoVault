@@ -19,6 +19,7 @@
 #include "../ipc/Psycho_bus.hpp"
 #include <map>
 #include <string>
+#include <vector>
 
 namespace pv::rt {
 
@@ -59,5 +60,14 @@ public:
 private:
   std::map<KeyScope, std::map<std::string, std::string>> table_;
 };
+
+// The browser's stock chords, in one place so the shell and the tests read the
+// same table. Every entry must bind; bind_stock stops at the first refusal.
+struct StockShortcut {
+  const char *accelerator;
+  const char *command;
+};
+const std::vector<StockShortcut> &stock_shortcuts();
+bool bind_stock_shortcuts(ShortcutRegistry &registry, Error &error);
 
 } // namespace pv::rt

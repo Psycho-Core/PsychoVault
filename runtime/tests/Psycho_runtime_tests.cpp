@@ -2766,6 +2766,47 @@ int run_runtime_bus_tests(int &shared) {
     RT_CHECK(web.page_world().run("typeof psycho").string == "undefined");
   }
 
+  // S032 stock chords: the shell's table binds without a refusal, and each chord
+  // resolves from the key event the shell builds for it.
+  {
+    ShortcutRegistry registry;
+    Error e;
+    RT_CHECK(bind_stock_shortcuts(registry, e) && !e);
+    RT_CHECK(registry.size() == stock_shortcuts().size());
+    auto chord = [&](bool ctrl, bool shift, const char *key) {
+      KeyEvent event;
+      event.ctrl = ctrl;
+      event.shift = shift;
+      event.key = key;
+      return registry.resolve(event, KeyContext{});
+    };
+    RT_CHECK(chord(true, false, "T") == "tab.new");
+    RT_CHECK(chord(true, true, "T") == "tab.reopen");
+    RT_CHECK(chord(true, false, "Tab") == "tab.next");
+    RT_CHECK(chord(true, true, "Tab") == "tab.previous");
+    RT_CHECK(chord(true, false, "=") == "zoom.in");
+    RT_CHECK(chord(true, false, "-") == "zoom.out");
+    RT_CHECK(chord(false, false, "F5") == "page.reload");
+    RT_CHECK(chord(true, true, "Left") == "tab.move-left");
+    RT_CHECK(chord(true, false, "Z").empty());
+    RT_CHECK(chord(false, false, "T").empty());
+  }
+
+  // S028 bare-page lookup: only a registered page with no path, query or
+  // fragment names a document; lookalikes and guesses name nothing.
+  {
+    const InternalRegistry registry = InternalRegistry::stock();
+    RT_CHECK(plain_internal_page(registry, "psychovault://newtab") == "newtab");
+    RT_CHECK(plain_internal_page(registry, "psychovault://newtab/") == "newtab");
+    RT_CHECK(plain_internal_page(registry, "PSYCHOVAULT://Version") == "version");
+    RT_CHECK(plain_internal_page(registry, "psychovault://newtab/app.js").empty());
+    RT_CHECK(plain_internal_page(registry, "psychovault://newtab?x=1").empty());
+    RT_CHECK(plain_internal_page(registry, "psychovault://newtab#frag").empty());
+    RT_CHECK(plain_internal_page(registry, "psychovault://nope").empty());
+    RT_CHECK(plain_internal_page(registry, "psychovault://newtab/../history").empty());
+    RT_CHECK(plain_internal_page(registry, "http://newtab").empty());
+  }
+
   // S038 pages: psychovault://nettest and psychovault://version render as plain
   // HTML that reports exactly what the service said. Unwired stages read as
   // unavailable (never passed), values are escaped, and a missing version

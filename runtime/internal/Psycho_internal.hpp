@@ -75,6 +75,12 @@ private:
   const InternalRegistry &registry_;
 };
 
+// The registered page named by a bare address: psychovault://<page> with no
+// resource path, query or fragment. Returns "" for anything else, including
+// unregistered names, traversal and escapes. This is what the shell's tab
+// loader asks before it serves one of my pages as a document.
+std::string plain_internal_page(const InternalRegistry &registry, const std::string &raw);
+
 // The widened admission policy for broker-driven navigation (S027's seam):
 // psychovault:// addresses validate against the registry, everything else
 // falls through to the stock http/https rules. Renderer-originated requests

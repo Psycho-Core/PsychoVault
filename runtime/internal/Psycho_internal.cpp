@@ -218,4 +218,12 @@ bool admit_browser_url(const std::string &raw, const InternalRegistry &registry,
   return admit_http_url(raw, canon, error);
 }
 
+std::string plain_internal_page(const InternalRegistry &registry, const std::string &raw) {
+  InternalUrl url;
+  Error error;
+  if (!registry.parse(raw, url, error) || !url.path.empty()) return "";
+  if (url.canon != "psychovault://" + url.page) return "";
+  return url.page;
+}
+
 } // namespace pv::rt
