@@ -49,6 +49,9 @@ public:
     // http/https-only rules; S028 widens this seam for the internal scheme
     // behind capabilities - the controller itself never widens.
     std::function<bool(const std::string &raw, std::string &canon, Error &error)> admit = {};
+    // How many committed entries one tab keeps; 0 means the default (100). The
+    // shell asks for 512, which is what it kept before it used this model.
+    size_t history_limit = 0;
   };
 
   WebContents(int id, int tab_id, Seams seams);
@@ -59,6 +62,9 @@ public:
   int go_back(Error &error);    // "nav.bounds" at the frontier
   int go_forward(Error &error); // "nav.bounds" at the frontier
   int reload(Error &error);     // "nav.no-entry" before the first commit
+  // The shell's rule for an address typed or opened in this tab: the address
+  // already on screen reloads (history does not grow), anything else is new.
+  int visit(const std::string &url, Error &error);
 
   // Resolution of the pending navigation, exactly one of these per pending id:
   bool commit(const std::string &title, const std::string &favicon, Error &error);
@@ -68,6 +74,14 @@ public:
   // Live edits to the committed entry (script can retitle the page it is on).
   bool set_title(const std::string &title, Error &error);
   bool set_favicon(const std::string &favicon, Error &error);
+  // The committed entry's address changed without a navigation (a redirect's
+  // final URL, history.pushState). History does not grow. "nav.no-entry" before
+  // the first commit; the address passes the same admit policy.
+  bool replace_url(const std::string &url, Error &error);
+  // Rebuild history from a closed tab or a saved session. Entries get fresh ids,
+  // the oldest fall off past the limit, `index` is clamped into range, and any
+  // pending navigation is aborted. An empty list leaves nothing committed.
+  bool restore(const std::vector<HistoryEntry> &entries, int index, Error &error);
 
   int id() const { return id_; }
   int tab_id() const { return tab_id_; }
@@ -99,7 +113,8 @@ private:
   uint32_t next_nav_id_ = 1;
   ContentState state_ = ContentState::Idle;
   std::string error_code_; // meaningful while state_ == Failed
-  static constexpr size_t kHistoryLimit = 100; // bounded: oldest frontier dies
+  static constexpr size_t kHistoryLimit = 100; // default bound: oldest frontier dies
+  size_t history_limit_ = kHistoryLimit;
   static constexpr size_t kLogLimit = 256;     // bounded audit memory
 };
 

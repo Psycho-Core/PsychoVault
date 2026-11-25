@@ -2918,6 +2918,49 @@ int run_runtime_bus_tests(int &shared) {
     RT_CHECK(chord(false, false, "T").empty());
   }
 
+  // S027 additions the shell relies on: a configurable bound, visit() reloading the
+  // address on screen, replace_url() rewriting without growing, and restore().
+  {
+    Error e;
+    WebContents::Seams seams;
+    seams.history_limit = 512;
+    seams.admit = [](const std::string &raw, std::string &canon, Error &) {
+      canon = raw;
+      return true;
+    };
+    WebContents contents(1, 1, std::move(seams));
+    for (int i = 0; i < 600; ++i) {
+      RT_CHECK(contents.visit("https://example.test/" + std::to_string(i), e) > 0);
+      RT_CHECK(contents.commit("t", "", e));
+    }
+    RT_CHECK(contents.history().size() == 512 && contents.index() == 511);
+    const int reloaded = contents.visit("https://example.test/599", e);
+    RT_CHECK(reloaded > 0 && contents.pending() &&
+             contents.pending()->kind == NavKind::Reload);
+    RT_CHECK(contents.commit("t", "", e) && contents.history().size() == 512);
+    RT_CHECK(contents.replace_url("https://example.test/final", e) &&
+             contents.current()->url == "https://example.test/final" &&
+             contents.history().size() == 512);
+    WebContents fresh(2, 2, WebContents::Seams{});
+    RT_CHECK(!fresh.replace_url("https://example.test/x", e) && e.code == "nav.no-entry");
+    std::vector<HistoryEntry> saved;
+    for (const char *url : {"https://a.test/", "https://b.test/", "https://c.test/"}) {
+      HistoryEntry entry;
+      entry.url = url;
+      saved.push_back(entry);
+    }
+    saved.push_back(HistoryEntry{0, "ftp://bad.test/", "", "", 0}); // refused by the default policy
+    RT_CHECK(fresh.restore(saved, 1, e) && fresh.history().size() == 3 && fresh.index() == 1 &&
+             fresh.can_go_back() && fresh.can_go_forward() && fresh.pending() == nullptr);
+    RT_CHECK(fresh.restore({}, 5, e) && fresh.index() == -1 && fresh.history().empty());
+    WebContents defaults(3, 3, WebContents::Seams{});
+    for (int i = 0; i < 120; ++i) {
+      RT_CHECK(defaults.go("https://example.test/" + std::to_string(i), e) > 0);
+      RT_CHECK(defaults.commit("", "", e));
+    }
+    RT_CHECK(defaults.history().size() == 100);
+  }
+
   // S028 bare-page lookup: only a registered page with no path, query or
   // fragment names a document; lookalikes and guesses name nothing.
   {

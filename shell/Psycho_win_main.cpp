@@ -15,6 +15,7 @@
 #include "../platform/Psycho_sandbox.hpp"
 #include "../runtime/commandline/Psycho_commandline.hpp"
 #include "../runtime/diagnostics/Psycho_diagnostics_page.hpp"
+#include "../runtime/content/Psycho_content.hpp"
 #include "../runtime/crash/Psycho_crash.hpp"
 #include "../runtime/logging/Psycho_logging.hpp"
 #include "../runtime/services/Psycho_services.hpp"
@@ -84,11 +85,49 @@ struct BridgeTask {
   Json payload;
 };
 struct Session;
+// S027 in production: each tab's session history is a rt::WebContents. The shell
+// vets every address before it navigates (navigate_input, the page bridge, the
+// renderer allowlist), so this controller's own policy only refuses an empty or
+// control-byte address, and its bound is the 512 entries the shell always kept.
+static std::unique_ptr<rt::WebContents> make_tab_contents(int tab_id) {
+  rt::WebContents::Seams seams;
+  seams.history_limit = 512;
+  seams.admit = [](const std::string &raw, std::string &canon, rt::Error &error) {
+    error = rt::Error{};
+    std::string text = raw;
+    while (!text.empty() && std::isspace((unsigned char)text.front())) text.erase(0, 1);
+    while (!text.empty() && std::isspace((unsigned char)text.back())) text.pop_back();
+    if (text.empty()) {
+      error = {"nav.empty", "an empty string is not an address"};
+      return false;
+    }
+    for (char c : text)
+      if ((unsigned char)c < 0x20 || c == 0x7f) {
+        error = {"nav.control", "control bytes do not belong in addresses"};
+        return false;
+      }
+    canon = text;
+    return true;
+  };
+  return std::make_unique<rt::WebContents>(tab_id, tab_id, std::move(seams));
+}
 struct Tab {
   int id;
   std::string url, title = "New Tab";
-  std::vector<std::string> history;
-  size_t index = 0;
+  std::unique_ptr<rt::WebContents> web;
+  rt::WebContents &nav() {
+    if (!web) web = make_tab_contents(id);
+    return *web;
+  }
+  bool can_back() const { return web && web->can_go_back(); }
+  bool can_forward() const { return web && web->can_go_forward(); }
+  std::vector<std::string> history_urls() const {
+    std::vector<std::string> urls;
+    if (web)
+      for (const auto &entry : web->history()) urls.push_back(entry.url);
+    return urls;
+  }
+  size_t history_index() const { return web && web->index() > 0 ? size_t(web->index()) : 0; }
   bool loading = false, started = false, recorded = false;
   bool pinned = false, muted = false;
   double scroll = 0, zoom = 1.0;
@@ -1358,7 +1397,6 @@ struct Browser {
     t.id = next_id++;
     t.url = url;
     t.title = app_ui_url(url) ? "New Tab" : url;
-    t.history.push_back(url);
     t.started = !starts(url, "http://") && !starts(url, "https://");
     tabs.push_back(std::move(t));
     active = int(tabs.size()) - 1;
@@ -1389,8 +1427,8 @@ struct Browser {
       ClosedTab closed;
       closed.url = tabs[size_t(index)].url;
       closed.title = tabs[size_t(index)].title;
-      closed.history = tabs[size_t(index)].history;
-      closed.index = tabs[size_t(index)].index;
+      closed.history = tabs[size_t(index)].history_urls();
+      closed.index = tabs[size_t(index)].history_index();
       closed.pinned = tabs[size_t(index)].pinned;
       closed.muted = tabs[size_t(index)].muted;
       closed_tabs.push_back(std::move(closed));
@@ -1451,15 +1489,9 @@ struct Browser {
     auto u = navigate_input(input, profile.search_template());
     if (u)
       target = u->href();
-    if (add_history) {
-      if (tab.history.empty() || tab.history[tab.index] != target) {
-        tab.history.resize(tab.index + 1);
-        tab.history.push_back(target);
-        tab.index = tab.history.size() - 1;
-        if (tab.history.size() > 512) {
-          tab.history.erase(tab.history.begin(), tab.history.begin() + (tab.history.size() - 512));
-          tab.index = tab.history.size() - 1;
-        }
+    {
+      const rt::NavKind kind = nav_begin(tab, target, add_history);
+      if (add_history && kind == rt::NavKind::New) {
         if (!private_mode &&
             (starts(target, "http://") || starts(target, "https://"))) {
           // Both my per-tab stack and the persisted history see the visit;
@@ -1494,6 +1526,7 @@ struct Browser {
       tab.loading = false;
       tab.recorded = true;
       tab.title = starts(target, "psychovault://settings") ? "Settings" : "New Tab";
+      nav_commit(tab, tab.title);
       if (index == active)
         status = "Ready";
       save_session();
@@ -1503,6 +1536,7 @@ struct Browser {
     if (!u || (!u->network() && !app_page)) {
       tab.loading = false;
       tab.error = "Unsupported URL";
+      nav_fail(tab, tab.error);
       if (index == active)
         status = tab.error;
       InvalidateRect(hwnd, nullptr, FALSE);
@@ -1584,6 +1618,10 @@ struct Browser {
   void stop() {
     Tab &tab = current();
     stop_session(tab);
+    if (tab.web) {
+      rt::Error error;
+      tab.web->stop(error);
+    }
     tab.loading = false;
     status = "Stopped";
     InvalidateRect(hwnd, nullptr, FALSE);
@@ -1615,17 +1653,34 @@ struct Browser {
   }
   void back() {
     Tab &t = current();
-    if (t.index > 0) {
-      --t.index;
-      navigate(t.history[t.index], false);
-    }
+    rt::Error error;
+    if (t.nav().go_back(error) > 0) navigate(t.web->pending()->url, false);
   }
   void forward() {
     Tab &t = current();
-    if (t.index + 1 < t.history.size()) {
-      ++t.index;
-      navigate(t.history[t.index], false);
-    }
+    rt::Error error;
+    if (t.nav().go_forward(error) > 0) navigate(t.web->pending()->url, false);
+  }
+  // The tab's navigation controller learns what the shell is doing: begin when
+  // an address starts loading, commit when its first frame (or an internal page)
+  // is on screen, fail when it errors. A failed load never reaches the history.
+  rt::NavKind nav_begin(Tab &tab, const std::string &target, bool add_history) {
+    rt::WebContents &web = tab.nav();
+    rt::Error error;
+    const rt::Navigation *pending = web.pending();
+    if (!add_history && pending && pending->url == target) return pending->kind; // back/forward
+    web.visit(target, error); // same address as on screen reloads, anything else is new
+    return web.pending() ? web.pending()->kind : rt::NavKind::Reload;
+  }
+  void nav_commit(Tab &tab, const std::string &title) {
+    if (!tab.web || !tab.web->pending()) return;
+    rt::Error error;
+    tab.web->commit(title, "", error);
+  }
+  void nav_fail(Tab &tab, const std::string &message) {
+    if (!tab.web || !tab.web->pending()) return;
+    rt::Error error;
+    tab.web->fail("nav.load", message, error);
   }
   double page_device_pixel_ratio(double zoom) const {
     HDC dc = hwnd ? GetDC(hwnd) : nullptr;
@@ -4166,8 +4221,8 @@ struct Browser {
         ClosedTab closed;
         closed.url = tab.url;
         closed.title = tab.title;
-        closed.history = tab.history;
-        closed.index = tab.index;
+        closed.history = tab.history_urls();
+        closed.index = tab.history_index();
         closed.pinned = tab.pinned;
         closed.muted = tab.muted;
         closed_tabs.push_back(std::move(closed));
@@ -4235,7 +4290,6 @@ struct Browser {
       t.id = next_id++;
       t.url = current().url;
       t.title = current().title;
-      t.history.push_back(t.url);
       t.started = false;
       tabs.insert(tabs.begin() + active + 1, std::move(t));
       select_tab(active + 1);
@@ -4328,8 +4382,6 @@ struct Browser {
       t.id = next_id++;
       t.url = tabs[size_t(menu_tab)].url;
       t.title = tabs[size_t(menu_tab)].title;
-      t.history.push_back(t.url);
-      t.index = 0;
       t.started = false;
       tabs.insert(tabs.begin() + menu_tab + 1, std::move(t));
       active = menu_tab + 1;
@@ -4344,10 +4396,9 @@ struct Browser {
       reopen_tab();
     } else if (id == "menu-close") {
       close_tab(menu_tab);
-    } else if (id == "menu-back" && tabs[size_t(active)].index > 0) {
+    } else if (id == "menu-back" && tabs[size_t(active)].can_back()) {
       back();
-    } else if (id == "menu-forward" &&
-               tabs[size_t(active)].index + 1 < tabs[size_t(active)].history.size()) {
+    } else if (id == "menu-forward" && tabs[size_t(active)].can_forward()) {
       forward();
     } else if (id == "menu-reload") {
       navigate(current().url, false);
@@ -4397,9 +4448,18 @@ struct Browser {
     t.id = next_id++;
     t.url = restore.url;
     t.title = restore.title;
-    t.history = restore.history.empty() ? std::vector<std::string>{restore.url}
-                                        : restore.history;
-    t.index = std::min(restore.index, t.history.size() - 1);
+    {
+      std::vector<rt::HistoryEntry> entries;
+      const std::vector<std::string> urls =
+          restore.history.empty() ? std::vector<std::string>{restore.url} : restore.history;
+      for (const auto &entry_url : urls) {
+        rt::HistoryEntry entry;
+        entry.url = entry_url;
+        entries.push_back(std::move(entry));
+      }
+      rt::Error restore_error;
+      t.nav().restore(entries, int(std::min(restore.index, entries.size() - 1)), restore_error);
+    }
     t.pinned = restore.pinned;
     t.muted = restore.muted;
     t.started = false;
@@ -4702,6 +4762,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       const bool old_loading = tab->loading, old_recorded = tab->recorded;
       if (!up->error.empty()) {
         tab->error = up->error;
+        b->nav_fail(*tab, up->error);
         tab->loading = false;
         if (tab == &b->current())
           b->status = up->error;
@@ -4713,10 +4774,11 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (!tab->recorded) {
           tab->recorded = true;
           auto final_url = tab->frame.str("url", tab->url);
+          b->nav_commit(*tab, tab->title);
           if (!final_url.empty() && final_url != tab->url) {
             tab->url = final_url;
-            if (tab->index < tab->history.size())
-              tab->history[tab->index] = final_url;
+            rt::Error replace_error;
+            if (tab->web) tab->web->replace_url(final_url, replace_error);
           }
           b->profile.visit(tab->title, tab->url);
           if (!b->save_profile() && b->profile_error.empty())
@@ -4789,8 +4851,8 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     Tab *tab = b ? b->find_tab(int(wp)) : nullptr;
     if (tab && up->generation == tab->generation && !up->url.empty()) {
       tab->url = up->url;
-      if (tab->index < tab->history.size())
-        tab->history[tab->index] = up->url;
+      rt::Error replace_error;
+      if (tab->web) tab->web->replace_url(up->url, replace_error);
       if (tab == &b->current()) {
         if (!b->address_focus)
           b->sync_address();

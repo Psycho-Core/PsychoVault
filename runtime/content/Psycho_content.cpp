@@ -76,6 +76,7 @@ WebContents::WebContents(int id, int tab_id, Seams seams)
     : id_(id), tab_id_(tab_id), seams_(std::move(seams)) {
   if (!seams_.notify) seams_.notify = [](const Envelope &) {};
   if (!seams_.admit) seams_.admit = admit_http_url;
+  if (seams_.history_limit > 0) history_limit_ = std::min<size_t>(seams_.history_limit, 4096);
 }
 
 void WebContents::tell(const char *method, Json payload) const {
@@ -158,6 +159,65 @@ int WebContents::reload(Error &error) {
   return start(NavKind::Reload, history_[index_].url, index_);
 }
 
+int WebContents::visit(const std::string &url, Error &error) {
+  error = Error{};
+  std::string canon;
+  if (!seams_.admit(url, canon, error)) return -1;
+  if (index_ != -1 && history_[(size_t)index_].url == canon) return reload(error);
+  return start(NavKind::New, std::move(canon), -1);
+}
+
+bool WebContents::replace_url(const std::string &url, Error &error) {
+  error = Error{};
+  if (index_ == -1) {
+    error = refuse("nav.no-entry", "nothing committed yet - nothing to rewrite");
+    return false;
+  }
+  std::string canon;
+  if (!seams_.admit(url, canon, error)) return false;
+  history_[(size_t)index_].url = canon;
+  Json notice = Json::make_object();
+  notice.set("contents", Json(id_));
+  notice.set("url", Json(canon));
+  notice.set("entry", Json(history_[(size_t)index_].id));
+  tell("tab:url", std::move(notice));
+  return true;
+}
+
+bool WebContents::restore(const std::vector<HistoryEntry> &entries, int index,
+                          Error &error) {
+  error = Error{};
+  abort_pending();
+  history_.clear();
+  // The landing entry is tracked through every drop so refused entries before it
+  // and entries trimmed off the front both move it correctly.
+  int landing = -1;
+  const int wanted = std::clamp(index, 0, std::max(0, (int)entries.size() - 1));
+  for (int i = 0; i < (int)entries.size(); ++i) {
+    std::string canon;
+    Error ignored;
+    if (!seams_.admit(entries[(size_t)i].url, canon, ignored)) continue; // dropped, not kept
+    HistoryEntry entry = entries[(size_t)i];
+    entry.id = next_entry_id_++;
+    entry.url = canon;
+    entry.navigation = 0;
+    history_.push_back(std::move(entry));
+    if (i <= wanted) landing = (int)history_.size() - 1;
+  }
+  while (history_.size() > history_limit_) {
+    history_.erase(history_.begin());
+    --landing;
+  }
+  if (history_.empty()) {
+    index_ = -1;
+  } else {
+    index_ = std::clamp(landing, 0, (int)history_.size() - 1);
+  }
+  state_ = ContentState::Idle;
+  error_code_.clear();
+  return true;
+}
+
 void WebContents::apply_metadata(HistoryEntry &entry, const std::string &title,
                                  const std::string &favicon) {
   // A revisit refreshes metadata when supplied, but never grows history.
@@ -184,7 +244,7 @@ bool WebContents::commit(const std::string &title, const std::string &favicon,
     entry.favicon = favicon;
     entry.navigation = nav.id;
     history_.push_back(std::move(entry));
-    while (history_.size() > kHistoryLimit) history_.erase(history_.begin());
+    while (history_.size() > history_limit_) history_.erase(history_.begin());
     index_ = (int)history_.size() - 1;
   } else {
     index_ = nav.target_index;
