@@ -25,7 +25,40 @@ bool RendererProcessFarm::spawn(Hosted &renderer, const std::string &executable,
     return false;
   }
   renderer.client = std::make_unique<RendererProcessClient>(*renderer.transport);
-  return true;
+  return admit(renderer, error);
+}
+
+bool RendererProcessFarm::admit(Hosted &renderer, Error &error) {
+  const Host::Fetcher fetch = [](const std::string &url, ResourceType) {
+    Resource resource;
+    resource.url = url;
+    resource.mime = "text/html; charset=utf-8";
+    resource.status = 200;
+    resource.ok = true;
+    resource.text = "<!doctype html><html><body></body></html>";
+    return resource;
+  };
+  Envelope reply;
+  Error probe_error;
+  if (renderer.client->navigate("about:blank", fetch, reply, probe_error) &&
+      reply.payload.flag("ok") && reply.payload.find("frame"))
+    return true;
+  std::string ignored;
+  kill_child_platform(renderer.process, "failed admission", ignored);
+  renderer.client.reset();
+  renderer.transport.reset();
+  renderer.process = WinChildHandle{};
+  error = {"renderer.admission",
+           "a new renderer did not complete its admission navigation" +
+               (probe_error.message.empty() ? std::string() : ": " + probe_error.message)};
+  return false;
+}
+
+std::vector<size_t> RendererProcessFarm::take_failed_leases() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  std::vector<size_t> out;
+  out.swap(failed_leases_);
+  return out;
 }
 
 void RendererProcessFarm::stop(Hosted &renderer) {
@@ -294,6 +327,10 @@ bool RendererProcessFarm::monitor(Error &error) {
     }
     if (!renderer.process.process || child_process_running_platform(renderer.process))
       continue;
+    if (renderer.leased) {
+      std::lock_guard<std::mutex> lock(mutex_);
+      failed_leases_.push_back(i);
+    }
     if (renderer.restarts >= 3) {
       stop(renderer);
       renderer.retired = true;

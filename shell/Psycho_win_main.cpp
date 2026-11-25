@@ -15,6 +15,9 @@
 #include "../platform/Psycho_sandbox.hpp"
 #include "../runtime/commandline/Psycho_commandline.hpp"
 #include "../runtime/diagnostics/Psycho_diagnostics_page.hpp"
+#include "../runtime/crash/Psycho_crash.hpp"
+#include "../runtime/logging/Psycho_logging.hpp"
+#include "../runtime/services/Psycho_services.hpp"
 #include "../runtime/app/Psycho_instance.hpp"
 #include "../runtime/broker/Psycho_renderer_farm.hpp"
 #include "../runtime/renderer/Psycho_renderer_main.hpp"
@@ -342,6 +345,10 @@ struct Session {
   rt::RendererProcessFarm *farm = nullptr;
   rt::RendererProcessClient::BridgeInvoker bridge_invoke;
   size_t renderer_slot = std::numeric_limits<size_t>::max();
+  // The UI thread reads the lease slot to find the tab a dead renderer served;
+  // renderer_slot itself is written by the session thread, so this is the copy
+  // published for other threads.
+  std::atomic<size_t> published_slot{std::numeric_limits<size_t>::max()};
   double width = 1000, height = 700, device_pixel_ratio = 1.0, scrollbar_width = 8.0;
   bool reduce_motion = false, high_contrast = false;
   std::string color_scheme = "dark";
@@ -567,6 +574,7 @@ void Session::run() {
     fail("Could not start tab renderer: " + renderer_error.message);
     return;
   }
+  published_slot.store(renderer_slot);
   struct RendererLease {
     rt::RendererProcessFarm *farm;
     size_t slot;
@@ -1164,6 +1172,132 @@ struct Browser {
       if (tab.id == id)
         return &tab;
     return nullptr;
+  }
+  // S040/S039 in production. Logs never carry URLs or titles (that would be a
+  // second browsing history on disk), and a private session writes nothing.
+  std::unique_ptr<rt::StructuredLog> runtime_log;
+  std::unique_ptr<rt::CrashService> crash_service;
+  // S031 in production: page-originated clipboard writes and message dialogs go
+  // through the broker's service law (size cap, writer record, one modal per
+  // window) before they reach the OS. Failing closed: no service, no effect.
+  std::unique_ptr<rt::ClipboardService> clipboard_service;
+  std::unique_ptr<rt::DialogService> dialog_service;
+  std::string last_recovery_failure;
+  void log_event(const char *service, rt::LogLevel level, const std::string &event,
+                 const rt::StructuredLog::Fields &fields = {}) {
+    if (!runtime_log) return;
+    rt::Error ignored;
+    runtime_log->write(service, level, event, fields, ignored);
+  }
+  void init_runtime_services() {
+    if (!private_mode)
+      runtime_log = std::make_unique<rt::StructuredLog>(profile.directory + "/logs");
+    rt::CrashService::Seams seams;
+    seams.now_ms = [] {
+      return int64_t(std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::system_clock::now().time_since_epoch()).count());
+    };
+    seams.persist_record = [this](const rt::CrashRecord &record, std::string &error) {
+      if (!runtime_log) return true; // private session: the record stays in memory
+      rt::Error write_error;
+      const bool wrote = runtime_log->write(
+          "crash", rt::LogLevel::Error, "renderer.failed",
+          {{"id", std::to_string(record.id)},
+           {"renderer", std::to_string(record.renderer_id)},
+           {"tab", std::to_string(record.tab_id)},
+           {"kind", record.kind == rt::RendererFailureKind::Hang ? "hang" : "crash"},
+           {"reason", record.reason},
+           {"state", std::to_string(int(record.state))},
+           {"attempts", std::to_string(record.restart_attempts)}},
+          write_error);
+      if (!wrote) error = write_error.message;
+      return wrote;
+    };
+    seams.show_crash_page = [this](int tab_id, const rt::CrashRecord &, std::string &) {
+      Tab *tab = find_tab(tab_id);
+      if (!tab) return false;
+      tab->loading = false;
+      tab->error = "This tab's renderer stopped unexpectedly.";
+      if (tab == &current()) status = tab->error;
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return true;
+    };
+    seams.restart_tab = [this](int tab_id, const std::string &url, std::string &) {
+      for (size_t i = 0; i < tabs.size(); ++i) {
+        if (tabs[i].id != tab_id) continue;
+        navigate_in(int(i), url, false);
+        return true;
+      }
+      return false;
+    };
+    crash_service = std::make_unique<rt::CrashService>(std::move(seams));
+    rt::ClipboardService::Seams clip_seams;
+    clip_seams.apply = [this](const std::string &text) { write_clipboard(text); };
+    clipboard_service = std::make_unique<rt::ClipboardService>(std::move(clip_seams));
+    rt::DialogService::Seams dialog_seams;
+    dialog_seams.show = [this](const rt::DialogRequest &request) {
+      rt::DialogResult result;
+      int n = MultiByteToWideChar(CP_UTF8, 0, request.message.c_str(),
+                                  int(request.message.size()), nullptr, 0);
+      std::wstring text(size_t(n > 0 ? n : 0), L'\0');
+      if (n > 0)
+        MultiByteToWideChar(CP_UTF8, 0, request.message.c_str(),
+                            int(request.message.size()), text.data(), n);
+      MessageBoxW(hwnd, text.c_str(), L"PsychoVault page", MB_OK);
+      result.cancelled = false;
+      result.button = 0;
+      return result;
+    };
+    dialog_service = std::make_unique<rt::DialogService>(std::move(dialog_seams));
+  }
+  void page_clipboard_write(const Tab &tab, const std::string &text) {
+    if (!clipboard_service) return;
+    auto parsed = parse_url(tab.url);
+    rt::Error error;
+    if (!clipboard_service->write_text(parsed ? parsed->origin() : tab.url, text, error))
+      log_event("clipboard", rt::LogLevel::Warn, "write.refused", {{"code", error.code}});
+  }
+  void page_message_dialog(const std::string &message) {
+    if (!dialog_service) return;
+    rt::DialogRequest request;
+    request.kind = rt::DialogRequest::Kind::Message;
+    request.window_id = 1; // one browser window today; S048 gives windows real ids
+    request.message = message;
+    request.from_shell = false;
+    rt::DialogResult result;
+    rt::Error error;
+    if (!dialog_service->run(request, result, error))
+      log_event("dialog", rt::LogLevel::Warn, "message.refused", {{"code", error.code}});
+  }
+  // A leased renderer exited and the farm replaced it. The page it held is gone,
+  // so the tab goes through the crash service: record, message, bounded retry.
+  void recover_failed_renderers() {
+    if (!renderer_farm || !crash_service) return;
+    for (size_t slot : renderer_farm->take_failed_leases()) {
+      log_event("renderer", rt::LogLevel::Warn, "lease.failed",
+                {{"slot", std::to_string(slot)}});
+      Tab *owner = nullptr;
+      for (auto &tab : tabs)
+        if (tab.session && tab.session->published_slot.load() == slot) {
+          owner = &tab;
+          break;
+        }
+      if (!owner) continue;
+      rt::CrashRecord record;
+      rt::Error error;
+      // Renderer ids are positive in the crash service, slots start at zero.
+      if (!crash_service->renderer_failed(int(slot) + 1, owner->id,
+                                          rt::RendererFailureKind::Crash, owner->url,
+                                          "renderer process exited", record, error)) {
+        log_event("crash", rt::LogLevel::Error, "renderer.failed.unrecorded",
+                  {{"code", error.code}});
+        if (record.id == 0) continue;
+      }
+      rt::Error restart_error;
+      if (!crash_service->restart(record.id, restart_error))
+        log_event("crash", rt::LogLevel::Warn, "restart.refused",
+                  {{"code", restart_error.code}});
+    }
   }
   void stop_session(Tab &tab) {
     if (!tab.session) return;
@@ -4588,16 +4722,13 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     std::unique_ptr<Update> up(reinterpret_cast<Update *>(lp));
     if (auto b = browser(hwnd)) {
       Tab *tab = b->find_tab(int(wp));
-      if (tab && tab->generation == up->generation) b->write_clipboard(up->clipboard);
+      if (tab && tab->generation == up->generation) b->page_clipboard_write(*tab, up->clipboard);
     }
     return 0;
   }
   case WM_DIALOG: {
     std::unique_ptr<Update> up(reinterpret_cast<Update *>(lp));
-    int n = MultiByteToWideChar(CP_UTF8, 0, up->url.c_str(), int(up->url.size()), nullptr, 0);
-    std::wstring text(size_t(n), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, up->url.c_str(), int(up->url.size()), text.data(), n);
-    MessageBoxW(hwnd, text.c_str(), L"PsychoVault page", MB_OK);
+    if (auto b = browser(hwnd)) b->page_message_dialog(up->url);
     return 0;
   }
   case WM_DONE: {
@@ -4606,6 +4737,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     Tab *tab = b ? b->find_tab(int(up->tab)) : nullptr;
     if (tab && up->generation == tab->generation) {
       tab->loading = false;
+      if (tab->error.empty() && b->crash_service) b->crash_service->renderer_stable(tab->id);
       if (tab == &b->current()) {
         b->status = !tab->error.empty() ? tab->error : tab->url;
         InvalidateRect(hwnd, nullptr, FALSE);
@@ -4617,8 +4749,15 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     auto b = browser(hwnd);
     if (renderer_farm) {
       rt::Error renderer_error;
-      if (!renderer_farm->monitor(renderer_error) && b)
+      if (!renderer_farm->monitor(renderer_error) && b) {
         b->status = "Renderer process recovery failed: " + renderer_error.message;
+        if (b->last_recovery_failure != renderer_error.code + renderer_error.message) {
+          b->last_recovery_failure = renderer_error.code + renderer_error.message;
+          b->log_event("renderer", rt::LogLevel::Error, "recovery.failed",
+                       {{"code", renderer_error.code}});
+        }
+      }
+      if (b) b->recover_failed_renderers();
     }
     if (b) b->reap_sessions();
     if (b && b->smoke && !b->smoke_bridge_url.empty()) {
@@ -5080,6 +5219,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     }
   }
   renderer_farm = &hosted_renderers;
+  b.init_runtime_services();
+  b.log_event("app", rt::LogLevel::Info, "start",
+              {{"version", PSYCHO_VAULT_VERSION},
+               {"mode", private_mode ? "private" : "normal"}});
+  b.log_event("renderer", rt::LogLevel::Info, "pool.started",
+              {{"count", std::to_string(hosted_renderers.size())}});
   b.smoke = smoke;
   b.expect_image = expect_image;
   b.capture_path = capture;

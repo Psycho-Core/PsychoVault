@@ -504,6 +504,7 @@ int run_runtime_bus_tests(int &shared) {
     Error error;
     RT_CHECK(!farm.start("unused-renderer", 2, error));
     RT_CHECK(farm.size() == 0 && error.code == "process.spawn");
+    RT_CHECK(farm.take_failed_leases().empty());
     farm.shutdown();
     RT_CHECK(farm.size() == 0);
   }

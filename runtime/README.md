@@ -357,7 +357,7 @@ proof, not visual parity. S045 and the S046 Windows acceptance gate passed.
   profile, flags and hash facts verbatim, or a named refusal if no provider is
   wired - I never invent a version or hash. Both calls are schema-registered
   and broker-service-backed, exposed only to the diagnostics renderer bridge;
-  web and shell pages still receive no diagnostics facade. As of 2026-11-25 the shell serves `psychovault://nettest` and `psychovault://version` as plain HTML from `Psycho_diagnostics_page.*`; nettest shows every stage unavailable until P4 wires probes, and version shows only the facts the shell knows (version, profile mode, flags) with no hashes. 29 new checks
+  web and shell pages still receive no diagnostics facade. As of 2026-11-25 (Linux tests and mingw syntax check only, not run on Windows) the shell serves `psychovault://nettest` and `psychovault://version` as plain HTML from `Psycho_diagnostics_page.*`; nettest shows every stage unavailable until P4 wires probes, and version shows only the facts the shell knows (version, profile mode, flags) with no hashes. 29 new checks
   (2350 total).
 
 - `crash/Psycho_crash.*` (S039, crash recovery contract): renderer crashes
@@ -408,3 +408,5 @@ profile-file denial, and socket denial all passed. The development runtime is
 not the finished browser: UI parity, the full engine gap table (S050), and later
 P2/P3 milestones remain open and must not be represented as completed by this
 P1 result.
+
+**Production wiring added 2026-11-25 (S047 part, S049; not yet run on Windows):** `RendererProcessFarm` admits every spawned child only after a navigation round trip (`renderer.admission` on failure) and reports leased children that died through `take_failed_leases()`. The shell maps a failed slot to its tab, records it with `CrashService`, shows an error card and restarts the tab at most three times until a load completes. `StructuredLog` writes `logs/{app,renderer,crash,clipboard,dialog}.log` in the profile (none in private sessions; no URLs or titles). Page clipboard writes and message dialogs go through `ClipboardService` and `DialogService`. Still contract-only: S024-S028, S031 (tray, menus, notifications, context menus, picker dialogs), S032-S037, and the `RendererHarness` class.

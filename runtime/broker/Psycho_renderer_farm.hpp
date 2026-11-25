@@ -40,6 +40,10 @@ public:
   // Replaces unexpectedly exited workers; after three replacements it fails
   // closed and reports retirement instead of looping forever.
   bool monitor(Error &error);
+  // Slots whose leased child exited since the last call (replaced or retired).
+  // The tab that held the lease has lost its page and must be recovered by the
+  // caller; the farm only reports, it never guesses which tab that was.
+  std::vector<size_t> take_failed_leases();
   void shutdown();
   size_t size() const;
   size_t restarts(size_t renderer) const;
@@ -56,11 +60,15 @@ private:
     bool retired = false;
   };
   bool spawn(Hosted &renderer, const std::string &executable, Error &error);
+  // S043 in production: a child is admitted only after it completes a real
+  // navigation round trip. Runs on every spawn: first start, lease, replacement.
+  bool admit(Hosted &renderer, Error &error);
   void stop(Hosted &renderer);
 
   Schemas schemas_;
   mutable std::mutex mutex_;
   std::vector<std::shared_ptr<Hosted>> renderers_;
+  std::vector<size_t> failed_leases_;
   std::string executable_;
   bool stopped_ = false;
 };

@@ -28,6 +28,8 @@ What actually happened: the P1 acceptance run (42334940299, 2026-11-07) used thi
 
 The P1 exit gate passed in run 42334940299. The steps S031-S040 and S043 exist as tested contracts but most have no production caller in the shell. I accept P1 on the gate and carry the unwired work as S047-S049 in the master plan. S047-S049 must finish before S081 (the app frame) starts. I will not describe those services as shipped until a caller and a Windows check exist.
 
+Update, 2026-11-25: S049 and part of S047 (page clipboard writes and message dialogs) now have production callers, checked only by Linux unit tests and a mingw syntax check of the Windows code. They have not run on Windows. S048 and the rest of S047 are still open.
+
 ## D007 - Milestones map onto phases in one table (recorded 2026-11-25)
 
 The plan had milestones M1-M9 and phases P0-P14 with no mapping, and two gates (P3 and P8) that could not be met in the order written. The mapping now lives in section 5 of the master plan.
