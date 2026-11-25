@@ -155,6 +155,16 @@ jobs:
           } finally {
             Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
           }
+      - name: Capture my diagnostics pages
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build/captures | Out-Null
+          foreach ($page in 'version', 'nettest') {
+            $out = "build/captures/diagnostics-$page.png"
+            .\build\PsychoVault.exe --smoke --url "psychovault://$page" --capture $out --profile build/test-profile
+            if ($LASTEXITCODE -ne 0) { throw "diagnostics page $page exited $LASTEXITCODE" }
+            if (-not (Test-Path $out) -or (Get-Item $out).Length -lt 2000) { throw "no usable capture for psychovault://$page" }
+          }
       - name: Exercise my app address bridge to a fetched page in one running app
         id: s045_flow
         shell: pwsh
