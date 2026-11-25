@@ -44,6 +44,8 @@ struct LayoutResult {
     Rect viewport, track, thumb;
     double offset = 0, maximum = 0, content = 0;
     std::string overscroll = "auto";
+    // overflow:hidden supports script scrolling, not wheel/keyboard scrolling.
+    bool user_scrollable = true;
   };
   std::unordered_map<int, ScrollContainer> scroll_containers;
   std::unordered_map<int, std::pair<size_t, size_t>> paint_ranges;

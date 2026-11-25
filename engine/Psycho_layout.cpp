@@ -61,6 +61,58 @@ struct Layout {
     auto found = image_sources.find(node.id);
     return found == image_sources.end() ? ImageSource{node.attribute("src"), 1} : found->second;
   }
+  struct ImageMetrics {
+    std::string url;
+    double width = 0, height = 0, attr_width = -1, attr_height = -1;
+  };
+  ImageMetrics image_metrics(const Node &node) const {
+    ImageMetrics result;
+    const ImageSource selected = image_source(node);
+    auto url = resolve_url(doc.url, selected.url);
+    result.url = url ? url->href() : selected.url;
+    auto resource = resources.find(result.url);
+    if (resource != resources.end() && resource->second.ok &&
+        resource->second.image_width > 0 && resource->second.image_height > 0 && selected.density > 0) {
+      result.width = resource->second.image_width / selected.density;
+      result.height = resource->second.image_height / selected.density;
+    }
+    auto attribute_size = [&](const char *name) {
+      const std::string value = trim(node.attribute(name));
+      if (value.empty()) return -1.0;
+      try {
+        size_t used = 0;
+        const double size = std::stod(value, &used);
+        if (used == value.size() && std::isfinite(size) && size >= 0 && size <= 16384) return size;
+      } catch (...) {}
+      return -1.0;
+    };
+    result.attr_width = attribute_size("width");
+    result.attr_height = attribute_size("height");
+    return result;
+  }
+  void paint_image(int id, const Node &node, const Style &style,
+                   const ImageMetrics &image, const Rect &content) {
+    Rect image_rect = content;
+    const bool fit_intrinsic = image.width > 0 && image.height > 0 &&
+                               content.w > 0 && content.h > 0 && style.object_fit != "fill";
+    if (fit_intrinsic) {
+      double scale = 1;
+      if (style.object_fit == "contain" || style.object_fit == "scale-down")
+        scale = std::min(content.w / image.width, content.h / image.height);
+      else if (style.object_fit == "cover")
+        scale = std::max(content.w / image.width, content.h / image.height);
+      if (style.object_fit == "scale-down") scale = std::min(1.0, scale);
+      image_rect.w = image.width * scale;
+      image_rect.h = image.height * scale;
+      image_rect.x += (content.w - image_rect.w) / 2;
+      image_rect.y += (content.h - image_rect.h) / 2;
+      out.paint.push_back({PaintCommand::Kind::PushClip, content, 0, {}, 0, 0, false, id});
+    }
+    out.paint.push_back({PaintCommand::Kind::Image, image_rect, 0, node.attribute("alt"),
+                         style.font_size, 0, false, id, image.url, {}, {}});
+    if (fit_intrinsic)
+      out.paint.push_back({PaintCommand::Kind::PopClip, content, 0, {}, 0, 0, false, id});
+  }
   double outer_extra(const Style &s) {
     return s.margin[1] + s.margin[3] + s.padding[1] + s.padding[3] + s.border[1] + s.border[3];
   }
@@ -220,13 +272,11 @@ struct Layout {
       content = std::max(0.0, specified - style.padding[1] - style.padding[3] -
                                     style.border[1] - style.border[3]);
     if (content < 0 && node.name == "img") {
-      const ImageSource selected = image_source(node);
-      auto url = resolve_url(doc.url, selected.url);
-      auto image = url ? resources.find(url->href()) : resources.end();
-      content = image != resources.end() && image->second.ok && image->second.image_width > 0
-                    ? image->second.image_width / selected.density : 120;
-      const std::string attr = trim(node.attribute("width"));
-      if (!attr.empty()) content = std::max(0.0, number_of(attr, content));
+      const ImageMetrics image = image_metrics(node);
+      const double height = resolved_height(style, -1) >= 0 ? resolved_height(style, -1) : image.attr_height;
+      content = image.attr_width >= 0 ? image.attr_width
+                : height >= 0 && image.height > 0 ? height * image.width / image.height
+                : image.width > 0 ? image.width : 120;
     }
     // Checkable controls have an intrinsic content box even when they have no
     // value or placeholder. Flex/grid measurement otherwise collapses them to
@@ -996,9 +1046,9 @@ struct Layout {
         x_offset = justify == "center" ? std::max(0.0, (width - outer) / 2)
                                         : std::max(0.0, width - outer);
       }
-      if (height_auto && align == "stretch")
+      if (height_auto && align == "stretch" && doc.nodes[cell.id].name != "img")
         forced_height = std::max(0.0, height - vertical_edges);
-      else if (height_auto) {
+      else if (height_auto && align != "stretch") {
         const double outer = std::min(height, measured_height);
         forced_height = std::max(0.0, outer - vertical_edges);
         if (align == "center") y_offset = std::max(0.0, (height - outer) / 2);
@@ -1213,6 +1263,8 @@ struct Layout {
     double sideways = s.padding[1] + s.padding[3] + s.border[1] + s.border[3];
     const double specified_width = resolved_width(s, available);
     const double specified_height = resolved_height(s, avail_h);
+    const bool block_image = n.name == "img";
+    const ImageMetrics image = block_image ? image_metrics(n) : ImageMetrics{};
     double min_width = std::max(0.0, resolved_bound(s, s.min_width_expression, s.min_width,
                                                     available, 0, "width"));
     double max_width = resolved_bound(s, s.max_width_expression, s.max_width,
@@ -1230,6 +1282,16 @@ struct Layout {
       w = specified_width;
       if (s.box_sizing == "border-box")
         w -= sideways;
+    } else if (block_image) {
+      double height = specified_height >= 0 ? specified_height
+                    : s.height_percent >= 0 && avail_h > 0 ? avail_h * s.height_percent
+                    : image.attr_height;
+      if (height >= 0 && s.box_sizing == "border-box" &&
+          (specified_height >= 0 || s.height_percent >= 0))
+        height = std::max(0.0, height - s.padding[0] - s.padding[2] - s.border[0] - s.border[2]);
+      w = image.attr_width >= 0 ? image.attr_width
+          : height >= 0 && image.height > 0 ? height * image.width / image.height
+          : image.width > 0 ? image.width : 120;
     } else {
       // An auto width fills what is left, so padding and border come out of it
       // rather than pushing the box past its parent.
@@ -1682,26 +1744,7 @@ struct Layout {
           if (cs.border[1] > 0)
             out.paint.push_back({PaintCommand::Kind::Rect, {outer_x + outer_w - cs.border[1], outer_y, cs.border[1], outer_h}, cs.border_color.bgra(), {}, 0, 0, false, c});
 
-          Rect image_rect = content;
-          const bool fit_intrinsic = natural_w > 0 && natural_h > 0 && iw > 0 && ih > 0 && cs.object_fit != "fill";
-          if (fit_intrinsic) {
-            double scale = 1;
-            if (cs.object_fit == "contain" || cs.object_fit == "scale-down")
-              scale = std::min(iw / natural_w, ih / natural_h);
-            else if (cs.object_fit == "cover")
-              scale = std::max(iw / natural_w, ih / natural_h);
-            if (cs.object_fit == "scale-down") scale = std::min(1.0, scale);
-            image_rect.w = natural_w * scale;
-            image_rect.h = natural_h * scale;
-            // CSS's initial object-position is 50% 50%.
-            image_rect.x += (iw - image_rect.w) / 2;
-            image_rect.y += (ih - image_rect.h) / 2;
-            out.paint.push_back({PaintCommand::Kind::PushClip, content, 0, {}, 0, 0, false, c});
-          }
-          out.paint.push_back({PaintCommand::Kind::Image, image_rect, 0, child.attribute("alt"),
-                               cs.font_size, 0, false, c, key, {}, {}});
-          if (fit_intrinsic)
-            out.paint.push_back({PaintCommand::Kind::PopClip, content, 0, {}, 0, 0, false, c});
+          paint_image(c, child, cs, image_metrics(child), content);
           out.boxes[c] = outer;
           cursor += outer_h + cs.margin[0] + cs.margin[2];
           return;
@@ -1895,6 +1938,14 @@ struct Layout {
         (input_type == "checkbox" || input_type == "radio");
     if (block_text_input) content_h = std::max(content_h, s.font_size);
     if (block_checkable) content_h = std::max(content_h, 14.0);
+    if (block_image) {
+      // Images are replaced elements and have intrinsic height even with no
+      // DOM children. CSS height and the flex/grid forced height below still
+      // take precedence over this fallback.
+      content_h = image.attr_height >= 0 ? image.attr_height
+                  : image.width > 0 && image.height > 0 ? w * image.height / image.width
+                  : 80;
+    }
     const double vertical_extra = s.padding[0] + s.padding[2] + s.border[0] + s.border[2];
     double min_height = std::max(0.0, resolved_bound(s, s.min_height_expression, s.min_height,
                                                     avail_h, 0, "height"));
@@ -1915,6 +1966,8 @@ struct Layout {
         (specified_height >= 0 || percent_height_used)) h = std::max(0.0, h - vertical_extra);
     if (max_height >= 0) h = std::min(h, max_height);
     h = std::max({h, min_height, 0.0});
+    if (block_image && w > 0 && h > 0)
+      paint_image(id, n, s, image, {inner_x, inner_y, w, h});
     if (block_text_input && w > 0 && h > 0) {
       const Rect content_clip{inner_x, inner_y, w, h};
       out.paint.push_back({PaintCommand::Kind::PushClip, content_clip, 0, {}, 0, 0, false, id});
@@ -1943,14 +1996,17 @@ struct Layout {
     double border_box = h + vertical_extra;
     double local_scroll = 0;
     double local_scroll_max = 0;
+    const bool scroll_container = s.overflow == "scroll" || s.overflow == "auto" ||
+                                  s.overflow == "hidden";
     const bool scrollable = s.overflow == "scroll" ||
                             (s.overflow == "auto" && content_h > h + 0.5);
-    if (scrollable && h > 0) {
+    if (scroll_container && h > 0) {
       local_scroll_max = std::max(0.0, content_h - h);
       if (auto stored = scroll_offsets.find(id); stored != scroll_offsets.end())
         local_scroll = std::clamp(stored->second, 0.0, local_scroll_max);
       if (local_scroll > 0) {
-        shift_range(children_at, 0, -local_scroll);
+        for (size_t i = children_at; i < out.paint.size(); ++i)
+          if (!out.paint[i].fixed) out.paint[i].rect.y -= local_scroll;
         for (int child : doc.nodes[id].children) shift_boxes(child, 0, -local_scroll);
       }
     }
@@ -1973,8 +2029,17 @@ struct Layout {
                            {}, {}, {}});
     // Anything positioned is measured against the nearest positioned box.
     double box_w = w + s.padding[1] + s.padding[3] + s.border[1] + s.border[3];
+    const size_t positioned_at = out.paint.size();
     place_positioned(id, s, cb ? *cb : Rect{0, 0, viewport_width, viewport_height}, left, top,
                      box_w, border_box, depth);
+    // Positioned descendants are painted after in-flow children. Scroll them
+    // with the same scrollport, while viewport-fixed descendants stay fixed.
+    if (local_scroll > 0) {
+      for (size_t i = positioned_at; i < out.paint.size(); ++i)
+        if (!out.paint[i].fixed) out.paint[i].rect.y -= local_scroll;
+      for (int child : doc.nodes[id].children)
+        if (positioned(styles[child])) shift_boxes(child, 0, -local_scroll);
+    }
     // A relative box keeps its place in the flow but paints where it is told.
     if (clips_children) {
       const Rect clip_rect{left + s.border[3], top + s.border[0],
@@ -2015,25 +2080,30 @@ struct Layout {
       outline.node = id;
       out.paint.push_back(std::move(outline));
     }
-    if (scrollable && h > 0) {
-      const double track_width = 7;
+    if (scroll_container && h > 0) {
       const Rect viewport{left + s.border[3], top + s.border[0],
                           w + s.padding[1] + s.padding[3],
                           h + s.padding[0] + s.padding[2]};
-      const Rect track{viewport.x + viewport.w - track_width, viewport.y,
-                       track_width, viewport.h};
-      const double thumb_height = std::min(track.h,
-          std::max(14.0, track.h * track.h / std::max(content_h, track.h)));
-      const double thumb_travel = std::max(0.0, track.h - thumb_height);
-      const double thumb_y = track.y + (local_scroll_max > 0
-          ? thumb_travel * local_scroll / local_scroll_max : 0);
-      const Rect thumb{track.x, thumb_y, track.w, thumb_height};
+      Rect track{}, thumb{};
+      if (scrollable) {
+        const double track_width = 7;
+        track = {viewport.x + viewport.w - track_width, viewport.y, track_width, viewport.h};
+        const double thumb_height = std::min(track.h,
+            std::max(14.0, track.h * track.h / std::max(content_h, track.h)));
+        const double thumb_travel = std::max(0.0, track.h - thumb_height);
+        const double thumb_y = track.y + (local_scroll_max > 0
+            ? thumb_travel * local_scroll / local_scroll_max : 0);
+        thumb = {track.x, thumb_y, track.w, thumb_height};
+      }
+      const double content_extent = std::max(viewport.h, content_h + s.padding[0] + s.padding[2]);
       out.scroll_containers[id] = {viewport, track, thumb, local_scroll, local_scroll_max,
-                                   content_h, s.overscroll_behavior};
-      out.paint.push_back({PaintCommand::Kind::Rect, track,
-                           0x30607080u, {}, 0, 0, false, id, {}, {}, {}});
-      out.paint.push_back({PaintCommand::Kind::Rect, thumb,
-                           0xff71869au, {}, 0, 0, false, id, {}, {}, {}});
+                                   content_extent, s.overscroll_behavior, s.overflow != "hidden"};
+      if (scrollable) {
+        out.paint.push_back({PaintCommand::Kind::Rect, track,
+                             0x30607080u, {}, 0, 0, false, id, {}, {}, {}});
+        out.paint.push_back({PaintCommand::Kind::Rect, thumb,
+                             0xff71869au, {}, 0, 0, false, id, {}, {}, {}});
+      }
     }
     if (effect_layer) {
       PaintCommand layer;

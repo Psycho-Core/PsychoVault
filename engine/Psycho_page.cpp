@@ -923,6 +923,31 @@ public:
     if (id < 0 || id >= int(d.nodes.size()))
       return js::Value();
     auto &n = d.nodes[id];
+    if (n.type == Node::Type::Element &&
+        (name == "scrollTop" || name == "clientHeight" || name == "scrollHeight")) {
+      if (page.dirty_ || !page.has_layout_cache_) page.rebuild();
+      const auto container = page.layout_.scroll_containers.find(id);
+      if (name == "scrollTop")
+        return js::Value(container == page.layout_.scroll_containers.end() ? 0.0
+                                                                           : container->second.offset);
+      if (container != page.layout_.scroll_containers.end())
+        return js::Value(std::round(name == "clientHeight" ? container->second.viewport.h
+                                                           : container->second.content));
+      const auto box = page.layout_.boxes.find(id);
+      if (box == page.layout_.boxes.end() || id >= int(page.computed_styles_.size()))
+        return js::Value(0.0);
+      const Style &style = page.computed_styles_[id];
+      const double client = std::max(0.0, box->second.h - style.border[0] - style.border[2]);
+      if (name == "clientHeight") return js::Value(std::round(client));
+      double extent = client;
+      for (int child : page.doc.nodes[id].children) {
+        const auto child_box = page.layout_.boxes.find(child);
+        if (child_box != page.layout_.boxes.end() && !page.layout_.fixed_boxes.count(child))
+          extent = std::max(extent, child_box->second.y + child_box->second.h -
+                                      (box->second.y + style.border[0]));
+      }
+      return js::Value(std::round(extent));
+    }
     if (name == "nodeType")
       return js::Value(n.type == Node::Type::Element ? 1.0
                        : n.type == Node::Type::Text  ? 3.0
@@ -1409,6 +1434,20 @@ public:
     if (id < 0 || id >= int(d.nodes.size()))
       return false;
     auto &n = d.nodes[id];
+    if (n.type == Node::Type::Element && name == "scrollTop") {
+      if (page.dirty_ || !page.has_layout_cache_) page.rebuild();
+      auto container = page.layout_.scroll_containers.find(id);
+      if (container != page.layout_.scroll_containers.end()) {
+        double requested = value.to_number();
+        if (!std::isfinite(requested)) requested = 0;
+        const double next = std::clamp(requested, 0.0, container->second.maximum);
+        if (next != container->second.offset) {
+          page.local_scroll_[id] = next;
+          page.dirty_ = true;
+        }
+      }
+      return true;
+    }
     if (n.name == "canvas" && (name == "width" || name == "height")) {
       canvas_context(id);
       auto &ctx = page.canvases_.at(id);
@@ -1711,6 +1750,11 @@ void Page::load(const Url &url, const std::string &html, const std::string &mime
   focus_visible_ = false;
   keyboard_modality_ = true;
   selections_.clear(); editor_history_.clear(); compositions_.clear(); clipboard_text_.clear();
+  // Node ids are reused by the parser for a new document. Do not carry a
+  // previous page's nested scroll position or scrollbar drag into this page.
+  local_scroll_.clear();
+  scroll_drag_node_ = -1;
+  scrollbar_pointer_ = false;
   control_down_ = shift_down_ = selecting_text_ = editor_dragged_ = false;
   selection_node_ = -1; selection_anchor_ = 0;
   doc.url = url;
@@ -3341,7 +3385,7 @@ bool Page::wheel(double x, double y, double delta) {
   bool changed = false;
   for (int node = target; node >= 0 && node < int(doc.nodes.size()); node = doc.nodes[node].parent) {
     auto found = layout_.scroll_containers.find(node);
-    if (found == layout_.scroll_containers.end() ||
+    if (found == layout_.scroll_containers.end() || !found->second.user_scrollable ||
         !found->second.viewport.contains(x, y + scroll_)) continue;
     const auto &container = found->second;
     const double next = std::clamp(container.offset + remaining, 0.0, container.maximum);
@@ -3630,7 +3674,7 @@ bool Page::scroll_key_default(const std::string &key, int target) {
   bool found_container = false;
   for (int node = target; node >= 0 && node < int(doc.nodes.size()); node = doc.nodes[node].parent) {
     auto found = layout_.scroll_containers.find(node);
-    if (found == layout_.scroll_containers.end()) continue;
+    if (found == layout_.scroll_containers.end() || !found->second.user_scrollable) continue;
     found_container = true;
     const auto &container = found->second;
     if (home || end) {

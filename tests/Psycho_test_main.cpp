@@ -4145,6 +4145,25 @@ int main() {
     CHECK(hit_transformed_active);
   }
   {
+    // Hidden overflow may be scrolled by script, but wheel input should chain
+    // to the enclosing user-scrollable box. A new document must not inherit
+    // the old node ids' nested offsets.
+    const std::string html =
+      "<style>body{margin:0}#outer{width:100px;height:40px;overflow:auto}"
+      "#hidden{width:70px;height:30px;overflow:hidden;overscroll-behavior:contain}"
+      "#child{width:50px;height:100px;background:red}#tail{height:100px}</style>"
+      "<div id=outer><div id=hidden><div id=child></div></div><div id=tail></div></div>";
+    Page page;
+    page.load(*parse_url("https://scroll-navigation.test/first"), html);
+    Rect before = node_box(page, "hidden");
+    CHECK(page.wheel(10, 10, 20));
+    Rect moved = node_box(page, "hidden");
+    CHECK(close_to(moved.y, before.y - 20));
+    page.load(*parse_url("https://scroll-navigation.test/second"), html);
+    Rect fresh = node_box(page, "hidden");
+    CHECK(close_to(fresh.y, before.y));
+  }
+  {
     // UiNestedScrollWheelAndScrollbar covers local wheel scrolling, remainder
     // chaining and overscroll containment, a proportional scrollbar and thumb
     // dragging, plus keyboard scrolling in the focused nested scroller.

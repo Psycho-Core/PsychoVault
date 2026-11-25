@@ -1,0 +1,15 @@
+<!doctype html>
+<html><head><title>P2 contract: blockified images</title><style>
+html, body { margin: 0; padding: 0; }
+.row { width: 100px; height: 24px; }
+.flex { display: flex; }
+.grid { display: grid; grid-template-columns: 100px; grid-template-rows: 24px; }
+.positioned { position: relative; }
+img { width: 20px; height: 10px; }
+.fit { object-fit: contain; background: #eeeeee; }
+.absolute { position: absolute; left: 10px; top: 4px; }
+</style></head><body>
+<div class="row flex"><img class="fit" src="pixel.png"></div>
+<div class="row grid"><img src="pixel.png"></div>
+<div class="row positioned"><img class="absolute" src="pixel.png"></div>
+</body></html>

@@ -1,0 +1,26 @@
+<!doctype html><html><head><title>scroll</title><style>
+html, body { margin: 0; padding: 0; }
+.scroller { width: 80px; height: 40px; position: relative; }
+#auto { overflow: auto; }
+#hidden { overflow: hidden; }
+#clip { overflow: clip; }
+.content { width: 60px; height: 100px; background: #cc0000; }
+#absolute { position: absolute; left: 5px; top: 20px; width: 10px; height: 10px; background: #00aa00; }
+#fixed { position: fixed; left: 100px; top: 10px; width: 10px; height: 10px; background: #0000cc; }
+.button { width: 80px; height: 20px; background: #eeeeee; }
+</style></head><body>
+<div id="auto" class="scroller"><div id="a-content" class="content"></div><div id="absolute"></div><div id="fixed"></div></div>
+<div id="hidden" class="scroller"><div id="h-content" class="content"></div></div>
+<div id="clip" class="scroller"><div id="c-content" class="content"></div></div>
+<div id="go" class="button"></div><div id="clamp" class="button"></div><div id="reset" class="button"></div><div id="resize" class="button"></div>
+<script>
+var a = document.getElementById('auto');
+var h = document.getElementById('hidden');
+var c = document.getElementById('clip');
+function show() { document.title = a.scrollTop + '|' + a.clientHeight + '|' + a.scrollHeight + '|' + h.scrollTop + '|' + h.clientHeight + '|' + h.scrollHeight + '|' + c.scrollTop; }
+show();
+document.getElementById('go').addEventListener('click', function() { a.scrollTop = 25.5; h.scrollTop = 30; c.scrollTop = 30; show(); });
+document.getElementById('clamp').addEventListener('click', function() { a.scrollTop = 500; h.scrollTop = -20; show(); });
+document.getElementById('reset').addEventListener('click', function() { a.scrollTop = NaN; h.scrollTop = Infinity; show(); });
+document.getElementById('resize').addEventListener('click', function() { document.getElementById('a-content').style.height = '50px'; show(); });
+</script></body></html>
