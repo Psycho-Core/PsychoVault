@@ -650,6 +650,25 @@ int run_runtime_bus_tests(int &shared) {
     const std::string renderer_path_arg(
         reinterpret_cast<const char *>(renderer_path_utf8.data()),
         renderer_path_utf8.size());
+    // Where the DirectWrite start-up time goes. The first measurement uses the bundled
+    // UI font (no system font enumeration needed); the second asks for an installed
+    // family, which fetches the system collection. Timings only: no assertion on speed.
+    {
+      Canvas probe(8, 8, 0xffffffff);
+      auto timed = [&](const char *family) {
+        const auto began = std::chrono::steady_clock::now();
+        const double width = probe.text_width("PsychoVault", 14, false, family, 400);
+        const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - began).count();
+        RT_CHECK(width > 0);
+        return elapsed;
+      };
+      const auto ui_us = timed("PsychoVault UI");
+      const auto system_us = timed("Segoe UI");
+      const auto again_us = timed("PsychoVault UI");
+      std::cout << "DIRECTWRITE_FIRST_UI_FONT_US=" << ui_us
+                << " FIRST_SYSTEM_FONT_US=" << system_us << " WARM_US=" << again_us << "\n";
+    }
     RendererProcessFarm farm;
     Error error;
     const bool farm_started = farm.start(renderer_path_arg, 2, error);

@@ -1,5 +1,6 @@
 #include "Psycho_image.hpp"
 #include "Psycho_raster.hpp"
+#include <functional>
 #include <cstring>
 #ifdef _WIN32
 #define NOMINMAX
@@ -315,9 +316,21 @@ struct SelectedFamily {
   std::wstring name;
   IDWriteFontCollection *collection = nullptr;
 };
+// The system collection is only fetched when a family that is not the bundled UI font
+// has to be looked up: enumerating it is the slow part of DirectWrite start-up, and a
+// page whose first family is the UI font never needs it.
 static SelectedFamily first_installed_family(std::string_view css_stack,
-                                             IDWriteFontCollection *collection,
+                                             const std::function<IDWriteFontCollection *()> &system_collection,
                                              IDWriteFontCollection *ui_collection) {
+  IDWriteFontCollection *collection = nullptr;
+  bool fetched = false;
+  auto system = [&]() {
+    if (!fetched) {
+      fetched = true;
+      collection = system_collection();
+    }
+    return collection;
+  };
   std::wstring stack = wide_text(css_stack.empty() ? "Segoe UI" : css_stack);
   size_t start = 0;
   while (start < stack.size()) {
@@ -351,7 +364,7 @@ static SelectedFamily first_installed_family(std::string_view css_stack,
     if (!candidate.empty()) {
       UINT32 index = 0;
       BOOL exists = FALSE;
-      if (SUCCEEDED(collection->FindFamilyName(candidate.c_str(), &index, &exists)) && exists) {
+      if (system() && SUCCEEDED(collection->FindFamilyName(candidate.c_str(), &index, &exists)) && exists) {
         ComPtr<IDWriteFontFamily> family;
         ComPtr<IDWriteLocalizedStrings> names;
         WCHAR locale[LOCALE_NAME_MAX_LENGTH]{};
@@ -378,7 +391,7 @@ static SelectedFamily first_installed_family(std::string_view css_stack,
     }
     start = end + 1;
   }
-  return {L"Segoe UI", collection};
+  return {L"Segoe UI", system()};
 }
 
 struct DirectWriteContext {
@@ -426,12 +439,16 @@ struct DirectWriteContext {
     return true;
   }
 
+  IDWriteFontCollection *system_collection() {
+    if (!font_collection && write_factory)
+      write_factory->GetSystemFontCollection(&font_collection, FALSE);
+    return font_collection.Get();
+  }
+
   bool ready() {
     if (!write_factory && FAILED(DWriteCreateFactory(
                                 DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
                                 reinterpret_cast<IUnknown **>(write_factory.GetAddressOf()))))
-      return false;
-    if (!font_collection && FAILED(write_factory->GetSystemFontCollection(&font_collection, FALSE)))
       return false;
     if (!d2d_factory && FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
                                                  d2d_factory.GetAddressOf())))
@@ -456,7 +473,9 @@ struct DirectWriteContext {
     const double clamped_size = size64 / 64.0;
     const int effective_weight = weight >= 1 && weight <= 1000 ? weight : (bold ? 700 : 400);
     load_ui_font();
-    SelectedFamily selected = first_installed_family(family, font_collection.Get(), ui_collection.Get());
+    SelectedFamily selected = first_installed_family(
+        family, [this] { return system_collection(); }, ui_collection.Get());
+    if (!selected.collection) return nullptr;
     std::wstring key = selected.name + (selected.collection == ui_collection.Get() ? L"|bundled|" : L"|system|") +
                        std::to_wstring(size64) + L"|" + std::to_wstring(effective_weight);
     auto found = formats.find(key);

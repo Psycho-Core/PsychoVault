@@ -13,7 +13,7 @@ The plan also says what the gate is not: full CSS conformance, the real settings
 
 ## Evidence per step
 
-Three kinds of check, kept apart: an **owned golden** records the engine's own output (a regression guard, not proof of correctness); an **independent golden** compares against rectangles I worked out from the CSS rules before looking at engine output; a **contract test** asserts boxes or pixels worked out from the rules. Windows evidence is the run named at the end.
+"Native" below means inline checks in `tests/Psycho_test_main.cpp` and `runtime/tests/`, found by searching for the area (animation, canvas, selection, composition, damage, tile, text_width); they are not individually named test functions. Three kinds of check, kept apart: an **owned golden** records the engine's own output (a regression guard, not proof of correctness); an **independent golden** compares against rectangles I worked out from the CSS rules before looking at engine output; a **contract test** asserts boxes or pixels worked out from the rules. Windows evidence is the run named at the end.
 
 | Step | Owned golden | Independent goldens | Contract tests |
 |---|---|---|---|
@@ -35,6 +35,8 @@ Three kinds of check, kept apart: an **owned golden** records the engine's own o
 | S067 compositing | s067 | effects, events_idle | native tile and layer metadata tests |
 | S068 canvas | s068 | canvas | native canvas tests |
 | S069 fonts | s069 | font_1x, font_2x | native font tests |
+| S070 golden suite | the 18 above | the 28 above | `Psycho_golden_tests.py`, `Psycho_independent_golden_tests.py` runner self-tests (6 each) |
+| S071 visual diff | n/a | n/a | `Psycho_reference_diff_tests.py` (8 self-tests, mocked renderer); the CLI has not compared a real engine render with a real `legacy-ui` capture, because no matching P3 view exists yet |
 
 ## What this session fixed because the probes showed it was wrong
 
@@ -71,7 +73,7 @@ Each was found by rendering a small page and comparing it with what the CSS rule
 ## What this audit does not establish
 
 - **Visual parity.** No settings or new-tab page exists yet; the S071 diff harness has only run against fixtures.
-- **Performance.** First navigation takes about 2.1 s on the Windows runner (35 ms on 2026-11-07); I did not find why.
+- **Performance, beyond one finding.** First navigation takes about 2-3 s on a cold Windows runner. It is not a regression in the renderer process: the original P1 run measured 35 ms, run 42340417295 (the commit that moved text to DirectWrite, S051) measured 3.1 s, and the second renderer in every run takes about 0.1 s. The cost is DirectWrite start-up on first text layout, almost certainly the system font enumeration. I made that lazy (a page whose first family is the bundled UI font no longer touches it) and added a timing line to the Windows test to see the split; no measurement of the result yet.
 - **Real text.** The goldens are deliberately text-free so they compare across platforms; glyph shaping, fallback and wrapping are checked only by the native tests and the platform golden.
 - **Independence of the owned goldens.** They lock in current output. The independent goldens and contract tests are the ones that can disagree with the engine, and they cover a representative slice, not every combination.
 

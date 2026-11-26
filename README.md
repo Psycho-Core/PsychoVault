@@ -16,7 +16,7 @@ The old app I made earlier ran on Electron. I want that experience back - the sa
 
 ## Where it stands
 
-This is a rebuild in progress. The engine, networking, profile, vault and extension groundwork exist and are tested at the unit level. What I have not built yet is the part that makes it feel like my old browser: the runtime that hosts my interface, the interface itself rendered by my own engine, and the installer. That is exactly where the plan starts, and it is why there is no new release to try yet.
+This is a rebuild in progress. The runtime foundation (P1) and the engine's rendering baseline (P2) are closed, each against its own written gate and Windows CI evidence: my runtime hosts a minimal interface page rendered by my own engine, ordinary tabs run in sandboxed renderer processes, and the engine paints the web's common layout and controls. What I have not built yet is the interface itself (P3): the tab strip, rail, address bar, new tab page and settings. There is no new release to try yet, and the development build is not an installer.
 
 ## How it will ship
 
