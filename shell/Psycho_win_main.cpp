@@ -3631,6 +3631,21 @@ struct Browser {
       report.set("status", status);
       report.set("note", smoke_settings_note);
       report.set("profileError", profile_error);
+      {
+        // What the page actually painted, so a missing row can be told from a missing page.
+        Json texts = Json::make_array();
+        const Json *paint = current().frame.find("paint");
+        if (paint && paint->type == Json::Type::Array) {
+          report.set("paintCommands", double(paint->array.size()));
+          for (const Json &command : paint->array)
+            if (!command.str("text").empty() && texts.array.size() < 40)
+              texts.array.push_back(Json(command.str("text").substr(0, 60) + " @" +
+                                         std::to_string(int(command.num("x"))) + "," +
+                                         std::to_string(int(command.num("y")))));
+        }
+        report.set("texts", std::move(texts));
+        report.set("frameTitle", current().frame.str("title"));
+      }
       if (current().session) {
         Json notes = Json::make_array();
         for (const auto &line : current().session->recent_diagnostics()) notes.array.push_back(Json(line));
