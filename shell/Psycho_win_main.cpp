@@ -928,7 +928,7 @@ void Session::run() {
 }
 static void capture(HWND hwnd, const std::string &path);
 // Telemetry the smoke reports carry: how often the window repainted, ticked, and got a frame page.
-static std::atomic<uint64_t> g_timer_ticks{0}, g_paints{0}, g_chrome_frames{0};
+static std::atomic<uint64_t> g_timer_ticks{0}, g_paints{0}, g_chrome_frames{0}, g_paint_us{0}, g_draw_us{0};
 // The settings snapshot the session threads read. Only the UI thread writes it (after every applied
 // change), so a settings page reads values without touching the profile from another thread.
 struct SettingsHub {
@@ -3744,6 +3744,8 @@ struct Browser {
       report.set("timerTicks", double(g_timer_ticks.load()));
       report.set("paints", double(g_paints.load()));
       report.set("chromeFrames", double(g_chrome_frames.load()));
+      report.set("paintMsTotal", double(g_paint_us.load()) / 1000.0);
+      report.set("drawMsTotal", double(g_draw_us.load()) / 1000.0);
       if (chrome_session) {
         report.set("chromeExchanges", double(chrome_session->exchanges.load()));
         report.set("chromeExchangeMs", double(chrome_session->exchange_ms.load()));
@@ -5605,7 +5607,10 @@ static void paint(HWND hwnd) {
   canvas.clip = {double(ps.rcPaint.left), double(ps.rcPaint.top),
                  double(std::max(0L, ps.rcPaint.right - ps.rcPaint.left)),
                  double(std::max(0L, ps.rcPaint.bottom - ps.rcPaint.top))};
+  const auto draw_started = std::chrono::steady_clock::now();
   b->draw(canvas);
+  g_draw_us.fetch_add(uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(
+      std::chrono::steady_clock::now() - draw_started).count()));
   BITMAPINFO bi{};
   bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
   bi.bmiHeader.biWidth = canvas.width;
@@ -5629,6 +5634,8 @@ static void paint(HWND hwnd) {
   const double elapsed = std::chrono::duration<double>(
       std::chrono::steady_clock::now() - paint_started).count();
   DwmFlush();
+  g_paint_us.fetch_add(uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(
+      std::chrono::steady_clock::now() - paint_started).count()));
   ++b->compositor_presented_frames;
   if (elapsed > 1.0 / refresh_hz)
     b->compositor_dropped_frames += uint64_t(std::max(1.0, std::ceil(elapsed * refresh_hz) - 1));
@@ -6572,6 +6579,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
       report.set("insideMessage", double(g_in_message.load()));
       report.set("msSinceLastMessage", double(GetTickCount() - g_last_message_tick.load()));
       report.set("msSinceStart", double(GetTickCount() - started));
+      report.set("timerTicks", double(g_timer_ticks.load()));
+      report.set("paints", double(g_paints.load()));
+      report.set("chromeFrames", double(g_chrome_frames.load()));
+      report.set("paintMsTotal", double(g_paint_us.load()) / 1000.0);
+      report.set("drawMsTotal", double(g_draw_us.load()) / 1000.0);
       std::string ignored;
       write_file_atomic(path, report.dump() + "\n", ignored);
       TerminateProcess(GetCurrentProcess(), 3);
