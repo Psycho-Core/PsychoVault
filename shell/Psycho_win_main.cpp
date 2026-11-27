@@ -5630,7 +5630,21 @@ static void capture(HWND hwnd, const std::string &path) {
   std::ofstream f(path, std::ios::binary);
   f.write(reinterpret_cast<const char *>(png.data()), std::streamsize(png.size()));
 }
+// Smoke watchdog: the last message the window procedure saw and when. If a smoke never finishes, the
+// watchdog thread writes these beside the capture and ends the process, so a hang leaves evidence.
+static std::atomic<DWORD> g_last_message_tick{0};
+static std::atomic<UINT> g_last_message{0};
+static std::atomic<UINT> g_in_message{0};
+static LRESULT wndproc_inner(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+  g_last_message.store(msg);
+  g_last_message_tick.store(GetTickCount());
+  g_in_message.store(msg);
+  const LRESULT result = wndproc_inner(hwnd, msg, wp, lp);
+  g_in_message.store(0);
+  return result;
+}
+static LRESULT wndproc_inner(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   switch (msg) {
   case WM_NCCREATE: {
     auto cs = reinterpret_cast<CREATESTRUCTW *>(lp);
@@ -6500,6 +6514,20 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
   // keep it off unless they ask for it; --no-chrome turns it off for debugging.
   if (!command.no_chrome && (command.chrome || !command.smoke || command.smoke_settings)) b.enable_chrome();
   b.start_tick = GetTickCount();
+  if (smoke && !capture.empty() && (command.smoke_chrome || command.smoke_settings)) {
+    std::thread([path = capture + ".watchdog.json", started = b.start_tick] {
+      Sleep(75000);
+      Json report = Json::make_object();
+      report.set("result", "hung");
+      report.set("lastMessage", double(g_last_message.load()));
+      report.set("insideMessage", double(g_in_message.load()));
+      report.set("msSinceLastMessage", double(GetTickCount() - g_last_message_tick.load()));
+      report.set("msSinceStart", double(GetTickCount() - started));
+      std::string ignored;
+      write_file_atomic(path, report.dump() + "\n", ignored);
+      TerminateProcess(GetCurrentProcess(), 3);
+    }).detach();
+  }
   if (private_mode) {
     b.forget_all_tabs();
     b.new_tab("psychovault://newtab", false);

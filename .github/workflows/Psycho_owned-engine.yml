@@ -261,7 +261,7 @@ jobs:
           $report = "$out.chrome.json"
           Remove-Item -Force $report -ErrorAction SilentlyContinue
           $p = Start-Process -FilePath '.\build\PsychoVault.exe' -ArgumentList @('--smoke', '--smoke-chrome', '--capture', $out, '--profile', 'build/chrome-profile') -PassThru
-          if (-not $p.WaitForExit(90000)) { try { $p.Kill($true) } catch {}; if (Test-Path $report) { Write-Host (Get-Content $report -Raw) } else { Write-Host 'no report was written before the hang' }; throw 'the chrome smoke did not finish' }
+          if (-not $p.WaitForExit(90000)) { try { $p.Kill($true) } catch {}; if (Test-Path $report) { Write-Host (Get-Content $report -Raw) } else { Write-Host 'no report was written before the hang' }; if (Test-Path "$out.watchdog.json") { Write-Host (Get-Content "$out.watchdog.json" -Raw) }; throw 'the chrome smoke did not finish' }
           if (Test-Path $report) { Write-Host (Get-Content $report -Raw) }
           if ($p.ExitCode -ne 0) { throw "the chrome smoke exited $($p.ExitCode)" }
           if (-not (Test-Path $report)) { throw 'the chrome smoke wrote no report' }
@@ -274,7 +274,7 @@ jobs:
           $report = "$out.settings.json"
           Remove-Item -Force $report -ErrorAction SilentlyContinue
           $p = Start-Process -FilePath '.\build\PsychoVault.exe' -ArgumentList @('--smoke', '--smoke-settings', '--capture', $out, '--profile', 'build/settings-profile', 'psychovault://settings') -PassThru
-          if (-not $p.WaitForExit(90000)) { try { $p.Kill($true) } catch {}; if (Test-Path $report) { Write-Host (Get-Content $report -Raw) } else { Write-Host 'no report was written before the hang' }; throw 'the settings smoke did not finish' }
+          if (-not $p.WaitForExit(90000)) { try { $p.Kill($true) } catch {}; if (Test-Path $report) { Write-Host (Get-Content $report -Raw) } else { Write-Host 'no report was written before the hang' }; if (Test-Path "$out.watchdog.json") { Write-Host (Get-Content "$out.watchdog.json" -Raw) }; throw 'the settings smoke did not finish' }
           if (Test-Path $report) { Write-Host (Get-Content $report -Raw) }
           if ($p.ExitCode -ne 0) { throw "the settings smoke exited $($p.ExitCode)" }
           if (-not (Test-Path $report)) { throw 'the settings smoke wrote no report' }
