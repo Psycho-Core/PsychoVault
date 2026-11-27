@@ -176,6 +176,9 @@ bool parse_command_line(const std::vector<std::string> &arguments,
     } else if (argument == "--smoke-services") {
       if (!once(argument)) return false;
       options.smoke_services = true;
+    } else if (argument == "--no-chrome") {
+      if (!once(argument)) return false;
+      options.no_chrome = true;
     } else if (argument == "--chrome") {
       if (!once(argument)) return false;
       options.chrome = true;

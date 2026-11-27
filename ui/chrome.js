@@ -49,6 +49,8 @@
     setDim("nav-back", !state.canBack);
     setDim("nav-forward", !state.canForward);
     if (document.activeElement !== addressEl && typeof state.address === "string") addressEl.value = state.address;
+    var statusText = document.getElementById("status-text");
+    if (statusText && typeof state.status === "string") statusText.textContent = state.status;
     var count = document.querySelector(".shield .count");
     if (count) count.textContent = String(state.blocked || 0);
   }

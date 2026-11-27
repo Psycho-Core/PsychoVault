@@ -1026,7 +1026,7 @@ struct Browser {
     layout_content();
   }
   void layout_content() {
-    content = chrome_enabled ? Rect{44, 84, double(std::max(0, width - 44)), double(std::max(0, height - 84))}
+    content = chrome_enabled ? Rect{44, 84, double(std::max(0, width - 44)), double(std::max(0, height - 84 - 22))}
               : app_ui_slice ? Rect{0, 0, double(width), double(height)}
                              : Rect{44, 84, double(width - 44), double(height - 106)};
   }
@@ -1475,6 +1475,17 @@ struct Browser {
     for (size_t slot : renderer_farm->take_failed_leases()) {
       log_event("renderer", rt::LogLevel::Warn, "lease.failed",
                 {{"slot", std::to_string(slot)}});
+      if (chrome_session && chrome_session->published_slot.load() == slot) {
+        // The frame's renderer died: start a new one; the next timer tick pushes the state again.
+        chrome_session->request_stop();
+        retired_sessions.push_back(std::move(chrome_session));
+        chrome_session.reset();
+        chrome_started = false;
+        chrome_frame = Json();
+        chrome_state_sent.clear();
+        log_event("renderer", rt::LogLevel::Warn, "chrome.restarted", {{"slot", std::to_string(slot)}});
+        continue;
+      }
       Tab *owner = nullptr;
       for (auto &tab : tabs)
         if (tab.session && tab.session->published_slot.load() == slot) {
@@ -3476,6 +3487,7 @@ struct Browser {
     state.set("canBack", current().can_back());
     state.set("canForward", current().can_forward());
     state.set("blocked", double(report ? report->blocked.load() : 0));
+    state.set("status", status.substr(0, 512));
     const std::string text = state.dump();
     if (text == chrome_state_sent) return;
     chrome_state_sent = text;
@@ -3634,7 +3646,7 @@ struct Browser {
       if (paint && paint->type == Json::Type::Array)
         for (const Json &command : paint->array)
           if (command.str("text") == "Restore tabs on launch") {
-            label_y = command.num("y") + command.num("h") / 2.0 - tab.scroll;
+            label_y = command.num("y") + command.num("h") / 2.0 - tab.scroll + content.y;
             break;
           }
       if (label_y < 0) {
@@ -3645,9 +3657,9 @@ struct Browser {
       bool found = false;
       for (const Json &command : paint->array) {
         if (std::fabs(command.num("w") - 44) > 1 || std::fabs(command.num("h") - 24) > 1) continue;
-        const double cy = command.num("y") + command.num("h") / 2.0 - tab.scroll;
+        const double cy = command.num("y") + command.num("h") / 2.0 - tab.scroll + content.y;
         if (std::fabs(cy - label_y) > 20) continue;
-        x = int(std::lround(command.num("x") + command.num("w") / 2.0));
+        x = int(std::lround(command.num("x") + command.num("w") / 2.0 + content.x));
         y = int(std::lround(cy));
         found = true;
         break;
@@ -6484,7 +6496,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
   b.smoke_services = command.smoke_services;
   b.smoke_chrome = command.smoke_chrome;
   b.smoke_settings = command.smoke_settings;
-  if (command.chrome) b.enable_chrome();
+  // The engine-rendered frame is the browser's chrome. The older smokes drive the page alone, so they
+  // keep it off unless they ask for it; --no-chrome turns it off for debugging.
+  if (!command.no_chrome && (command.chrome || !command.smoke || command.smoke_settings)) b.enable_chrome();
   b.start_tick = GetTickCount();
   if (private_mode) {
     b.forget_all_tabs();

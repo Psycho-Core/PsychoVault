@@ -57,3 +57,6 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .star{position:absolute;right:12px;top:8px;width:12px;height:14px}
 .menu{position:absolute;right:11px;top:13px;width:18px;height:18px}
 .menu svg{display:block;margin:4px auto 0}
+
+.statusbar{position:absolute;left:44px;right:0;bottom:0;height:21px;border-top:1px solid var(--pv-border);background:var(--pv-bg)}
+.statusbar span{position:absolute;left:12px;top:3px;right:12px;height:16px;font-size:11px;line-height:16px;color:var(--pv-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

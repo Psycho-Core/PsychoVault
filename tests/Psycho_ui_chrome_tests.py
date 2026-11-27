@@ -20,7 +20,7 @@ STUB = """
 window.psycho={tab:{close:function(a){document.title="close:"+a.id;},activate:function(a){document.title="activate:"+a.id;},
   new:function(a){document.title="new:"+a.url;}},nav:{back:function(){document.title="back";},go:function(a){document.title="go:"+a.url;}},
   win:{close:function(){document.title="win-close";}}};
-psychoChromeState({tabs:[{id:1,title:"One"},{id:2,title:"Two"}],activeId:2,address:"https://example.test/",canBack:true,canForward:false});
+psychoChromeState({tabs:[{id:1,title:"One"},{id:2,title:"Two"}],activeId:2,address:"https://example.test/",canBack:true,canForward:false,status:"Loading https://example.test/"});
 """
 
 
@@ -53,6 +53,13 @@ class ChromeFrame(unittest.TestCase):
         self.assertTrue(result["inspected"][0]["found"])
         self.assertTrue(result["inspected"][1]["found"])
         self.assertIsNone(result.get("diagnostics"))
+
+    def test_status_bar_shows_the_pushed_status(self):
+        result = run(("--inspect", "#status-text", "--inspect", "#statusbar"))
+        self.assertEqual(result["inspected"][0]["text"], "Loading https://example.test/")
+        bar = result["inspected"][1]["box"]
+        # 21px content plus the 1px top border is the 22px status bar of the reference chrome.
+        self.assertEqual((bar["x"], bar["h"], bar["y"] + bar["h"]), (44, 21, 940))
 
     def test_close_glyph_closes_that_tab(self):
         x, y = center("#tabs .x")
