@@ -451,6 +451,8 @@ struct Session {
   std::atomic<bool> ready{false};
   std::atomic<bool> finished{false};
   std::atomic<bool> muted{false};
+  // Telemetry for the smoke reports: renderer round trips and the time they took.
+  std::atomic<uint64_t> exchanges{0}, exchange_ms{0};
   std::vector<std::string> diagnostics;
   AudioOut audio;
   ~Session() {
@@ -902,10 +904,14 @@ void Session::run() {
       height = command.num("height", height);
     }
     lock.unlock();
+    const auto exchange_started = std::chrono::steady_clock::now();
     if (!exchange(&command, reply)) {
       fail("Renderer input IPC failed: " + renderer_error.message);
       break;
     }
+    exchanges.fetch_add(1);
+    exchange_ms.fetch_add(uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - exchange_started).count()));
     if (!reply.payload.flag("ok")) {
       fail("Renderer refused page input: " +
            reply.payload.str("detail", "unknown renderer input error"));
@@ -921,6 +927,8 @@ void Session::run() {
   if (!done_posted) post_update(hwnd, WM_DONE, make_update(tab, generation));
 }
 static void capture(HWND hwnd, const std::string &path);
+// Telemetry the smoke reports carry: how often the window repainted, ticked, and got a frame page.
+static std::atomic<uint64_t> g_timer_ticks{0}, g_paints{0}, g_chrome_frames{0};
 // The settings snapshot the session threads read. Only the UI thread writes it (after every applied
 // change), so a settings page reads values without touching the profile from another thread.
 struct SettingsHub {
@@ -3733,6 +3741,17 @@ struct Browser {
       report.set("chromeFrame", chrome_frame.type == Json::Type::Object);
       report.set("chromeReady", chrome_session && chrome_session->ready.load());
       report.set("note", smoke_chrome_note);
+      report.set("timerTicks", double(g_timer_ticks.load()));
+      report.set("paints", double(g_paints.load()));
+      report.set("chromeFrames", double(g_chrome_frames.load()));
+      if (chrome_session) {
+        report.set("chromeExchanges", double(chrome_session->exchanges.load()));
+        report.set("chromeExchangeMs", double(chrome_session->exchange_ms.load()));
+      }
+      if (current().session) {
+        report.set("tabExchanges", double(current().session->exchanges.load()));
+        report.set("tabExchangeMs", double(current().session->exchange_ms.load()));
+      }
       report.set("activeLoading", current().loading);
       report.set("activeHasFrame", current().frame.type == Json::Type::Object);
       report.set("activeError", current().error);
@@ -5641,6 +5660,8 @@ static std::atomic<UINT> g_in_message{0};
 static LRESULT wndproc_inner(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   g_last_message.store(msg);
+  if (msg == WM_PAINT) g_paints.fetch_add(1);
+  else if (msg == WM_TIMER) g_timer_ticks.fetch_add(1);
   g_last_message_tick.store(GetTickCount());
   g_in_message.store(msg);
   const LRESULT result = wndproc_inner(hwnd, msg, wp, lp);
@@ -5779,6 +5800,7 @@ static LRESULT wndproc_inner(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
           const bool first = b->chrome_frame.type != Json::Type::Object;
           b->chrome_frame = std::move(up->frame);
           b->chrome_frame_tick = GetTickCount();
+          g_chrome_frames.fetch_add(1);
           if (first) b->chrome_state_sent.clear();
           // The frame page is pumped continuously and most frames change nothing; repainting the
           // whole window for each one starves the timer. Repaint only what the frame says changed.
