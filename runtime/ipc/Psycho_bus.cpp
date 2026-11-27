@@ -111,6 +111,14 @@ Schemas Schemas::stock() {
   s.add("tab:mute", fields({{"id", T::Number, true}}));
   s.add("ui:overlay", fields({{"open", T::Bool, true}}));
   s.add("rail:adblock", fields({}));
+  // The frame's side panel: which one is open ("" closes it) and the actions its rows and footer offer.
+  s.add("ui:panel", fields({{"kind", T::String, true}}));
+  s.add("bookmarks:add", fields({}));
+  s.add("bookmarks:remove", fields({{"url", T::String, true}}));
+  s.add("history:clear", fields({}));
+  s.add("downloads:cancel", fields({{"id", T::Number, true}}));
+  s.add("downloads:remove", fields({{"id", T::Number, true}}));
+  s.add("downloads:clear", fields({}));
   // The frame page answers the dialog it is showing: which one, which button, and the text of a prompt.
   s.add("ui:dialog", fields({{"id", T::Number, true}, {"button", T::Number, true}, {"value", T::String, false}}));
   s.add("nav:back", fields({}));

@@ -1081,8 +1081,12 @@ struct Browser {
     chrome_enabled = true;
     layout_content();
   }
+  // The side panel (history, bookmarks, downloads) takes 330px from the page when it is open.
+  bool chrome_panel_open() const { return chrome_enabled && (panel_bookmarks || panel_history || panel_downloads); }
+  bool last_panel_open = false;
   void layout_content() {
-    content = chrome_enabled ? Rect{44, 84, double(std::max(0, width - 44)), double(std::max(0, height - 84 - 22))}
+    const int panel_width = chrome_panel_open() ? 330 : 0;
+    content = chrome_enabled ? Rect{44, 84, double(std::max(0, width - 44 - panel_width)), double(std::max(0, height - 84 - 22))}
               : app_ui_slice ? Rect{0, 0, double(width), double(height)}
                              : Rect{44, 84, double(width - 44), double(height - 106)};
   }
@@ -3556,6 +3560,41 @@ struct Browser {
     state.set("activeId", double(current().id));
     state.set("address", app_ui_url(current().url) ? std::string() : current().url.substr(0, 2048));
     state.set("blockAds", profile.block_ads);
+    if (chrome_panel_open()) {
+      Json panel = Json::make_object();
+      Json items = Json::make_array();
+      const std::string kind = panel_bookmarks ? "bookmarks" : panel_history ? "history" : "downloads";
+      panel.set("kind", kind);
+      if (kind == "bookmarks") {
+        for (const Bookmark &mark : profile.bookmarks) {
+          if (items.array.size() >= 300) break;
+          Json item = Json::make_object();
+          item.set("title", mark.title.substr(0, 120));
+          item.set("url", mark.url.substr(0, 512));
+          items.array.push_back(std::move(item));
+        }
+      } else if (kind == "history") {
+        for (auto it = profile.history.rbegin(); it != profile.history.rend() && items.array.size() < 300; ++it) {
+          Json item = Json::make_object();
+          item.set("title", it->title.substr(0, 120));
+          item.set("url", it->url.substr(0, 512));
+          items.array.push_back(std::move(item));
+        }
+      } else {
+        for (const DownloadItem &download : downloads.snapshot()) {
+          if (items.array.size() >= 100) break;
+          Json item = Json::make_object();
+          item.set("id", double(download.id));
+          item.set("filename", download.filename.substr(0, 120));
+          item.set("state", download.state);
+          item.set("received", double(download.received));
+          item.set("total", double(download.total));
+          items.array.push_back(std::move(item));
+        }
+      }
+      panel.set("items", std::move(items));
+      state.set("panel", std::move(panel));
+    }
     if (!frame_dialogs.empty()) {
       const FrameDialog &front = frame_dialogs.front();
       Json dialog = Json::make_object();
@@ -3608,7 +3647,10 @@ struct Browser {
           {"tab:close", rt::Channel::Tab},    {"nav:go", rt::Channel::Nav},
           {"tab:pin", rt::Channel::Tab},      {"tab:mute", rt::Channel::Tab},
           {"ui:overlay", rt::Channel::Ui},    {"rail:adblock", rt::Channel::Rail},
-          {"ui:dialog", rt::Channel::Ui},
+          {"ui:dialog", rt::Channel::Ui},      {"ui:panel", rt::Channel::Ui},
+          {"bookmarks:add", rt::Channel::Bookmarks}, {"bookmarks:remove", rt::Channel::Bookmarks},
+          {"history:clear", rt::Channel::History},   {"downloads:cancel", rt::Channel::Downloads},
+          {"downloads:remove", rt::Channel::Downloads}, {"downloads:clear", rt::Channel::Downloads},
           {"nav:back", rt::Channel::Nav},     {"nav:forward", rt::Channel::Nav},
           {"nav:reload", rt::Channel::Nav},   {"nav:home", rt::Channel::Nav},
           {"win:minimize", rt::Channel::Win}, {"win:maximize", rt::Channel::Win},
@@ -3626,6 +3668,24 @@ struct Browser {
         if (!std::isfinite(raw_id) || raw_id <= 0 || raw_id > double(std::numeric_limits<int>::max()) ||
             raw_id != double(int(raw_id))) {
           bridge_error = {"bridge.tab.id", "a tab action requires a positive integer id"};
+          return false;
+        }
+      }
+      if (method == "ui:panel") {
+        const std::string kind = payload.str("kind");
+        if (!kind.empty() && kind != "bookmarks" && kind != "history" && kind != "downloads") {
+          bridge_error = {"bridge.panel.kind", "unknown panel"};
+          return false;
+        }
+      }
+      if (method == "bookmarks:remove" && payload.str("url").size() > 8192) {
+        bridge_error = {"bridge.bookmark.url", "address is too long"};
+        return false;
+      }
+      if (method == "downloads:cancel" || method == "downloads:remove") {
+        const double id = payload.num("id", 0);
+        if (!std::isfinite(id) || id <= 0 || id > 1e9 || id != std::floor(id)) {
+          bridge_error = {"bridge.download.id", "a download action needs a positive integer id"};
           return false;
         }
       }
@@ -3694,6 +3754,32 @@ struct Browser {
     } else if (method == "ui:dialog") {
       answer_frame_dialog(int(task.payload.num("id", 0)), int(task.payload.num("button", 0)),
                           task.payload.str("value"));
+    } else if (method == "ui:panel") {
+      const std::string kind = task.payload.str("kind");
+      panel_bookmarks = kind == "bookmarks";
+      panel_history = kind == "history";
+      panel_downloads = kind == "downloads";
+      panel_workspaces = false;
+    } else if (method == "bookmarks:add") {
+      const std::string url = current().url;
+      if (!private_mode && !url.empty() && !app_ui_url(url)) {
+        profile.bookmark(current().title, url);
+        save_profile();
+        status = "Bookmark saved";
+      }
+    } else if (method == "bookmarks:remove") {
+      profile.remove_bookmark(task.payload.str("url"));
+      save_profile();
+    } else if (method == "history:clear") {
+      profile.clear_history();
+      save_profile();
+      status = "I cleared my browsing history";
+    } else if (method == "downloads:cancel") {
+      downloads.cancel(int(task.payload.num("id", 0)));
+    } else if (method == "downloads:remove") {
+      downloads.remove(int(task.payload.num("id", 0)));
+    } else if (method == "downloads:clear") {
+      downloads.clear_finished();
     } else if (method == "ui:overlay") {
       chrome_overlay = task.payload.flag("open");
       if (!chrome_overlay) chrome_pointer_down = false;
@@ -3900,10 +3986,10 @@ struct Browser {
       }
       std::string write_error;
       write_file_atomic(capture_path + ".chrome.json", report.dump() + "\n", write_error);
-      smoke_chrome_stage = 9;
+      smoke_chrome_stage = 99;
       PostQuitMessage(passed ? 0 : 1);
     };
-    if (smoke_chrome_stage >= 9) return true;
+    if (smoke_chrome_stage >= 99) return true;
     if (now - start_tick >= 45000) {
       finish(false, "the browser frame did not complete its tab actions in time");
       return true;
@@ -3995,7 +4081,29 @@ struct Browser {
       smoke_chrome_tick = now;
     } else if (smoke_chrome_stage == 8) {
       if (frame_dialogs.empty() && smoke_chrome_note.find("alert answered") != std::string::npos) {
-        finish(true, "the frame opened a tab, closed one, pinned one from its menu, and answered a page alert");
+        // Open the history panel (what Ctrl+H or the menu does) with one visit in it.
+        profile.history.push_back({"Smoke visit", "https://smoke.test/", double(now_ms() % 4000000000000000LL)});
+        panel_history = true;
+        smoke_chrome_note += "; alert done, panel opened";
+        smoke_chrome_stage = 10;
+        smoke_chrome_tick = now;
+      }
+    } else if (smoke_chrome_stage == 10) {
+      // The page area must have shrunk by the 330px panel and the row must be painted in it.
+      if (now - smoke_chrome_tick < 600) return true;
+      int row_x = 0, row_y = 0;
+      if (!chrome_paint_center("Smoke", 0, row_x, row_y, 2000) || row_x < int(content.x + content.w)) return true;
+      if (std::fabs(content.w - (width - 44 - 330)) > 1) {
+        finish(false, "the page area did not shrink for the panel");
+        return true;
+      }
+      smoke_chrome_note += "; pressing the history row at " + std::to_string(row_x) + "," + std::to_string(row_y);
+      chrome_press(row_x, row_y);
+      smoke_chrome_stage = 11;
+      smoke_chrome_tick = now;
+    } else if (smoke_chrome_stage == 11) {
+      if (current().url == "https://smoke.test/") {
+        finish(true, "the frame opened a tab, closed one, pinned one, answered an alert, and opened a history row from its panel");
         return true;
       }
     }
@@ -6249,6 +6357,10 @@ static LRESULT wndproc_inner(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (b) b->reap_sessions();
     if (b && b->chrome_enabled) {
       b->start_chrome();
+      if (b->chrome_panel_open() != b->last_panel_open) {
+        b->last_panel_open = b->chrome_panel_open();
+        b->resize(b->width, b->height);
+      }
       b->push_chrome_state();
     }
     if (b && b->smoke && b->smoke_settings) {

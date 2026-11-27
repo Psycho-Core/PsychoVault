@@ -24,6 +24,10 @@ psycho.tab.pin=function(a){document.title="pin:"+a.id;};
 psycho.tab.mute=function(a){document.title="mute:"+a.id;};
 psycho.ui={overlay:function(a){window.__overlay=a.open;},dialog:function(a){document.title="dialog:"+a.id+":"+a.button+":"+a.value;}};
 psycho.rail={adblock:function(){document.title="adblock";}};
+psycho.ui.panel=function(a){document.title="panel:"+a.kind;};
+psycho.bookmarks={add:function(){document.title="bm-add";},remove:function(a){document.title="bm-remove:"+a.url;}};
+psycho.history={clear:function(){document.title="history-clear";}};
+psycho.downloads={remove:function(a){document.title="dl-remove:"+a.id;},clear:function(){document.title="dl-clear";}};
 psychoChromeState({tabs:[{id:1,title:"One"},{id:2,title:"Two"}],activeId:2,address:"https://example.test/",canBack:true,canForward:false,status:"Loading https://example.test/"});
 """
 
@@ -129,6 +133,58 @@ class ChromeFrame(unittest.TestCase):
         tail = self.dialog_state("prompt", ["Cancel", "OK"], "Name?")
         out = run(("--action", "text:abc", "--action", "key:Enter"), tail=tail)
         self.assertEqual(out["title"], "dialog:7:1:abc")
+
+    def panel_state(self, kind, items):
+        import json as _json
+        panel = {"kind": kind, "items": items}
+        return ("psychoChromeState({tabs:[{id:1,title:'One'}],activeId:1,address:'',panel:%s});" % _json.dumps(panel))
+
+    HISTORY = [{"title": "Alpha", "url": "https://a.test/"}, {"title": "Beta", "url": "https://b.test/"}]
+
+    def test_panel_lists_rows_and_a_press_navigates(self):
+        tail = self.panel_state("history", self.HISTORY)
+        out = run(("--inspect", "#panel", "--inspect", ".prow"), tail=tail + 'document.title=String(document.querySelectorAll(".prow").length);')
+        self.assertEqual(out["title"], "2")
+        panel = out["inspected"][0]["box"]
+        self.assertEqual((panel["x"], panel["y"], panel["w"]), (1110, 84, 330))
+        box = out["inspected"][1]["box"]
+        self.assertEqual(run(("--action", f"click:{int(box['x']) + 40},{int(box['y']) + 12}"), tail=tail)["title"], "go:https://a.test/")
+
+    def test_panel_filter_narrows_the_rows(self):
+        tail = self.panel_state("history", self.HISTORY)
+        box = run(("--inspect", "#panel-filter"), tail=tail)["inspected"][0]["box"]
+        out = run(("--action", f"click:{int(box['x']) + 20},{int(box['y']) + 10}", "--action", "text:bet"),
+                  tail=tail + 'document.addEventListener("keyup",function(){document.title=String(document.querySelectorAll(".prow").length);});')
+        # The engine has no key-up for typed text in the CLI, so read the rows directly.
+        out = run(("--action", f"click:{int(box['x']) + 20},{int(box['y']) + 10}", "--action", "text:bet", "--inspect", ".prow"), tail=tail)
+        self.assertEqual(len([i for i in out["inspected"] if i.get("found")]), 1)
+
+    def test_bookmark_row_remove_button_calls_the_bridge(self):
+        tail = self.panel_state("bookmarks", self.HISTORY)
+        box = run(("--inspect", ".prow .rm"), tail=tail)["inspected"][0]["box"]
+        out = run(("--action", f"click:{int(box['x'] + box['w'] / 2)},{int(box['y'] + box['h'] / 2)}"), tail=tail)
+        self.assertEqual(out["title"], "bm-remove:https://a.test/")
+
+    def test_clear_history_asks_first_then_clears(self):
+        tail = self.panel_state("history", self.HISTORY)
+        foot = run(("--inspect", "#panel-foot button"), tail=tail)["inspected"][0]["box"]
+        press_foot = f"click:{int(foot['x'] + foot['w'] / 2)},{int(foot['y'] + foot['h'] / 2)}"
+        # The press opens a confirm dialog; nothing is cleared yet.
+        self.assertNotEqual(run(("--action", press_foot), tail=tail)["title"], "history-clear")
+        confirm = run(("--action", press_foot, "--inspect", "#dlg-actions button:last-child"), tail=tail)["inspected"][0]["box"]
+        out = run(("--action", press_foot, "--action", f"click:{int(confirm['x'] + confirm['w'] / 2)},{int(confirm['y'] + confirm['h'] / 2)}"), tail=tail)
+        self.assertEqual(out["title"], "history-clear")
+
+    def test_main_menu_opens_the_history_panel(self):
+        x, y = center("#menu")
+        out = run(("--action", f"click:{x},{y}", "--inspect", '[data-go="history"]'))
+        item = out["inspected"][0]["box"]
+        out = run(("--action", f"click:{x},{y}", "--action", f"click:{int(item['x'] + 20)},{int(item['y'] + 12)}"))
+        self.assertEqual(out["title"], "panel:history")
+
+    def test_star_bookmarks_the_page(self):
+        x, y = center("#bookmark")
+        self.assertEqual(run(("--action", f"click:{x},{y}"))["title"], "bm-add")
 
     def test_no_dialog_means_no_scrim(self):
         out = run(("--inspect", "#scrim"))

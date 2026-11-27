@@ -75,3 +75,17 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .dlg-actions{height:34px;text-align:right}
 .dlg-actions button{display:inline-block;height:34px;min-width:80px;margin-left:10px;padding:0 16px;border:1px solid var(--pv-border);border-radius:8px;background:var(--pv-raised);font-size:13px;line-height:32px;color:var(--pv-text)}
 .dlg-actions button.primary{border-color:var(--pv-accent);background:var(--pv-accent);color:#04111d}
+
+.panel{position:absolute;right:0;top:84px;bottom:22px;width:330px;border-left:1px solid var(--pv-border);background:var(--pv-surface)}
+.panel-head{position:absolute;left:0;top:0;right:0;height:44px;border-bottom:1px solid var(--pv-border)}
+.panel-head span{position:absolute;left:16px;top:12px;font-size:15px;line-height:20px;font-weight:700;color:var(--pv-text)}
+.panel-head button{position:absolute;right:10px;top:10px;width:24px;height:24px;font-size:18px;line-height:24px;color:var(--pv-muted);text-align:center}
+#panel-filter{position:absolute;left:12px;right:12px;top:54px;height:32px;margin:0;padding:0 12px;border:1px solid var(--pv-border);border-radius:8px;background:var(--pv-bg);color:var(--pv-text);font:13px/32px var(--pv-font)}
+.panel-list{position:absolute;left:0;right:0;top:96px;bottom:48px;overflow:hidden}
+.prow{position:relative;height:48px;border-bottom:1px solid var(--pv-border)}
+.prow .t{position:absolute;left:16px;top:6px;width:250px;height:18px;font-size:13px;line-height:18px;color:var(--pv-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prow .u{position:absolute;left:16px;top:25px;width:250px;height:16px;font-size:11px;line-height:16px;color:var(--pv-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prow .rm{position:absolute;right:12px;top:12px;width:24px;height:24px;font-size:16px;line-height:24px;color:var(--pv-muted);text-align:center}
+.pempty{padding:24px 16px;font-size:13px;line-height:19px;color:var(--pv-muted)}
+.panel-foot{position:absolute;left:0;right:0;bottom:0;height:48px;border-top:1px solid var(--pv-border)}
+.panel-foot button{position:absolute;right:12px;top:8px;height:32px;padding:0 14px;border:1px solid var(--pv-border);border-radius:8px;background:var(--pv-raised);font-size:12px;line-height:30px;color:var(--pv-text)}

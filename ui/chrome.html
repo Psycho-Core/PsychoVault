@@ -66,6 +66,18 @@
   <button type="button" data-act="new" role="menuitem">New tab</button>
   <button type="button" data-act="close" role="menuitem">Close tab</button>
 </div>
+<div class="ctx" id="mainmenu" style="display:none" role="menu">
+  <button type="button" data-go="history" role="menuitem">History</button>
+  <button type="button" data-go="bookmarks" role="menuitem">Bookmarks</button>
+  <button type="button" data-go="downloads" role="menuitem">Downloads</button>
+  <button type="button" data-go="settings" role="menuitem">Settings</button>
+</div>
+<aside class="panel" id="panel" style="display:none" aria-label="Side panel">
+  <div class="panel-head"><span id="panel-title"></span><button type="button" id="panel-close" aria-label="Close panel">&times;</button></div>
+  <input id="panel-filter" type="text" placeholder="Filter" aria-label="Filter">
+  <div class="panel-list" id="panel-list"></div>
+  <div class="panel-foot" id="panel-foot"></div>
+</aside>
 <div class="scrim" id="scrim" style="display:none">
   <div class="dialog" id="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
     <h2 id="dlg-title"></h2>

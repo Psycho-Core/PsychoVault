@@ -47,7 +47,8 @@
     var after = tabs.length * (TAB_WIDTH + TAB_GAP);
     plusEl.style.left = (36 + after + 2) + "px";
     wsEl.style.left = (36 + after + 40) + "px";
-    if (state.dialog) showDialog(state.dialog); else hideDialog();
+    if (state.dialog) showDialog(state.dialog); else if (!localHandler) hideDialog();
+    renderPanel(state.panel);
     var shield = document.getElementById("rail-adblock");
     if (shield && typeof state.blockAds === "boolean") shield.className = state.blockAds ? "rail-btn good" : "rail-btn off";
     setDim("nav-back", !state.canBack);
@@ -64,12 +65,26 @@
   var dlgInput = document.getElementById("dlg-input");
   var dlgActions = document.getElementById("dlg-actions");
   var dialogId = 0, dialogButtons = [], dialogKind = "";
+  var localHandler = null;
   function answer(button) {
     var id = dialogId;
     var value = dialogKind === "prompt" ? dlgInput.value : "";
     dialogId = 0;
     scrim.style.display = "none";
+    if (localHandler) {
+      // A dialog this page opened itself (confirming "clear history"): answer in place.
+      var handler = localHandler;
+      localHandler = null;
+      bridge("ui", "overlay", { open: false });
+      handler(button, value);
+      return;
+    }
     bridge("ui", "dialog", { id: id, button: button, value: value });
+  }
+  function askLocal(title, message, buttons, handler) {
+    localHandler = handler;
+    showDialog({ id: -1, kind: "confirm", title: title, message: message, buttons: buttons });
+    bridge("ui", "overlay", { open: true });
   }
   function focusables() {
     var list = [];
@@ -147,14 +162,132 @@
       node = node.parentNode;
     }
   });
+  // ---- Side panel: bookmarks, history or downloads. The shell sends the list with the state and
+  // shrinks the page by 330px while it is open; rows act through the bridge.
+  var panelEl = document.getElementById("panel");
+  var panelList = document.getElementById("panel-list");
+  var panelFilter = document.getElementById("panel-filter");
+  var panelFoot = document.getElementById("panel-foot");
+  var panelData = null;
+  var TITLES = { bookmarks: "Bookmarks", history: "History", downloads: "Downloads" };
+  function sizeText(bytes) {
+    if (!bytes) return "";
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1048576) return Math.round(bytes / 1024) + " KB";
+    return (bytes / 1048576).toFixed(1) + " MB";
+  }
+  function paintPanel() {
+    clear(panelList);
+    clear(panelFoot);
+    if (!panelData) return;
+    var kind = panelData.kind, needle = (panelFilter.value || "").toLowerCase();
+    var items = panelData.items || [], shown = 0;
+    for (var i = 0; i < items.length && shown < 40; i++) {
+      var item = items[i];
+      var label = kind === "downloads" ? item.filename : item.title;
+      var detail = kind === "downloads" ? item.state + (item.total ? " " + sizeText(item.received) + " of " + sizeText(item.total) : "") : item.url;
+      if (needle && ((label || "") + " " + (detail || "")).toLowerCase().indexOf(needle) < 0) continue;
+      var row = el("div", "prow");
+      row.setAttribute("data-kind", kind);
+      if (kind === "downloads") row.setAttribute("data-id", String(item.id));
+      else row.setAttribute("data-url", item.url);
+      row.appendChild(el("span", "t", label || detail));
+      row.appendChild(el("span", "u", detail || ""));
+      if (kind !== "history") row.appendChild(el("button", "rm", "×"));
+      panelList.appendChild(row);
+      shown++;
+    }
+    if (!shown) {
+      panelList.appendChild(el("div", "pempty", kind === "downloads" ? "No downloads yet." : needle ? "Nothing matches." : kind === "bookmarks" ? "No bookmarks yet. The star in the address bar saves the page you are on." : "No history yet."));
+    }
+    if (kind === "history" && items.length) panelFoot.appendChild(el("button", "", "Clear history"));
+    if (kind === "downloads" && items.length) panelFoot.appendChild(el("button", "", "Clear finished"));
+  }
+  function renderPanel(panel) {
+    if (!panelEl) return;
+    if (!panel) {
+      if (panelEl.style.display !== "none") panelEl.style.display = "none";
+      panelData = null;
+      return;
+    }
+    var opened = panelEl.style.display === "none" || !panelData || panelData.kind !== panel.kind;
+    panelData = panel;
+    panelEl.style.display = "block";
+    document.getElementById("panel-title").textContent = TITLES[panel.kind] || "";
+    if (opened) panelFilter.value = "";
+    paintPanel();
+  }
+  panelFilter.addEventListener("input", paintPanel);
+  document.getElementById("panel-close").addEventListener("click", function () { bridge("ui", "panel", { kind: "" }); });
+  function rowOf(node) {
+    while (node) {
+      if (node.className === "prow") return node;
+      node = node.parentNode;
+    }
+    return null;
+  }
+  panelList.addEventListener("click", function (event) {
+    var row = rowOf(event.target);
+    if (!row) return;
+    var removing = false, node = event.target;
+    while (node && node !== row) { if (node.className === "rm") removing = true; node = node.parentNode; }
+    var kind = row.getAttribute("data-kind");
+    if (kind === "downloads") {
+      var id = Number(row.getAttribute("data-id"));
+      if (removing) bridge("downloads", "remove", { id: id });
+      return;
+    }
+    var url = row.getAttribute("data-url");
+    if (removing && kind === "bookmarks") bridge("bookmarks", "remove", { url: url });
+    else if (url) bridge("nav", "go", { url: url });
+  });
+  panelFoot.addEventListener("click", function () {
+    if (!panelData) return;
+    if (panelData.kind === "history") {
+      askLocal("Clear browsing history?", "Bookmarks are kept.", ["Cancel", "Clear history"], function (button) {
+        if (button === 1) bridge("history", "clear");
+      });
+    } else if (panelData.kind === "downloads") {
+      bridge("downloads", "clear");
+    }
+  });
+  document.getElementById("bookmark").addEventListener("click", function () { bridge("bookmarks", "add"); });
+
+  // The main menu behind the hamburger button.
+  var mainMenu = document.getElementById("mainmenu");
+  document.getElementById("menu").addEventListener("click", function (event) {
+    var wasOpen = menuOpen();
+    if (wasOpen) { hideMenu(); return; }
+    var box = document.getElementById("menu").getBoundingClientRect();
+    mainMenu.style.left = Math.round(box.left + box.width - 176) + "px";
+    mainMenu.style.top = Math.round(box.top + box.height + 6) + "px";
+    mainMenu.style.display = "block";
+    bridge("ui", "overlay", { open: true });
+    event.stopPropagation();
+  });
+  mainMenu.addEventListener("click", function (event) {
+    var node = event.target, go = "";
+    while (node && !go) {
+      if (node.getAttribute && node.getAttribute("data-go")) go = node.getAttribute("data-go");
+      node = node.parentNode;
+    }
+    hideMenu();
+    if (go === "settings") bridge("tab", "new", { url: "psychovault://settings" });
+    else if (go) bridge("ui", "panel", { kind: go });
+    event.stopPropagation();
+  });
+
   // The tab menu. It opens over the page, so the shell is told (ui.overlay) to send every pointer
   // event to this page while it is open.
   var menuEl = document.getElementById("tabmenu");
   var menuTab = 0;
-  function menuOpen() { return menuEl && menuEl.style.display !== "none"; }
+  function menuOpen() {
+    return (menuEl && menuEl.style.display !== "none") || (mainMenu && mainMenu.style.display !== "none");
+  }
   function hideMenu() {
     if (!menuOpen()) return;
     menuEl.style.display = "none";
+    mainMenu.style.display = "none";
     bridge("ui", "overlay", { open: false });
   }
   function tabIdOf(node) {
