@@ -57,3 +57,7 @@ P1 is closed on its original exit gate plus the production wiring. What decided 
 ## D012 - P2 closed under a scoped reading of the gate (recorded 2026-11-25)
 
 The P2 gate says the golden suite covers "the S052-S069 feature set". Read as every property in every specification, that is never finished. I read it as each step's behavior as my reference UI and the documentation tier need it, listed the exclusions per step with an owning phase in `docs/Psycho_P2_GATE_AUDIT.md`, and closed P2 on that reading after fixing five defects the probes found. The cost: per-corner radii, filter blur, horizontal scrolling and table layout are not there, and a settings page that needs them will find out in P3. The check I did not do is render real reference pages, because they do not exist yet. Windows run 45722428997 is the evidence.
+
+## D013 - P3 audited and not closed (recorded 2026-11-27)
+
+I audited P3 against its gate and did not close it: the visual clause is unproven (and three settings pages and the new-tab page measure far from their captures), 26 of 51 value controls and none of the buttons are wired, and the per-control owner matrix does not exist. I did not apply a scoping reading like D012's. The audit lists what building the rest would take and offers a reading for you to accept or reject. Nothing about P4 should start on the assumption that P3 is done.
