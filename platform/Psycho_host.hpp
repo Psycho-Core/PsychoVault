@@ -48,6 +48,7 @@ public:
   void pointer_down(double x, double y);
   void pointer_up(double x, double y);
   void click(double x, double y);
+  void context_menu(double x, double y);
   void key(const std::string &key, const std::string &text);
   void key_up(const std::string &key);
   std::string edit_clipboard(bool cut);

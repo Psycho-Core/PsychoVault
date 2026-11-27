@@ -985,7 +985,7 @@ struct Browser {
   // curated bridge (tab/nav/win methods), never through shell-side hit rectangles.
   static constexpr int kChromeTab = -2;
   static constexpr uint64_t kChromeGeneration = 1;
-  bool chrome_enabled = false, chrome_started = false, chrome_focus = false;
+  bool chrome_enabled = false, chrome_started = false, chrome_focus = false, chrome_overlay = false;
   bool chrome_pointer_down = false, chrome_pointer_inside = false;
   std::shared_ptr<Session> chrome_session;
   Json chrome_frame;
@@ -3443,6 +3443,14 @@ struct Browser {
     paint_commands(c, commands, 0, chrome_images);
     c.clip = old;
   }
+  // A secondary press over the frame (or anywhere while its menu is open) goes to the frame page,
+  // which decides what its context menu offers.
+  bool chrome_context(int x, int y) {
+    if (!chrome_enabled || !chrome_session || (content.contains(x, y) && !chrome_overlay)) return false;
+    chrome_focus = true;
+    send_chrome_pointer("contextmenu", x, y);
+    return true;
+  }
   void send_chrome_pointer(const char *tag, int x, int y) {
     if (!chrome_session) return;
     Json command = Json::make_object();
@@ -3457,7 +3465,7 @@ struct Browser {
     if (!chrome_enabled || !chrome_session) return false;
     const std::string what = kind;
     if (what == "down") {
-      if (content.contains(x, y)) {
+      if (content.contains(x, y) && !chrome_overlay) {
         chrome_focus = false;
         return false;
       }
@@ -3470,10 +3478,10 @@ struct Browser {
       if (!chrome_pointer_down) return false;
       chrome_pointer_down = false;
       send_chrome_pointer("pointerup", x, y);
-      if (!content.contains(x, y)) send_chrome_pointer("click", x, y);
+      if (!content.contains(x, y) || chrome_overlay) send_chrome_pointer("click", x, y);
       return true;
     }
-    const bool inside = !content.contains(x, y);
+    const bool inside = !content.contains(x, y) || chrome_overlay;
     if (inside || chrome_pointer_inside || chrome_pointer_down) send_chrome_pointer("pointermove", x, y);
     chrome_pointer_inside = inside;
     return inside;
@@ -3489,11 +3497,14 @@ struct Browser {
       entry.set("title", t.title.substr(0, 120));
       entry.set("url", t.url.substr(0, 512));
       entry.set("loading", t.loading);
+      entry.set("pinned", t.pinned);
+      entry.set("muted", t.muted);
       list.array.push_back(std::move(entry));
     }
     state.set("tabs", std::move(list));
     state.set("activeId", double(current().id));
     state.set("address", app_ui_url(current().url) ? std::string() : current().url.substr(0, 2048));
+    state.set("blockAds", profile.block_ads);
     state.set("canBack", current().can_back());
     state.set("canForward", current().can_forward());
     state.set("blocked", double(report ? report->blocked.load() : 0));
@@ -3531,6 +3542,8 @@ struct Browser {
       static const Allowed allowed[] = {
           {"tab:new", rt::Channel::Tab},      {"tab:activate", rt::Channel::Tab},
           {"tab:close", rt::Channel::Tab},    {"nav:go", rt::Channel::Nav},
+          {"tab:pin", rt::Channel::Tab},      {"tab:mute", rt::Channel::Tab},
+          {"ui:overlay", rt::Channel::Ui},    {"rail:adblock", rt::Channel::Rail},
           {"nav:back", rt::Channel::Nav},     {"nav:forward", rt::Channel::Nav},
           {"nav:reload", rt::Channel::Nav},   {"nav:home", rt::Channel::Nav},
           {"win:minimize", rt::Channel::Win}, {"win:maximize", rt::Channel::Win},
@@ -3543,7 +3556,7 @@ struct Browser {
         return false;
       }
       if (!schemas.validate(method, payload, bridge_error)) return false;
-      if (method == "tab:activate" || method == "tab:close") {
+      if (method == "tab:activate" || method == "tab:close" || method == "tab:pin" || method == "tab:mute") {
         const double raw_id = payload.num("id", 0);
         if (!std::isfinite(raw_id) || raw_id <= 0 || raw_id > double(std::numeric_limits<int>::max()) ||
             raw_id != double(int(raw_id))) {
@@ -3595,13 +3608,27 @@ struct Browser {
       std::string target = task.payload.str("url", "psychovault://newtab");
       if (target.empty()) target = "psychovault://newtab";
       new_tab(std::move(target));
-    } else if (method == "tab:activate" || method == "tab:close") {
+    } else if (method == "tab:activate" || method == "tab:close" || method == "tab:pin" || method == "tab:mute") {
       const int id = int(task.payload.num("id", 0));
       for (size_t i = 0; i < tabs.size(); ++i) {
         if (tabs[i].id != id) continue;
         if (method == "tab:activate") select_tab(int(i));
-        else close_tab(int(i));
+        else if (method == "tab:close") close_tab(int(i));
+        else if (method == "tab:pin") tab_set_pinned(int(i), !tabs[i].pinned);
+        else tab_set_muted(int(i), !tabs[i].muted);
         break;
+      }
+    } else if (method == "ui:overlay") {
+      chrome_overlay = task.payload.flag("open");
+      if (!chrome_overlay) chrome_pointer_down = false;
+    } else if (method == "rail:adblock") {
+      if (settings_service) {
+        rt::Error error;
+        if (settings_service->set("blockAds", Json(!profile.block_ads), error)) {
+          save_profile();
+          publish_settings();
+          status = profile.block_ads ? "Ad and tracker blocking on" : "Ad and tracker blocking off";
+        }
       }
     } else if (method == "nav:go") {
       const std::string target = task.payload.str("url");
@@ -3836,7 +3863,30 @@ struct Browser {
       smoke_chrome_stage = 3;
     } else if (smoke_chrome_stage == 3) {
       if (tabs.size() == 1 && current().frame.type == Json::Type::Object && !current().loading) {
-        finish(true, "the frame opened a tab and closed one through the bridge");
+        smoke_chrome_stage = 4;
+        smoke_chrome_tick = now;
+        smoke_chrome_note += "; closed one";
+      }
+    } else if (smoke_chrome_stage == 4) {
+      // Right-click the remaining tab through the window procedure's path; the frame opens its menu
+      // over the page and tells the shell (ui.overlay), which then sends it every press.
+      if (now - smoke_chrome_tick < 600 || !settled) return true;
+      chrome_context(140, 20);
+      smoke_chrome_stage = 5;
+      smoke_chrome_tick = now;
+    } else if (smoke_chrome_stage == 5) {
+      if (!chrome_overlay || now - smoke_chrome_tick < 600) return true;
+      if (!chrome_paint_center("Pin", 0, x, y)) {
+        finish(false, "the tab menu painted no Pin item");
+        return true;
+      }
+      smoke_chrome_note += "; menu open, pressing Pin at " + std::to_string(x) + "," + std::to_string(y);
+      chrome_press(x, y);
+      smoke_chrome_stage = 6;
+      smoke_chrome_tick = now;
+    } else if (smoke_chrome_stage == 6) {
+      if (!tabs.empty() && tabs[0].pinned && !chrome_overlay) {
+        finish(true, "the frame opened a tab, closed one, and pinned one from its right-click menu");
         return true;
       }
     }
@@ -5758,8 +5808,10 @@ static LRESULT wndproc_inner(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       b->pointer_move(int(b->content.x) - 1, int(b->content.y) - 1);
     return 0;
   case WM_RBUTTONDOWN: {
-    if (auto b = browser(hwnd))
-      b->right_click(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
+    if (auto b = browser(hwnd)) {
+      const int x = GET_X_LPARAM(lp), y = GET_Y_LPARAM(lp);
+      if (!b->chrome_context(x, y)) b->right_click(x, y);
+    }
     return 0;
   }
   case WM_MOUSEWHEEL: {

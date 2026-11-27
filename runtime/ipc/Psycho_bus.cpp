@@ -105,6 +105,12 @@ Schemas Schemas::stock() {
   // Browser-chrome actions. Only the chrome page's facade exposes these (see AppHost), and the
   // shell refuses them from any other source.
   s.add("tab:close", fields({{"id", T::Number, true}}));
+  // The browser frame's tab menu and rail: pin or mute one tab, say whether a menu is open over the
+  // page (so the shell routes pointer input to the frame), and toggle the ad blocker.
+  s.add("tab:pin", fields({{"id", T::Number, true}}));
+  s.add("tab:mute", fields({{"id", T::Number, true}}));
+  s.add("ui:overlay", fields({{"open", T::Bool, true}}));
+  s.add("rail:adblock", fields({}));
   s.add("nav:back", fields({}));
   s.add("nav:forward", fields({}));
   s.add("nav:reload", fields({}));

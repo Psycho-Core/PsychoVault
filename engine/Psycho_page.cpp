@@ -3122,6 +3122,10 @@ std::string Page::title() const {
 int Page::hit(double x, double y) const {
   int best = -1;
   double area = std::numeric_limits<double>::max();
+  // The topmost thing under the point is the one painted last (z-index, positioned and later
+  // siblings all show up as a later paint range), and among equals the smallest box wins, which is
+  // the innermost. Choosing by area alone sent a press under a menu to whatever it covered.
+  long best_order = -1;
   for (auto &[id, r] : layout_.boxes) {
     Rect visible = r;
     for (int parent = doc.nodes[id].parent; parent >= 0; parent = doc.nodes[parent].parent) {
@@ -3135,8 +3139,20 @@ int Page::hit(double x, double y) const {
       if (visible.w <= 0 || visible.h <= 0) break;
     }
     const double content_y = layout_.fixed_boxes.count(id) ? y : y + scroll_;
-    if (visible.contains(x, content_y) && visible.w * visible.h < area) {
+    if (!visible.contains(x, content_y)) continue;
+    // A node that painted nothing of its own (a control drawn by its parent, an empty wrapper) takes
+    // the paint position of its nearest painted ancestor, and then the smaller box wins as before.
+    long order = -1;
+    for (int owner = id; owner >= 0; owner = doc.nodes[owner].parent) {
+      const auto painted = layout_.paint_ranges.find(owner);
+      if (painted != layout_.paint_ranges.end()) {
+        order = long(painted->second.first);
+        break;
+      }
+    }
+    if (order > best_order || (order == best_order && visible.w * visible.h < area)) {
       best = id;
+      best_order = order;
       area = visible.w * visible.h;
     }
   }
@@ -3662,6 +3678,21 @@ static int focusable_element(const Document &doc, int target) {
         candidate.name == "textarea" || candidate.get_attribute("tabindex", ignored)) return node;
   }
   return -1;
+}
+void Page::context_menu(double x, double y) {
+  keyboard_modality_ = false;
+  note_user_activation();
+  if (dirty_) rebuild();
+  const int target = hit(x, y);
+  if (target < 0) return;
+  auto event = js_->make_object();
+  event.object->properties["type"] = js::Value("contextmenu");
+  event.object->properties["target"] = js_->host_value(target);
+  event.object->properties["button"] = js::Value(2);
+  event.object->properties["clientX"] = js::Value(x);
+  event.object->properties["clientY"] = js::Value(y);
+  dispatch(target, "contextmenu", event, true, true);
+  dirty_ = true;
 }
 void Page::click(double x, double y) {
   keyboard_modality_ = false;

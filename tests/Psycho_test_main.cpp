@@ -1259,6 +1259,34 @@ int main() {
     CHECK(image);
     CHECK(host.pump() == false);
   }
+  // A press goes to the topmost painted element, not the smallest box: a menu over a button
+  // receives it, a later sibling beats an earlier one, and the innermost element of the winner
+  // is still the target (the engine reports the text node under the pointer, so handlers see the
+  // press bubble up through the element).
+  {
+    auto presses = [&](double x, double y) {
+      Page layered;
+      layered.load(*parse_url("https://local.test/"),
+        "<style>body{margin:0}#under{position:absolute;left:0;top:0;width:60px;height:20px;background:#222}"
+        "#menu{position:absolute;z-index:5;left:0;top:0;width:200px;height:100px;background:#eee}"
+        "#item{display:block;width:100px;height:30px;background:#ccc}"
+        "#later{position:absolute;left:300px;top:0;width:50px;height:50px;background:#00f}"
+        "#earlier{position:absolute;left:300px;top:0;width:50px;height:50px;background:#f00}</style>"
+        "<button id=under>under</button><div id=menu><span id=item>Pin</span></div>"
+        "<div id=earlier></div><div id=later></div>"
+        "<script>['under','menu','item','later','earlier'].forEach(function(n){"
+        "document.getElementById(n).addEventListener('click',function(e){document.title+=n+';';});});</script>");
+      layered.render(400, 200, 0);
+      layered.click(x, y);
+      return layered.render(400, 200, 0).str("title");
+    };
+    const std::string over_button = presses(10, 10);
+    CHECK(over_button.find("item;") != std::string::npos && over_button.find("menu;") != std::string::npos);
+    CHECK(over_button.find("under;") == std::string::npos);
+    CHECK(presses(150, 80).find("menu;") != std::string::npos);
+    const std::string stacked = presses(320, 20);
+    CHECK(stacked.find("later;") != std::string::npos && stacked.find("earlier;") == std::string::npos);
+  }
   // UiPseudoClassInteractionMatrix covers interaction state, structural pseudos,
   // Keyboard navigation through the host's separate scroll-key path also
   // enables focus-visible after a pointer-focused element.

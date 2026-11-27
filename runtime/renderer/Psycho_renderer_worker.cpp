@@ -408,13 +408,14 @@ bool RendererWorker::input(const Envelope &request, Envelope &response, Error &e
         key != "PageDown" && key != "Home" && key != "End")
       return reject("scrollkey is not a supported scrolling key");
     host_->scroll_key(key);
-  } else if (tag == "click" || tag == "pointermove" || tag == "pointerdown" ||
+  } else if (tag == "click" || tag == "contextmenu" || tag == "pointermove" || tag == "pointerdown" ||
              tag == "pointerup") {
     double x = 0, y = 0;
     if (!finite_number("x", x) || !finite_number("y", y)) {
       return reject("pointer input requires finite x and y coordinates");
     }
     if (tag == "click") host_->click(x, y);
+    else if (tag == "contextmenu") host_->context_menu(x, y);
     else if (tag == "pointermove") host_->pointer_move(x, y);
     else if (tag == "pointerdown") host_->pointer_down(x, y);
     else host_->pointer_up(x, y);

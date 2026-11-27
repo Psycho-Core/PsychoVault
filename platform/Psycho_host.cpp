@@ -159,6 +159,13 @@ void Host::click(double x, double y) {
   settle();
 }
 
+void Host::context_menu(double x, double y) {
+  if (!loaded_)
+    return;
+  page_->context_menu(x, y);
+  settle();
+}
+
 void Host::key(const std::string &key, const std::string &text) {
   if (!loaded_)
     return;

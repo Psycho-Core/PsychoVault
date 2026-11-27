@@ -60,3 +60,9 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 
 .statusbar{position:absolute;left:44px;right:0;bottom:0;height:21px;border-top:1px solid var(--pv-border);background:var(--pv-bg)}
 .statusbar span{position:absolute;left:12px;top:3px;right:12px;height:16px;font-size:11px;line-height:16px;color:var(--pv-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.ctx{position:absolute;z-index:50;left:0;top:0;width:176px;padding:6px 0;border:1px solid var(--pv-border);border-radius:10px;background:var(--pv-surface)}
+.ctx button{display:block;width:176px;height:30px;padding:0 14px;text-align:left;font-size:13px;line-height:30px;color:var(--pv-text)}
+.rail-btn.off{top:0;background:#2d1c24}
+.tab .mute{position:absolute;right:26px;top:6px;font-size:10px;line-height:20px;color:var(--pv-muted)}
+.tab.pinned .title{width:86px}

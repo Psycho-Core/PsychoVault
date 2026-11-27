@@ -20,6 +20,10 @@ STUB = """
 window.psycho={tab:{close:function(a){document.title="close:"+a.id;},activate:function(a){document.title="activate:"+a.id;},
   new:function(a){document.title="new:"+a.url;}},nav:{back:function(){document.title="back";},go:function(a){document.title="go:"+a.url;}},
   win:{close:function(){document.title="win-close";}}};
+psycho.tab.pin=function(a){document.title="pin:"+a.id;};
+psycho.tab.mute=function(a){document.title="mute:"+a.id;};
+psycho.ui={overlay:function(a){window.__overlay=a.open;}};
+psycho.rail={adblock:function(){document.title="adblock";}};
 psychoChromeState({tabs:[{id:1,title:"One"},{id:2,title:"Two"}],activeId:2,address:"https://example.test/",canBack:true,canForward:false,status:"Loading https://example.test/"});
 """
 
@@ -60,6 +64,23 @@ class ChromeFrame(unittest.TestCase):
         bar = result["inspected"][1]["box"]
         # 21px content plus the 1px top border is the 22px status bar of the reference chrome.
         self.assertEqual((bar["x"], bar["h"], bar["y"] + bar["h"]), (44, 21, 940))
+
+    def test_right_click_opens_the_tab_menu_and_pin_calls_the_bridge(self):
+        # Menu opens at the pointer; its first item (Pin tab) sits 6px padding + half a 30px row below.
+        out = run(("--action", "contextmenu:100,20", "--action", "click:130,41"))
+        self.assertEqual(out["title"], "pin:1")
+
+    def test_menu_mute_and_close(self):
+        self.assertEqual(run(("--action", "contextmenu:100,20", "--action", "click:130,71"))["title"], "mute:1")
+        self.assertEqual(run(("--action", "contextmenu:100,20", "--action", "click:130,131"))["title"], "close:1")
+
+    def test_press_elsewhere_closes_the_menu_without_acting(self):
+        out = run(("--action", "contextmenu:100,20", "--action", "click:700,300"))
+        self.assertEqual(out["title"], "PsychoVault")
+
+    def test_rail_adblock_button_toggles_the_blocker(self):
+        x, y = center("#rail-adblock")
+        self.assertEqual(run(("--action", f"click:{x},{y}"))["title"], "adblock")
 
     def test_close_glyph_closes_that_tab(self):
         x, y = center("#tabs .x")

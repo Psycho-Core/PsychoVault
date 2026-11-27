@@ -60,6 +60,12 @@
     <button class="menu" id="menu" type="button" aria-label="Menu"><svg width="12" height="10" viewBox="0 0 12 10"><rect y="0" width="12" height="1.6" fill="#e6edf7"/><rect y="4" width="12" height="1.6" fill="#e6edf7"/><rect y="8" width="12" height="1.6" fill="#e6edf7"/></svg></button>
   </div>
 </header>
+<div class="ctx" id="tabmenu" style="display:none" role="menu">
+  <button type="button" data-act="pin" role="menuitem">Pin tab</button>
+  <button type="button" data-act="mute" role="menuitem">Mute tab</button>
+  <button type="button" data-act="new" role="menuitem">New tab</button>
+  <button type="button" data-act="close" role="menuitem">Close tab</button>
+</div>
 <footer class="statusbar" id="statusbar"><span id="status-text"></span></footer>
 <script src="chrome.js"></script>
 </body>

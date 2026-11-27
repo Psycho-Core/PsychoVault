@@ -39,13 +39,16 @@
       var title = tab.title || tab.url || "New Tab";
       node.appendChild(el("span", "fav", tab.loading ? "•" : title.charAt(0).toUpperCase()));
       node.appendChild(el("span", "title", title));
-      var close = el("button", "x", "×");
-      node.appendChild(close);
+      if (tab.muted) node.appendChild(el("span", "mute", "M"));
+      if (!tab.pinned) node.appendChild(el("button", "x", "×"));
+      else node.className += " pinned";
       tabsEl.appendChild(node);
     }
     var after = tabs.length * (TAB_WIDTH + TAB_GAP);
     plusEl.style.left = (36 + after + 2) + "px";
     wsEl.style.left = (36 + after + 40) + "px";
+    var shield = document.getElementById("rail-adblock");
+    if (shield && typeof state.blockAds === "boolean") shield.className = state.blockAds ? "rail-btn good" : "rail-btn off";
     setDim("nav-back", !state.canBack);
     setDim("nav-forward", !state.canForward);
     if (document.activeElement !== addressEl && typeof state.address === "string") addressEl.value = state.address;
@@ -71,11 +74,67 @@
       node = node.parentNode;
     }
   });
+  // The tab menu. It opens over the page, so the shell is told (ui.overlay) to send every pointer
+  // event to this page while it is open.
+  var menuEl = document.getElementById("tabmenu");
+  var menuTab = 0;
+  function menuOpen() { return menuEl && menuEl.style.display !== "none"; }
+  function hideMenu() {
+    if (!menuOpen()) return;
+    menuEl.style.display = "none";
+    bridge("ui", "overlay", { open: false });
+  }
+  function tabIdOf(node) {
+    while (node) {
+      if (node.getAttribute && node.getAttribute("data-tab") !== null) return Number(node.getAttribute("data-tab"));
+      node = node.parentNode;
+    }
+    return 0;
+  }
+  function tabState(id) {
+    var tabs = current.tabs || [];
+    for (var i = 0; i < tabs.length; i++) if (tabs[i].id === id) return tabs[i];
+    return null;
+  }
+  tabsEl.addEventListener("contextmenu", function (event) {
+    var id = tabIdOf(event.target);
+    if (!id || !menuEl) return;
+    var tab = tabState(id) || {};
+    menuTab = id;
+    menuEl.querySelector('[data-act="pin"]').textContent = tab.pinned ? "Unpin tab" : "Pin tab";
+    menuEl.querySelector('[data-act="mute"]').textContent = tab.muted ? "Unmute tab" : "Mute tab";
+    menuEl.style.left = Math.round(event.clientX) + "px";
+    menuEl.style.top = Math.round(event.clientY) + "px";
+    var wasOpen = menuOpen();
+    menuEl.style.display = "block";
+    if (!wasOpen) bridge("ui", "overlay", { open: true });
+    if (event.preventDefault) event.preventDefault();
+  });
+  if (menuEl) {
+    menuEl.addEventListener("click", function (event) {
+      var node = event.target, act = "";
+      while (node && !act) {
+        if (node.getAttribute && node.getAttribute("data-act")) act = node.getAttribute("data-act");
+        node = node.parentNode;
+      }
+      var id = menuTab;
+      hideMenu();
+      if (act === "pin") bridge("tab", "pin", { id: id });
+      else if (act === "mute") bridge("tab", "mute", { id: id });
+      else if (act === "close") bridge("tab", "close", { id: id });
+      else if (act === "new") bridge("tab", "new", { url: "psychovault://newtab" });
+      event.stopPropagation();
+    });
+  }
+  // A press anywhere else closes the menu (the shell sends every press here while it is open).
+  document.addEventListener("click", function () { hideMenu(); });
+
   function on(id, group, method, args) {
     var node = document.getElementById(id);
     if (node) node.addEventListener("click", function () { bridge(group, method, args); });
   }
   on("new-tab", "tab", "new", { url: "psychovault://newtab" });
+  on("rail-adblock", "rail", "adblock");
   on("nav-back", "nav", "back");
   on("nav-forward", "nav", "forward");
   on("nav-reload", "nav", "reload");

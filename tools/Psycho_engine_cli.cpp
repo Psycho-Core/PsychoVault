@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
       } else if (a == "--help") {
         std::cout << "PsychoVault owned engine renderer\n--input FILE --url "
                      "URL --width N --height N --out PNG --resource URL=FILE\n"
-                     "--scroll N --dpr N --reduced-motion --action hover:X,Y|click:X,Y|wheel:X,Y,DELTA|key:KEY|text:TEXT|render\n"
+                     "--scroll N --dpr N --reduced-motion --action hover:X,Y|click:X,Y|contextmenu:X,Y|wheel:X,Y,DELTA|key:KEY|text:TEXT|render\n"
                      "--inspect SELECTOR (repeatable; reports first matched element and its layout box)\n";
         return 0;
       } else if (a == "--input")
@@ -93,13 +93,14 @@ int main(int argc, char **argv) {
       if (type == "render") page.render(width, height, scroll);
       else if (type == "key") page.key(value, "");
       else if (type == "text") page.key("", value);
-      else if (type == "hover" || type == "click" || type == "wheel") {
+      else if (type == "hover" || type == "click" || type == "contextmenu" || type == "wheel") {
         const auto values = split(value, ',');
         if (values.size() != (type == "wheel" ? 3u : 2u))
           throw std::runtime_error("invalid interaction coordinates");
         const double x = std::stod(values[0]), y = std::stod(values[1]);
         if (type == "hover") page.pointer_move(x, y);
         else if (type == "click") page.click(x, y);
+        else if (type == "contextmenu") page.context_menu(x, y);
         else page.wheel(x, y, std::stod(values[2]));
       } else throw std::runtime_error("unknown action: " + action);
     }
