@@ -5780,8 +5780,32 @@ static LRESULT wndproc_inner(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
           b->chrome_frame = std::move(up->frame);
           b->chrome_frame_tick = GetTickCount();
           if (first) b->chrome_state_sent.clear();
+          // The frame page is pumped continuously and most frames change nothing; repainting the
+          // whole window for each one starves the timer. Repaint only what the frame says changed.
+          const Json &f = b->chrome_frame;
+          const Json *tiles = f.find("damageTiles"), *damage = f.find("damage");
+          if (first || f.flag("fullDamage") ||
+              (!(tiles && tiles->type == Json::Type::Array) && !(damage && damage->type == Json::Type::Array))) {
+            InvalidateRect(hwnd, nullptr, FALSE);
+          } else if (tiles && tiles->type == Json::Type::Array && !tiles->array.empty() &&
+                     tiles->array.size() <= 256) {
+            for (const Json &tile : tiles->array) {
+              const double size = tile.num("size", 128);
+              RECT dirty{LONG(std::floor(tile.num("x"))), LONG(std::floor(tile.num("y"))),
+                         LONG(std::ceil(tile.num("x") + size)), LONG(std::ceil(tile.num("y") + size))};
+              InvalidateRect(hwnd, &dirty, FALSE);
+            }
+          } else if (damage && damage->type == Json::Type::Array && !damage->array.empty()) {
+            if (damage->array.size() > 64) InvalidateRect(hwnd, nullptr, FALSE);
+            else
+              for (const Json &region : damage->array) {
+                RECT dirty{LONG(std::floor(region.num("x"))), LONG(std::floor(region.num("y"))),
+                           LONG(std::ceil(region.num("x") + region.num("w"))),
+                           LONG(std::ceil(region.num("y") + region.num("h")))};
+                InvalidateRect(hwnd, &dirty, FALSE);
+              }
+          }
         }
-        InvalidateRect(hwnd, nullptr, FALSE);
       }
       return 0;
     }
