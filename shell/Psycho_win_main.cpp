@@ -3670,7 +3670,9 @@ struct Browser {
       double label_y = -1;
       if (paint && paint->type == Json::Type::Array)
         for (const Json &command : paint->array)
-          if (command.str("text") == "Restore tabs on launch") {
+          // The engine paints text word by word, so the row is found by its first word; only the
+          // General panel is visible, and "Restore" appears once in it.
+          if (command.str("text") == "Restore") {
             label_y = command.num("y") + command.num("h") / 2.0 - tab.scroll + content.y;
             break;
           }
