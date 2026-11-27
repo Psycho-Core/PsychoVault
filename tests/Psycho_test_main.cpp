@@ -1287,6 +1287,42 @@ int main() {
     const std::string stacked = presses(320, 20);
     CHECK(stacked.find("later;") != std::string::npos && stacked.find("earlier;") == std::string::npos);
   }
+  // document.activeElement names the focused element (the body when none), and Enter or Space on a
+  // focused button presses it like a click, without submitting a form it is not a submit button of.
+  {
+    Page keys;
+    keys.load(*parse_url("https://local.test/"),
+      "<form><button type=button id=plain>Plain</button><button id=send>Send</button></form>"
+      "<script>var log='';document.getElementById('plain').addEventListener('click',function(){log+='plain;';});"
+      "document.getElementById('send').addEventListener('click',function(){log+='send;';});"
+      "document.addEventListener('keyup',function(){document.title=log+'|'+document.activeElement.id;});</script>");
+    keys.render(300, 100, 0);
+    keys.key("Tab", "");
+    keys.key("Enter", "");
+    keys.key_up("Enter");
+    CHECK(keys.render(300, 100, 0).str("title") == "plain;|plain");
+    keys.key("Tab", "");
+    keys.key("Space", "");
+    keys.key_up("Space");
+    CHECK(keys.render(300, 100, 0).str("title") == "plain;send;|send");
+  }
+  // Tree walking and removeChild: a page can empty a container with while(firstChild).
+  {
+    Page tree;
+    tree.load(*parse_url("https://local.test/"),
+      "<div id=t> <span id=a>A</span> text <b id=b>B</b> </div>"
+      "<script>var t=document.getElementById('t'),out=[];"
+      "out.push(t.firstChild.nodeType===undefined?'x':'node');"
+      "out.push(document.getElementById('a').nextElementSibling.id);"
+      "out.push(document.getElementById('b').previousElementSibling.id);"
+      "out.push(t.lastElementChild.id+t.childElementCount);"
+      "out.push(document.getElementById('a').previousSibling===t.firstChild?'first':'other');"
+      "var n=0;while(t.firstChild){t.removeChild(t.firstChild);n++;}"
+      "out.push(n+':'+t.childNodes.length);"
+      "try{t.removeChild(document.getElementById('t'))}catch(e){out.push('threw')}"
+      "document.title=out.join(',');</script>");
+    CHECK(tree.render(300, 100, 0).str("title") == "node,b,a,b2,first,5:0,threw");
+  }
   // UiPseudoClassInteractionMatrix covers interaction state, structural pseudos,
   // Keyboard navigation through the host's separate scroll-key path also
   // enables focus-visible after a pointer-focused element.

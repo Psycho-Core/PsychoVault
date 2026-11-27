@@ -47,7 +47,7 @@ const ExposedEntry kNewTabProfile[] = {
 const ExposedEntry kChromeProfile[] = {
     {Channel::Tab, "tab:new"},     {Channel::Tab, "tab:activate"}, {Channel::Tab, "tab:close"},
     {Channel::Tab, "tab:pin"},     {Channel::Tab, "tab:mute"},     {Channel::Ui, "ui:overlay"},
-    {Channel::Rail, "rail:adblock"},
+    {Channel::Rail, "rail:adblock"}, {Channel::Ui, "ui:dialog"},
     {Channel::Nav, "nav:go"},      {Channel::Nav, "nav:back"},     {Channel::Nav, "nav:forward"},
     {Channel::Nav, "nav:reload"},  {Channel::Nav, "nav:home"},
     {Channel::Win, "win:minimize"}, {Channel::Win, "win:maximize"}, {Channel::Win, "win:close"},

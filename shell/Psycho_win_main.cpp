@@ -1027,6 +1027,52 @@ struct Browser {
   int smoke_chrome_stage = 0;
   DWORD smoke_chrome_tick = 0;
   std::string smoke_chrome_note;
+  // A dialog the frame page draws over everything: modal, one at a time, answered through the bridge.
+  struct FrameDialog {
+    int id = 0;
+    std::string kind, title, message, value;
+    std::vector<std::string> buttons;
+    std::function<void(int, const std::string &)> done;
+  };
+  std::deque<FrameDialog> frame_dialogs;
+  int next_frame_dialog = 1;
+  bool chrome_captures() const { return chrome_overlay || !frame_dialogs.empty(); }
+  void show_frame_dialog(const std::string &kind, const std::string &title, const std::string &message,
+                         std::vector<std::string> buttons, std::function<void(int, const std::string &)> done,
+                         const std::string &value = {}) {
+    if (frame_dialogs.size() >= 8 || buttons.empty() || buttons.size() > 4) return;
+    FrameDialog dialog;
+    dialog.id = next_frame_dialog++;
+    dialog.kind = kind;
+    dialog.title = title.substr(0, 120);
+    dialog.message = message.substr(0, 2000);
+    dialog.value = value.substr(0, 512);
+    dialog.buttons = std::move(buttons);
+    dialog.done = std::move(done);
+    const bool first = frame_dialogs.empty();
+    frame_dialogs.push_back(std::move(dialog));
+    if (first) {
+      rt::Error focus_error;
+      if (focus_service) focus_service->modal_open(kWindowId, focus_error);
+      chrome_focus = true;
+      chrome_state_sent.clear();
+    }
+    InvalidateRect(hwnd, nullptr, FALSE);
+  }
+  void answer_frame_dialog(int id, int button, const std::string &value) {
+    if (frame_dialogs.empty() || frame_dialogs.front().id != id ||
+        button >= int(frame_dialogs.front().buttons.size()))
+      return;
+    FrameDialog dialog = std::move(frame_dialogs.front());
+    frame_dialogs.pop_front();
+    if (frame_dialogs.empty()) {
+      rt::Error focus_error;
+      if (focus_service) focus_service->modal_close(kWindowId, focus_error);
+    }
+    chrome_state_sent.clear();
+    if (dialog.done) dialog.done(button, value);
+    InvalidateRect(hwnd, nullptr, FALSE);
+  }
   Session *key_target() {
     return chrome_enabled && chrome_focus && chrome_session ? chrome_session.get()
                                                            : current().session.get();
@@ -1453,6 +1499,11 @@ struct Browser {
       log_event("clipboard", rt::LogLevel::Warn, "write.refused", {{"code", error.code}});
   }
   void page_message_dialog(const std::string &message) {
+    if (chrome_enabled && chrome_session) {
+      // The frame draws the page's alert itself, over everything, and the focus service knows a modal is up.
+      show_frame_dialog("alert", "This page says", message, {"OK"}, nullptr);
+      return;
+    }
     if (!dialog_service) return;
     rt::DialogRequest request;
     request.kind = rt::DialogRequest::Kind::Message;
@@ -3446,7 +3497,7 @@ struct Browser {
   // A secondary press over the frame (or anywhere while its menu is open) goes to the frame page,
   // which decides what its context menu offers.
   bool chrome_context(int x, int y) {
-    if (!chrome_enabled || !chrome_session || (content.contains(x, y) && !chrome_overlay)) return false;
+    if (!chrome_enabled || !chrome_session || (content.contains(x, y) && !chrome_captures())) return false;
     chrome_focus = true;
     send_chrome_pointer("contextmenu", x, y);
     return true;
@@ -3465,7 +3516,7 @@ struct Browser {
     if (!chrome_enabled || !chrome_session) return false;
     const std::string what = kind;
     if (what == "down") {
-      if (content.contains(x, y) && !chrome_overlay) {
+      if (content.contains(x, y) && !chrome_captures()) {
         chrome_focus = false;
         return false;
       }
@@ -3478,10 +3529,10 @@ struct Browser {
       if (!chrome_pointer_down) return false;
       chrome_pointer_down = false;
       send_chrome_pointer("pointerup", x, y);
-      if (!content.contains(x, y) || chrome_overlay) send_chrome_pointer("click", x, y);
+      if (!content.contains(x, y) || chrome_captures()) send_chrome_pointer("click", x, y);
       return true;
     }
-    const bool inside = !content.contains(x, y) || chrome_overlay;
+    const bool inside = !content.contains(x, y) || chrome_captures();
     if (inside || chrome_pointer_inside || chrome_pointer_down) send_chrome_pointer("pointermove", x, y);
     chrome_pointer_inside = inside;
     return inside;
@@ -3505,6 +3556,19 @@ struct Browser {
     state.set("activeId", double(current().id));
     state.set("address", app_ui_url(current().url) ? std::string() : current().url.substr(0, 2048));
     state.set("blockAds", profile.block_ads);
+    if (!frame_dialogs.empty()) {
+      const FrameDialog &front = frame_dialogs.front();
+      Json dialog = Json::make_object();
+      dialog.set("id", double(front.id));
+      dialog.set("kind", front.kind);
+      dialog.set("title", front.title);
+      dialog.set("message", front.message);
+      dialog.set("value", front.value);
+      Json buttons = Json::make_array();
+      for (const std::string &label : front.buttons) buttons.array.push_back(Json(label));
+      dialog.set("buttons", std::move(buttons));
+      state.set("dialog", std::move(dialog));
+    }
     state.set("canBack", current().can_back());
     state.set("canForward", current().can_forward());
     state.set("blocked", double(report ? report->blocked.load() : 0));
@@ -3544,6 +3608,7 @@ struct Browser {
           {"tab:close", rt::Channel::Tab},    {"nav:go", rt::Channel::Nav},
           {"tab:pin", rt::Channel::Tab},      {"tab:mute", rt::Channel::Tab},
           {"ui:overlay", rt::Channel::Ui},    {"rail:adblock", rt::Channel::Rail},
+          {"ui:dialog", rt::Channel::Ui},
           {"nav:back", rt::Channel::Nav},     {"nav:forward", rt::Channel::Nav},
           {"nav:reload", rt::Channel::Nav},   {"nav:home", rt::Channel::Nav},
           {"win:minimize", rt::Channel::Win}, {"win:maximize", rt::Channel::Win},
@@ -3561,6 +3626,14 @@ struct Browser {
         if (!std::isfinite(raw_id) || raw_id <= 0 || raw_id > double(std::numeric_limits<int>::max()) ||
             raw_id != double(int(raw_id))) {
           bridge_error = {"bridge.tab.id", "a tab action requires a positive integer id"};
+          return false;
+        }
+      }
+      if (method == "ui:dialog") {
+        const double id = payload.num("id", 0), button = payload.num("button", -1);
+        if (!std::isfinite(id) || id <= 0 || id > 1e9 || id != std::floor(id) || !std::isfinite(button) ||
+            button < 0 || button > 7 || button != std::floor(button) || payload.str("value").size() > 4096) {
+          bridge_error = {"bridge.dialog.answer", "a dialog answer needs a positive id, a button 0-7 and short text"};
           return false;
         }
       }
@@ -3618,6 +3691,9 @@ struct Browser {
         else tab_set_muted(int(i), !tabs[i].muted);
         break;
       }
+    } else if (method == "ui:dialog") {
+      answer_frame_dialog(int(task.payload.num("id", 0)), int(task.payload.num("button", 0)),
+                          task.payload.str("value"));
     } else if (method == "ui:overlay") {
       chrome_overlay = task.payload.flag("open");
       if (!chrome_overlay) chrome_pointer_down = false;
@@ -3753,13 +3829,13 @@ struct Browser {
   // the shell agreed on a new tab and then a close, and the state push redrew the strip between.
   // The leftmost paint command with this text: the tab strip is left of the workspace chip, and
   // paint order alone does not say which of two positioned elements comes first.
-  bool chrome_paint_center(const char *glyph, int, int &x, int &y) const {
+  bool chrome_paint_center(const char *glyph, int, int &x, int &y, double max_y = 60) const {
     const Json *paint = chrome_frame.find("paint");
     if (!paint || paint->type != Json::Type::Array) return false;
     bool found = false;
     double best = 0;
     for (const Json &command : paint->array) {
-      if (command.str("text") != glyph || command.num("y") > 60) continue;
+      if (command.str("text") != glyph || command.num("y") > max_y) continue;
       if (found && command.num("x") >= best) continue;
       found = true;
       best = command.num("x");
@@ -3799,6 +3875,19 @@ struct Browser {
       if (current().session) {
         report.set("tabExchanges", double(current().session->exchanges.load()));
         report.set("tabExchangeMs", double(current().session->exchange_ms.load()));
+      }
+      {
+        // What the frame painted in its top band and dialog area, to tell a missing item from a late frame.
+        Json texts = Json::make_array();
+        const Json *paint = chrome_frame.find("paint");
+        if (paint && paint->type == Json::Type::Array)
+          for (const Json &command : paint->array)
+            if (!command.str("text").empty() && command.num("y") < 300 && command.num("x") > 60 &&
+                texts.array.size() < 30)
+              texts.array.push_back(Json(command.str("text").substr(0, 40) + " @" +
+                                         std::to_string(int(command.num("x"))) + "," +
+                                         std::to_string(int(command.num("y")))));
+        report.set("chromeTexts", std::move(texts));
       }
       report.set("activeLoading", current().loading);
       report.set("activeHasFrame", current().frame.type == Json::Type::Object);
@@ -3876,7 +3965,7 @@ struct Browser {
       smoke_chrome_tick = now;
     } else if (smoke_chrome_stage == 5) {
       if (!chrome_overlay || now - smoke_chrome_tick < 600) return true;
-      if (!chrome_paint_center("Pin", 0, x, y)) {
+      if (!chrome_paint_center("Pin tab", 0, x, y)) {
         finish(false, "the tab menu painted no Pin item");
         return true;
       }
@@ -3886,7 +3975,27 @@ struct Browser {
       smoke_chrome_tick = now;
     } else if (smoke_chrome_stage == 6) {
       if (!tabs.empty() && tabs[0].pinned && !chrome_overlay) {
-        finish(true, "the frame opened a tab, closed one, and pinned one from its right-click menu");
+        smoke_chrome_note += "; pinned";
+        // A page alert, drawn by the frame over everything: press OK through the pointer path.
+        show_frame_dialog("alert", "This page says", "Smoke alert", {"OK"}, [this](int, const std::string &) {
+          smoke_chrome_note += "; alert answered";
+        });
+        smoke_chrome_stage = 7;
+        smoke_chrome_tick = now;
+      }
+    } else if (smoke_chrome_stage == 7) {
+      if (now - smoke_chrome_tick < 600 || frame_dialogs.empty()) {
+        if (frame_dialogs.empty() && now - smoke_chrome_tick >= 600)
+          finish(false, "the alert disappeared before it was pressed");
+        return true;
+      }
+      if (!chrome_paint_center("OK", 0, x, y, 2000)) return true;
+      chrome_press(x, y);
+      smoke_chrome_stage = 8;
+      smoke_chrome_tick = now;
+    } else if (smoke_chrome_stage == 8) {
+      if (frame_dialogs.empty() && smoke_chrome_note.find("alert answered") != std::string::npos) {
+        finish(true, "the frame opened a tab, closed one, pinned one from its menu, and answered a page alert");
         return true;
       }
     }
@@ -4583,6 +4692,15 @@ struct Browser {
     return true;
   }
   void key(UINT, WPARAM wp, LPARAM) {
+    if (!frame_dialogs.empty()) {
+      // A modal dialog owns the keyboard: no shortcut, address or page sees a key until it is answered.
+      chrome_focus = true;
+      const char *name = wp == VK_RETURN ? "Enter" : wp == VK_ESCAPE ? "Escape" : wp == VK_TAB ? "Tab"
+                         : wp == VK_LEFT ? "ArrowLeft" : wp == VK_RIGHT ? "ArrowRight"
+                         : wp == VK_BACK ? "Backspace" : wp == VK_DELETE ? "Delete" : nullptr;
+      if (name) page_key(name);
+      return;
+    }
     bool ctrl = GetKeyState(VK_CONTROL) < 0;
     bool shift = GetKeyState(VK_SHIFT) < 0;
     if (menu_open && wp == VK_ESCAPE) {

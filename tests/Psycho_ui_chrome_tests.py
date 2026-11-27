@@ -22,17 +22,17 @@ window.psycho={tab:{close:function(a){document.title="close:"+a.id;},activate:fu
   win:{close:function(){document.title="win-close";}}};
 psycho.tab.pin=function(a){document.title="pin:"+a.id;};
 psycho.tab.mute=function(a){document.title="mute:"+a.id;};
-psycho.ui={overlay:function(a){window.__overlay=a.open;}};
+psycho.ui={overlay:function(a){window.__overlay=a.open;},dialog:function(a){document.title="dialog:"+a.id+":"+a.button+":"+a.value;}};
 psycho.rail={adblock:function(){document.title="adblock";}};
 psychoChromeState({tabs:[{id:1,title:"One"},{id:2,title:"Two"}],activeId:2,address:"https://example.test/",canBack:true,canForward:false,status:"Loading https://example.test/"});
 """
 
 
-def run(extra=()):
+def run(extra=(), tail=""):
     with tempfile.TemporaryDirectory() as directory:
         directory = pathlib.Path(directory)
         script = directory / "chrome_probe.js"
-        script.write_text((ROOT / "ui/chrome.js").read_text(encoding="utf-8") + STUB, encoding="utf-8")
+        script.write_text((ROOT / "ui/chrome.js").read_text(encoding="utf-8") + STUB + tail, encoding="utf-8")
         cmd = [str(ENGINE), "--input", str(ROOT / "ui/chrome.html"), "--url", "psychovault://chrome/",
                "--width", "1440", "--height", "940", "--out", str(directory / "o.png")]
         for name in ("tokens.css", "components.css", "chrome.css"):
@@ -58,6 +58,10 @@ class ChromeFrame(unittest.TestCase):
         self.assertTrue(result["inspected"][1]["found"])
         self.assertIsNone(result.get("diagnostics"))
 
+    def test_state_replaces_the_tab_strip_instead_of_adding_to_it(self):
+        out = run(tail='document.title = String(document.querySelectorAll("#tabs .tab").length);')
+        self.assertEqual(out["title"], "2")  # the two tabs of the stub state, not those plus the static one
+
     def test_status_bar_shows_the_pushed_status(self):
         result = run(("--inspect", "#status-text", "--inspect", "#statusbar"))
         self.assertEqual(result["inspected"][0]["text"], "Loading https://example.test/")
@@ -81,6 +85,54 @@ class ChromeFrame(unittest.TestCase):
     def test_rail_adblock_button_toggles_the_blocker(self):
         x, y = center("#rail-adblock")
         self.assertEqual(run(("--action", f"click:{x},{y}"))["title"], "adblock")
+
+    def dialog_state(self, kind, buttons, message="Are you sure?"):
+        import json as _json
+        dialog = {"id": 7, "kind": kind, "title": "Confirm", "message": message, "buttons": buttons, "value": ""}
+        return ("psychoChromeState({tabs:[{id:1,title:'One'}],activeId:1,address:'',dialog:%s});" % _json.dumps(dialog))
+
+    def button_center(self, tail, index):
+        boxes = run(("--inspect", "#dlg-actions button"), tail=tail)["inspected"]
+        box = boxes[0]["box"] if index == 0 else None
+        out = run(("--inspect", "#dlg-actions button:last-child"), tail=tail)["inspected"][0]["box"] if index else box
+        return int(out["x"] + out["w"] / 2), int(out["y"] + out["h"] / 2)
+
+    def test_dialog_is_drawn_over_the_page_and_ok_answers_it(self):
+        tail = self.dialog_state("alert", ["OK"], "Hello from the page")
+        out = run(("--inspect", "#dlg-message", "--inspect", "#scrim"), tail=tail)
+        self.assertEqual(out["inspected"][0]["text"], "Hello from the page")
+        scrim = out["inspected"][1]["box"]
+        self.assertEqual((scrim["x"], scrim["y"], scrim["w"], scrim["h"]), (0, 0, 1440, 940))
+        x, y = self.button_center(tail, 1)
+        self.assertEqual(run(("--action", f"click:{x},{y}"), tail=tail)["title"], "dialog:7:0:")
+
+    def test_confirm_buttons_report_which_was_pressed(self):
+        tail = self.dialog_state("confirm", ["Cancel", "Delete"])
+        x, y = self.button_center(tail, 0)
+        self.assertEqual(run(("--action", f"click:{x},{y}"), tail=tail)["title"], "dialog:7:0:")
+        x, y = self.button_center(tail, 1)
+        self.assertEqual(run(("--action", f"click:{x},{y}"), tail=tail)["title"], "dialog:7:1:")
+
+    def test_escape_answers_with_the_first_button(self):
+        tail = self.dialog_state("confirm", ["Cancel", "Delete"])
+        self.assertEqual(run(("--action", "key:Escape"), tail=tail)["title"], "dialog:7:0:")
+
+    def test_tab_is_trapped_inside_the_dialog_and_enter_presses_the_focused_button(self):
+        tail = self.dialog_state("confirm", ["Cancel", "Delete"])
+        # Focus starts on the primary (last) button; Tab wraps to Cancel; Enter presses it.
+        self.assertEqual(run(("--action", "key:Tab", "--action", "key:Enter"), tail=tail)["title"], "dialog:7:0:")
+        # Two Tabs wrap all the way round to the primary button again.
+        self.assertEqual(run(("--action", "key:Tab", "--action", "key:Tab", "--action", "key:Enter"),
+                             tail=tail)["title"], "dialog:7:1:")
+
+    def test_prompt_returns_the_typed_text(self):
+        tail = self.dialog_state("prompt", ["Cancel", "OK"], "Name?")
+        out = run(("--action", "text:abc", "--action", "key:Enter"), tail=tail)
+        self.assertEqual(out["title"], "dialog:7:1:abc")
+
+    def test_no_dialog_means_no_scrim(self):
+        out = run(("--inspect", "#scrim"))
+        self.assertFalse(out["inspected"][0].get("hasBox", False))
 
     def test_close_glyph_closes_that_tab(self):
         x, y = center("#tabs .x")

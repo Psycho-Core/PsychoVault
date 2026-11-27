@@ -671,6 +671,9 @@ public:
         return node(d.element("html"));
       if (name == "body")
         return node(d.body);
+      // The focused element, or the body when nothing has focus (what a page reads to trap Tab).
+      if (name == "activeElement")
+        return node(page.focused_ >= 0 && page.focused_ < int(d.nodes.size()) ? page.focused_ : d.body);
       if (name == "head")
         return node(d.head);
       if (name == "title")
@@ -1184,6 +1187,35 @@ public:
       return list(n.children);
     if (name == "firstElementChild")
       return n.children.empty() ? js::Value::null() : node(n.children.front());
+    // Tree walking: firstChild/lastChild/siblings over every child node, the *Element* forms over
+    // elements only. A node with no such relative gives null.
+    if (name == "firstChild")
+      return n.children.empty() ? js::Value::null() : node(n.children.front());
+    if (name == "lastChild")
+      return n.children.empty() ? js::Value::null() : node(n.children.back());
+    if (name == "lastElementChild" || name == "childElementCount") {
+      int count = 0, last = -1;
+      for (int child : n.children)
+        if (page.doc.nodes[child].type == Node::Type::Element) { ++count; last = child; }
+      if (name == "childElementCount") return js::Value(count);
+      return last < 0 ? js::Value::null() : node(last);
+    }
+    if (name == "nextSibling" || name == "previousSibling" || name == "nextElementSibling" ||
+        name == "previousElementSibling") {
+      if (n.parent < 0) return js::Value::null();
+      const auto &siblings = page.doc.nodes[n.parent].children;
+      const auto self = std::find(siblings.begin(), siblings.end(), id);
+      if (self == siblings.end()) return js::Value::null();
+      const bool forward = name == "nextSibling" || name == "nextElementSibling";
+      const bool elements_only = name == "nextElementSibling" || name == "previousElementSibling";
+      for (auto it = forward ? self + 1 : self; ;) {
+        if (forward) { if (it == siblings.end()) break; }
+        else { if (it == siblings.begin()) break; --it; }
+        if (!elements_only || page.doc.nodes[*it].type == Node::Type::Element) return node(*it);
+        if (forward) ++it;
+      }
+      return js::Value::null();
+    }
     if (name == "attributes")
       return js::Value();
     if (name == "getAttribute")
@@ -1230,6 +1262,20 @@ public:
         page.doc.remove(id);
         page.dirty_ = true;
         return js::Value();
+      });
+    // parent.removeChild(child): only a real child of this node; anything else is the DOM's
+    // NotFoundError rather than a silent detach of an unrelated node.
+    if (name == "removeChild")
+      return r.make_native([this, id](js::Values &a) {
+        if (a.empty() || a[0].type != js::Value::Type::Object || !a[0].object ||
+            a[0].object->kind != js::Object::Kind::Host)
+          throw js::JsError{js::Value("TypeError: removeChild needs a node")};
+        const int child = a[0].object->host;
+        if (child < 0 || child >= int(page.doc.nodes.size()) || page.doc.nodes[child].parent != id)
+          throw js::JsError{js::Value("NotFoundError: the node is not a child of this node")};
+        page.doc.remove(child);
+        page.dirty_ = true;
+        return a[0];
       });
     if ((name == "matches" || name == "closest") && n.type == Node::Type::Element)
       return r.make_native([this, id, name](js::Values &a) {
@@ -3126,6 +3172,7 @@ int Page::hit(double x, double y) const {
   // siblings all show up as a later paint range), and among equals the smallest box wins, which is
   // the innermost. Choosing by area alone sent a press under a menu to whatever it covered.
   long best_order = -1;
+  int best_depth = -1;
   for (auto &[id, r] : layout_.boxes) {
     Rect visible = r;
     for (int parent = doc.nodes[id].parent; parent >= 0; parent = doc.nodes[parent].parent) {
@@ -3150,10 +3197,15 @@ int Page::hit(double x, double y) const {
         break;
       }
     }
-    if (order > best_order || (order == best_order && visible.w * visible.h < area)) {
+    // Equal paint position and equal box (a wrapper that shrinks to its only child): the deeper node.
+    int depth = 0;
+    for (int up = doc.nodes[id].parent; up >= 0; up = doc.nodes[up].parent) ++depth;
+    const double box_area = visible.w * visible.h;
+    if (order > best_order || (order == best_order && (box_area < area || (box_area == area && depth > best_depth)))) {
       best = id;
       best_order = order;
-      area = visible.w * visible.h;
+      best_depth = depth;
+      area = box_area;
     }
   }
   return best;
@@ -4250,6 +4302,20 @@ void Page::key(const std::string &key, const std::string &text) {
   }
   if (focused_ < 0 || focused_ >= int(doc.nodes.size())) return;
   auto &n = doc.nodes[focused_];
+  // Enter on a focused button or link, and Space on a focused button, checkbox or radio, press it
+  // the way a mouse click does (the same dispatch, so scripts and default actions both run).
+  if (key == "Enter" && (n.name == "button" || (n.name == "a" && !n.attribute("href").empty()))) {
+    activate(focused_);
+    return;
+  }
+  if (key == "Space" || key == " ") {
+    const std::string type = lower(n.attribute("type"));
+    if (n.name == "button" || (n.name == "input" && (type == "checkbox" || type == "radio" || type == "button" ||
+                                                      type == "submit" || type == "reset"))) {
+      activate(focused_);
+      return;
+    }
+  }
   if (key == "Enter") {
     int form = n.parent;
     while (form >= 0 && doc.nodes[form].name != "form")

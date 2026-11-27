@@ -47,6 +47,7 @@
     var after = tabs.length * (TAB_WIDTH + TAB_GAP);
     plusEl.style.left = (36 + after + 2) + "px";
     wsEl.style.left = (36 + after + 40) + "px";
+    if (state.dialog) showDialog(state.dialog); else hideDialog();
     var shield = document.getElementById("rail-adblock");
     if (shield && typeof state.blockAds === "boolean") shield.className = state.blockAds ? "rail-btn good" : "rail-btn off";
     setDim("nav-back", !state.canBack);
@@ -57,6 +58,78 @@
     var count = document.querySelector(".shield .count");
     if (count) count.textContent = String(state.blocked || 0);
   }
+  // ---- Modal dialog: alert, confirm or prompt, drawn over the page; the shell sends it every pointer
+  // and key event while it is open and keeps tab, address and shortcuts inert. Tab is trapped here.
+  var scrim = document.getElementById("scrim");
+  var dlgInput = document.getElementById("dlg-input");
+  var dlgActions = document.getElementById("dlg-actions");
+  var dialogId = 0, dialogButtons = [], dialogKind = "";
+  function answer(button) {
+    var id = dialogId;
+    var value = dialogKind === "prompt" ? dlgInput.value : "";
+    dialogId = 0;
+    scrim.style.display = "none";
+    bridge("ui", "dialog", { id: id, button: button, value: value });
+  }
+  function focusables() {
+    var list = [];
+    if (dialogKind === "prompt") list.push(dlgInput);
+    for (var i = 0; i < dialogButtons.length; i++) list.push(dialogButtons[i]);
+    return list;
+  }
+  function showDialog(dialog) {
+    if (dialog.id === dialogId) return;
+    dialogId = dialog.id;
+    dialogKind = dialog.kind;
+    document.getElementById("dlg-title").textContent = dialog.title || "";
+    document.getElementById("dlg-message").textContent = dialog.message || "";
+    dlgInput.style.display = dialog.kind === "prompt" ? "block" : "none";
+    dlgInput.value = dialog.value || "";
+    clear(dlgActions);
+    dialogButtons = [];
+    var labels = dialog.buttons || [];
+    for (var i = 0; i < labels.length; i++) {
+      var button = el("button", i === labels.length - 1 ? "primary" : "", labels[i]);
+      button.setAttribute("data-button", String(i));
+      dlgActions.appendChild(button);
+      dialogButtons.push(button);
+    }
+    scrim.style.display = "block";
+    var first = dialog.kind === "prompt" ? dlgInput : dialogButtons[dialogButtons.length - 1];
+    if (first && first.focus) first.focus();
+  }
+  function hideDialog() {
+    if (!dialogId) return;
+    dialogId = 0;
+    scrim.style.display = "none";
+  }
+  dlgActions.addEventListener("click", function (event) {
+    var node = event.target;
+    while (node) {
+      if (node.getAttribute && node.getAttribute("data-button") !== null) {
+        answer(Number(node.getAttribute("data-button")));
+        return;
+      }
+      node = node.parentNode;
+    }
+  });
+  scrim.addEventListener("keydown", function (event) {
+    if (!dialogId) return;
+    if (event.key === "Escape") {
+      // Escape picks the first button (Cancel, No or OK for an alert).
+      answer(0);
+      if (event.preventDefault) event.preventDefault();
+    } else if (event.key === "Tab") {
+      var list = focusables(), at = -1;
+      for (var i = 0; i < list.length; i++) if (list[i] === document.activeElement) at = i;
+      if (list.length) list[(at + 1) % list.length].focus();
+      if (event.preventDefault) event.preventDefault();
+    } else if (event.key === "Enter" && dialogKind === "prompt" && document.activeElement === dlgInput) {
+      answer(dialogButtons.length - 1);
+      if (event.preventDefault) event.preventDefault();
+    }
+  });
+
   window.psychoChromeState = render;
 
   // Actions

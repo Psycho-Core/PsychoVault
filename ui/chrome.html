@@ -66,6 +66,14 @@
   <button type="button" data-act="new" role="menuitem">New tab</button>
   <button type="button" data-act="close" role="menuitem">Close tab</button>
 </div>
+<div class="scrim" id="scrim" style="display:none">
+  <div class="dialog" id="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
+    <h2 id="dlg-title"></h2>
+    <p id="dlg-message"></p>
+    <input id="dlg-input" type="text" aria-label="Value" style="display:none">
+    <div class="dlg-actions" id="dlg-actions"></div>
+  </div>
+</div>
 <footer class="statusbar" id="statusbar"><span id="status-text"></span></footer>
 <script src="chrome.js"></script>
 </body>

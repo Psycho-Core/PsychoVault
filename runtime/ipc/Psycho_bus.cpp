@@ -111,6 +111,8 @@ Schemas Schemas::stock() {
   s.add("tab:mute", fields({{"id", T::Number, true}}));
   s.add("ui:overlay", fields({{"open", T::Bool, true}}));
   s.add("rail:adblock", fields({}));
+  // The frame page answers the dialog it is showing: which one, which button, and the text of a prompt.
+  s.add("ui:dialog", fields({{"id", T::Number, true}, {"button", T::Number, true}, {"value", T::String, false}}));
   s.add("nav:back", fields({}));
   s.add("nav:forward", fields({}));
   s.add("nav:reload", fields({}));
