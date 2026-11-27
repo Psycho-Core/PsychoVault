@@ -3550,6 +3550,9 @@ struct Browser {
       report.set("chromeFrame", chrome_frame.type == Json::Type::Object);
       report.set("chromeReady", chrome_session && chrome_session->ready.load());
       report.set("note", smoke_chrome_note);
+      report.set("activeLoading", current().loading);
+      report.set("activeHasFrame", current().frame.type == Json::Type::Object);
+      report.set("activeError", current().error);
       if (chrome_session) {
         Json notes = Json::make_array();
         for (const auto &line : chrome_session->recent_diagnostics()) notes.array.push_back(Json(line));
@@ -3597,7 +3600,7 @@ struct Browser {
       }
     } else if (smoke_chrome_stage == 2) {
       // Wait for the strip to be redrawn with a second tab before pressing its close glyph.
-      if (now - smoke_chrome_tick < 600 || !ready) return true;
+      if (now - smoke_chrome_tick < 600 || !settled || chrome_frame.type != Json::Type::Object) return true;
       if (!chrome_paint_center("\u00d7", 0, x, y)) {
         finish(false, "the frame painted no tab close button");
         return true;
