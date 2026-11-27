@@ -1,0 +1,28 @@
+/* PsychoVault design tokens. Values were measured from the legacy captures in
+   docs/reference/legacy-ui/ (03-new-tab-page.png and 04-settings-general.png),
+   not copied from any stylesheet. */
+:root {
+  /* surfaces */
+  --pv-bg: #0a0e17;          /* page */
+  --pv-surface: #0f1523;     /* cards, sidebar, search field */
+  --pv-raised: #141c2e;      /* active nav item, buttons, tile icon */
+  --pv-border: #1e293b;      /* card and control outlines */
+  /* text */
+  --pv-text: #e6edf7;
+  --pv-muted: #8b9bb4;
+  --pv-faint: #4b5a72;       /* footer note */
+  --pv-placeholder: #64748b;
+  /* accent */
+  --pv-accent: #38bdf8;
+  --pv-accent-weak: #193e58; /* switch track when on */
+  --pv-switch-off: #1e293b;
+  --pv-knob-off: #8b9bb4;
+  --pv-danger: #f87171;
+  /* shape */
+  --pv-radius-card: 14px;
+  --pv-radius-control: 8px;
+  --pv-radius-pill: 24px;
+  /* type */
+  --pv-font: "PsychoVault UI", "Inter", "Segoe UI", sans-serif;
+  --pv-mono: Consolas, "Courier New", monospace;
+}

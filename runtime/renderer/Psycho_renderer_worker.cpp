@@ -29,12 +29,12 @@ Json renderer_cookie_state(const CookieJar &jar) {
 bool renderer_url_allowed(const std::string &raw) {
   if (raw == "about:blank") return true;
   auto parsed = parse_url(raw);
-  // The only internal pages a renderer may draw as a document: the app UI and
-  // the two diagnostics pages, all bare addresses. Anything else registered
+  // The only internal pages a renderer may draw as a document: the new tab and settings
+  // pages and the two diagnostics pages, all bare addresses. Anything else registered
   // (settings, history, ...) is refused here until it has a loader.
   static const InternalRegistry registry = InternalRegistry::stock();
   const std::string page = plain_internal_page(registry, raw);
-  if (page == "newtab" || page == "version" || page == "nettest") return true;
+  if (page == "newtab" || page == "settings" || page == "version" || page == "nettest") return true;
   return parsed && parsed->network();
 }
 

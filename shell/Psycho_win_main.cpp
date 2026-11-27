@@ -170,6 +170,20 @@ static std::string diagnostics_page_name(const std::string &text) {
   const rt::InternalPage *page = name.empty() ? nullptr : internal_registry().find(name);
   return page && page->category == "diagnostics" ? name : std::string();
 }
+// The settings page is an engine-rendered page like the new-tab page (P3/S083): its
+// markup is generated from the legacy inventory and its controls are not wired yet.
+static bool settings_page_url(const std::string &text) {
+  return rt::plain_internal_page(internal_registry(), text) == "settings";
+}
+// Every address the shell serves as an engine-rendered document.
+static bool engine_page_url(const std::string &text) {
+  return app_ui_url(text) || settings_page_url(text) || !diagnostics_page_name(text).empty();
+}
+static const PVUiAsset *find_ui_asset(const std::string &name) {
+  for (const PVUiAsset &asset : kPVUiAssets)
+    if (name == asset.name) return &asset;
+  return nullptr;
+}
 // Facts the broker supplies to psychovault://version; set once in wWinMain.
 static pv::rt::VersionInfo g_version_info;
 static bool g_version_known = false;
@@ -632,7 +646,7 @@ void Session::run() {
     return;
   }
   auto initial_url = parse_url(url);
-  const bool app_page = app_ui_url(url) || !diagnostics_page_name(url).empty();
+  const bool app_page = engine_page_url(url);
   if (!initial_url || (!initial_url->network() && !app_page)) {
     fail("Invalid URL");
     return;
@@ -709,18 +723,23 @@ void Session::run() {
       resource.broker_storage_state = storage->origin_state(document_url.origin());
       return resource;
     }
-    if (parsed && parsed->scheme == "psychovault" && parsed->host == "newtab" &&
+    if (parsed && parsed->scheme == "psychovault" &&
+        (parsed->host == "newtab" || parsed->host == "settings") &&
         parsed->query.empty() && parsed->fragment.empty()) {
       Resource resource;
       resource.url = parsed->href();
       resource.ok = true;
       resource.status = 200;
-      if (parsed->path.empty() || parsed->path == "/") {
-        resource.mime = "text/html; charset=utf-8";
-        resource.text = kPVAppUiHtml;
-      } else if (parsed->path == "/app.js") {
-        resource.mime = "text/javascript; charset=utf-8";
-        resource.text = kPVAppUiJs;
+      // The page itself at "/", and only the shared styles and scripts by name. A page's own
+      // markup is never served under another page's origin.
+      const bool root = parsed->path.empty() || parsed->path == "/";
+      const std::string name = root ? (parsed->host == "newtab" ? "index.html" : "settings.html")
+                                    : (parsed->path.size() > 1 ? parsed->path.substr(1) : std::string());
+      const PVUiAsset *asset = name.empty() || (!root && name.size() > 5 && name.ends_with(".html"))
+                                   ? nullptr : find_ui_asset(name);
+      if (asset) {
+        resource.mime = asset->mime;
+        resource.text = asset->data;
       } else {
         resource.ok = false;
         resource.refused = true;
@@ -1578,8 +1597,7 @@ struct Browser {
     status = !tab.error.empty() ? tab.error : tab.loading ? "Loading " + tab.url : tab.url;
     update_find();
     if ((!tab.started && (starts(tab.url, "http://") || starts(tab.url, "https://"))) ||
-        ((app_ui_url(tab.url) || !diagnostics_page_name(tab.url).empty()) &&
-         !tab.session && tab.frame.type == Json::Type::Null)) {
+        (engine_page_url(tab.url) && !tab.session && tab.frame.type == Json::Type::Null)) {
       navigate(tab.url, false);
     } else if (tab.session) {
       Json j = Json::make_object();
@@ -1646,7 +1664,7 @@ struct Browser {
       settings = starts(target, "psychovault://settings");
       sync_address();
     }
-    const bool app_page = app_ui_url(target) || !diagnostics_page_name(target).empty();
+    const bool app_page = engine_page_url(target);
     if ((starts(target, "psychovault://") && !app_page) || target == "about:blank") {
       tab.loading = false;
       tab.recorded = true;
@@ -5474,7 +5492,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
           if (const Json *paint = home.frame.find("paint");
               paint && paint->type == Json::Type::Array) {
             for (const Json &command : paint->array) {
-              if (command.str("text") != "Type a web address") continue;
+              if (command.str("text") != "Search DuckDuckGo or enter an address") continue;
               address_x = command.num("x") + 2.0;
               address_y = command.num("y") + command.num("h") / 2.0;
               address_found = true;
@@ -5539,9 +5557,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       bool web = starts(b->current().url, "http://") || starts(b->current().url, "https://");
       bool failed_internal = false;
       // An internal page that never produced a frame is a failed smoke too.
-      const bool internal_page =
-          !app_ui_url(b->current().url) && starts(b->current().url, "psychovault://") &&
-          (!diagnostics_page_name(b->current().url).empty());
+      const bool internal_page = engine_page_url(b->current().url);
       if (internal_page && (b->current().frame.type != Json::Type::Object ||
                             !b->current().error.empty()))
         failed_internal = true;

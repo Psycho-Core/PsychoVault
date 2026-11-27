@@ -41,6 +41,9 @@ struct Run {
   Style style;
   bool break_before = false;
 };
+// Elements laid out as replaced images: <img>, and an inline <svg> (which the page renders to
+// a synthetic image resource before layout).
+static bool image_like(const Node &node) { return node.name == "img" || node.name == "svg"; }
 struct Layout {
   const Document &doc;
   const std::vector<Style> &styles;
@@ -271,7 +274,7 @@ struct Layout {
     if (specified >= 0 && style.box_sizing == "border-box")
       content = std::max(0.0, specified - style.padding[1] - style.padding[3] -
                                     style.border[1] - style.border[3]);
-    if (content < 0 && node.name == "img") {
+    if (content < 0 && image_like(node)) {
       const ImageMetrics image = image_metrics(node);
       const double height = resolved_height(style, -1) >= 0 ? resolved_height(style, -1) : image.attr_height;
       content = image.attr_width >= 0 ? image.attr_width
@@ -1085,7 +1088,7 @@ struct Layout {
         x_offset = justify == "center" ? std::max(0.0, (width - outer) / 2)
                                         : std::max(0.0, width - outer);
       }
-      if (height_auto && align == "stretch" && doc.nodes[cell.id].name != "img")
+      if (height_auto && align == "stretch" && !image_like(doc.nodes[cell.id]))
         forced_height = std::max(0.0, height - vertical_edges);
       else if (height_auto && align != "stretch") {
         const double outer = std::min(height, measured_height);
@@ -1302,7 +1305,7 @@ struct Layout {
     double sideways = s.padding[1] + s.padding[3] + s.border[1] + s.border[3];
     const double specified_width = resolved_width(s, available);
     const double specified_height = resolved_height(s, avail_h);
-    const bool block_image = n.name == "img";
+    const bool block_image = image_like(n);
     const ImageMetrics image = block_image ? image_metrics(n) : ImageMetrics{};
     double min_width = std::max(0.0, resolved_bound(s, s.min_width_expression, s.min_width,
                                                     available, 0, "width"));
@@ -1490,6 +1493,17 @@ struct Layout {
       // them with the text when the line ends.
       struct LineBlock { size_t from, to; int id; };
       std::vector<LineBlock> line_blocks;
+      // Where a replaced or control box of width box_w starts on its own line: auto margins
+      // centre or push it, otherwise the container's text-align places it (the text-align
+      // inherits, so a centred stack of images and inputs centres them too).
+      auto aligned_x = [&](double box_w, const Style &st) {
+        const double free_space = inner_w - box_w - st.margin[3] - st.margin[1];
+        if (st.auto_left && st.auto_right) return inner_x + st.margin[3] + std::max(0.0, free_space / 2);
+        if (st.auto_left) return inner_x + st.margin[3] + std::max(0.0, free_space);
+        if (s.text_align == "center") return inner_x + st.margin[3] + std::max(0.0, free_space / 2);
+        if (s.text_align == "right") return inner_x + st.margin[3] + std::max(0.0, free_space);
+        return inner_x + st.margin[3];
+      };
       auto flush = [&]() {
         if (line.empty() && line_height <= 0)
           return;
@@ -1694,7 +1708,7 @@ struct Layout {
           cursor += box.h + cs.margin[0] + cs.margin[2];
           return;
         }
-        if (child.name == "img") {
+        if (image_like(child)) {
           flush();
           const ImageSource selected = image_source(child);
           auto resolved = resolve_url(doc.url, selected.url);
@@ -1774,9 +1788,9 @@ struct Layout {
           }
           iw = std::clamp(iw, 0.0, 16384.0);
           ih = std::clamp(ih, 0.0, 16384.0);
-          const double outer_x = inner_x + cs.margin[3];
-          const double outer_y = cursor + cs.margin[0];
           const double outer_w = iw + horizontal_extra;
+          const double outer_x = aligned_x(outer_w, cs);
+          const double outer_y = cursor + cs.margin[0];
           const double outer_h = ih + vertical_extra;
           const Rect outer{outer_x, outer_y, outer_w, outer_h};
           const Rect content{outer_x + cs.border[3] + cs.padding[3],
@@ -1890,7 +1904,9 @@ struct Layout {
                       : range                    ? 16.0
                                                  : cs.font_size + cs.padding[0] + cs.padding[2] +
                                                        cs.border[0] + cs.border[2];
-          const Rect control_box{inner_x, cursor, cw, ch};
+          const double control_x = aligned_x(cw, cs);
+          const double control_y = cursor + cs.margin[0];
+          const Rect control_box{control_x, control_y, cw, ch};
           const double radius = ctype == "radio" ? std::min(cw, ch) / 2 : cs.radius;
           auto shape = [&](PaintCommand::Kind kind, Rect rect, uint32_t color, double corner) {
             PaintCommand command{kind, rect, color, {}, 0, 1, false, c, {}, {}, {}};
@@ -1906,30 +1922,43 @@ struct Layout {
             const double fraction = std::clamp((value - lo) / (hi - lo), 0.0, 1.0);
             const double thumb = std::min(14.0, ch);
             const double track_h = 4;
-            const double track_y = cursor + (ch - track_h) / 2;
-            const double thumb_x = inner_x + fraction * std::max(0.0, cw - thumb);
-            shape(PaintCommand::Kind::Rect, {inner_x, track_y, cw, track_h}, 0xffc8ccd0, 2);
+            const double track_y = control_y + (ch - track_h) / 2;
+            const double thumb_x = control_x + fraction * std::max(0.0, cw - thumb);
+            shape(PaintCommand::Kind::Rect, {control_x, track_y, cw, track_h}, 0xffc8ccd0, 2);
             if (fraction > 0)
               shape(PaintCommand::Kind::Rect,
-                    {inner_x, track_y, thumb_x - inner_x + thumb / 2, track_h}, 0xff1a73e8, 2);
-            shape(PaintCommand::Kind::Rect, {thumb_x, cursor + (ch - thumb) / 2, thumb, thumb},
+                    {control_x, track_y, thumb_x - control_x + thumb / 2, track_h}, 0xff1a73e8, 2);
+            shape(PaintCommand::Kind::Rect, {thumb_x, control_y + (ch - thumb) / 2, thumb, thumb},
                   0xff1a73e8, thumb / 2);
           } else {
-            shape(PaintCommand::Kind::Rect, control_box,
-                  cs.background.transparent ? 0xffffffff : cs.background.bgra(), radius);
-            shape(PaintCommand::Kind::Border, control_box, cs.border_color.bgra(), radius);
+            // An author's background (even `transparent`) is honoured; only a control with no
+            // background declared at all gets the default white field.
+            const bool declared_background = cs.raw.count("background") || cs.raw.count("background-color");
+            if (declared_background ? !cs.background.transparent : true)
+              shape(PaintCommand::Kind::Rect, control_box,
+                    cs.background.transparent ? 0xffffffff : cs.background.bgra(), radius);
+            // The default control outline stays unless the author declared a border and it
+            // came out zero-width (`border: 0`, `border: none`).
+            bool declared_border = false;
+            for (const auto &entry : cs.raw)
+              if (entry.first.rfind("border", 0) == 0 && entry.first.rfind("border-radius", 0) != 0 &&
+                  entry.first.find("radius") == std::string::npos)
+                declared_border = true;
+            if (cs.border[0] > 0 || cs.border[1] > 0 || cs.border[2] > 0 || cs.border[3] > 0 ||
+                !declared_border)
+              shape(PaintCommand::Kind::Border, control_box, cs.border_color.bgra(), radius);
           }
           if (checkable && child.get_attribute("checked", label)) {
             const double side = std::min(cw, ch) * 0.55;
             shape(PaintCommand::Kind::Rect,
-                  {inner_x + (cw - side) / 2, cursor + (ch - side) / 2, side, side},
+                  {control_x + (cw - side) / 2, control_y + (ch - side) / 2, side, side},
                   cs.color.bgra(), ctype == "radio" ? side / 2 : 0);
           }
           if (!checkable && !range) {
             const double chevron = child.name == "select" ? 18.0 : 0.0;
             out.paint.push_back(
                 {PaintCommand::Kind::Text,
-                 {inner_x + cs.padding[3] + 4, cursor + cs.padding[0] + 2, cw - 8 - chevron, ch - 4},
+                 {control_x + cs.padding[3] + 4, control_y + cs.padding[0] + 2, cw - 8 - chevron, ch - 4},
                  cs.color.bgra(),
                  label,
                  cs.font_size,
@@ -1940,14 +1969,14 @@ struct Layout {
           }
           if (child.name == "select") {
             // A down-pointing chevron drawn as shrinking rows.
-            const double mid_x = inner_x + cw - 12, top = cursor + ch / 2 - 2;
+            const double mid_x = control_x + cw - 12, top = control_y + ch / 2 - 2;
             for (int row = 0; row < 4; ++row) {
               const double half = 4.5 - row;
               shape(PaintCommand::Kind::Rect, {mid_x - half, top + row, half * 2, 1},
                     cs.color.bgra(), 0);
             }
           }
-          out.boxes[c] = {inner_x, cursor, cw, ch};
+          out.boxes[c] = {control_x, control_y, cw, ch};
           cursor += ch + cs.margin[0] + cs.margin[2];
           return;
         }
@@ -1964,6 +1993,7 @@ struct Layout {
         child_height = std::max(0.0, child_height - s.padding[0] - s.padding[2] -
                                       s.border[0] - s.border[2]);
       for (int c : n.children) {
+        if (n.name == "svg") break; // an svg paints as one image; its shapes are not boxes
         Style child_style = resolve_box_style(styles[c], inner_w);
         const auto &cs = child_style;
         if (cs.display == "none" || positioned(cs))
@@ -1971,7 +2001,7 @@ struct Layout {
         // Images use the replaced-element sizing and paint path even when
         // display:block; the generic block path otherwise paints an empty box.
         // This path still uses the engine's simplified vertical image flow.
-        bool is_block = doc.nodes[c].type == Node::Type::Element && doc.nodes[c].name != "img" &&
+        bool is_block = doc.nodes[c].type == Node::Type::Element && !image_like(doc.nodes[c]) &&
                         cs.display != "inline" && cs.display != "inline-block" && c != 0;
         if (is_block) {
           flush();
@@ -2148,7 +2178,24 @@ struct Layout {
                            {},
                            {}});
     }
-    if (*std::max_element(std::begin(s.border), std::end(s.border)) > 0) {
+    const bool uniform_border = s.border[0] == s.border[1] && s.border[1] == s.border[2] &&
+                                s.border[2] == s.border[3];
+    if (!uniform_border && *std::max_element(std::begin(s.border), std::end(s.border)) > 0) {
+      // Different widths per side (border-top only, a divider line, ...): one rectangle per
+      // side, in the shared border colour, instead of an outline of the widest width.
+      const double box_w = out.boxes[id].w;
+      const uint32_t colour = s.border_color.bgra();
+      auto side = [&](double x, double y, double width, double height) {
+        if (width > 0 && height > 0)
+          out.paint.push_back({PaintCommand::Kind::Rect, {x, y, width, height}, colour, {}, 0, 0,
+                               false, id, {}, {}, {}});
+      };
+      side(left, top, box_w, s.border[0]);
+      side(left, top + border_box - s.border[2], box_w, s.border[2]);
+      side(left, top + s.border[0], s.border[3], border_box - s.border[0] - s.border[2]);
+      side(left + box_w - s.border[1], top + s.border[0], s.border[1],
+           border_box - s.border[0] - s.border[2]);
+    } else if (*std::max_element(std::begin(s.border), std::end(s.border)) > 0) {
       PaintCommand border;
       border.kind = PaintCommand::Kind::Border;
       border.rect = {left, top, out.boxes[id].w, border_box};
@@ -2280,7 +2327,7 @@ static bool collapse_vertical_margins(const Document &doc, const std::vector<Sty
     if (st.height >= 0 || !st.height_expression.empty() || st.height_percent >= 0 ||
         st.min_height > 0 || !st.min_height_expression.empty())
       return false;
-    if (doc.nodes[id].name == "img" || doc.nodes[id].name == "input") return false;
+    if (image_like(doc.nodes[id]) || doc.nodes[id].name == "input") return false;
     for (int kid : doc.nodes[id].children)
       if (!blank(kid)) return false;
     return true;
@@ -2375,78 +2422,199 @@ bool parse_gradient(const std::string &spec, Rect box, Gradient &out) {
   size_t open = spec.find("gradient(");
   if (open == std::string::npos)
     return false;
-  bool radial = lower(spec.substr(0, open)).find("radial") != std::string::npos;
+  const std::string kind = lower(spec.substr(0, open));
+  bool radial = kind.find("radial") != std::string::npos;
   size_t close = spec.rfind(')');
   if (close == std::string::npos || close <= open)
     return false;
-  std::string body = spec.substr(open + 9, close - open - 9);
-  auto parts = split(body, ',');
-  std::erase_if(parts, [](const std::string &p) { return trim(p).empty(); });
-  if (parts.empty())
-    return false;
-  double angle = 180; // CSS default is top to bottom
-  size_t first_stop = 0;
-  auto head = lower(trim(parts[0]));
-  if (head.find("deg") != std::string::npos) {
-    try {
-      angle = std::stod(head);
-    } catch (...) {
-      angle = 180;
-    }
-    first_stop = 1;
-  } else if (head.find("to ") == 0 || head.find("at ") != std::string::npos) {
-    if (head.find("left") != std::string::npos)
-      angle = 270;
-    else if (head.find("right") != std::string::npos)
-      angle = 90;
-    else if (head.find("top") != std::string::npos)
-      angle = 0;
-    else
-      angle = 180;
-    first_stop = 1;
-  }
-  std::vector<std::pair<double, uint32_t>> raw;
-  for (size_t i = first_stop; i < parts.size(); ++i) {
-    auto text = trim(parts[i]);
-    auto colour = parse_color(text);
-    size_t stop_at = colour.transparent ? 0 : text.find('%');
-    if (colour.transparent && text.find('%') != std::string::npos)
-      continue;
-    double at = -1;
-    if (stop_at != std::string::npos) {
-      try {
-        at = std::clamp(std::stod(text.substr(0, stop_at)) / 100.0, 0.0, 1.0);
-      } catch (...) {
+  const std::string body = spec.substr(open + 9, close - open - 9);
+  // Split on commas and spaces that are not inside parentheses, so rgba(1,2,3,.5)
+  // and "#0a0e17 70%" stay whole.
+  auto split_top = [](const std::string &text, char separator) {
+    std::vector<std::string> out;
+    std::string current;
+    int depth = 0;
+    for (char c : text) {
+      if (c == '(') ++depth;
+      else if (c == ')') depth = std::max(0, depth - 1);
+      if (depth == 0 && (separator == ' ' ? std::isspace(static_cast<unsigned char>(c)) != 0 : c == separator)) {
+        if (!trim(current).empty()) out.push_back(trim(current));
+        current.clear();
+      } else {
+        current += c;
       }
     }
-    raw.emplace_back(at, colour.bgra());
+    if (!trim(current).empty()) out.push_back(trim(current));
+    return out;
+  };
+  const auto parts = split_top(body, ',');
+  if (parts.empty())
+    return false;
+  const double width = std::max(box.w, 0.0), height = std::max(box.h, 0.0);
+  double angle = 180; // CSS default is top to bottom
+  double center_x = box.x + width / 2, center_y = box.y + height / 2;
+  double radius_x = std::hypot(width, height) / 2, radius_y = radius_x; // farthest-corner circle
+  size_t first_stop = 0;
+  const std::string head = lower(parts[0]);
+  auto has_word = [&](const std::string &text, const char *word) { return text.find(word) != std::string::npos; };
+  auto number_before = [&](const std::string &text, const char *unit, double &value) {
+    const size_t at = text.find(unit);
+    if (at == std::string::npos || at == 0) return false;
+    size_t start = at;
+    while (start > 0 && (std::isdigit(static_cast<unsigned char>(text[start - 1])) || text[start - 1] == '.' ||
+                         text[start - 1] == '-' || text[start - 1] == '+'))
+      --start;
+    try { value = std::stod(text.substr(start, at - start)); } catch (...) { return false; }
+    return true;
+  };
+  if (!radial) {
+    double value = 0;
+    if (number_before(head, "deg", value)) { angle = value; first_stop = 1; }
+    else if (number_before(head, "turn", value)) { angle = value * 360; first_stop = 1; }
+    else if (number_before(head, "rad", value)) { angle = value * 180.0 / 3.14159265358979323846; first_stop = 1; }
+    else if (head.rfind("to ", 0) == 0) {
+      const bool to_top = has_word(head, "top"), to_bottom = has_word(head, "bottom");
+      const bool to_left = has_word(head, "left"), to_right = has_word(head, "right");
+      if ((to_top || to_bottom) && (to_left || to_right)) {
+        // A corner keyword: the gradient line is perpendicular to the diagonal between
+        // the two corners it does not point at.
+        const double vx = (to_right ? 1.0 : -1.0) * height, vy = (to_bottom ? 1.0 : -1.0) * width;
+        angle = std::atan2(vx, -vy) * 180.0 / 3.14159265358979323846;
+      } else if (to_left) angle = 270;
+      else if (to_right) angle = 90;
+      else if (to_top) angle = 0;
+      else angle = 180;
+      first_stop = 1;
+    }
+  } else {
+    // radial-gradient([circle|ellipse] [size] [at <x> <y>], stops...)
+    const bool configuration = head.find("at ") != std::string::npos || head.rfind("circle", 0) == 0 ||
+                               head.rfind("ellipse", 0) == 0 || head.rfind("closest", 0) == 0 ||
+                               head.rfind("farthest", 0) == 0;
+    if (configuration) {
+      first_stop = 1;
+      const bool circle = head.rfind("circle", 0) == 0;
+      const size_t at = head.find("at ");
+      auto position = [&](const std::string &word, double extent, double origin, bool horizontal) {
+        if (word == "center") return origin + extent / 2;
+        if (word == "left" || word == "top") return origin;
+        if (word == "right" || word == "bottom") return origin + extent;
+        try {
+          if (word.back() == '%') return origin + extent * std::stod(word.substr(0, word.size() - 1)) / 100.0;
+          if (word.size() > 2 && word.ends_with("px")) return origin + std::stod(word.substr(0, word.size() - 2));
+        } catch (...) {}
+        return origin + extent / 2;
+        (void)horizontal;
+      };
+      if (at != std::string::npos) {
+        const auto words = split_top(head.substr(at + 3), ' ');
+        if (!words.empty()) {
+          // "at top" / "at left" name one axis; a lone keyword leaves the other centred.
+          const std::string first = words[0], second = words.size() > 1 ? words[1] : "center";
+          const bool first_vertical = first == "top" || first == "bottom";
+          center_x = position(first_vertical ? second : first, width, box.x, true);
+          center_y = position(first_vertical ? first : second, height, box.y, false);
+        }
+      }
+      // Farthest-corner sizing from the chosen centre (the CSS default).
+      const double far_x = std::max(center_x - box.x, box.x + width - center_x);
+      const double far_y = std::max(center_y - box.y, box.y + height - center_y);
+      if (circle) {
+        radius_x = radius_y = std::hypot(far_x, far_y);
+      } else {
+        radius_x = far_x * std::sqrt(2.0);
+        radius_y = far_y * std::sqrt(2.0);
+      }
+      // Explicit radii: "circle 300px" or "ellipse 420px 340px" (before any "at ...").
+      {
+        const std::string sizing = head.substr(0, at == std::string::npos ? head.size() : at);
+        std::vector<double> lengths;
+        for (const std::string &word : split_top(sizing, ' ')) {
+          try {
+            if (word.size() > 2 && word.ends_with("px")) lengths.push_back(std::stod(word.substr(0, word.size() - 2)));
+            else if (word.size() > 1 && word.back() == '%') lengths.push_back(-std::stod(word.substr(0, word.size() - 1)) / 100.0);
+          } catch (...) {}
+        }
+        if (!lengths.empty()) {
+          auto resolve_length = [&](double value, double extent) { return value < 0 ? -value * extent : value; };
+          radius_x = std::max(0.0001, resolve_length(lengths[0], width));
+          radius_y = lengths.size() > 1 ? std::max(0.0001, resolve_length(lengths[1], height)) : radius_x;
+          if (circle || lengths.size() == 1) radius_y = radius_x;
+        }
+      }
+      if (head.find("closest-side") != std::string::npos) {
+        radius_x = std::min(center_x - box.x, box.x + width - center_x);
+        radius_y = std::min(center_y - box.y, box.y + height - center_y);
+        if (circle) radius_x = radius_y = std::min(radius_x, radius_y);
+      } else if (head.find("farthest-side") != std::string::npos) {
+        radius_x = far_x;
+        radius_y = far_y;
+        if (circle) radius_x = radius_y = std::max(far_x, far_y);
+      }
+    } else {
+      radius_x = std::max(center_x - box.x, box.x + width - center_x) * std::sqrt(2.0); // default ellipse
+      radius_y = std::max(center_y - box.y, box.y + height - center_y) * std::sqrt(2.0);
+    }
+  }
+  // Colour stops: "<colour> [<position>]", where the position is a percentage or a length.
+  std::vector<std::pair<double, uint32_t>> raw;
+  const double line_length = radial ? radius_x
+      : std::fabs(std::sin(angle * 3.14159265358979323846 / 180.0)) * width +
+        std::fabs(std::cos(angle * 3.14159265358979323846 / 180.0)) * height;
+  for (size_t i = first_stop; i < parts.size(); ++i) {
+    const auto words = split_top(parts[i], ' ');
+    if (words.empty()) continue;
+    double at = -1;
+    std::string colour_text = parts[i];
+    const std::string &last = words.back();
+    if (words.size() > 1) {
+      try {
+        if (last.back() == '%') { at = std::stod(last.substr(0, last.size() - 1)) / 100.0; colour_text = trim(parts[i].substr(0, parts[i].size() - last.size())); }
+        else if (last.size() > 2 && last.ends_with("px") && line_length > 0) { at = std::stod(last.substr(0, last.size() - 2)) / line_length; colour_text = trim(parts[i].substr(0, parts[i].size() - last.size())); }
+      } catch (...) {
+        at = -1;
+      }
+    }
+    const Color colour = parse_color(colour_text);
+    raw.emplace_back(at < 0 ? -1.0 : std::clamp(at, 0.0, 1.0), colour.bgra());
     if (raw.size() >= 16)
       break;
   }
   if (raw.empty())
     return false;
   // Stops without a position are spread evenly between their neighbours.
-  for (size_t i = 0; i < raw.size(); ++i)
-    if (raw[i].first < 0)
-      raw[i].first = raw.size() == 1 ? 0 : double(i) / double(raw.size() - 1);
+  if (raw.front().first < 0) raw.front().first = 0;
+  if (raw.back().first < 0) raw.back().first = 1;
+  for (size_t i = 1; i < raw.size(); ++i) {
+    if (raw[i].first >= 0) {
+      raw[i].first = std::max(raw[i].first, raw[i - 1].first);
+      continue;
+    }
+    size_t next = i;
+    while (next < raw.size() && raw[next].first < 0) ++next;
+    const double from = raw[i - 1].first, to = raw[std::min(next, raw.size() - 1)].first;
+    for (size_t k = i; k < next; ++k)
+      raw[k].first = from + (to - from) * double(k - i + 1) / double(next - i + 1);
+    i = next - 1;
+  }
   out = Gradient{};
   out.radial = radial;
-  double radians = angle * 3.14159265358979323846 / 180.0;
-  double cx = box.x + box.w / 2, cy = box.y + box.h / 2;
   if (radial) {
-    out.x0 = cx;
-    out.y0 = cy;
+    out.x0 = center_x;
+    out.y0 = center_y;
     out.r0 = 0;
-    out.r1 = std::max(box.w, box.h) / 2;
+    out.r1 = std::max(radius_x, 0.0001);
+    out.aspect = radius_x > 0.0001 ? radius_y / radius_x : 1.0;
   } else {
     // I project the box onto the gradient direction so the first stop starts at
     // one edge and the last ends at the other.
-    double dx = std::sin(radians), dy = -std::cos(radians);
-    double half = (std::fabs(dx) * box.w + std::fabs(dy) * box.h) / 2;
-    out.x0 = cx - dx * half;
-    out.y0 = cy - dy * half;
-    out.x1 = cx + dx * half;
-    out.y1 = cy + dy * half;
+    const double radians = angle * 3.14159265358979323846 / 180.0;
+    const double dx = std::sin(radians), dy = -std::cos(radians);
+    const double half = (std::fabs(dx) * width + std::fabs(dy) * height) / 2;
+    out.x0 = center_x - dx * half;
+    out.y0 = center_y - dy * half;
+    out.x1 = center_x + dx * half;
+    out.y1 = center_y + dy * half;
   }
   for (auto &[at, colour] : raw)
     out.stops.push_back({at, colour});

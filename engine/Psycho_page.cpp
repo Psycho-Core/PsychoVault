@@ -1660,6 +1660,27 @@ public:
     return out + "</" + n.name + ">";
   }
 };
+// Markup for an inline <svg> and its subtree, with the namespace the SVG parser expects.
+static std::string serialize_svg_markup(const Document &d, int id) {
+  const Node &n = d.nodes[id];
+  if (n.type == Node::Type::Text) return html_escape(n.text);
+  if (n.type != Node::Type::Element) return "";
+  std::string out = "<" + n.name;
+  bool has_namespace = false;
+  for (const auto &a : n.attributes) {
+    if (a.first == "xmlns") has_namespace = true;
+    // HTML lowercases attribute names; the SVG ones that matter are camel case.
+    std::string key = a.first;
+    if (key == "viewbox") key = "viewBox";
+    else if (key == "preserveaspectratio") key = "preserveAspectRatio";
+    out += " " + key + "=\"" + html_escape(a.second) + "\"";
+  }
+  if (!has_namespace && n.name == "svg") out += " xmlns=\"http://www.w3.org/2000/svg\"";
+  if (n.children.empty()) return out + "/>";
+  out += ">";
+  for (int child : n.children) out += serialize_svg_markup(d, child);
+  return out + "</" + n.name + ">";
+}
 void Page::request_navigation(const std::string &input) {
   if (navigations.size() < 8) {
     auto u = resolve_url(doc.url, input);
@@ -2681,6 +2702,59 @@ void Page::rebuild() {
     image_sources.emplace(node.id, source);
     if (lower(node.attribute("loading")) != "lazy")
       request(source.url, ResourceType::Image);
+  }
+  // An inline <svg> is rendered to a synthetic image resource keyed by its markup, then laid out
+  // and painted like an <img>. Re-rendered only when the markup or size changes.
+  for (const Node &node : doc.nodes) {
+    if (node.type != Node::Type::Element || node.name != "svg") continue;
+    std::string markup = serialize_svg_markup(doc, node.id);
+    auto length_attribute = [&](const char *name) {
+      const std::string value = trim(node.attribute(name));
+      try {
+        size_t used = 0;
+        const double v = std::stod(value, &used);
+        if (used > 0 && std::isfinite(v) && v > 0 && v <= 4096) return v;
+      } catch (...) {}
+      return 0.0;
+    };
+    double svg_w = length_attribute("width"), svg_h = length_attribute("height");
+    if (svg_w <= 0 || svg_h <= 0) {
+      // fall back to the viewBox, then to the 300x150 an <svg> has by default
+      std::string box = node.attribute("viewBox", node.attribute("viewbox"));
+      double vx = 0, vy = 0, vw = 0, vh = 0;
+      if (std::sscanf(box.c_str(), "%lf%*[ ,]%lf%*[ ,]%lf%*[ ,]%lf", &vx, &vy, &vw, &vh) == 4 && vw > 0 && vh > 0) {
+        if (svg_w <= 0 && svg_h > 0) svg_w = svg_h * vw / vh;
+        else if (svg_h <= 0 && svg_w > 0) svg_h = svg_w * vh / vw;
+        else { svg_w = vw; svg_h = vh; }
+      }
+      if (svg_w <= 0) svg_w = 300;
+      if (svg_h <= 0) svg_h = 150;
+    }
+    markup += "<!-- " + std::to_string(int(svg_w)) + "x" + std::to_string(int(svg_h)) + " -->";
+    const std::string url = "inline-svg:" + std::to_string(node.id) + "/" +
+                            std::to_string(std::hash<std::string>{}(markup));
+    if (!resources_.count(url)) {
+      Resource inline_svg;
+      inline_svg.url = url;
+      inline_svg.ok = true;
+      inline_svg.status = 200;
+      inline_svg.mime = "image/svg+xml";
+      try {
+        Image image = render_svg(markup, int(std::lround(svg_w)), int(std::lround(svg_h)));
+        inline_svg.image_width = image.width;
+        inline_svg.image_height = image.height;
+        images_[url] = std::move(image);
+      } catch (const std::exception &e) {
+        inline_svg.ok = false;
+        inline_svg.error = std::string("SVG decode failed: ") + e.what();
+        diagnostics.push_back({"image", inline_svg.error});
+      }
+      resources_[url] = std::move(inline_svg);
+    }
+    ImageSource source;
+    source.url = url;
+    source.density = 1;
+    image_sources.emplace(node.id, source);
   }
   for (const Style &style : styles)
     for (const std::string &layer : style.background_layers) {

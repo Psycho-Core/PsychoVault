@@ -123,6 +123,16 @@ jobs:
             Write-Host "::error title=P2 layout contract::$detail"
             exit $code
           }
+      - name: Verify gradient paint contract
+        shell: pwsh
+        run: |
+          python tests/Psycho_p2_paint_contract_tests.py --engine build/pv-engine.exe 2>&1 | Tee-Object build/p2-paint.txt
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            $detail = (Get-Content build/p2-paint.txt -Raw) -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            Write-Host "::error title=P2 paint contract::$detail"
+            exit $code
+          }
       - name: Verify focus interaction contract
         shell: pwsh
         run: |
@@ -175,12 +185,13 @@ jobs:
           } finally {
             Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
           }
-      - name: Capture my diagnostics pages
+      - name: Capture my engine-rendered pages
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force build/captures | Out-Null
-          foreach ($page in 'version', 'nettest') {
-            $out = Join-Path $env:GITHUB_WORKSPACE "build/captures/diagnostics-$page.png"
+          $hashes = @{}
+          foreach ($page in 'version', 'nettest', 'newtab', 'settings') {
+            $out = Join-Path $env:GITHUB_WORKSPACE "build/captures/page-$page.png"
             Remove-Item -Force $out -ErrorAction SilentlyContinue
             # The browser is a GUI-subsystem program, so PowerShell would not wait
             # for it; start it explicitly and wait for its real exit code.
@@ -188,15 +199,35 @@ jobs:
             if (-not $p.WaitForExit(90000)) { try { $p.Kill($true) } catch {}; throw "psychovault://$page did not finish" }
             if ($p.ExitCode -ne 0) { throw "psychovault://$page exited $($p.ExitCode)" }
             if (-not (Test-Path $out) -or (Get-Item $out).Length -lt 2000) { throw "no usable capture for psychovault://$page" }
-            Write-Host "psychovault://$page captured, $((Get-Item $out).Length) bytes"
+            $hashes[$page] = (Get-FileHash $out).Hash
+            Write-Host "psychovault://$page captured, $((Get-Item $out).Length) bytes, $($hashes[$page])"
           }
-          # Two different pages must not produce the same pixels; identical
-          # captures mean a blank or stuck window, not two rendered pages.
-          $a = (Get-FileHash build/captures/diagnostics-version.png).Hash
-          $b = (Get-FileHash build/captures/diagnostics-nettest.png).Hash
-          Write-Host "version $a"
-          Write-Host "nettest $b"
-          if ($a -eq $b) { throw "the version and nettest captures are identical" }
+          # Different pages must not produce the same pixels; identical captures mean a
+          # blank or stuck window, not rendered pages.
+          if (($hashes.Values | Select-Object -Unique).Count -ne $hashes.Count) { throw 'two of the page captures are identical' }
+      - name: Verify the generated settings page and new-tab markup
+        shell: pwsh
+        run: |
+          python tests/Psycho_ui_settings_tests.py 2>&1 | Tee-Object build/ui-settings.txt
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error title=UI markup tests::see build/ui-settings.txt"; exit $LASTEXITCODE }
+      - name: Measure my pages against the legacy captures (report only)
+        shell: pwsh
+        run: |
+          # Real glyphs are drawn here, unlike a headless Linux render, so these numbers include text.
+          # The limit is the full image so the harness reports a count instead of failing the step.
+          $common = @('--engine', 'build/pv-engine.exe', '--max-changed-pixels', '99999999',
+                      '--resource', 'psychovault://newtab/tokens.css=ui/tokens.css',
+                      '--resource', 'psychovault://newtab/components.css=ui/components.css',
+                      '--resource', 'psychovault://newtab/app.js=ui/app.js',
+                      '--resource', 'psychovault://settings/tokens.css=ui/tokens.css',
+                      '--resource', 'psychovault://settings/components.css=ui/components.css',
+                      '--resource', 'psychovault://settings/settings.js=ui/settings.js')
+          python tools/Psycho_reference_diff.py --reference 03-new-tab-page.png --input ui/index.html --url psychovault://newtab/ --outdir build/ref-diff-newtab @common 2>&1 | Tee-Object build/ref-diff-newtab.txt
+          python tools/Psycho_reference_diff.py --reference 04-settings-general.png --input ui/settings.html --url psychovault://settings/ --outdir build/ref-diff-settings @common 2>&1 | Tee-Object build/ref-diff-settings.txt
+          foreach ($name in 'newtab', 'settings') {
+            $report = Get-Content "build/ref-diff-$name/report.json" -Raw | ConvertFrom-Json
+            Write-Host "legacy-diff $name : $($report | ConvertTo-Json -Compress -Depth 3)"
+          }
       - name: Exercise my tab and history models in the running shell
         shell: pwsh
         run: |

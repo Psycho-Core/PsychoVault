@@ -20,6 +20,7 @@ struct GradientStop {
 struct Gradient {
   bool radial = false;
   double x0 = 0, y0 = 0, x1 = 0, y1 = 0, r0 = 0, r1 = 0;
+  double aspect = 1; // radial only: vertical radius over horizontal radius (1 = circle)
   std::vector<GradientStop> stops;
 };
 // I sample a gradient at a point, clamping outside the ends.

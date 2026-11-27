@@ -145,8 +145,11 @@ class P2ImageContractTests(unittest.TestCase):
     def test_original_s050_image_fixture_decodes_and_fits_both_resources(self):
         frame, pixels = render("images.html", 1396, 834, svg=True)
         images = [c for c in frame["paint"] if c["kind"] == 3]
-        self.assertEqual(len(images), 2)
-        raster, vector = images
+        # two <img> resources and, since inline <svg> is rendered as an image, the fixture's inline marker
+        self.assertEqual(len(images), 3)
+        raster, vector, inline = images
+        self.assertTrue(inline["url"].startswith("inline-svg:"))
+        self.assertEqual((inline["w"], inline["h"]), (72, 48))
         self.assertEqual(raster["url"], "https://s050.test/pixel.png")
         self.assertEqual((raster["w"], raster["h"]), (48, 48))
         self.assertEqual(vector["url"], "https://s050.test/mark.svg")
@@ -161,7 +164,11 @@ class P2ImageContractTests(unittest.TestCase):
                          bytes((21, 128, 61, 255)))
         self.assertEqual(pixel(vector["x"] + 5, vector["y"] + 5), bytes((220, 252, 231, 255)))
         self.assertEqual(pixel(raster["x"] + 10, raster["y"] + 10), BLUE)
-        clips = [c for c in frame["paint"] if c["kind"] == 6]
+        # the inline marker: a #bae6fd rounded rectangle with a #0369a1 circle at its centre
+        self.assertEqual(pixel(inline["x"] + 36, inline["y"] + 24), bytes((3, 105, 161, 255)))
+        self.assertEqual(pixel(inline["x"] + 6, inline["y"] + 6), bytes((186, 230, 253, 255)))
+        clips = [c for c in frame["paint"] if c["kind"] == 6 and c["node"] in (raster["node"], vector["node"])]
+        images = [raster, vector]
         for image in images:
             clip = next(c for c in clips if c["node"] == image["node"])
             self.assertEqual((clip["w"], clip["h"]), (64, 48))

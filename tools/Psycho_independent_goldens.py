@@ -51,8 +51,10 @@ CASES = {
     "events_idle": {"fixture": "events", "steps": ["S066", "S067"], "actions": ["render"], "rects": [(0, 0, 40, 30, RED), (0, 30, 40, 30, BLUE)], "idle": True},
     "control_initial": {"fixture": "control", "steps": ["S061"], "rects": [(0, 0, 40, 30, RED)]},
     "control_checked": {"fixture": "control", "steps": ["S060", "S061"], "actions": ["click:10,10"], "title": "checked", "rects": [(0, 0, 40, 30, GREEN)]},
-    "edit_initial": {"fixture": "edit", "steps": ["S062"], "rects": [(0, 0, 1, 1, GRAY), (0, 1, 40, 30, RED)]},
-    "edit_input": {"fixture": "edit", "steps": ["S060", "S062"], "actions": ["click:0,0", "text:x"], "title": "x", "rects": [(0, 0, 1, 1, GRAY), (0, 1, 40, 30, GREEN)]},
+    # The 1x1 input declares `border:0`, so it has no outline; an earlier expectation here encoded the
+    # engine drawing one anyway (fixed 2026-11-27 when controls began honouring a declared zero border).
+    "edit_initial": {"fixture": "edit", "steps": ["S062"], "rects": [(0, 1, 40, 30, RED)]},
+    "edit_input": {"fixture": "edit", "steps": ["S060", "S062"], "actions": ["click:0,0", "text:x"], "title": "x", "rects": [(0, 1, 40, 30, GREEN)]},
     "image": {"steps": ["S063"], "image": True, "rects": [(0, 0, 40, 20, YELLOW), (10, 0, 10, 10, CYAN), (20, 0, 10, 10, ORANGE), (10, 10, 10, 10, ORANGE), (20, 10, 10, 10, CYAN)]},
     "motion_reduced": {"fixture": "motion", "steps": ["S065"], "reduced": True, "rects": [(0, 0, 40, 30, GREEN)]},
     "canvas": {"steps": ["S068"], "rects": [(0, 0, 80, 60, RED), (10, 10, 30, 20, GREEN), (40, 30, 20, 20, BLUE)], "canvas": True},

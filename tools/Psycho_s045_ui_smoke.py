@@ -58,17 +58,20 @@ def main() -> int:
     app_frame = render(
         engine, ROOT / "ui/index.html", "psychovault://newtab",
         outdir / "s045-app-ui.png", args.width, args.height,
-        [("psychovault://newtab/app.js", ROOT / "ui/app.js")])
+        [("psychovault://newtab/app.js", ROOT / "ui/app.js"),
+         ("psychovault://newtab/tokens.css", ROOT / "ui/tokens.css"),
+         ("psychovault://newtab/components.css", ROOT / "ui/components.css")])
     local_frame = render(
         engine, ROOT / "ui/fixtures/local-page.html", "https://local.test/",
         outdir / "s045-local-web-fixture.png", args.width, args.height, [])
-    if app_frame.get("title") != "PsychoVault — App UI Slice":
+    if app_frame.get("title") != "New Tab":
         raise RuntimeError(f"unexpected app UI document title: {app_frame.get('title')!r}")
     if local_frame.get("title") != "Local renderer fixture":
         raise RuntimeError(f"unexpected local fixture title: {local_frame.get('title')!r}")
     app_text = " ".join(" ".join(command.get("text", "") for command in app_frame["paint"]).split())
     local_text = " ".join(" ".join(command.get("text", "") for command in local_frame["paint"]).split())
-    for phrase in ("Your", "browser,", "Open in tab", "Create a new tab"):
+    for phrase in ("PsychoVault", "Search DuckDuckGo or enter an address", "GitHub", "YouTube", "Reddit",
+                   "Wikipedia", "Mail", "News", "Nothing leaves this machine unless you ask it to."):
         if phrase not in app_text:
             raise RuntimeError(f"app UI screenshot is missing expected text: {phrase!r}")
     for phrase in ("LOCAL WEB FIXTURE", "same", "engine", "web", "document"):

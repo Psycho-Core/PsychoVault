@@ -16,7 +16,7 @@ The old app I made earlier ran on Electron. I want that experience back - the sa
 
 ## Where it stands
 
-This is a rebuild in progress. The runtime foundation (P1) and the engine's rendering baseline (P2) are closed, each against its own written gate and Windows CI evidence: my runtime hosts a minimal interface page rendered by my own engine, ordinary tabs run in sandboxed renderer processes, and the engine paints the web's common layout and controls. What I have not built yet is the interface itself (P3): the tab strip, rail, address bar, new tab page and settings. There is no new release to try yet, and the development build is not an installer.
+This is a rebuild in progress. The runtime foundation (P1) and the engine's rendering baseline (P2) are closed, each against its own written gate and Windows CI evidence: my runtime hosts a minimal interface page rendered by my own engine, ordinary tabs run in sandboxed renderer processes, and the engine paints the web's common layout and controls. P3, the interface itself, has started: the new-tab page and a settings page with all 109 inventory controls are real pages rendered by my engine, but the controls are not wired and the tab strip, rail, address bar and status bar are not built. There is no new release to try yet, and the development build is not an installer.
 
 ## How it will ship
 

@@ -118,7 +118,7 @@ uint32_t gradient_shade(const Gradient &gradient, double x, double y) {
     return 0x00000000u;
   double t = 0;
   if (gradient.radial) {
-    double dx = x - gradient.x0, dy = y - gradient.y0;
+    double dx = x - gradient.x0, dy = (y - gradient.y0) / std::max(gradient.aspect, 0.0001);
     double distance = std::sqrt(dx * dx + dy * dy);
     double span = gradient.r1 - gradient.r0;
     t = span > 0.0001 ? (distance - gradient.r0) / span : 0;
@@ -139,11 +139,18 @@ uint32_t gradient_shade(const Gradient &gradient, double x, double y) {
     const GradientStop &left = gradient.stops[i - 1];
     double span = right.at - left.at;
     double f = span > 0.0001 ? (t - left.at) / span : 0;
-    auto mix = [&](int shift) {
-      double a = double((left.color >> shift) & 255), b = double((right.color >> shift) & 255);
-      return uint32_t(a + (b - a) * f);
+    // Interpolate premultiplied by alpha, as CSS does: a fade to transparent keeps its colour
+    // instead of darkening toward the (black) colour of a transparent stop.
+    const double alpha_left = double(left.color >> 24) / 255.0, alpha_right = double(right.color >> 24) / 255.0;
+    const double alpha = alpha_left + (alpha_right - alpha_left) * f;
+    auto channel = [&](int shift) {
+      const double a = double((left.color >> shift) & 255) * alpha_left;
+      const double b = double((right.color >> shift) & 255) * alpha_right;
+      const double premultiplied = a + (b - a) * f;
+      return uint32_t(std::clamp(alpha > 0.0001 ? premultiplied / alpha : 0.0, 0.0, 255.0) + 0.5);
     };
-    return (mix(24) << 24) | (mix(16) << 16) | (mix(8) << 8) | mix(0);
+    return (uint32_t(std::clamp(alpha * 255.0 + 0.5, 0.0, 255.0)) << 24) | (channel(16) << 16) |
+           (channel(8) << 8) | channel(0);
   }
   return gradient.stops.back().color;
 }

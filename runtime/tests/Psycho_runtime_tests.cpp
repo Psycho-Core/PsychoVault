@@ -616,9 +616,9 @@ int run_runtime_bus_tests(int &shared) {
     };
     Envelope rendered;
     Error error;
-    (void)client.navigate("psychovault://settings", fetch, rendered, error);
+    (void)client.navigate("psychovault://history", fetch, rendered, error);
     child_thread.join();
-    // ... and still refuses a registered page it has no business rendering.
+    // ... and still refuses a registered page it has no loader for yet (history).
     RT_CHECK(worker_served && !rendered.payload.flag("ok") && fetch_calls == 0);
   }
 

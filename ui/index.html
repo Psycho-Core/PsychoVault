@@ -3,46 +3,42 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PsychoVault — App UI Slice</title>
+  <title>New Tab</title>
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="components.css">
   <style>
-    * { box-sizing: border-box; }
-    html, body { margin: 0; min-height: 100%; background: #080d16; color: #e6edf3; }
-    body { font-family: "PsychoVault UI", "Segoe UI", Arial, sans-serif; }
-    .page { width: 720px; margin: 116px auto 0; }
-    .brand { color: #38bdf8; font-size: 14px; font-weight: 700; letter-spacing: 3px; }
-    h1 { margin: 26px 0 8px; font-size: 38px; font-weight: 600; }
-    .intro { margin: 0 0 34px; color: #9aa9bb; font-size: 16px; }
-    .address { padding: 22px; border: 1px solid #253449; border-radius: 12px; background: #101927; }
-    label { display: block; margin-bottom: 10px; color: #c8d4e2; font-size: 13px; }
-    .row { height: 46px; }
-    input { width: 510px; height: 42px; padding: 0 13px; border: 1px solid #34465d; border-radius: 6px; background: #080d16; color: #e6edf3; font-size: 14px; }
-    button { height: 42px; margin-left: 8px; padding: 0 16px; border: 0; border-radius: 6px; background: #0ea5e9; color: #06111b; font-size: 14px; font-weight: 700; }
-    button.secondary { margin-left: 0; border: 1px solid #34465d; background: #162334; color: #dce7f3; }
-    .actions { margin-top: 14px; }
-    .status { min-height: 22px; margin: 12px 0 0; color: #91a2b7; font-size: 12px; }
-    .proof { margin-top: 36px; padding-top: 18px; border-top: 1px solid #1c2939; color: #8292a6; font-size: 12px; }
-    .proof strong { color: #b7c6d7; font-weight: 600; }
+    /* Geometry measured from docs/reference/legacy-ui/03-new-tab-page.png at 1396x834. */
+    .stage{position:relative;height:100vh;min-height:560px;background:radial-gradient(ellipse 430px 330px at 50% 36%, rgba(56,189,248,.12), rgba(56,189,248,0))}
+    .stack{position:absolute;left:0;right:0;top:253px;text-align:center}
+    .logo{display:block;margin:0 auto}
+    .brand{margin-top:34px;height:40px;font-size:36px;line-height:40px;font-weight:700;color:var(--pv-text)}
+    .search{display:block;width:620px;height:48px;margin:31px auto 0;padding:0 20px;border:1px solid var(--pv-accent);border-radius:var(--pv-radius-pill);background:var(--pv-surface);box-shadow:0 0 18px rgba(56,189,248,.25);color:var(--pv-text);font:14px/46px var(--pv-font)}
+    .tiles{display:flex;justify-content:center;gap:14px;margin-top:26px}
+    .tile{display:block;width:104px;height:104px;border:1px solid var(--pv-border);border-radius:14px;background:var(--pv-surface);text-align:center}
+    .tile .ico{display:block;width:34px;height:34px;margin:21px auto 0;border-radius:17px;background:var(--pv-raised);color:var(--pv-accent);font-size:16px;line-height:34px;font-weight:700}
+    .tile .lbl{display:block;margin-top:10px;font-size:12px;line-height:16px;color:var(--pv-muted)}
+    .note-foot{position:absolute;left:0;right:0;bottom:21px;text-align:center;font-size:12px;color:var(--pv-faint)}
   </style>
 </head>
 <body>
-  <div class="page">
-    <div class="brand">PSYCHOVAULT</div>
-    <h1>Your browser, built from the inside.</h1>
-    <div class="intro">A small app surface rendered by the PsychoVault engine.</div>
-    <div class="address">
-      <div id="address-form">
-        <div class="field-label">Open a web address</div>
-        <div class="row">
-          <input id="address" name="address" type="text" value="" placeholder="Type a web address" aria-label="Web address">
-          <button id="open-address" type="submit">Open in tab</button>
-        </div>
+  <div class="stage">
+    <div class="stack">
+      <svg class="logo" width="42" height="48" viewBox="0 0 42 48" aria-hidden="true">
+        <path d="M21 2 L40 9 V24 C40 35 32 43 21 47 C10 43 2 35 2 24 V9 Z" fill="none" stroke="#38bdf8" stroke-width="2.4"/>
+        <path d="M24 11 L13 27 H20 L17 39 L29 22 H22 Z" fill="#e6edf7"/>
+      </svg>
+      <h1 class="brand">PsychoVault</h1>
+      <input id="address" class="search" type="text" name="address" value="" placeholder="Search DuckDuckGo or enter an address" aria-label="Search DuckDuckGo or enter an address">
+      <div class="tiles">
+        <a class="tile" href="https://github.com/"><span class="ico">G</span><span class="lbl">GitHub</span></a>
+        <a class="tile" href="https://www.youtube.com/"><span class="ico">Y</span><span class="lbl">YouTube</span></a>
+        <a class="tile" href="https://www.reddit.com/"><span class="ico">R</span><span class="lbl">Reddit</span></a>
+        <a class="tile" href="https://www.wikipedia.org/"><span class="ico">W</span><span class="lbl">Wikipedia</span></a>
+        <a class="tile" href="https://mail.google.com/"><span class="ico">M</span><span class="lbl">Mail</span></a>
+        <a class="tile" href="https://news.google.com/"><span class="ico">N</span><span class="lbl">News</span></a>
       </div>
-      <div class="actions">
-        <button id="new-tab" class="secondary" type="button">Create a new tab</button>
-      </div>
-      <div id="status" class="status">App UI preview · waiting for the broker bridge</div>
     </div>
-    <div class="proof"><strong>Vertical slice</strong> &nbsp; HTML + CSS + JavaScript &nbsp;·&nbsp; owned layout, script and paint pipeline</div>
+    <div class="note-foot">Nothing leaves this machine unless you ask it to.</div>
   </div>
   <script src="app.js"></script>
 </body>

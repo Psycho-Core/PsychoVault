@@ -69,13 +69,26 @@ def main():
         + body + ";\n} // namespace pv\n", encoding="utf-8")
     # My browser UI is part of the one executable, not a loose file that a
     # renderer could resolve from an arbitrary working directory.
-    ui_html=(ROOT/"ui/index.html").read_text(encoding="utf-8")
-    ui_js=(ROOT/"ui/app.js").read_text(encoding="utf-8")
-    assert ")PVUIHTML\"" not in ui_html and ")PVUIJS\"" not in ui_js
+    # Every page and shared asset under ui/ (not README or fixtures) is embedded in a table the
+    # shell serves from. A literal is cut into pieces under MSVC's size cap, always right after
+    # an ASCII byte so a UTF-8 sequence is never split between two literals.
+    ui_types={".html":"text/html; charset=utf-8",".css":"text/css; charset=utf-8",".js":"text/javascript; charset=utf-8"}
+    entries=[]
+    for path in sorted((ROOT/"ui").iterdir()):
+        if path.suffix not in ui_types or not path.is_file(): continue
+        raw=path.read_bytes()
+        assert b")PVUI\"" not in raw, path
+        pieces=[];start=0
+        while start<len(raw):
+            end=min(start+12000,len(raw))
+            while end<len(raw) and raw[end-1]>=0x80: end-=1
+            pieces.append(raw[start:end].decode("utf-8"));start=end
+        literal="\n".join('R"PVUI('+piece+')PVUI"' for piece in pieces) or '""'
+        entries.append('    {"%s", "%s", %s}'%(path.name,ui_types[path.suffix],literal))
     ui_body=(
         "#pragma once\nnamespace pv {\n"
-        + 'inline const char kPVAppUiHtml[] = R"PVUIHTML(' + ui_html + ')PVUIHTML";\n'
-        + 'inline const char kPVAppUiJs[] = R"PVUIJS(' + ui_js + ')PVUIJS";\n'
+        + "struct PVUiAsset { const char *name, *mime, *data; };\n"
+        + "inline const PVUiAsset kPVUiAssets[] = {\n" + ",\n".join(entries) + "\n};\n"
         + "} // namespace pv\n"
     )
     (out/"Psycho_embedded_ui.hpp").write_text(ui_body, encoding="utf-8")

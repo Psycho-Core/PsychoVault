@@ -1,0 +1,31 @@
+/* Shared components for the new tab page and the settings pages. */
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--pv-bg);color:var(--pv-text);font-family:var(--pv-font);font-size:14px;line-height:1.4}
+a{color:inherit;text-decoration:none}
+h1,h2,h3,p{margin:0}
+
+/* cards */
+.card{background:var(--pv-surface);border:1px solid var(--pv-border);border-radius:var(--pv-radius-card)}
+.card-title{font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--pv-accent)}
+
+/* controls */
+.btn{display:inline-block;height:30px;padding:0 12px;border:1px solid var(--pv-border);border-radius:var(--pv-radius-control);background:var(--pv-raised);color:var(--pv-text);font:13px/28px var(--pv-font);cursor:pointer}
+.btn.danger{border-color:#7f1d1d;background:transparent;color:var(--pv-danger)}
+.field,.select{height:34px;padding:0 12px;border:1px solid var(--pv-border);border-radius:var(--pv-radius-control);background:var(--pv-bg);color:var(--pv-text);font:13px/32px var(--pv-font)}
+.select{width:180px}
+.area{width:100%;min-height:88px;padding:10px;border:0;border-radius:var(--pv-radius-control);background:var(--pv-bg);color:var(--pv-text);font:12px/1.5 var(--pv-mono)}
+
+/* switch: <label class="switch"><input type="checkbox"><span class="track"><span class="knob"></span></span></label> */
+.switch{position:relative;display:inline-block;width:44px;height:24px;flex:none}
+.switch input{position:absolute;left:0;top:0;width:44px;height:24px;margin:0;opacity:0}
+.switch .track{position:absolute;left:0;top:0;width:44px;height:24px;border-radius:12px;background:var(--pv-switch-off);border:1px solid var(--pv-border)}
+.switch .knob{position:absolute;left:3px;top:3px;width:16px;height:16px;border-radius:8px;background:var(--pv-knob-off)}
+.switch input:checked + .track{background:var(--pv-accent-weak);border-color:var(--pv-accent)}
+.switch input:checked + .track .knob{left:23px;background:var(--pv-accent)}
+
+/* setting rows */
+.row{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:11px 0;border-top:1px solid var(--pv-border)}
+.card-title + .row{border-top:0}
+.row .label{font-size:14px;color:var(--pv-text)}
+.row .desc{margin-top:2px;font-size:12.5px;color:var(--pv-muted)}
+.note{margin:8px 0 4px;font-size:12.5px;line-height:19px;color:var(--pv-muted)}
