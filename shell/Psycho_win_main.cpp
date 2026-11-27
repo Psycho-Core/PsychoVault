@@ -3438,7 +3438,7 @@ struct Browser {
     } else if (smoke_chrome_stage == 14) {
       if (now - smoke_chrome_tick < 600) return true;
       int row_x = 0, row_y = 0;
-      if (!chrome_paint_center("New", 0, row_x, row_y, 2000, 100)) return true;
+      if (!chrome_paint_center("New", 0, row_x, row_y, 2000, 130)) return true; // below the text line (y~105)
       smoke_chrome_note += "; pressing palette row at " + std::to_string(row_x) + "," + std::to_string(row_y);
       smoke_chrome_tabs_before = tabs.size();
       chrome_press(row_x, row_y);
