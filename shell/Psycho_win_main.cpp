@@ -3567,9 +3567,8 @@ struct Browser {
       return true;
     }
     // Ready means the strip on screen was drawn from the state the shell last sent: a frame has
-    // arrived since that push and has been quiet for a moment, so the glyph positions are current.
-    const bool settled = !chrome_state_sent.empty() && chrome_frame_tick > chrome_state_tick &&
-                         now - chrome_frame_tick >= 600;
+    // arrived well after that push (frames flow continuously, so one in flight at the push is not enough).
+    const bool settled = !chrome_state_sent.empty() && chrome_frame_tick >= chrome_state_tick + 300;
     const bool ready = chrome_frame.type == Json::Type::Object && settled &&
                        current().frame.type == Json::Type::Object && !current().loading &&
                        now - start_tick >= 1500;
