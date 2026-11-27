@@ -3756,9 +3756,12 @@ struct Browser {
       finish(false, "the browser frame failed to load: " + chrome_error);
       return true;
     }
-    // Ready means the strip on screen was drawn from the state the shell last sent: a frame has
-    // arrived well after that push (frames flow continuously, so one in flight at the push is not enough).
-    const bool settled = !chrome_state_sent.empty() && chrome_frame_tick >= chrome_state_tick + 300;
+    // Ready means the strip on screen was drawn from the current tab list, judged from the frame itself.
+    // The strip is current when its "+" sits where chrome.js puts it for this many tabs
+    // (44px rail + 36px mark gap + 126px per tab + 2px, centre of the 26px button).
+    int plus_x = 0, plus_y = 0;
+    const bool settled = chrome_paint_center("+", 0, plus_x, plus_y) &&
+                         std::abs(plus_x - (44 + 36 + int(tabs.size()) * 126 + 2 + 13)) <= 2;
     const bool ready = chrome_frame.type == Json::Type::Object && settled &&
                        current().frame.type == Json::Type::Object && !current().loading &&
                        now - start_tick >= 1500;
