@@ -27,6 +27,7 @@ psycho.rail={adblock:function(){document.title="adblock";}};
 psycho.ui.panel=function(a){document.title="panel:"+a.kind;};
 psycho.bookmarks={add:function(){document.title="bm-add";},remove:function(a){document.title="bm-remove:"+a.url;}};
 psycho.history={clear:function(){document.title="history-clear";}};
+psycho.find={step:function(a){document.title="find-step:"+a.delta;},close:function(){document.title="find-close";}};
 psycho.downloads={remove:function(a){document.title="dl-remove:"+a.id;},clear:function(){document.title="dl-clear";}};
 psychoChromeState({tabs:[{id:1,title:"One"},{id:2,title:"Two"}],activeId:2,address:"https://example.test/",canBack:true,canForward:false,status:"Loading https://example.test/"});
 """
@@ -49,8 +50,8 @@ def run(extra=(), tail=""):
         return json.loads(proc.stdout)
 
 
-def center(selector, index=0):
-    boxes = run(("--inspect", selector))["inspected"]
+def center(selector, index=0, tail=""):
+    boxes = run(("--inspect", selector), tail=tail)["inspected"]
     box = boxes[index]["box"]
     return int(box["x"] + box["w"] / 2), int(box["y"] + box["h"] / 2)
 
@@ -185,6 +186,26 @@ class ChromeFrame(unittest.TestCase):
     def test_star_bookmarks_the_page(self):
         x, y = center("#bookmark")
         self.assertEqual(run(("--action", f"click:{x},{y}"))["title"], "bm-add")
+
+    def find_state(self, text="hello", count=3, index=1, panel=False):
+        extra = ",panel:{kind:'history',items:[]}" if panel else ""
+        return ("psychoChromeState({tabs:[{id:1,title:'One'}],activeId:1,address:''%s,"
+                "find:{text:'%s',count:%d,index:%d}});" % (extra, text, count, index))
+
+    def test_find_bar_shows_the_shell_state_and_its_buttons_step_and_close(self):
+        tail = self.find_state()
+        out = run(("--inspect", "#findbar", "--inspect", "#find-count"), tail=tail)
+        bar = out["inspected"][0]["box"]
+        self.assertEqual((bar["x"], bar["y"], bar["w"], bar["h"]), (1044, 92, 380, 44))  # 16px in from the right edge
+        self.assertEqual(out["inspected"][1]["text"], "2 of 3")
+        for selector, expected in (("#find-next", "find-step:1"), ("#find-prev", "find-step:-1"), ("#find-done", "find-close")):
+            x, y = center(selector, tail=tail)
+            self.assertEqual(run(("--action", f"click:{x},{y}"), tail=tail)["title"], expected)
+
+    def test_find_bar_moves_left_of_an_open_panel_and_says_when_nothing_matches(self):
+        out = run(("--inspect", "#findbar", "--inspect", "#find-count"), tail=self.find_state("zzz", 0, 0, True))
+        self.assertEqual(out["inspected"][0]["box"]["x"], 714)
+        self.assertEqual(out["inspected"][1]["text"], "No matches")
 
     def test_no_dialog_means_no_scrim(self):
         out = run(("--inspect", "#scrim"))

@@ -116,6 +116,9 @@ Schemas Schemas::stock() {
   s.add("bookmarks:add", fields({}));
   s.add("bookmarks:remove", fields({{"url", T::String, true}}));
   s.add("history:clear", fields({}));
+  // The find bar: step to the next (+1) or previous (-1) match, or close it. Typing stays with the shell.
+  s.add("find:step", fields({{"delta", T::Number, true}}));
+  s.add("find:close", fields({}));
   s.add("downloads:cancel", fields({{"id", T::Number, true}}));
   s.add("downloads:remove", fields({{"id", T::Number, true}}));
   s.add("downloads:clear", fields({}));

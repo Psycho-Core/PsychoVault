@@ -1037,6 +1037,12 @@ struct Browser {
   std::deque<FrameDialog> frame_dialogs;
   int next_frame_dialog = 1;
   bool chrome_captures() const { return chrome_overlay || !frame_dialogs.empty(); }
+  // The find bar floats over the page's top-right corner (16px in, 8px down, 380x44); a press on it
+  // belongs to the frame even though the point is inside the page area.
+  Rect find_bar_rect() const { return {content.x + content.w - 396, content.y + 8, 380, 44}; }
+  bool over_chrome(int x, int y) const {
+    return !content.contains(x, y) || chrome_captures() || (find_open && find_bar_rect().contains(x, y));
+  }
   void show_frame_dialog(const std::string &kind, const std::string &title, const std::string &message,
                          std::vector<std::string> buttons, std::function<void(int, const std::string &)> done,
                          const std::string &value = {}) {
@@ -3501,7 +3507,7 @@ struct Browser {
   // A secondary press over the frame (or anywhere while its menu is open) goes to the frame page,
   // which decides what its context menu offers.
   bool chrome_context(int x, int y) {
-    if (!chrome_enabled || !chrome_session || (content.contains(x, y) && !chrome_captures())) return false;
+    if (!chrome_enabled || !chrome_session || !over_chrome(x, y)) return false;
     chrome_focus = true;
     send_chrome_pointer("contextmenu", x, y);
     return true;
@@ -3520,7 +3526,7 @@ struct Browser {
     if (!chrome_enabled || !chrome_session) return false;
     const std::string what = kind;
     if (what == "down") {
-      if (content.contains(x, y) && !chrome_captures()) {
+      if (!over_chrome(x, y)) {
         chrome_focus = false;
         return false;
       }
@@ -3533,10 +3539,10 @@ struct Browser {
       if (!chrome_pointer_down) return false;
       chrome_pointer_down = false;
       send_chrome_pointer("pointerup", x, y);
-      if (!content.contains(x, y) || chrome_captures()) send_chrome_pointer("click", x, y);
+      if (over_chrome(x, y)) send_chrome_pointer("click", x, y);
       return true;
     }
-    const bool inside = !content.contains(x, y) || chrome_captures();
+    const bool inside = over_chrome(x, y);
     if (inside || chrome_pointer_inside || chrome_pointer_down) send_chrome_pointer("pointermove", x, y);
     chrome_pointer_inside = inside;
     return inside;
@@ -3595,6 +3601,13 @@ struct Browser {
       panel.set("items", std::move(items));
       state.set("panel", std::move(panel));
     }
+    if (find_open) {
+      Json find = Json::make_object();
+      find.set("text", find_text.substr(0, 200));
+      find.set("count", double(find_marks.size()));
+      find.set("index", double(find_at));
+      state.set("find", std::move(find));
+    }
     if (!frame_dialogs.empty()) {
       const FrameDialog &front = frame_dialogs.front();
       Json dialog = Json::make_object();
@@ -3650,6 +3663,7 @@ struct Browser {
           {"ui:dialog", rt::Channel::Ui},      {"ui:panel", rt::Channel::Ui},
           {"bookmarks:add", rt::Channel::Bookmarks}, {"bookmarks:remove", rt::Channel::Bookmarks},
           {"history:clear", rt::Channel::History},   {"downloads:cancel", rt::Channel::Downloads},
+          {"find:step", rt::Channel::Find},          {"find:close", rt::Channel::Find},
           {"downloads:remove", rt::Channel::Downloads}, {"downloads:clear", rt::Channel::Downloads},
           {"nav:back", rt::Channel::Nav},     {"nav:forward", rt::Channel::Nav},
           {"nav:reload", rt::Channel::Nav},   {"nav:home", rt::Channel::Nav},
@@ -3677,6 +3691,10 @@ struct Browser {
           bridge_error = {"bridge.panel.kind", "unknown panel"};
           return false;
         }
+      }
+      if (method == "find:step" && std::fabs(payload.num("delta", 0)) != 1) {
+        bridge_error = {"bridge.find.step", "find steps by one match, forward or back"};
+        return false;
       }
       if (method == "bookmarks:remove" && payload.str("url").size() > 8192) {
         bridge_error = {"bridge.bookmark.url", "address is too long"};
@@ -3760,6 +3778,10 @@ struct Browser {
       panel_history = kind == "history";
       panel_downloads = kind == "downloads";
       panel_workspaces = false;
+    } else if (method == "find:step") {
+      find_step(task.payload.num("delta", 1) < 0 ? -1 : 1);
+    } else if (method == "find:close") {
+      close_find();
     } else if (method == "bookmarks:add") {
       const std::string url = current().url;
       if (!private_mode && !url.empty() && !app_ui_url(url)) {
@@ -4103,7 +4125,29 @@ struct Browser {
       smoke_chrome_tick = now;
     } else if (smoke_chrome_stage == 11) {
       if (current().url == "https://smoke.test/") {
-        finish(true, "the frame opened a tab, closed one, pinned one, answered an alert, and opened a history row from its panel");
+        // The find bar floats over the page's corner; Ctrl+F opens it, the frame draws the shell's
+        // find state, and its Done button must be pressable even though it is inside the page area.
+        panel_history = false;
+        find_text = "smoke";
+        open_find();
+        smoke_chrome_note += "; history row opened a page";
+        smoke_chrome_stage = 12;
+        smoke_chrome_tick = now;
+      }
+    } else if (smoke_chrome_stage == 12) {
+      if (now - smoke_chrome_tick < 600) return true;
+      int done_x = 0, done_y = 0;
+      if (!chrome_paint_center("Done", 0, done_x, done_y, 2000)) return true;
+      if (!find_bar_rect().contains(done_x, done_y)) {
+        finish(false, "the find bar's Done button is outside the rectangle the shell routes to the frame");
+        return true;
+      }
+      chrome_press(done_x, done_y);
+      smoke_chrome_stage = 13;
+      smoke_chrome_tick = now;
+    } else if (smoke_chrome_stage == 13) {
+      if (!find_open) {
+        finish(true, "the frame opened a tab, closed one, pinned one, answered an alert, opened a history row, and closed the find bar");
         return true;
       }
     }

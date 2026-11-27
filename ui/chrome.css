@@ -89,3 +89,12 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .pempty{padding:24px 16px;font-size:13px;line-height:19px;color:var(--pv-muted)}
 .panel-foot{position:absolute;left:0;right:0;bottom:0;height:48px;border-top:1px solid var(--pv-border)}
 .panel-foot button{position:absolute;right:12px;top:8px;height:32px;padding:0 14px;border:1px solid var(--pv-border);border-radius:8px;background:var(--pv-raised);font-size:12px;line-height:30px;color:var(--pv-text)}
+
+.findbar{position:absolute;top:92px;right:16px;width:380px;height:44px;z-index:20;border:1px solid var(--pv-accent);border-radius:12px;background:var(--pv-surface)}
+.findbar.shifted{right:346px}
+.findbar .ftext{position:absolute;left:14px;top:12px;width:170px;height:20px;font-size:13px;line-height:20px;color:var(--pv-text);white-space:nowrap;overflow:hidden}
+.findbar .fcount{position:absolute;left:190px;top:12px;width:70px;height:20px;font-size:12px;line-height:20px;color:var(--pv-muted)}
+.findbar button{position:absolute;top:8px;height:28px;border-radius:8px;font-size:16px;line-height:26px;color:var(--pv-text);text-align:center}
+#find-prev{left:262px;width:28px}
+#find-next{left:294px;width:28px}
+.findbar .done{left:328px;width:44px;font-size:12px;border:1px solid var(--pv-border)}

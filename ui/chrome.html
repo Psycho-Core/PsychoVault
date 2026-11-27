@@ -72,6 +72,12 @@
   <button type="button" data-go="downloads" role="menuitem">Downloads</button>
   <button type="button" data-go="settings" role="menuitem">Settings</button>
 </div>
+<div class="findbar" id="findbar" style="display:none" role="search">
+  <span class="ftext" id="find-text"></span><span class="fcount" id="find-count"></span>
+  <button type="button" id="find-prev" aria-label="Previous match">&lsaquo;</button>
+  <button type="button" id="find-next" aria-label="Next match">&rsaquo;</button>
+  <button type="button" id="find-done" class="done">Done</button>
+</div>
 <aside class="panel" id="panel" style="display:none" aria-label="Side panel">
   <div class="panel-head"><span id="panel-title"></span><button type="button" id="panel-close" aria-label="Close panel">&times;</button></div>
   <input id="panel-filter" type="text" placeholder="Filter" aria-label="Filter">

@@ -49,7 +49,7 @@ const ExposedEntry kChromeProfile[] = {
     {Channel::Tab, "tab:pin"},     {Channel::Tab, "tab:mute"},     {Channel::Ui, "ui:overlay"},
     {Channel::Rail, "rail:adblock"}, {Channel::Ui, "ui:dialog"}, {Channel::Ui, "ui:panel"},
     {Channel::Bookmarks, "bookmarks:add"}, {Channel::Bookmarks, "bookmarks:remove"},
-    {Channel::History, "history:clear"}, {Channel::Downloads, "downloads:cancel"},
+    {Channel::History, "history:clear"}, {Channel::Find, "find:step"}, {Channel::Find, "find:close"}, {Channel::Downloads, "downloads:cancel"},
     {Channel::Downloads, "downloads:remove"}, {Channel::Downloads, "downloads:clear"},
     {Channel::Nav, "nav:go"},      {Channel::Nav, "nav:back"},     {Channel::Nav, "nav:forward"},
     {Channel::Nav, "nav:reload"},  {Channel::Nav, "nav:home"},

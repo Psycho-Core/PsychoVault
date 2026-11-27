@@ -49,6 +49,7 @@
     wsEl.style.left = (36 + after + 40) + "px";
     if (state.dialog) showDialog(state.dialog); else if (!localHandler) hideDialog();
     renderPanel(state.panel);
+    renderFind(state.find, !!state.panel);
     var shield = document.getElementById("rail-adblock");
     if (shield && typeof state.blockAds === "boolean") shield.className = state.blockAds ? "rail-btn good" : "rail-btn off";
     setDim("nav-back", !state.canBack);
@@ -162,6 +163,24 @@
       node = node.parentNode;
     }
   });
+  // ---- Find bar. The shell owns the text, the matches and the current one (it types into the find
+  // string itself and scrolls to a match); this page draws them and sends step or close.
+  var findBar = document.getElementById("findbar");
+  function renderFind(find, panelOpen) {
+    if (!findBar) return;
+    if (!find) {
+      if (findBar.style.display !== "none") findBar.style.display = "none";
+      return;
+    }
+    findBar.className = panelOpen ? "findbar shifted" : "findbar";
+    findBar.style.display = "block";
+    document.getElementById("find-text").textContent = find.text || "Find in page";
+    document.getElementById("find-count").textContent = find.text ? (find.count ? (find.index + 1) + " of " + find.count : "No matches") : "";
+  }
+  document.getElementById("find-prev").addEventListener("click", function () { bridge("find", "step", { delta: -1 }); });
+  document.getElementById("find-next").addEventListener("click", function () { bridge("find", "step", { delta: 1 }); });
+  document.getElementById("find-done").addEventListener("click", function () { bridge("find", "close"); });
+
   // ---- Side panel: bookmarks, history or downloads. The shell sends the list with the state and
   // shrinks the page by 330px while it is open; rows act through the bridge.
   var panelEl = document.getElementById("panel");
