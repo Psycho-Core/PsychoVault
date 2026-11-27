@@ -50,6 +50,7 @@
     if (state.dialog) showDialog(state.dialog); else if (!localHandler) hideDialog();
     renderPanel(state.panel);
     renderFind(state.find, !!state.panel);
+    renderPalette(state.palette);
     var shield = document.getElementById("rail-adblock");
     if (shield && typeof state.blockAds === "boolean") shield.className = state.blockAds ? "rail-btn good" : "rail-btn off";
     setDim("nav-back", !state.canBack);
@@ -163,6 +164,46 @@
       node = node.parentNode;
     }
   });
+  // ---- Command palette. The shell owns the text, the filtered list and the selection (typing, arrows,
+  // Enter and Escape are its keys); this page draws them and sends a pressed row or a press outside.
+  var pscrim = document.getElementById("pscrim");
+  var paletteRows = document.getElementById("palette-rows");
+  function renderPalette(palette) {
+    if (!pscrim) return;
+    if (!palette) {
+      if (pscrim.style.display !== "none") pscrim.style.display = "none";
+      return;
+    }
+    pscrim.style.display = "block";
+    var text = document.getElementById("palette-text");
+    text.textContent = palette.text || "Type a command";
+    text.className = palette.text ? "ptext" : "ptext empty";
+    clear(paletteRows);
+    var matches = palette.matches || [];
+    for (var i = 0; i < matches.length; i++) {
+      var row = el("div", i === palette.index ? "prow2 sel" : "prow2");
+      row.setAttribute("data-id", matches[i].id);
+      row.appendChild(document.createTextNode(matches[i].label));
+      row.appendChild(el("span", "chord", matches[i].chord || ""));
+      paletteRows.appendChild(row);
+    }
+  }
+  pscrim.addEventListener("click", function (event) {
+    var node = event.target;
+    while (node && node !== pscrim) {
+      if (node.getAttribute && node.getAttribute("data-id")) {
+        bridge("palette", "run", { id: node.getAttribute("data-id") });
+        return;
+      }
+      node = node.parentNode;
+    }
+    // A press that is not on a row: on the box itself keeps it open, on the backdrop closes it.
+    var inside = false;
+    node = event.target;
+    while (node) { if (node.id === "palette") inside = true; node = node.parentNode; }
+    if (!inside) bridge("palette", "close");
+  });
+
   // ---- Find bar. The shell owns the text, the matches and the current one (it types into the find
   // string itself and scrolls to a match); this page draws them and sends step or close.
   var findBar = document.getElementById("findbar");

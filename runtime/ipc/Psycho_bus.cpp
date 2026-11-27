@@ -119,6 +119,9 @@ Schemas Schemas::stock() {
   // The find bar: step to the next (+1) or previous (-1) match, or close it. Typing stays with the shell.
   s.add("find:step", fields({{"delta", T::Number, true}}));
   s.add("find:close", fields({}));
+  // The command palette: run the row that was pressed, or close it. Typing and arrows stay with the shell.
+  s.add("palette:run", fields({{"id", T::String, true}}));
+  s.add("palette:close", fields({}));
   s.add("downloads:cancel", fields({{"id", T::Number, true}}));
   s.add("downloads:remove", fields({{"id", T::Number, true}}));
   s.add("downloads:clear", fields({}));

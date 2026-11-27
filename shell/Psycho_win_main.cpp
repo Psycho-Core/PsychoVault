@@ -1027,6 +1027,7 @@ struct Browser {
   int smoke_chrome_stage = 0;
   DWORD smoke_chrome_tick = 0;
   std::string smoke_chrome_note;
+  size_t smoke_chrome_tabs_before = 0;
   // A dialog the frame page draws over everything: modal, one at a time, answered through the bridge.
   struct FrameDialog {
     int id = 0;
@@ -1036,7 +1037,7 @@ struct Browser {
   };
   std::deque<FrameDialog> frame_dialogs;
   int next_frame_dialog = 1;
-  bool chrome_captures() const { return chrome_overlay || !frame_dialogs.empty(); }
+  bool chrome_captures() const { return chrome_overlay || !frame_dialogs.empty() || palette_open; }
   // The find bar floats over the page's top-right corner (16px in, 8px down, 380x44); a press on it
   // belongs to the frame even though the point is inside the page area.
   Rect find_bar_rect() const { return {content.x + content.w - 396, content.y + 8, 380, 44}; }
@@ -3601,6 +3602,23 @@ struct Browser {
       panel.set("items", std::move(items));
       state.set("panel", std::move(panel));
     }
+    if (palette_open) {
+      Json palette = Json::make_object();
+      palette.set("text", palette_text.substr(0, 120));
+      auto matches = palette_matches();
+      const int last = int(matches.size()) - 1;
+      palette.set("index", double(std::clamp(palette_index, 0, std::max(0, last))));
+      Json rows = Json::make_array();
+      for (size_t i = 0; i < matches.size() && i < 8; ++i) {
+        Json row = Json::make_object();
+        row.set("label", matches[i]->label);
+        row.set("chord", matches[i]->chord);
+        row.set("id", matches[i]->id);
+        rows.array.push_back(std::move(row));
+      }
+      palette.set("matches", std::move(rows));
+      state.set("palette", std::move(palette));
+    }
     if (find_open) {
       Json find = Json::make_object();
       find.set("text", find_text.substr(0, 200));
@@ -3664,6 +3682,7 @@ struct Browser {
           {"bookmarks:add", rt::Channel::Bookmarks}, {"bookmarks:remove", rt::Channel::Bookmarks},
           {"history:clear", rt::Channel::History},   {"downloads:cancel", rt::Channel::Downloads},
           {"find:step", rt::Channel::Find},          {"find:close", rt::Channel::Find},
+          {"palette:run", rt::Channel::Ui},          {"palette:close", rt::Channel::Ui},
           {"downloads:remove", rt::Channel::Downloads}, {"downloads:clear", rt::Channel::Downloads},
           {"nav:back", rt::Channel::Nav},     {"nav:forward", rt::Channel::Nav},
           {"nav:reload", rt::Channel::Nav},   {"nav:home", rt::Channel::Nav},
@@ -3689,6 +3708,15 @@ struct Browser {
         const std::string kind = payload.str("kind");
         if (!kind.empty() && kind != "bookmarks" && kind != "history" && kind != "downloads") {
           bridge_error = {"bridge.panel.kind", "unknown panel"};
+          return false;
+        }
+      }
+      if (method == "palette:run") {
+        const std::string id = payload.str("id");
+        const bool plain = !id.empty() && id.size() <= 64 &&
+            std::all_of(id.begin(), id.end(), [](unsigned char c) { return std::isalnum(c) || c == '-'; });
+        if (!plain) {
+          bridge_error = {"bridge.palette.id", "a palette command id is short letters, digits and dashes"};
           return false;
         }
       }
@@ -3778,6 +3806,10 @@ struct Browser {
       panel_history = kind == "history";
       panel_downloads = kind == "downloads";
       panel_workspaces = false;
+    } else if (method == "palette:run") {
+      run_command(task.payload.str("id"));
+    } else if (method == "palette:close") {
+      palette_open = false;
     } else if (method == "find:step") {
       find_step(task.payload.num("delta", 1) < 0 ? -1 : 1);
     } else if (method == "find:close") {
@@ -3937,13 +3969,13 @@ struct Browser {
   // the shell agreed on a new tab and then a close, and the state push redrew the strip between.
   // The leftmost paint command with this text: the tab strip is left of the workspace chip, and
   // paint order alone does not say which of two positioned elements comes first.
-  bool chrome_paint_center(const char *glyph, int, int &x, int &y, double max_y = 60) const {
+  bool chrome_paint_center(const char *glyph, int, int &x, int &y, double max_y = 60, double min_y = 0) const {
     const Json *paint = chrome_frame.find("paint");
     if (!paint || paint->type != Json::Type::Array) return false;
     bool found = false;
     double best = 0;
     for (const Json &command : paint->array) {
-      if (command.str("text") != glyph || command.num("y") > max_y) continue;
+      if (command.str("text") != glyph || command.num("y") > max_y || command.num("y") < min_y) continue;
       if (found && command.num("x") >= best) continue;
       found = true;
       best = command.num("x");
@@ -4147,7 +4179,27 @@ struct Browser {
       smoke_chrome_tick = now;
     } else if (smoke_chrome_stage == 13) {
       if (!find_open) {
-        finish(true, "the frame opened a tab, closed one, pinned one, answered an alert, opened a history row, and closed the find bar");
+        // The command palette: the shell owns the text and the matches, the frame draws the rows.
+        palette_open = true;
+        palette_text = "New tab";
+        palette_caret = palette_text.size();
+        palette_index = 0;
+        smoke_chrome_note += "; find closed";
+        smoke_chrome_stage = 14;
+        smoke_chrome_tick = now;
+      }
+    } else if (smoke_chrome_stage == 14) {
+      if (now - smoke_chrome_tick < 600) return true;
+      int row_x = 0, row_y = 0;
+      if (!chrome_paint_center("New", 0, row_x, row_y, 2000, 100)) return true;
+      smoke_chrome_note += "; pressing palette row at " + std::to_string(row_x) + "," + std::to_string(row_y);
+      smoke_chrome_tabs_before = tabs.size();
+      chrome_press(row_x, row_y);
+      smoke_chrome_stage = 15;
+      smoke_chrome_tick = now;
+    } else if (smoke_chrome_stage == 15) {
+      if (!palette_open && tabs.size() == smoke_chrome_tabs_before + 1) {
+        finish(true, "the frame opened a tab, closed one, pinned one, answered an alert, opened a history row, closed the find bar, and ran a palette command");
         return true;
       }
     }

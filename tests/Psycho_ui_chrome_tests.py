@@ -27,6 +27,7 @@ psycho.rail={adblock:function(){document.title="adblock";}};
 psycho.ui.panel=function(a){document.title="panel:"+a.kind;};
 psycho.bookmarks={add:function(){document.title="bm-add";},remove:function(a){document.title="bm-remove:"+a.url;}};
 psycho.history={clear:function(){document.title="history-clear";}};
+psycho.palette={run:function(a){document.title="palette-run:"+a.id;},close:function(){document.title="palette-close";}};
 psycho.find={step:function(a){document.title="find-step:"+a.delta;},close:function(){document.title="find-close";}};
 psycho.downloads={remove:function(a){document.title="dl-remove:"+a.id;},clear:function(){document.title="dl-clear";}};
 psychoChromeState({tabs:[{id:1,title:"One"},{id:2,title:"Two"}],activeId:2,address:"https://example.test/",canBack:true,canForward:false,status:"Loading https://example.test/"});
@@ -206,6 +207,27 @@ class ChromeFrame(unittest.TestCase):
         out = run(("--inspect", "#findbar", "--inspect", "#find-count"), tail=self.find_state("zzz", 0, 0, True))
         self.assertEqual(out["inspected"][0]["box"]["x"], 714)
         self.assertEqual(out["inspected"][1]["text"], "No matches")
+
+    def palette_state(self):
+        import json as _json
+        palette = {"text": "tab", "index": 1, "matches": [
+            {"label": "New tab", "chord": "Ctrl+T", "id": "palette-new-tab"},
+            {"label": "Close tab", "chord": "Ctrl+W", "id": "palette-close-tab"}]}
+        return "psychoChromeState({tabs:[{id:1,title:'One'}],activeId:1,address:'',palette:%s});" % _json.dumps(palette)
+
+    def test_palette_draws_the_shell_state_and_a_pressed_row_runs(self):
+        tail = self.palette_state()
+        out = run(("--inspect", "#palette-text", "--inspect", ".prow2.sel", "--inspect", ".prow2"), tail=tail)
+        self.assertEqual(out["inspected"][0]["text"], "tab")
+        self.assertIn("Close tab", out["inspected"][1]["text"])
+        row = out["inspected"][2]["box"]
+        self.assertEqual(run(("--action", f"click:{int(row['x']) + 40},{int(row['y']) + 10}"), tail=tail)["title"], "palette-run:palette-new-tab")
+
+    def test_a_press_outside_the_palette_closes_it(self):
+        self.assertEqual(run(("--action", "click:100,700"), tail=self.palette_state())["title"], "palette-close")
+
+    def test_no_palette_means_no_backdrop(self):
+        self.assertFalse(run(("--inspect", "#pscrim"))["inspected"][0].get("hasBox", False))
 
     def test_no_dialog_means_no_scrim(self):
         out = run(("--inspect", "#scrim"))
