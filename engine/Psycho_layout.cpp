@@ -1538,7 +1538,8 @@ struct Layout {
             line_width += ellipsis_width;
           }
         }
-        line_height = std::max(line_height, 16.0);
+        // A line box is as tall as its tallest inline box's line-height; there is no minimum (a 10px font
+        // with line-height:1 makes a 10px line).
         double tx = inner_x;
         if (s.text_align == "center")
           tx += std::max(0.0, (inner_w - line_width) / 2);
