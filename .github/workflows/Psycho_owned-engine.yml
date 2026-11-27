@@ -245,6 +245,24 @@ jobs:
             $report = Get-Content "build/ref-diff-$name/report.json" -Raw | ConvertFrom-Json
             Write-Host "legacy-diff $name : $($report | ConvertTo-Json -Compress -Depth 3)"
           }
+      - name: Measure the other settings categories and the browser frame against the legacy captures (report only)
+        shell: pwsh
+        run: |
+          $common = @('--engine', 'build/pv-engine.exe', '--max-changed-pixels', '99999999',
+                      '--resource', 'psychovault://settings/tokens.css=ui/tokens.css',
+                      '--resource', 'psychovault://settings/components.css=ui/components.css',
+                      '--resource', 'psychovault://settings/settings.js=ui/settings.js')
+          $categories = @('general','privacy','downloads','extensions','performance','appearance','spelling','passwords','accessibility','about')
+          $references = @('04-settings-general.png','05-settings-privacy.png','06-settings-downloads.png','07-settings-extensions.png','08-settings-performance.png','09-settings-appearance.png','10-settings-spelling.png','11-settings-passwords.png','12-settings-accessibility.png','13-settings-about.png')
+          for ($i = 0; $i -lt $categories.Count; $i++) {
+            $name = $categories[$i]
+            python tools/Psycho_reference_diff.py --reference $references[$i] --input ui/settings.html --url "psychovault://settings/#$name" --outdir "build/ref-diff-cat-$name" @common | Out-Null
+            $report = Get-Content "build/ref-diff-cat-$name/report.json" -Raw | ConvertFrom-Json
+            Write-Host "legacy-diff category $name : $($report.changed_pixels) of $($report.total_pixels) pixels differ"
+          }
+          python tools/Psycho_reference_diff.py --reference 02-browser-chrome.png --input ui/chrome.html --url psychovault://chrome/ --outdir build/ref-diff-chrome --engine build/pv-engine.exe --max-changed-pixels 99999999 --resource psychovault://chrome/tokens.css=ui/tokens.css --resource psychovault://chrome/components.css=ui/components.css --resource psychovault://chrome/chrome.css=ui/chrome.css --resource psychovault://chrome/chrome.js=ui/chrome.js | Out-Null
+          $chrome = Get-Content build/ref-diff-chrome/report.json -Raw | ConvertFrom-Json
+          Write-Host "legacy-diff chrome : $($chrome.changed_pixels) of $($chrome.total_pixels) pixels differ"
       - name: Exercise my tab and history models in the running shell
         shell: pwsh
         run: |

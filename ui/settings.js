@@ -19,6 +19,12 @@
     }(buttons[k]));
   }
 
+  // psychovault://settings/#privacy opens that category (also lets a capture or a link name one).
+  var wanted = (typeof location !== "undefined" && location.hash ? String(location.hash) : "").replace("#", "");
+  for (var w = 0; wanted && w < buttons.length; w++) {
+    if (buttons[w].getAttribute("data-cat") === wanted) show(wanted);
+  }
+
   var bridge = typeof psycho !== "undefined" && psycho.settings ? psycho.settings : null;
   var statusEl = document.getElementById("save-status");
   function say(text) { if (statusEl) statusEl.textContent = text; }
