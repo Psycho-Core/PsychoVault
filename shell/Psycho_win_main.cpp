@@ -141,6 +141,7 @@ struct Tab {
   std::map<std::string, Image> images;
   size_t image_bytes = 0;
   DWORD frame_tick = 0; // when the first frame of this load arrived
+  size_t paint_sig = 0; // signature of the last frame's paint list and scroll, to skip identical repaints
 };
 struct Hit {
   Rect rect;
@@ -989,6 +990,7 @@ struct Browser {
   std::shared_ptr<Session> chrome_session;
   Json chrome_frame;
   std::string chrome_error, chrome_state_sent;
+  size_t chrome_paint_sig = 0;
   DWORD chrome_state_tick = 0, chrome_frame_tick = 0;
   std::map<std::string, Image> chrome_images;
   bool smoke_chrome = false, smoke_settings = false;
@@ -5812,8 +5814,14 @@ static LRESULT wndproc_inner(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
           // The frame page is pumped continuously and most frames change nothing; repainting the
           // whole window for each one starves the timer. Repaint only what the frame says changed.
           const Json &f = b->chrome_frame;
+          const Json *painted = f.find("paint");
+          const size_t signature = std::hash<std::string>{}(painted ? painted->dump() : std::string());
+          const bool same = signature == b->chrome_paint_sig;
+          b->chrome_paint_sig = signature;
           const Json *tiles = f.find("damageTiles"), *damage = f.find("damage");
-          if (first || f.flag("fullDamage") ||
+          if (same && !first) {
+            // Identical to what is on screen.
+          } else if (first || f.flag("fullDamage") ||
               (!(tiles && tiles->type == Json::Type::Array) && !(damage && damage->type == Json::Type::Array))) {
             InvalidateRect(hwnd, nullptr, FALSE);
           } else if (tiles && tiles->type == Json::Type::Array && !tiles->array.empty() &&
@@ -5841,6 +5849,7 @@ static LRESULT wndproc_inner(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     Tab *tab = b ? b->find_tab(int(wp)) : nullptr;
     if (tab && up->generation == tab->generation) {
       bool full_repaint = !up->error.empty();
+      bool frame_unchanged = false;
       const std::string old_title = tab->title, old_url = tab->url;
       const bool old_loading = tab->loading, old_recorded = tab->recorded;
       if (!up->error.empty()) {
@@ -5851,6 +5860,15 @@ static LRESULT wndproc_inner(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
           b->status = up->error;
       } else {
         tab->frame = std::move(up->frame);
+        {
+          // The renderer is pumped many times a second and most frames repeat the last one;
+          // repainting the window for each would keep the UI thread painting forever.
+          const Json *painted = tab->frame.find("paint");
+          const size_t signature = std::hash<std::string>{}(
+              (painted ? painted->dump() : std::string()) + "|" + std::to_string(tab->frame.num("scroll")));
+          frame_unchanged = signature == tab->paint_sig;
+          tab->paint_sig = signature;
+        }
         tab->title = tab->frame.str("title", tab->title);
         tab->loading = false;
         tab->scroll = tab->frame.num("scroll", tab->scroll);
@@ -5879,6 +5897,8 @@ static LRESULT wndproc_inner(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       if (tab == &b->current()) {
         if (full_repaint || b->find_open) {
           InvalidateRect(hwnd, nullptr, FALSE);
+        } else if (frame_unchanged) {
+          // Same paint list and scroll as the frame already on screen.
         } else {
           const Json *tiles = tab->frame.find("damageTiles");
           if (tab->frame.flag("fullDamage")) {
