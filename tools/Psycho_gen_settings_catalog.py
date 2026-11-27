@@ -22,12 +22,14 @@ OUTPUT = ROOT / "runtime/settings/Psycho_settings_catalog.inc"
 # Not settings: transient editor inputs and secrets.
 EXCLUDE = {"permOrigin", "permCamera", "permMicrophone", "permLocation", "permNotifications",
            "eSite", "eUser", "diagnosticsReport", "updateToken", "vaultEnabled"}
-# Backed by a Profile field today (see runtime/settings/Psycho_settings.cpp).
-WIRED = {
+# Rows with a dedicated Profile field (the rest persist in the profile's extra-settings bag; see
+# runtime/settings/Psycho_settings.cpp). Kept as documentation of which is which.
+DEDICATED = {
     "search", "restore", "workspacesEnabled", "homepage", "blockAds", "blockThirdPartyCookies", "sendDNT",
     "stripReferrer", "blockAutoplay", "webRtc", "downloadDir", "askSaveLocation", "downloadNotify",
     "batterySaver", "sleepTabsMin", "theme", "accent", "hideSidebar", "highContrast", "reduceMotion",
     "showTabCloseButtons", "panicEnabled", "panicUrl", "spellCheck", "spellBuiltin", "vaultLockMin",
+    "remember", "cpuLimit", "spellLangs", "spellDictUrl", "spellUserWords", "blockAllowSites", "blockCustomDomains",
 }
 
 
@@ -41,6 +43,8 @@ def rows():
                 continue
             if kind == "input" and type_ == "checkbox":
                 shape = "Bool"
+            elif kind == "textarea":
+                shape = "Lines"
             elif kind == "select":
                 shape = "Choice"
             elif type_ == "number":
@@ -48,7 +52,7 @@ def rows():
             else:
                 shape = "Text"
             options = [o["value"] for o in control["options"]] if shape == "Choice" else []
-            out.append((cid, shape, options, cid in WIRED))
+            out.append((cid, shape, options, True))
     return out
 
 

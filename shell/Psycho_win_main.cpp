@@ -1792,7 +1792,7 @@ struct Browser {
     {
       const rt::NavKind kind = nav_begin(tab, target, add_history);
       if (add_history && kind == rt::NavKind::New) {
-        if (!private_mode &&
+        if (!private_mode && profile.remember_history &&
             (starts(target, "http://") || starts(target, "https://"))) {
           // Both my per-tab stack and the persisted history see the visit;
           // the flush to disk rides my timer so a long session does not lose it.
@@ -1898,6 +1898,25 @@ struct Browser {
         task->payload = payload;
         if (!PostMessageW(window, WM_BRIDGE, 0, reinterpret_cast<LPARAM>(task.get()))) {
           bridge_error = {"bridge.queue.failed", "the browser window refused the change"};
+          return false;
+        }
+        task.release();
+        reply = Json::make_object();
+        reply.set("queued", Json(true));
+        return true;
+      }
+      if (channel == rt::Channel::History) {
+        // Only the settings page may clear history, and only with the whole history cleared.
+        if (!settings_origin || method != "history:clear" || !schemas.validate(method, payload, bridge_error)) {
+          if (bridge_error.code.empty()) bridge_error = {"bridge.history.origin", "history is not available to this page"};
+          return false;
+        }
+        auto task = std::make_unique<BridgeTask>();
+        task->tab = source_tab;
+        task->method = method;
+        task->payload = payload;
+        if (!PostMessageW(window, WM_BRIDGE, 0, reinterpret_cast<LPARAM>(task.get()))) {
+          bridge_error = {"bridge.queue.failed", "the browser window refused the request"};
           return false;
         }
         task.release();
@@ -5923,6 +5942,13 @@ static LRESULT wndproc_inner(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     // this point with tab:new / tab:activate alone (its bridge lambda enforces that).
     if (task->method == "settings:set") {
       b->apply_setting(*task);
+      return 0;
+    }
+    if (task->method == "history:clear") {
+      b->profile.clear_history();
+      b->save_profile();
+      b->status = "I cleared my browsing history";
+      InvalidateRect(hwnd, nullptr, FALSE);
       return 0;
     }
     if (task->method != "tab:new" && task->method != "tab:activate") return 0;

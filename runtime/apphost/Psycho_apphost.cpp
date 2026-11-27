@@ -11,7 +11,8 @@ namespace {
 // NOT get: vault, proton, extensions - extension-less means extension-less.
 const ExposedEntry kShellProfile[] = {
     {Channel::Settings, "settings:get"}, {Channel::Settings, "settings:set"},
-    {Channel::Settings, "settings:list"}, {Channel::History, "history:list"},  {Channel::Tab, "tab:new"},
+    {Channel::Settings, "settings:list"}, {Channel::History, "history:list"},
+    {Channel::History, "history:clear"},  {Channel::Tab, "tab:new"},
     {Channel::Tab, "tab:activate"},      {Channel::Internal, "internal:list"},
     {Channel::Lifecycle, "lifecycle:ping"},
 };

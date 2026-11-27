@@ -38,34 +38,66 @@
     if (control.type === "checkbox") control.checked = value === true;
     else control.value = String(value);
   }
-  function send(key, control) {
+  function send(key) {
+    var control = controlFor(key);
+    if (!control || !bridge) return;
     try {
       bridge.set({ key: key, value: JSON.stringify(readValue(control)) });
       say("Saved");
     } catch (error) {
-      say("Not saved: " + key);
+      say("Not saved: " + key + " (" + String(error && error.message ? error.message : error) + ")");
     }
   }
   if (!bridge) return;
-  var listing = null;
-  try { listing = bridge.list(); } catch (error) { say("Settings are unavailable"); return; }
-  var values = (listing && listing.values) || {};
-  var unwired = (listing && listing.unwired) || {};
-  var key;
-  for (key in values) {
-    (function (name) {
-      var control = controlFor(name);
-      if (!control) return;
-      writeValue(control, values[name]);
-      var send_now = function () { send(name, control); };
-      control.addEventListener("change", send_now);
-      control.setAttribute("data-wired", "true");
-    }(key));
+
+  function fill() {
+    var listing = null;
+    try { listing = bridge.list(); } catch (error) { say("Settings are unavailable"); return false; }
+    var values = (listing && listing.values) || {};
+    for (var key in values) {
+      var control = controlFor(key);
+      if (control) writeValue(control, values[key]);
+    }
+    return true;
   }
-  for (key in unwired) {
-    var control = controlFor(key);
-    if (!control) continue;
-    control.setAttribute("data-unwired", unwired[key]);
-    control.setAttribute("title", "Not connected to the profile yet (owner " + unwired[key] + ")");
+  if (!fill()) return;
+
+  // Every control that holds a value saves when it changes; the textareas also have their own save
+  // buttons, which send what is in the box now.
+  var listing = bridge.list();
+  var values = (listing && listing.values) || {};
+  for (var name in values) {
+    (function (key) {
+      var control = controlFor(key);
+      if (!control) return;
+      control.addEventListener("change", function () { send(key); });
+      control.setAttribute("data-wired", "true");
+    }(name));
+  }
+  function onPress(buttonId, handler) {
+    var button = controlFor(buttonId);
+    if (button) button.addEventListener("click", handler);
+  }
+  onPress("spellWordsSave", function () { send("spellUserWords"); });
+  onPress("spellWordsRefresh", function () { fill(); say("Reloaded"); });
+  onPress("blockSaveLists", function () { send("blockAllowSites"); send("blockCustomDomains"); });
+  onPress("customSearchSave", function () { send("customSearchEngines"); });
+  onPress("modSave", function () { send("modCss"); });
+  onPress("modClear", function () { var box = controlFor("modCss"); if (box) { box.value = ""; send("modCss"); } });
+
+  // Clear browsing history asks twice: the first press arms the button, the second does it.
+  var clearButton = controlFor("clear");
+  var clearArmed = false;
+  if (clearButton && psycho.history && psycho.history.clear) {
+    clearButton.addEventListener("click", function () {
+      if (!clearArmed) {
+        clearArmed = true;
+        clearButton.textContent = "Press again to clear";
+        return;
+      }
+      clearArmed = false;
+      clearButton.textContent = "Clear history";
+      try { psycho.history.clear(); say("History cleared"); } catch (error) { say("History was not cleared"); }
+    });
   }
 }());

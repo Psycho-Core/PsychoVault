@@ -18,18 +18,19 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 ENGINE = ROOT / "build" / ("pv-engine.exe" if sys.platform == "win32" else "pv-engine")
 STUB = """
 window.psycho={settings:{
-  list:function(){return {values:{restore:false,search:"brave",homepage:"psychovault://newtab"},unwired:{remember:"S141-S145"}};},
-  set:function(a){document.title="set:"+a.key+"="+a.value;}}};
+  list:function(){return {values:{restore:false,search:"brave",homepage:"psychovault://newtab",spellUserWords:"psycho\\nvault"},unwired:{}};},
+  set:function(a){document.title="set:"+a.key+"="+a.value;}},
+  history:{clear:function(){document.title="history-clear";}}};
 """
 
 
-def run(extra=(), tail=""):
+def run(extra=(), tail="", page="psychovault://settings/"):
     with tempfile.TemporaryDirectory() as directory:
         directory = pathlib.Path(directory)
         script = directory / "settings_probe.js"
         # The stub must exist before the page script runs, so it goes first.
         script.write_text(STUB + (ROOT / "ui/settings.js").read_text(encoding="utf-8") + tail, encoding="utf-8")
-        cmd = [str(ENGINE), "--input", str(ROOT / "ui/settings.html"), "--url", "psychovault://settings/",
+        cmd = [str(ENGINE), "--input", str(ROOT / "ui/settings.html"), "--url", page,
                "--width", "1200", "--height", "900", "--out", str(directory / "o.png")]
         for name in ("tokens.css", "components.css"):
             cmd += ["--resource", f"psychovault://settings/{name}={ROOT / 'ui' / name}"]
@@ -56,11 +57,24 @@ document.title = document.getElementById("search").value + "|" + document.getEle
         # The listed value was false, so the press turns it on.
         self.assertEqual(out["title"], "set:restore=true")
 
-    def test_unwired_control_names_its_owner(self):
-        out = run(tail='''
-var r = document.getElementById("remember");
-document.title = r.getAttribute("data-unwired") + "|" + r.getAttribute("title");''')
-        self.assertTrue(out["title"].startswith("S141-S145|Not connected to the profile yet"), out["title"])
+    def test_a_textarea_save_button_sends_what_is_in_the_box(self):
+        page = "psychovault://settings/#spelling"
+        box = run(("--inspect", "#spellWordsSave"), page=page)["inspected"][0]["box"]
+        x, y = int(box["x"] + box["w"] / 2), int(box["y"] + box["h"] / 2)
+        out = run(("--action", f"click:{x},{y}"), page=page,
+                  tail='document.getElementById("spellUserWords").value = "a\\nb";')
+        self.assertEqual(out["title"], 'set:spellUserWords="a\\nb"')
+
+    def test_listed_textarea_text_is_shown(self):
+        out = run(tail='document.title = document.getElementById("spellUserWords").value.length;')
+        self.assertEqual(out["title"], "12")  # "psycho\nvault"
+
+    def test_clear_history_asks_twice(self):
+        page = "psychovault://settings/#privacy"
+        box = run(("--inspect", "#clear"), page=page)["inspected"][0]["box"]
+        press = f"click:{int(box['x'] + 10)},{int(box['y'] + box['h'] / 2)}"
+        self.assertNotEqual(run(("--action", press), page=page)["title"], "history-clear")
+        self.assertEqual(run(("--action", press, "--action", press), page=page)["title"], "history-clear")
 
 
 if __name__ == "__main__":

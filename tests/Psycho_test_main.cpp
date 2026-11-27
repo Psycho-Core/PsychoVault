@@ -2904,9 +2904,9 @@ int main() {
     local_scheme.path = "/etc/passwd";
     CHECK(policy_blocks(policy, local_scheme, reason));
   }
+  // ---- S088: the settings service validates against the catalog, stores in a dedicated profile
+  // field or the extra-settings bag, and everything it stored survives a save and a reopen.
   {
-    // ---- S088: the settings service validates against the catalog, applies to the profile, and
-    // refuses a control with no backing field with the step that owns it.
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "pv-settings-test";
     std::error_code ignored;
     std::filesystem::remove_all(dir, ignored);
@@ -2916,7 +2916,7 @@ int main() {
     CHECK(settings.set("restore", Json(false), e) && !profile.restore_tabs);
     CHECK(settings.set("search", Json("brave"), e) && profile.search_engine == "brave");
     CHECK(!settings.set("search", Json("nonsense"), e) && e.code == "setting.choice" &&
-             profile.search_engine == "brave");
+          profile.search_engine == "brave");
     CHECK(!settings.set("restore", Json("yes"), e) && e.code == "setting.type");
     CHECK(settings.set("vaultLockMin", Json(15), e) && profile.vault_lock_minutes == 15);
     CHECK(!settings.set("vaultLockMin", Json(7), e) && e.code == "setting.choice");
@@ -2924,18 +2924,61 @@ int main() {
     CHECK(!settings.set("sleepTabsMin", Json(-1), e) && e.code == "setting.range");
     CHECK(!settings.set("panicUrl", Json("javascript:alert(1)"), e) && e.code == "setting.invalid");
     CHECK(settings.set("panicUrl", Json("https://example.test/"), e));
-    CHECK(!settings.set("remember", Json(false), e) && e.code == "setting.unwired" &&
-             e.message.find("S141-S145") != std::string::npos);
     CHECK(!settings.set("noSuchSetting", Json(true), e) && e.code == "setting.unknown");
     CHECK(!settings.set("homepage", Json(std::string("a\nb")), e) && e.code == "setting.text");
+    // Dedicated fields the first version could not reach.
+    CHECK(settings.set("remember", Json(false), e) && !profile.remember_history);
+    CHECK(settings.set("cpuLimit", Json("low"), e) && profile.cpu_limit == 30);
+    CHECK(settings.set("spellUserWords", Json(std::string("psycho\n  vault \n\npsycho2")), e) &&
+          profile.user_words.size() == 3 && profile.user_words[1] == "vault");
+    CHECK(settings.set("blockCustomDomains", Json(std::string("ads.example\ntrack.example")), e) &&
+          profile.blocked_hosts.size() == 2);
+    CHECK(settings.set("blockAllowSites", Json(std::string("example.org")), e) &&
+          profile.block_allow_sites.size() == 1);
+    CHECK(!settings.set("spellUserWords", Json(std::string("bad\x01")), e) && e.code == "setting.lines");
+    // No dedicated field: the bag keeps the validated value, typed by its catalog row.
+    CHECK(settings.set("uiSounds", Json(true), e) && profile.extra_settings.flag("uiSounds"));
+    CHECK(settings.set("netLimit", Json(256), e) && profile.extra_settings.num("netLimit") == 256);
+    CHECK(!settings.set("netLimit", Json(3), e) && e.code == "setting.choice");
+    CHECK(settings.set("clearOnExit", Json("cache"), e) && profile.clear_on_exit &&
+          profile.extra_settings.str("clearOnExit") == "cache");
+    CHECK(settings.set("modCss", Json(std::string(":root{}\n")), e));
     const Json snapshot = settings.snapshot();
     CHECK(snapshot.find("values") && snapshot.at("values").str("search") == "brave" &&
-             !snapshot.at("values").flag("restore", true) &&
-             snapshot.at("unwired").find("remember") != nullptr &&
-             snapshot.at("values").find("remember") == nullptr);
-    // A change made while no profile field exists never reaches the snapshot as a value.
+          !snapshot.at("values").flag("restore", true) && snapshot.at("values").find("uiSounds") &&
+          snapshot.at("values").str("cpuLimit") == "low" &&
+          snapshot.at("values").str("spellUserWords").find("vault") != std::string::npos &&
+          snapshot.at("unwired").object.empty());
+    // It all persists: save, reopen, and the snapshot reads the same.
+    CHECK(profile.save());
+    Profile reopened = Profile::open(dir.string(), false);
+    rt::SettingsService again(reopened);
+    const Json again_values = again.snapshot().at("values");
+    CHECK(again_values.str("search") == "brave" && !again_values.flag("remember", true) &&
+          again_values.flag("uiSounds") && again_values.num("netLimit") == 256 &&
+          again_values.str("clearOnExit") == "cache" && again_values.str("cpuLimit") == "low");
+    // Every catalogued key accepts a value of its own kind (nothing is refused as unconnected).
+    for (const rt::SettingSpec &spec : rt::SettingsService::catalog()) {
+      Json probe;
+      switch (spec.kind) {
+      case rt::SettingKind::Bool: probe = Json(true); break;
+      case rt::SettingKind::Number: probe = Json(1); break;
+      case rt::SettingKind::Choice: probe = Json(spec.choices.front()); break;
+      default: probe = Json("https://example.test/"); break;
+      }
+      rt::Error each;
+      bool ok = again.set(spec.key, probe, each);
+      if (!ok && each.code != "setting.invalid") CHECK(ok);  // only a profile refusing a value may say no
+    }
+    // Remember history off: a visit is not recorded.
+    reopened.remember_history = false;
+    reopened.visit("Example", "https://example.test/page");
+    CHECK(reopened.history.empty());
+    reopened.remember_history = true;
+    reopened.visit("Example", "https://example.test/page");
+    CHECK(reopened.history.size() == 1);
     CHECK(rt::Schemas::stock().validate("settings:set",
-                                       [] { Json j = Json::make_object(); j.set("key", Json("restore")); j.set("value", Json("true")); return j; }(), e));
+          [] { Json j = Json::make_object(); j.set("key", Json("restore")); j.set("value", Json("true")); return j; }(), e));
     std::filesystem::remove_all(dir, ignored);
   }
   // ---- My new settings survive a profile round trip ----------------------

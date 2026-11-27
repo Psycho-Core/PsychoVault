@@ -119,6 +119,9 @@ Profile Profile::open(const std::string &directory, bool private_mode) {
     p.block_ads = settings.flag("blockAds", true);
     p.block_third_party_cookies = settings.flag("blockThirdPartyCookies", true);
     p.send_dnt = settings.flag("sendDNT", true);
+    p.remember_history = settings.flag("rememberHistory", true);
+    if (const Json *extra = settings.find("extraSettings"); extra && extra->type == Json::Type::Object)
+      p.extra_settings = *extra;
     p.strip_referrer = settings.flag("stripReferrer", false);
     p.clear_on_exit = settings.flag("clearOnExit", false);
     p.https_only = settings.flag("httpsOnly", false);
@@ -245,6 +248,8 @@ bool Profile::save() {
   settings.set("blockAds", block_ads);
   settings.set("blockThirdPartyCookies", block_third_party_cookies);
   settings.set("sendDNT", send_dnt);
+  settings.set("rememberHistory", remember_history);
+  settings.set("extraSettings", extra_settings);
   settings.set("stripReferrer", strip_referrer);
   settings.set("clearOnExit", clear_on_exit);
   settings.set("httpsOnly", https_only);
@@ -409,7 +414,7 @@ bool Profile::save_workspaces(const Json &state) {
                            error);
 }
 void Profile::visit(const std::string &title, const std::string &url) {
-  if (private_mode || !valid_browser_url(url) || !starts(url, "http"))
+  if (private_mode || !remember_history || !valid_browser_url(url) || !starts(url, "http"))
     return;
   if (!history.empty() && history.front().url == url) {
     history.front().title = bounded(title.empty() ? url : title, 512);

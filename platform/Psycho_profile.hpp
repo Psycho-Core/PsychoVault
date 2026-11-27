@@ -41,6 +41,12 @@ public:
   bool ask_save_location = false, download_notify = true;
   // Privacy and security
   bool block_ads = true, block_third_party_cookies = true, send_dnt = true;
+  // Whether visits are written to history at all (Settings > Privacy > Remember history).
+  bool remember_history = true;
+  // Settings that have a control but no dedicated field yet, keyed by control id and validated by the
+  // settings catalog before they get here. They persist with the profile; what acts on each is
+  // tracked in the plan.
+  Json extra_settings = Json::make_object();
   bool strip_referrer = false, clear_on_exit = false;
   // My HTTPS policy: upgrade everything, and the hosts that told me to keep using
   // HTTPS, persisted so a restart cannot be talked back down to plain HTTP.
