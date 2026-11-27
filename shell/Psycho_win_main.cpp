@@ -3514,18 +3514,22 @@ struct Browser {
   // --smoke-chrome: finds the frame's own "+" and close glyphs in its paint list and presses them
   // through the same pointer path a mouse uses. Passing means the page, the bridge, the broker and
   // the shell agreed on a new tab and then a close, and the state push redrew the strip between.
-  bool chrome_paint_center(const char *glyph, int nth, int &x, int &y) const {
+  // The leftmost paint command with this text: the tab strip is left of the workspace chip, and
+  // paint order alone does not say which of two positioned elements comes first.
+  bool chrome_paint_center(const char *glyph, int, int &x, int &y) const {
     const Json *paint = chrome_frame.find("paint");
     if (!paint || paint->type != Json::Type::Array) return false;
-    int seen = 0;
+    bool found = false;
+    double best = 0;
     for (const Json &command : paint->array) {
-      if (command.str("text") != glyph) continue;
-      if (seen++ != nth) continue;
+      if (command.str("text") != glyph || command.num("y") > 60) continue;
+      if (found && command.num("x") >= best) continue;
+      found = true;
+      best = command.num("x");
       x = int(std::lround(command.num("x") + command.num("w") / 2.0));
       y = int(std::lround(command.num("y") + command.num("h") / 2.0));
-      return true;
     }
-    return false;
+    return found;
   }
   void chrome_press(int x, int y) {
     chrome_pointer("move", x, y);
