@@ -136,10 +136,10 @@ RAW = {
 # the eight dynamic editors in the inventory, as empty containers in the card they belong to
 DYNAMIC = {"privacy": [("site permission editor", "dynSitePermissions", "Site permissions"), ("container list", "dynContainers", "Containers"),
                        ("data usage table", "dynDataUsage", "Cleanup")],
-           "extensions": [("extension list", "dynExtensions", "Extensions"), ("proxy switch list", "dynProxySwitch", "Proxy")],
+           "extensions": [("extension list", "dynExtensions", "Extensions"), ("proxy switch list", "dynProxySwitch", "Extensions")],
            "appearance": [("sidebar service catalogue and list", "dynServices", "Sidebar services and speed dial"),
                           ("speed dial tiles", "dynTiles", "Sidebar services and speed dial")],
-           "passwords": [("vault entry list", "dynVaultEntries", "Add or edit an entry")]}
+           "passwords": [("vault entry list", "dynVaultEntries", "Passwords")]}
 
 
 def esc(text: str) -> str:
