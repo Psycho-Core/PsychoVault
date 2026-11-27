@@ -22,6 +22,10 @@ struct Document {
   Document();
   int create(Node::Type type, std::string name = {}, std::string text = {});
   void append(int parent, int child);
+  // Insert child under parent before ref (a child of parent), or at the end when ref is -1.
+  void insert_before(int parent, int child, int ref);
+  // A copy of a node, with its subtree when deep; the copy has no parent.
+  int clone_node(int id, bool deep);
   void detach(int child);
   void remove(int child);
   std::string text_content(int id) const;

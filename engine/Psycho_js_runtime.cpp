@@ -2628,7 +2628,41 @@ void Runtime::install_builtins() {
     return make_array(out);
   });
   array.object->properties["of"] = make_native([this](Values &a) { return make_array(a); });
+  array.object->properties["isArray"] = make_native([](Values &a) {
+    return Value(!a.empty() && a[0].type == Value::Type::Object && a[0].object &&
+                 a[0].object->kind == Object::Kind::Array);
+  });
   g.properties["Array"] = array;
+  {
+    // Number.isInteger and friends: statics only, none of them coerce their argument.
+    Value &number = g.properties["Number"];
+    auto numeric = [](Values &a, double &out) {
+      if (a.empty() || a[0].type != Value::Type::Number) return false;
+      out = a[0].to_number();
+      return true;
+    };
+    number.object->properties["isInteger"] = make_native([numeric](Values &a) {
+      double v = 0;
+      return Value(numeric(a, v) && std::isfinite(v) && v == std::floor(v));
+    });
+    number.object->properties["isSafeInteger"] = make_native([numeric](Values &a) {
+      double v = 0;
+      return Value(numeric(a, v) && std::isfinite(v) && v == std::floor(v) && std::fabs(v) <= 9007199254740991.0);
+    });
+    number.object->properties["isFinite"] = make_native([numeric](Values &a) {
+      double v = 0;
+      return Value(numeric(a, v) && std::isfinite(v));
+    });
+    number.object->properties["isNaN"] = make_native([numeric](Values &a) {
+      double v = 0;
+      return Value(numeric(a, v) && std::isnan(v));
+    });
+    number.object->properties["parseFloat"] = g.properties["parseFloat"];
+    number.object->properties["parseInt"] = g.properties["parseInt"];
+    number.object->properties["MAX_SAFE_INTEGER"] = Value(9007199254740991.0);
+    number.object->properties["MIN_SAFE_INTEGER"] = Value(-9007199254740991.0);
+    number.object->properties["EPSILON"] = Value(2.220446049250313e-16);
+  }
   // Map and Set keep insertion order because my object properties are ordered.
   // My Symbol is a key factory: each call makes a distinct key string, and the
   // well-known keys are fixed strings every object can answer.

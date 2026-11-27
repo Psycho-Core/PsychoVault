@@ -82,6 +82,33 @@ void Document::append(int parent, int child) {
   nodes[child].parent = parent;
   nodes[parent].children.push_back(child);
 }
+void Document::insert_before(int parent, int child, int ref) {
+  if (ref < 0 || ref >= int(nodes.size()) || nodes[ref].parent != parent || ref == child) {
+    append(parent, child);
+    return;
+  }
+  if (parent < 0 || child < 0 || child >= int(nodes.size()) || parent == child) return;
+  for (int p = parent; p >= 0; p = nodes[p].parent)
+    if (p == child) return;
+  detach(child);
+  auto &siblings = nodes[parent].children;
+  const auto at = std::find(siblings.begin(), siblings.end(), ref);
+  siblings.insert(at, child);
+  nodes[child].parent = parent;
+}
+int Document::clone_node(int id, bool deep) {
+  if (id < 0 || id >= int(nodes.size())) return -1;
+  const Node source = nodes[id];
+  const int copy = create(source.type, source.name, source.text);
+  if (copy < 0) return -1;
+  nodes[copy].attributes = source.attributes;
+  if (deep)
+    for (int child : source.children) {
+      const int sub = clone_node(child, true);
+      if (sub >= 0) append(copy, sub);
+    }
+  return copy;
+}
 void Document::detach(int child) {
   if (child < 0 || child >= int(nodes.size()))
     return;

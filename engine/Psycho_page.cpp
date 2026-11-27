@@ -4,6 +4,16 @@
 #include <sstream>
 #include <thread>
 namespace pv {
+// Names of the on<event> handler properties an element accepts.
+static bool is_handler_property(const std::string &name) {
+  static const std::set<std::string> known = {
+      "onclick", "ondblclick", "onchange", "oninput", "onkeydown", "onkeyup", "onkeypress", "onsubmit", "onfocus",
+      "onblur", "onmouseover", "onmouseout", "onmouseenter", "onmouseleave", "onmousedown", "onmouseup",
+      "oncontextmenu", "onpointerdown", "onpointerup", "onpointermove", "onscroll", "onwheel", "onload", "onerror",
+      "oninvalid", "onreset", "onselect", "ontoggle"};
+  return known.count(name) != 0;
+}
+
 static constexpr int kDocument = -1, kLocation = -3, kStorageLocal = -5, kStorageSession = -6,
                      kHistory = -7, kStyleBase = 1000000, kClassBase = 2000000,
                      kCanvasBase = 3000000, kGradientBase = 4000000,
@@ -819,6 +829,10 @@ public:
           auto c = a[0].to_string();
           bool has = page.doc.nodes[n].has_class(c);
           auto classes = split(page.doc.nodes[n].attribute("class"), ' ');
+          // toggle(name, force): force true adds, false removes, and the result says whether it is present.
+          const bool want = a.size() > 1 ? a[1].truthy() : !has;
+          if (want == has)
+            return js::Value(has);
           if (has)
             std::erase(classes, c);
           else
@@ -831,7 +845,7 @@ public:
           }
           page.doc.nodes[n].set_attribute("class", out);
           page.dirty_ = true;
-          return js::Value(!has);
+          return js::Value(want);
         });
       return js::Value();
     }
@@ -962,6 +976,22 @@ public:
       return js::Value(n.attribute("id"));
     if (name == "className")
       return js::Value(n.attribute("class"));
+    // el.onclick and the other on<event> handler properties read back what was assigned.
+    if (n.type == Node::Type::Element && is_handler_property(name)) {
+      const auto found = page.handler_props_.find({id, name.substr(2)});
+      return found == page.handler_props_.end() ? js::Value::null() : found->second;
+    }
+    // IDL attributes that reflect a content attribute: booleans by presence, strings by value.
+    if (n.type == Node::Type::Element) {
+      static const std::map<std::string, std::string> booleans = {
+          {"hidden", "hidden"}, {"disabled", "disabled"}, {"required", "required"}, {"readOnly", "readonly"},
+          {"multiple", "multiple"}, {"open", "open"}, {"selected", "selected"}, {"autofocus", "autofocus"}};
+      static const std::map<std::string, std::string> strings = {
+          {"title", "title"}, {"placeholder", "placeholder"}, {"name", "name"}, {"alt", "alt"},
+          {"rel", "rel"}, {"target", "target"}, {"lang", "lang"}, {"role", "role"}, {"htmlFor", "for"}};
+      if (auto flag = booleans.find(name); flag != booleans.end()) return js::Value(has_attr(n, flag->second));
+      if (auto text = strings.find(name); text != strings.end()) return js::Value(n.attribute(text->second));
+    }
     if (name == "textContent" || name == "innerText")
       return js::Value(d.text_content(id));
     if (name == "innerHTML")
@@ -1257,6 +1287,92 @@ public:
         page.dirty_ = true;
         return a.empty() ? js::Value() : a[0];
       });
+    // Tree mutation beyond appendChild. Arguments may be nodes or strings (a string becomes a text node).
+    if (name == "insertBefore" || name == "prepend" || name == "before" || name == "after" ||
+        name == "replaceChildren" || name == "cloneNode" || name == "insertAdjacentHTML") {
+      return r.make_native([this, id, name](js::Values &a) -> js::Value {
+        auto &doc = page.doc;
+        auto to_node = [&](const js::Value &v) -> int {
+          if (v.type == js::Value::Type::Object && v.object && v.object->kind == js::Object::Kind::Host)
+            return v.object->host;
+          return doc.create(Node::Type::Text, "#text", v.to_string());
+        };
+        if (name == "cloneNode") {
+          const int copy = doc.clone_node(id, !a.empty() && a[0].truthy());
+          return copy < 0 ? js::Value::null() : node(copy);
+        }
+        if (name == "insertBefore") {
+          if (a.empty()) return js::Value();
+          const int child = to_node(a[0]);
+          int ref = -1;
+          if (a.size() > 1 && a[1].type == js::Value::Type::Object && a[1].object &&
+              a[1].object->kind == js::Object::Kind::Host)
+            ref = a[1].object->host;
+          doc.insert_before(id, child, ref);
+          page.dirty_ = true;
+          return a[0];
+        }
+        if (name == "prepend") {
+          const int first = doc.nodes[id].children.empty() ? -1 : doc.nodes[id].children.front();
+          for (const js::Value &v : a) doc.insert_before(id, to_node(v), first);
+          page.dirty_ = true;
+          return js::Value();
+        }
+        if (name == "before" || name == "after") {
+          const int parent = doc.nodes[id].parent;
+          if (parent < 0) return js::Value();
+          int ref = id;
+          if (name == "after") {
+            const auto &siblings = doc.nodes[parent].children;
+            const auto self = std::find(siblings.begin(), siblings.end(), id);
+            ref = self == siblings.end() || self + 1 == siblings.end() ? -1 : *(self + 1);
+          }
+          for (const js::Value &v : a) doc.insert_before(parent, to_node(v), ref);
+          page.dirty_ = true;
+          return js::Value();
+        }
+        if (name == "replaceChildren") {
+          const std::vector<int> old = doc.nodes[id].children;
+          for (int child : old) doc.remove(child);
+          for (const js::Value &v : a) doc.append(id, to_node(v));
+          page.dirty_ = true;
+          return js::Value();
+        }
+        // insertAdjacentHTML(position, html)
+        if (a.size() < 2) return js::Value();
+        const std::string where = lower(a[0].to_string());
+        const int holder = doc.create(Node::Type::Element, "div");
+        doc.parse_fragment(holder, a[1].to_string());
+        const std::vector<int> made = doc.nodes[holder].children;
+        const int parent = doc.nodes[id].parent;
+        int ref = -1, target = id;
+        if (where == "beforebegin" || where == "afterend") {
+          if (parent < 0) return js::Value();
+          target = parent;
+          if (where == "beforebegin") ref = id;
+          else {
+            const auto &siblings = doc.nodes[parent].children;
+            const auto self = std::find(siblings.begin(), siblings.end(), id);
+            ref = self == siblings.end() || self + 1 == siblings.end() ? -1 : *(self + 1);
+          }
+        } else if (where == "afterbegin") {
+          ref = doc.nodes[id].children.empty() ? -1 : doc.nodes[id].children.front();
+        }
+        for (int child : made) doc.insert_before(target, child, ref);
+        page.dirty_ = true;
+        return js::Value();
+      });
+    }
+    if (name == "options" && n.type == Node::Type::Element && (n.name == "select" || n.name == "datalist")) {
+      std::vector<int> options;
+      for (int child : n.children) {
+        if (d.nodes[child].name == "option") options.push_back(child);
+        else if (d.nodes[child].name == "optgroup")
+          for (int grandchild : d.nodes[child].children)
+            if (d.nodes[grandchild].name == "option") options.push_back(grandchild);
+      }
+      return list(options);
+    }
     if (name == "remove")
       return r.make_native([this, id](js::Values &) {
         page.doc.remove(id);
@@ -1605,6 +1721,40 @@ public:
       page.dirty_ = true;
       return true;
     }
+    if (n.type == Node::Type::Element && is_handler_property(name)) {
+      // The handler property is one listener per event type: assigning replaces the previous one.
+      const std::string type = name.substr(2);
+      const auto key = std::make_pair(id, type);
+      if (auto old = page.handler_props_.find(key); old != page.handler_props_.end()) {
+        page.remove_listener(id, type, old->second, false);
+        page.handler_props_.erase(old);
+      }
+      if (value.type == js::Value::Type::Object && value.object &&
+          (value.object->function || value.object->native)) {
+        page.handler_props_[key] = value;
+        page.add_listener(id, type, value, false, false);
+      }
+      return true;
+    }
+    if (n.type == Node::Type::Element) {
+      static const std::map<std::string, std::string> booleans = {
+          {"hidden", "hidden"}, {"disabled", "disabled"}, {"required", "required"}, {"readOnly", "readonly"},
+          {"multiple", "multiple"}, {"open", "open"}, {"autofocus", "autofocus"}};
+      static const std::map<std::string, std::string> strings = {
+          {"title", "title"}, {"placeholder", "placeholder"}, {"name", "name"}, {"alt", "alt"},
+          {"rel", "rel"}, {"target", "target"}, {"lang", "lang"}, {"role", "role"}, {"htmlFor", "for"}};
+      if (auto flag = booleans.find(name); flag != booleans.end()) {
+        if (value.truthy()) n.set_attribute(flag->second, "");
+        else std::erase_if(n.attributes, [&](auto &attribute) { return attribute.first == flag->second; });
+        page.dirty_ = true;
+        return true;
+      }
+      if (auto text = strings.find(name); text != strings.end()) {
+        n.set_attribute(text->second, value.to_string());
+        page.dirty_ = true;
+        return true;
+      }
+    }
     if (name == "id") {
       n.set_attribute("id", value.to_string());
       page.dirty_ = true;
@@ -1868,6 +2018,18 @@ void Page::load(const Url &url, const std::string &html, const std::string &mime
   diagnostics = doc.diagnostics;
   delete js_->host();
   js_ = std::make_unique<js::Runtime>(new PageHost(*this));
+  // window.addEventListener: window-level listeners share the document root's list, so an event that
+  // bubbles to the top reaches them. Events that exist only on window (hashchange, resize) are
+  // dispatched there explicitly by the code that causes them.
+  js_->global().properties["addEventListener"] = js_->make_native([this](js::Values &a) {
+    if (a.size() > 1)
+      add_listener(doc.root, a[0].to_string(), a[1], listener_capture_option(a), listener_passive_option(a));
+    return js::Value();
+  });
+  js_->global().properties["removeEventListener"] = js_->make_native([this](js::Values &a) {
+    if (a.size() > 1) remove_listener(doc.root, a[0].to_string(), a[1], listener_capture_option(a));
+    return js::Value();
+  });
   js_->global().properties["location"] = js_->host_value(kLocation, "Location");
   js_->global().properties["localStorage"] = js_->host_value(kStorageLocal, "Storage");
   js_->global().properties["sessionStorage"] = js_->host_value(kStorageSession, "Storage");

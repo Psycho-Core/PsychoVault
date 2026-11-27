@@ -191,6 +191,8 @@ private:
   double last_activation_ms_ = -1e15;
   // Events that belong to an object rather than an element, keyed by handle.
   std::map<int, std::vector<Listener>> host_listeners_;
+  // el.onclick = fn and its siblings: the function currently set for (node, event type).
+  std::map<std::pair<int, std::string>, js::Value> handler_props_;
   bool media_wake_ = false;
   int next_media_source_ = 1, next_mse_ = 1;
   int next_media_revision_ = 1;

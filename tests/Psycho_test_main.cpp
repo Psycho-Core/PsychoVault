@@ -1323,6 +1323,31 @@ int main() {
       "document.title=out.join(',');</script>");
     CHECK(tree.render(300, 100, 0).str("title") == "node,b,a,b2,first,5:0,threw");
   }
+  // Web APIs a real page (the reference settings page) relies on.
+  {
+    Page web;
+    web.load(*parse_url("https://local.test/"),
+      "<div id=d><i id=i1>1</i></div><select id=sel><option value=a>A</option><option value=b>B</option></select>"
+      "<button id=b>b</button><p id=h hidden>x</p>"
+      "<script>var out=[];"
+      "var d=document.getElementById('d');"
+      "d.prepend(document.createElement('u'));"
+      "d.insertBefore(document.createElement('s'),document.getElementById('i1'));"
+      "d.insertAdjacentHTML('beforeend','<b>z</b>');"
+      "out.push(d.childNodes.length+d.firstChild.tagName+d.lastChild.tagName);"
+      "var c=d.cloneNode(true);out.push(c.childNodes.length+':'+(c.parentNode===null));"
+      "d.replaceChildren();out.push(d.childNodes.length);"
+      "out.push(document.getElementById('sel').options.length);"
+      "var n=0;var b=document.getElementById('b');b.onclick=function(){n++};b.onclick=function(){n+=10};"
+      "b.click();out.push(n);"
+      "out.push(Array.isArray([])+':'+Array.isArray({})+':'+Number.isInteger(3)+':'+Number.isInteger(3.5)+':'+Number.isInteger('3'));"
+      "var h=document.getElementById('h');out.push(h.hidden);h.hidden=false;out.push(h.hasAttribute('hidden'));"
+      "document.body.classList.toggle('a',false);document.body.classList.toggle('b',true);"
+      "out.push(document.body.className);"
+      "var seen=0;window.addEventListener('click',function(){seen++});document.getElementById('b').click();out.push(seen);"
+      "document.title=out.join(',');</script>");
+    CHECK(web.render(300, 200, 0).str("title") == "4UB,4:true,0,2,10,true:false:true:false:false,true,false,b,1");
+  }
   // UiPseudoClassInteractionMatrix covers interaction state, structural pseudos,
   // Keyboard navigation through the host's separate scroll-key path also
   // enables focus-visible after a pointer-focused element.

@@ -37,6 +37,29 @@ COPY = {
     "accent": ("Accent colour", "The accent colour, applied to the whole UI. Private windows stay violet."),
     "hideSidebar": ("Hide the sidebar", "Collapses the icon rail for more page width."),
     "enhanceVideo": ("Enhance videos", "Contrast, saturation and brightness lifted on every video element."),
+    # Read from the captures (docs/reference/legacy-ui/06-13). Where the capture describes the old
+    # engine (Chromium, Electron) the sentence says what my browser does instead.
+    "downloadDir": ("Download folder", "Used for automatic downloads and as the starting folder for Save As. Empty means your system Downloads folder."),
+    "askSaveLocation": ("Ask where to save each download", "On: choose a name and location each time. Off: save automatically to the download folder."),
+    "downloadNotify": ("Notify when a download finishes", "A system notification while PsychoVault is in the background. The rail badge and the in-window message happen either way."),
+    "cpuLimit": ("CPU limit", "Lowers this browser's scheduler priority so games and captures get the cores."),
+    "batterySaver": ("Battery saver", "Battery saver: lowers priority further and sleeps tabs after three minutes."),
+    "sleepTabsMin": ("Sleep tabs after", "Minutes before idle tabs sleep; 0 means never. Pinned tabs never sleep. Battery saver can sleep tabs sooner."),
+    "sleepExclude": ("Never sleep these sites", "One hostname per line, for example example.com. Exact hostnames only. Audio-playing and loading tabs are also skipped. Unsaved forms may still be lost."),
+    "netLimit": ("Bandwidth cap", "Downloads are paused and resumed to hold the average, so this is a duty cycle, not a hard ceiling."),
+    "batteryAuto": ("Battery saver on unplug", "Turn the limiter and fast tab sleep on by itself when the power lead comes out."),
+    "spellCheck": ("Spell-check text you type in pages", "Turns the whole feature on or off: red underlines in a page's own fields, the suggestions in the right-click menu and \u201cAdd to dictionary\u201d. The address bar, the palette and this page are deliberately not checked."),
+    "spellBuiltin": ("PsychoVault's own checker", "This is what draws the red line and offers \u201cthe\u201d for \u201cteh\u201d: a built-in word list plus your own words, checked in the page. Turn it off only if you do not want any checking."),
+    "spellLangs": ("Languages", "Which word list the checker prefers: en uses the English list; any other language has no dictionary here because only English ships. Blank uses your system locale; case does not matter."),
+    "spellDictUrl": ("Dictionary source", "A folder or mirror holding <lang>.dic and <lang>.aff Hunspell files. Nothing is fetched from here; the built-in checker is what makes the feature work."),
+    "vaultEnabled": ("Vault enabled", "Off means the browser reads nothing from the vault and writes nothing to it."),
+    "vaultLockMin": ("Auto-lock after", "Wipes the decrypted vault from memory. Copying a password starts a one-minute lock on its own."),
+    "translateTarget": ("Translate pages to", "This is the destination language. The page's original language is detected automatically."),
+    "highContrast": ("High-contrast interface", "Uses brighter text, stronger borders, and a clear accent in PsychoVault's controls and Settings."),
+    "reduceMotion": ("Reduce motion", "Reduces browser-interface animation and asks websites to minimize transitions and scrolling effects."),
+    "showTabCloseButtons": ("Always show tab close buttons", "Keeps each close button visible instead of only showing it on hover or focus."),
+    "openErrorLog": ("Error log", "Logs can contain private paths or URLs. Review and redact them before sharing."),
+    "updateCheckNow": ("Automatic updates", "Checked quietly once at startup, and only on packaged Windows x64 builds. This runs the same check and tells you the answer even when it fails."),
     # inventory labels that name a neighbour, not the control
     "customSearchEngines": ("Custom search shortcuts", ""),
     "blockAllowSites": ("Never block on these sites", ""),
@@ -73,25 +96,42 @@ GROUPS = {
                 ("Browser hardening", ["blockThirdPartyCookies", "sendDNT", "blockAutoplay", "webRtc", "doh", "dohTemplate", "stripReferrer", "denyPerms", "relaunch"]),
                 ("Containers", ["contAdd", "contSave"]),
                 ("Cleanup", ["clearOnExit", "dataRefresh"])],
-    "downloads": [("Downloads", ["downloadDir", "downloadDirPick", "askSaveLocation", "downloadNotify"])],
-    "extensions": [("Proton VPN", ["vpnCheckOpen", "protonVpnRestore", "protonVpnStatus"]),
-                   ("Proxy", ["proxySelfTest", "proxyStatus"]),
-                   ("Extensions", ["extAddFolder", "extAddCrx", "extReload"])],
-    "performance": [("Resource limits", ["cpuLimit", "netLimit"]),
-                    ("Sleeping tabs", ["sleepTabsMin", "sleepExclude"]),
-                    ("Battery", ["batterySaver", "batteryAuto"])],
+    "downloads": [("Downloads", ["@downloads_intro", "downloadDir+downloadDirPick", "askSaveLocation", "downloadNotify"])],
+    "extensions": [("Extensions", ["@ext_intro", "@ext_callout_open", "vpnCheckOpen", "protonVpnRestore", "protonVpnStatus",
+                                   "proxySelfTest", "proxyStatus", "@ext_callout_close", "@ext_after",
+                                   "extAddFolder", "extAddCrx", "extReload"])],
+    "performance": [("Governor", ["cpuLimit", "batterySaver", "sleepTabsMin", "sleepExclude", "netLimit", "batteryAuto"])],
     "appearance": [("Appearance", ["theme", "accent", "hideSidebar", "modCss", "modSave", "modClear"]),
                    ("Enhance & personality", ["enhanceVideo", "enhanceImages", "uiSounds", "soundVol", "mediaKeys", "mediaAutoPause", "panicEnabled", "panicUrl"]),
                    ("Sidebar services and speed dial", ["railIcons", "svcAdd", "svcSave", "tileAdd", "tileSave"])],
-    "spelling": [("Spell checking", ["spellCheck", "spellBuiltin", "spellLangs", "spellDictUrl"]),
-                 ("Personal dictionary", ["spellUserWords", "spellWordsSave", "spellWordsRefresh"])],
-    "passwords": [("Vault", ["vaultEnabled", "vaultLockMin", "vpw", "vgo", "vforget", "vnew", "vset", "vLock", "vRefresh"]),
-                  ("Backup and import", ["vbackupPassword", "vbackupConfirm", "vBackup", "vRestore", "vImport"]),
-                  ("Add or edit an entry", ["eSite", "eUser", "ePass", "eGen", "eSave"])],
-    "accessibility": [("Language", ["translateTarget"]),
-                      ("Interface comfort", ["highContrast", "reduceMotion", "showTabCloseButtons"])],
-    "about": [("Updates", ["updateCheckNow", "updateToken", "updateTokenSave", "updateTokenForget"]),
-              ("Troubleshooting", ["openErrorLog", "diagnosticsRefresh", "diagnosticsCopy", "diagnosticsReport"])],
+    "spelling": [("Spelling", ["spellCheck", "spellBuiltin", "spellLangs", "spellDictUrl", "@spell_status", "@spell_words",
+                               "spellUserWords", "spellWordsSave", "spellWordsRefresh"])],
+    "passwords": [("Passwords", ["@pw_status", "vaultEnabled", "vaultLockMin", "@pw_master", "vnew+vset", "vpw", "vgo", "vforget",
+                                 "@pw_backup", "vbackupPassword+vbackupConfirm", "vBackup", "vRestore", "vImport", "@pw_fill",
+                                 "@pw_empty", "eSite+eUser+ePass+eGen+eSave", "vLock", "vRefresh"])],
+    "accessibility": [("Page translation", ["translateTarget", "@translate_note"]),
+                      ("Accessibility", ["highContrast", "reduceMotion", "showTabCloseButtons", "@a11y_tip"])],
+    "about": [("About", ["openErrorLog", "diagnosticsRefresh+diagnosticsCopy", "diagnosticsReport", "@about_notes",
+                         "updateCheckNow", "updateToken", "updateTokenSave", "updateTokenForget"])],
+}
+# Raw snippets placed between rows. "@name" in a GROUPS list inserts RAW[name]; "+id" after a control id
+# puts that control's bare element on the same row (see combo()).
+RAW = {
+    "downloads_intro": '<div class="note">Choose whether each download asks where to save. When asking is off, files go to the folder below with a unique name; existing files are not replaced. The Save As dialog is provided by your operating system. Browser updates use Downloads separately.</div>',
+    "ext_intro": '<div class="note">Extensions are loaded the way a browser\u2019s \u201cload unpacked\u201d works: install an unpacked folder or a <b>.crx</b> file. Web store one-click installation is not supported. Extensions run inside every tab and can read the pages you visit - only install ones you trust, and note that <b>no signature is verified</b> for a crx here.<br><b>What actually works.</b> Content scripts, page changes, request blocking through the webRequest API, storage, messaging, and - through PsychoVault\u2019s own shim - proxy and privacy settings, which is what a browser VPN extension needs to send traffic through a tunnel. What does not exist in this engine: declarativeNetRequest (the MV3 rules engine), native messaging and a toolbar to click. Known incompatible permissions are flagged below, but this is not a guarantee an extension will work.</div>',
+    "ext_callout_open": '<div class="callout"><div class="callout-title">Proton VPN</div><p><b>Installed by default.</b> PsychoVault ships a build of Proton\u2019s own browser extension, compiled from Proton\u2019s GPL-3.0 source. It appears in the list below like any other extension - open its window to sign in and connect.</p><p>Sign in with your own Proton account. Use the VPN button on the sidebar to connect or disconnect. A connection indicator alone does not prove there are no DNS or WebRTC leaks.</p>',
+    "ext_callout_close": '</div>',
+    "ext_after": '<div class="note">If the VPN says connected but your IP does not change, press <b>Check what proxy is in use</b>. It reports what the browser would really do with your traffic, per profile.<br>Press <b>Check install</b> to see what the bundled extension did at startup.</div>',
+    "spell_status": '<div class="note" id="spellStatus">spellchecking on | engine: PsychoVault built-in | locale en-US</div>',
+    "spell_words": '<div class="note">Your words - one per line. Saving adds what is new and removes what you deleted, so this list is the dictionary.</div>',
+    "pw_status": '<div class="note" id="vaultStatus">vault on - locked - 0 entries</div>',
+    "pw_master": '<div class="note">The vault is currently encrypted by your operating system. You can optionally set a master password.</div>',
+    "pw_backup": '<div class="note"><b>Import and encrypted backups</b> - unlock the vault first. CSV exports contain plaintext passwords: keep the file private and delete it securely when you are finished. Imports and restores merge entries and skip matching site and username; they never replace existing entries. Keep the backup password safe - it cannot be recovered.</div>',
+    "pw_fill": '<div class="note">Vault filling is manual, HTTPS-only and limited to the same host (with www treated as equivalent). Cross-origin frames are not filled.</div>',
+    "pw_empty": '<div class="note">No entries yet.<br>Add an entry by hand - or right-click a password field on a real site and choose \u201cSave password for this site\u201d.</div>',
+    "translate_note": '<div class="note">Choose <b>Menu \u2192 Translate current page</b> or press <b>Ctrl+K</b> and search \u201ctranslate\u201d. Google Translate receives the page URL and fetches its contents; PsychoVault asks first and opens the translated copy in a new tab. This needs internet access and may not work on every site. Do not use it for private or sensitive pages.</div>',
+    "a11y_tip": '<div class="note">Keyboard tip: use <b>Ctrl++</b> / <b>Ctrl+-</b> to zoom the current page and the left/right arrow keys while focused on a tab to switch tabs. Keyboard focus is outlined.</div>',
+    "about_notes": '<div class="note">If an update fails while Proton VPN is on, disconnect it and retry. PsychoVault does not bypass the VPN automatically. It removes an updater-downloaded installer only after the new version starts and the file is verified unchanged; older untracked installers are kept.</div><div class="note"><span class="strong">PsychoVault</span></div><div class="note">Browser application (this UI, tabs, bookmarks, history, downloads, blocking) and the rendering engine: written for this project.</div><div class="note">Bookmark, history and settings files live in your user data folder.</div><div class="note">Licensed MIT. Third-party components under their own licences - see THIRD-PARTY-NOTICES.md.</div>',
 }
 # the eight dynamic editors in the inventory, as empty containers in the card they belong to
 DYNAMIC = {"privacy": [("site permission editor", "dynSitePermissions", "Site permissions"), ("container list", "dynContainers", "Containers"),
@@ -160,6 +200,39 @@ def render_control(control: dict, defaults: dict) -> str:
     raise ValueError(f"unhandled control {control}")
 
 
+def bare(control: dict, defaults: dict) -> str:
+    """The control element alone, for a combined row."""
+    cid, kind, ctype = control["id"], control["kind"], control["type"]
+    default = default_of(defaults, cid)
+    if kind == "textarea":
+        return f'<textarea class="area" id="{cid}" placeholder="{esc(AREAS.get(cid, ("", ""))[1])}"></textarea>'
+    if kind == "input":
+        input_type = ctype if ctype in ("text", "password", "number") else "text"
+        value = ""
+        if isinstance(default, str) and cid not in ("vpw", "vnew", "vbackupPassword", "vbackupConfirm", "ePass"):
+            value = f' value="{esc(default)}"'
+        return f'<input class="field" type="{input_type}" id="{cid}"{value} placeholder="{esc(PLACEHOLDERS.get(cid, ""))}">'
+    if kind == "button":
+        return f'<button class="btn" id="{cid}" type="button">{esc(control["label"])}</button>'
+    raise ValueError(f"cannot combine {cid}")
+
+
+def combo(ids: list[str], by_id: dict, defaults: dict) -> str:
+    """One row: the first control's text on the left, every listed control on the right. Rows of only inputs
+    and buttons (no text in COPY) are plain control lines."""
+    first = by_id[ids[0]]
+    right = "".join(bare(by_id[i], defaults) for i in ids if not (i == ids[0] and ids[0] in COPY and first["kind"] in ("textarea",) and False))
+    if ids[0] in COPY and first["kind"] != "button":
+        label, desc = COPY[ids[0]]
+        left = f'<div class="text"><div class="label">{esc(label)}</div>' + (f'<div class="desc">{esc(desc)}</div>' if desc else "") + "</div>"
+        return f'<div class="row">{left}<div class="ctl">{right}</div></div>'
+    if ids[0] in COPY:  # a labelled action row whose buttons sit together on the right
+        label, desc = COPY[ids[0]]
+        left = f'<div class="text"><div class="label">{esc(label)}</div>' + (f'<div class="desc">{esc(desc)}</div>' if desc else "") + "</div>"
+        return f'<div class="row">{left}<div class="ctl">{right}</div></div>'
+    return f'<div class="line">{right}</div>'
+
+
 def group_buttons(rendered: list[str]) -> list[str]:
     """Adjacent bare buttons share one actions row."""
     out, run = [], []
@@ -188,13 +261,27 @@ def build() -> str:
         nav.append(f'<button class="cat{active}" type="button" data-cat="{cid}"><span class="num">{index + 1:02d}</span>'
                    f'<span class="name">{esc(category["title"])}</span></button>')
         cards, used = [], set()
-        groups = [(t, [i for i in ids if i in by_id]) for t, ids in GROUPS[cid]]
-        listed = {i for _, ids in groups for i in ids}
+        def present(item):
+            return item.startswith("@") or all(part in by_id for part in item.split("+"))
+        groups = [(t, [i for i in ids if present(i)]) for t, ids in GROUPS[cid]]
+        listed = {part for _, ids in groups for i in ids if not i.startswith("@") for part in i.split("+")}
         leftovers = [c["id"] for c in category["controls"] if c["id"] not in listed]
         if leftovers:
             groups.append(("More", leftovers))
         for title, ids in groups:
-            rows = group_buttons([render_control(by_id[i], defaults) for i in ids])
+            rendered, ids_used = [], []
+            for item in ids:
+                if item.startswith("@"):
+                    rendered.append(RAW[item[1:]])
+                elif "+" in item:
+                    parts = item.split("+")
+                    rendered.append(combo(parts, by_id, defaults))
+                    ids_used.extend(parts)
+                elif item in by_id:
+                    rendered.append(render_control(by_id[item], defaults))
+                    ids_used.append(item)
+            ids = ids_used
+            rows = group_buttons(rendered)
             for item_label, dyn_id, card_title in DYNAMIC.get(cid, []):
                 if card_title == title:
                     rows.append(f'<div class="dynamic" id="{dyn_id}" data-editor="{esc(item_label)}">{esc(item_label[:1].upper() + item_label[1:])}</div>')
@@ -237,6 +324,15 @@ main{flex:1}
 .group .card-title{margin:0 0 15px}
 .row .text{flex:1}
 .actions{display:flex;gap:8px;margin:7px 0 0}
+.ctl{display:flex;gap:8px;align-items:center}
+.row .ctl .area{width:440px;min-height:70px}
+.row .ctl .field{width:272px}
+.line{display:flex;gap:8px;align-items:center;margin:8px 0 0}
+.line .field{flex:1}
+.callout{margin:12px 0 10px;padding:14px 15px 14px;border:1px solid var(--pv-accent-weak);border-radius:12px;background:#0c1a2c}
+.callout-title{font-size:14px;font-weight:700;color:var(--pv-text)}
+.callout p{margin:8px 0 0;font-size:12.5px;line-height:19px;color:var(--pv-muted)}
+.strong{color:var(--pv-text)}
 .dynamic{margin:12px 0 6px;padding:14px;border:1px dashed var(--pv-border);border-radius:10px;font-size:12.5px;color:var(--pv-muted)}
 </style>
 </head>
