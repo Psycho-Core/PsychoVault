@@ -76,3 +76,13 @@ No screenshot or diff image has been looked at by me. No accessibility check (sc
 ## What closing P3 would take
 
 Either build the rest (a per-control owner matrix; wire the controls whose service exists; the extension, vault, workspaces, performance and translate panels; drag reorder; real rail services and speed dial; review the diffs and bring Extensions, Performance and About and the new-tab page into range), or scope the gate as D012 did for P2. I have **not** made that scoping call. One reading I would offer for your review: "hard to tell apart" is judged by you from the diff images and screenshots, which I cannot see; "every control whose backing service exists" is limited to the 26 already wired plus the ones listed above as having a service today; "listed with the step" is the per-control matrix, which I should write next either way.
+
+## Update 2026-11-27 (settings persistence)
+
+[Run 45995979447](https://github.com/Psycho-Core/PsychoVault/actions/runs/45995979447) passed on Windows. Clause 2 moved, but the clause is still not met.
+
+- **All 51 value controls now persist.** The 26 that had a profile field keep it; 7 more got a dedicated one (remember history, CPU limit, spelling languages, dictionary source, personal words, never-block sites, extra blocked domains); the other 18 are stored in a validated extra-settings bag in the profile (`extraSettings`). The service rejects a bad value with a reason instead of accepting it. A unit test saves, reopens and reads every one back, and probes every catalogued key with a value of its own kind.
+- **Remember history is real:** with it off, no visit is recorded (both the profile and the shell's own history push check it).
+- **Buttons now wired:** Save words, Reload status, Save blocker lists, Save shortcuts, Apply mod, Clear, and Clear history (which asks twice, then clears through the broker). That is 7 of the 43 buttons.
+- **Storing is not acting.** A value in the bag changes nothing in the running browser yet (for example sound volume, bandwidth cap, bundled domain list, translate target, containers). I have not audited which of the 26 older fields the browser acts on; a grep shows several are read in only one place. The plan's P7 steps own the effects.
+- **Still not wired:** the vault controls and entry editor, the extension and proxy buttons, the download folder picker, the six clear-data actions, the update token, and all 8 dynamic editors. Custom search shortcuts are saved as text but not yet parsed into engines.
