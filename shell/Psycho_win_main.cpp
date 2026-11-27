@@ -3544,6 +3544,12 @@ struct Browser {
       report.set("chromeFrame", chrome_frame.type == Json::Type::Object);
       report.set("chromeReady", chrome_session && chrome_session->ready.load());
       report.set("note", smoke_chrome_note);
+      if (chrome_session) {
+        Json notes = Json::make_array();
+        for (const auto &line : chrome_session->recent_diagnostics()) notes.array.push_back(Json(line));
+        report.set("diagnostics", std::move(notes));
+        report.set("startError", chrome_session->start_error);
+      }
       std::string write_error;
       write_file_atomic(capture_path + ".chrome.json", report.dump() + "\n", write_error);
       smoke_chrome_stage = 9;
@@ -3569,7 +3575,9 @@ struct Browser {
         finish(false, "the frame painted no new-tab button");
         return true;
       }
-      smoke_chrome_note = std::to_string(tabs.size()) + " tabs before the click";
+      smoke_chrome_note = std::to_string(tabs.size()) + " tabs before the click at " +
+                          std::to_string(x) + "," + std::to_string(y) + " content " +
+                          std::to_string(int(content.x)) + "," + std::to_string(int(content.y));
       smoke_chrome_tick = now;
       chrome_press(x, y);
       smoke_chrome_stage = 1;
