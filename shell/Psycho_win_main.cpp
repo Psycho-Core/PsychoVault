@@ -974,6 +974,7 @@ struct Browser {
   std::shared_ptr<Session> chrome_session;
   Json chrome_frame;
   std::string chrome_error, chrome_state_sent;
+  DWORD chrome_state_tick = 0, chrome_frame_tick = 0;
   std::map<std::string, Image> chrome_images;
   bool smoke_chrome = false;
   int smoke_chrome_stage = 0;
@@ -3396,6 +3397,7 @@ struct Browser {
     const std::string text = state.dump();
     if (text == chrome_state_sent) return;
     chrome_state_sent = text;
+    chrome_state_tick = GetTickCount();
     Json message = Json::make_object();
     message.set("tag", "appmessage");
     message.set("state", std::move(state));
@@ -3564,13 +3566,16 @@ struct Browser {
       finish(false, "the browser frame failed to load: " + chrome_error);
       return true;
     }
-    const bool ready = chrome_frame.type == Json::Type::Object && !chrome_state_sent.empty() &&
+    // Ready means the strip on screen was drawn from the state the shell last sent: a frame has
+    // arrived since that push and has been quiet for a moment, so the glyph positions are current.
+    const bool settled = !chrome_state_sent.empty() && chrome_frame_tick > chrome_state_tick &&
+                         now - chrome_frame_tick >= 600;
+    const bool ready = chrome_frame.type == Json::Type::Object && settled &&
                        current().frame.type == Json::Type::Object && !current().loading &&
                        now - start_tick >= 1500;
     int x = 0, y = 0;
     if (smoke_chrome_stage == 0) {
       if (!ready) return true;
-      if (now - smoke_chrome_tick < 400 && smoke_chrome_tick) return true;
       if (!chrome_paint_center("+", 0, x, y)) {
         finish(false, "the frame painted no new-tab button");
         return true;
@@ -3589,7 +3594,7 @@ struct Browser {
       }
     } else if (smoke_chrome_stage == 2) {
       // Wait for the strip to be redrawn with a second tab before pressing its close glyph.
-      if (now - smoke_chrome_tick < 1200) return true;
+      if (now - smoke_chrome_tick < 600 || !ready) return true;
       if (!chrome_paint_center("\u00d7", 0, x, y)) {
         finish(false, "the frame painted no tab close button");
         return true;
@@ -5567,6 +5572,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         else {
           const bool first = b->chrome_frame.type != Json::Type::Object;
           b->chrome_frame = std::move(up->frame);
+          b->chrome_frame_tick = GetTickCount();
           if (first) b->chrome_state_sent.clear();
         }
         InvalidateRect(hwnd, nullptr, FALSE);
