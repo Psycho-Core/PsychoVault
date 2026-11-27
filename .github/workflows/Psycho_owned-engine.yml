@@ -210,6 +210,13 @@ jobs:
         run: |
           python tests/Psycho_ui_settings_tests.py 2>&1 | Tee-Object build/ui-settings.txt
           if ($LASTEXITCODE -ne 0) { Write-Host "::error title=UI markup tests::see build/ui-settings.txt"; exit $LASTEXITCODE }
+      - name: Check the settings page wiring and the settings catalog (S088)
+        shell: pwsh
+        run: |
+          python tools/Psycho_gen_settings_catalog.py --check
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error title=Settings catalog::out of date"; exit $LASTEXITCODE }
+          python tests/Psycho_ui_settings_wiring_tests.py --engine build/pv-engine.exe 2>&1 | Tee-Object build/ui-settings-wiring.txt
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error title=Settings wiring tests::see build/ui-settings-wiring.txt"; exit $LASTEXITCODE }
       - name: Check the browser frame page's behaviour (S081)
         shell: pwsh
         run: |
@@ -259,6 +266,19 @@ jobs:
           if ($p.ExitCode -ne 0) { throw "the chrome smoke exited $($p.ExitCode)" }
           if (-not (Test-Path $report)) { throw 'the chrome smoke wrote no report' }
           if ((Get-Content $report -Raw | ConvertFrom-Json).result -ne 'passed') { throw 'the chrome smoke did not pass' }
+      - name: Press a real settings switch and check the saved profile (S088)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build/captures | Out-Null
+          $out = Join-Path $env:GITHUB_WORKSPACE 'build/captures/settings-smoke.png'
+          $report = "$out.settings.json"
+          Remove-Item -Force $report -ErrorAction SilentlyContinue
+          $p = Start-Process -FilePath '.\build\PsychoVault.exe' -ArgumentList @('--smoke', '--smoke-settings', '--capture', $out, '--profile', 'build/settings-profile', 'psychovault://settings') -PassThru
+          if (-not $p.WaitForExit(90000)) { try { $p.Kill($true) } catch {}; throw 'the settings smoke did not finish' }
+          if (Test-Path $report) { Write-Host (Get-Content $report -Raw) }
+          if ($p.ExitCode -ne 0) { throw "the settings smoke exited $($p.ExitCode)" }
+          if (-not (Test-Path $report)) { throw 'the settings smoke wrote no report' }
+          if ((Get-Content $report -Raw | ConvertFrom-Json).result -ne 'passed') { throw 'the settings smoke did not pass' }
       - name: Exercise my broker services and renderer crash recovery in the running shell
         shell: pwsh
         run: |

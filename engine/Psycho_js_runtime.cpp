@@ -1420,7 +1420,32 @@ Value Runtime::construct(const Value &constructor, Values &args) {
   init_instance(constructor, object, args);
   return object;
 }
-void Runtime::hoist(const std::vector<std::unique_ptr<Stmt>> &statements, Env &env) {
+// var is function-scoped: every var in the statements, however deeply nested in blocks, loops and
+// try clauses (but not inside a nested function), exists from the start of the function or program.
+static void collect_vars(const std::vector<std::unique_ptr<Stmt>> &statements, Env &env) {
+  for (auto &s : statements) {
+    if (!s) continue;
+    switch (s->kind) {
+    case Stmt::Kind::Variables:
+      if (s->text == "var")
+        for (auto &d : s->declarations)
+          if (!env.properties.count(d.first)) env.properties[d.first] = Value();
+      break;
+    case Stmt::Kind::ForIn:
+      if (!env.properties.count(s->name)) env.properties[s->name] = Value();
+      break;
+    case Stmt::Kind::Function:
+      continue;
+    default:
+      break;
+    }
+    collect_vars(s->body, env);
+    collect_vars(s->alternate, env);
+    collect_vars(s->final, env);
+    for (auto &entry : s->cases) collect_vars(entry.body, env);
+  }
+}
+void Runtime::hoist(const std::vector<std::unique_ptr<Stmt>> &statements, Env &env, bool vars) {
   for (auto &s : statements) {
     if (s->kind == Stmt::Kind::Function) {
       Value fn = make_object(Object::Kind::Function);
@@ -1428,11 +1453,8 @@ void Runtime::hoist(const std::vector<std::unique_ptr<Stmt>> &statements, Env &e
       fn.object->closure = &env;
       env.properties[s->name] = fn;
     }
-    if (s->kind == Stmt::Kind::Variables && s->text == "var")
-      for (auto &d : s->declarations)
-        if (!env.properties.count(d.first))
-          env.properties[d.first] = Value();
   }
+  if (vars) collect_vars(statements, env);
 }
 Runtime::Flow Runtime::execute_block(const std::vector<std::unique_ptr<Stmt>> &statements, Env &env,
                                      Value this_value) {
@@ -1473,7 +1495,7 @@ Runtime::Flow Runtime::execute(const Stmt &s, Env &env, Value this_value) {
     Env *block = static_cast<Env *>(allocate(Object::Kind::Environment));
     block->parent = &env;
     env_stack_.push_back(block);
-    hoist(s.body, *block);
+    hoist(s.body, *block, false);
     Flow f = execute_block(s.body, *block, this_value);
     env_stack_.pop_back();
     return f;
@@ -1504,7 +1526,7 @@ Runtime::Flow Runtime::execute(const Stmt &s, Env &env, Value this_value) {
     Env *loop = static_cast<Env *>(allocate(Object::Kind::Environment));
     loop->parent = &env;
     env_stack_.push_back(loop);
-    hoist(s.body, *loop);
+    hoist(s.body, *loop, false);
     if (s.body[0])
       execute(*s.body[0], *loop, this_value);
     while (!s.condition || evaluate(*s.condition, *loop, this_value).truthy()) {
@@ -1539,6 +1561,8 @@ Runtime::Flow Runtime::execute(const Stmt &s, Env &env, Value this_value) {
         for (auto &p : iterable.object->properties)
           keys.push_back(s.text == "of" ? p.second : Value(p.first));
     }
+    // "for (var k in o)" declares k with var scope; without this the first assignment found no k.
+    if (!find_env(env, s.name)) global_->properties[s.name] = Value();
     for (auto &v : keys) {
       assign_identifier(env, s.name, v);
       Flow f = execute_block(s.body, env, this_value);
@@ -1572,7 +1596,7 @@ Runtime::Flow Runtime::execute(const Stmt &s, Env &env, Value this_value) {
     block->parent = &env;
     env_stack_.push_back(block);
     for (auto &entry : s.cases)
-      hoist(entry.body, *block);
+      hoist(entry.body, *block, false);
     Flow flow;
     for (size_t i = start; i < s.cases.size(); ++i) {
       flow = execute_block(s.cases[i].body, *block, this_value);
@@ -1600,7 +1624,7 @@ Runtime::Flow Runtime::execute(const Stmt &s, Env &env, Value this_value) {
       Env *block = static_cast<Env *>(allocate(Object::Kind::Environment));
       block->parent = &env;
       env_stack_.push_back(block);
-      hoist(s.body, *block);
+      hoist(s.body, *block, false);
       f = execute_block(s.body, *block, this_value);
       env_stack_.pop_back();
     } catch (JsError &error) {

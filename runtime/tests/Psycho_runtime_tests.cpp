@@ -3333,6 +3333,7 @@ int run_runtime_bus_tests(int &shared) {
                                   chrome_error) && chrome_smoke.smoke_chrome && chrome_smoke.chrome);
     }
     RT_CHECK(rejected({"--smoke-chrome"}, "commandline.smoke-chrome-mode"));
+    RT_CHECK(rejected({"--smoke-settings"}, "commandline.smoke-settings-mode"));
     RT_CHECK(rejected({"--private", "--private"}, "commandline.duplicate-option"));
     RT_CHECK(rejected({"--profile", "one", "--profile", "two"},
                       "commandline.duplicate-option"));

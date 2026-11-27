@@ -19,6 +19,7 @@ struct CommandLineOptions {
   bool smoke_tabs = false; // test-only: exercise the tab and history models, no network
   bool smoke_services = false; // test-only: exercise broker services and crash recovery
   bool chrome = false; // S081: draw the browser frame as an engine-rendered page
+  bool smoke_settings = false; // test-only: press a settings switch and check the profile changed
   bool smoke_chrome = false; // test-only: drive the frame's own buttons through real input
   bool expect_image = false;
 };

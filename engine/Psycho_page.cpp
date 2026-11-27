@@ -1,3 +1,4 @@
+#include <set>
 #include "Psycho_page.hpp"
 #include <chrono>
 #include <sstream>
@@ -1022,6 +1023,22 @@ public:
       });
     if (name == "checked")
       return js::Value(has_attr(n, "checked"));
+    // HTMLInputElement.type / HTMLButtonElement.type reflect the attribute with its defaults.
+    if (name == "type" && n.type == Node::Type::Element) {
+      if (n.name == "input") {
+        const std::string value = lower(n.attribute("type", "text"));
+        static const std::set<std::string> known = {"text", "password", "checkbox", "radio", "button", "submit",
+                                                    "reset", "hidden", "number", "range", "email", "url",
+                                                    "search", "tel", "date", "time", "color", "file"};
+        return js::Value(known.count(value) ? value : std::string("text"));
+      }
+      if (n.name == "button") {
+        const std::string value = lower(n.attribute("type", "submit"));
+        return js::Value(value == "reset" || value == "button" ? value : std::string("submit"));
+      }
+      if (n.name == "select") return js::Value(std::string("select-one"));
+      if (n.name == "textarea") return js::Value(std::string("textarea"));
+    }
     if (n.name == "form" && name == "checkValidity")
       return r.make_native([this, id](js::Values &) {
         bool valid = true;
@@ -3299,8 +3316,19 @@ void Page::activate(int target) {
   if (dispatch(target, "click", event, true, true)) return;
   for (int node = target; node >= 0 && node < int(doc.nodes.size()); node = doc.nodes[node].parent)
     if (page_control_disabled(doc, node)) return;
-  if (doc.nodes[target].name == "label") {
-    const int control = label_control(doc, target);
+  // A press on the label, or on anything inside it that is not itself a control, activates the
+  // label's control: the custom switch markup puts spans (track, knob) inside the label.
+  int label_at = -1;
+  for (int n = target; n >= 0 && n < int(doc.nodes.size()); n = doc.nodes[n].parent) {
+    const std::string &tag = doc.nodes[n].name;
+    if (tag == "label") {
+      label_at = n;
+      break;
+    }
+    if (tag == "a" || tag == "button" || tag == "input" || tag == "select" || tag == "textarea") break;
+  }
+  if (label_at >= 0) {
+    const int control = label_control(doc, label_at);
     if (control >= 0 && !page_control_disabled(doc, control)) {
       set_focus(focusable_element(doc, control));
       activate(control);

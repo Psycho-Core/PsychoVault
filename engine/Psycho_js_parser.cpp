@@ -1,4 +1,5 @@
 #include "Psycho_js.hpp"
+#include <cctype>
 #include <cstdlib>
 namespace pv::js {
 static bool ident_start(char c) {
@@ -1443,6 +1444,22 @@ public:
             value = expr();
           init->declarations.emplace_back(name, std::move(value));
         }
+      } else if (!is(";") && (tok(1).text == "in" || tok(1).text == "of") &&
+                 !tok().text.empty() &&
+                 (std::isalpha(static_cast<unsigned char>(tok().text[0])) || tok().text[0] == '_' ||
+                  tok().text[0] == '$')) {
+        // for (name in object) / for (name of iterable): the loop variable already exists.
+        const std::string name = identifier();
+        const std::string kind = tok().text;
+        ++p;
+        auto f = statement_node(Stmt::Kind::ForIn);
+        f->text = kind;
+        f->name = name;
+        f->condition = expr();
+        expect(")");
+        f->body.push_back(statement());
+        --depth;
+        return f;
       } else if (!is(";"))
         init = statement_node(Stmt::Kind::Expression), init->expression = expr();
       expect(";");

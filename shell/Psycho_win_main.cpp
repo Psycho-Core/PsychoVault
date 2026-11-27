@@ -14,6 +14,7 @@
 #include "../platform/Psycho_download.hpp"
 #include "../platform/Psycho_sandbox.hpp"
 #include "../runtime/commandline/Psycho_commandline.hpp"
+#include "../runtime/settings/Psycho_settings.hpp"
 #include "../runtime/diagnostics/Psycho_diagnostics_page.hpp"
 #include "../runtime/content/Psycho_content.hpp"
 #include "../runtime/crash/Psycho_crash.hpp"
@@ -920,6 +921,12 @@ void Session::run() {
   if (!done_posted) post_update(hwnd, WM_DONE, make_update(tab, generation));
 }
 static void capture(HWND hwnd, const std::string &path);
+// The settings snapshot the session threads read. Only the UI thread writes it (after every applied
+// change), so a settings page reads values without touching the profile from another thread.
+struct SettingsHub {
+  std::mutex mutex;
+  Json snapshot = Json::make_object();
+};
 struct Browser {
   HWND hwnd = nullptr;
   Profile profile;
@@ -976,7 +983,37 @@ struct Browser {
   std::string chrome_error, chrome_state_sent;
   DWORD chrome_state_tick = 0, chrome_frame_tick = 0;
   std::map<std::string, Image> chrome_images;
-  bool smoke_chrome = false;
+  bool smoke_chrome = false, smoke_settings = false;
+  int smoke_settings_stage = 0;
+  bool smoke_settings_before = false;
+  DWORD smoke_settings_tick = 0;
+  std::string smoke_settings_note;
+  std::shared_ptr<SettingsHub> settings_hub = std::make_shared<SettingsHub>();
+  std::unique_ptr<rt::SettingsService> settings_service;
+  void publish_settings() {
+    if (!settings_service) settings_service = std::make_unique<rt::SettingsService>(profile);
+    Json snapshot = settings_service->snapshot();
+    std::lock_guard lock(settings_hub->mutex);
+    settings_hub->snapshot = std::move(snapshot);
+  }
+  // Applies one settings-page change on the UI thread. The change was validated on the session
+  // thread; the profile may still refuse it (a folder that cannot be created), which is reported.
+  void apply_setting(const BridgeTask &task) {
+    if (!settings_service) publish_settings();
+    const std::string key = task.payload.str("key");
+    auto value = Json::parse(task.payload.str("value"), 4096);
+    rt::Error error;
+    if (!value || !settings_service->set(key, *value, error)) {
+      status = error.message.empty() ? "Setting refused" : error.message;
+      publish_settings();
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return;
+    }
+    if (!save_profile() && profile_error.empty()) profile_error = profile.error;
+    publish_settings();
+    status = "Saved " + key;
+    InvalidateRect(hwnd, nullptr, FALSE);
+  }
   int smoke_chrome_stage = 0;
   DWORD smoke_chrome_tick = 0;
   std::string smoke_chrome_note;
@@ -1735,11 +1772,56 @@ struct Browser {
     session->storage = &local_storage;
     session->profile_state_mutex = &profile_state_mutex;
     session->farm = renderer_farm;
-    session->bridge_invoke = [window = hwnd, source_tab = tab.id](
+    publish_settings();
+    session->bridge_invoke = [window = hwnd, source_tab = tab.id, hub = settings_hub,
+                              settings_origin = settings_page_url(target) && !private_mode](
         rt::Channel channel, const std::string &method, const Json &payload,
         Json &reply, rt::Error &bridge_error) {
       static const rt::Schemas schemas = rt::Schemas::stock();
       bridge_error = rt::Error{};
+      if (channel == rt::Channel::Settings) {
+        // Only the settings page may read or change settings, and only through the catalog.
+        if (!settings_origin || (method != "settings:list" && method != "settings:get" &&
+                                 method != "settings:set") ||
+            !schemas.validate(method, payload, bridge_error)) {
+          if (bridge_error.code.empty()) bridge_error = {"bridge.settings.origin", "settings are not available to this page"};
+          return false;
+        }
+        if (method == "settings:list" || method == "settings:get") {
+          std::lock_guard lock(hub->mutex);
+          if (method == "settings:list") {
+            reply = hub->snapshot;
+            return true;
+          }
+          const Json *values = hub->snapshot.find("values");
+          const Json *found = values ? values->find(payload.str("key")) : nullptr;
+          if (!found) {
+            bridge_error = {"setting.unwired", "that setting is not connected to the profile yet"};
+            return false;
+          }
+          reply = Json::make_object();
+          reply.set("value", *found);
+          return true;
+        }
+        auto decoded = Json::parse(payload.str("value"), 4096);
+        if (!decoded) {
+          bridge_error = {"setting.encoding", "the value is not valid JSON text"};
+          return false;
+        }
+        if (!rt::SettingsService::validate(payload.str("key"), *decoded, bridge_error)) return false;
+        auto task = std::make_unique<BridgeTask>();
+        task->tab = source_tab;
+        task->method = method;
+        task->payload = payload;
+        if (!PostMessageW(window, WM_BRIDGE, 0, reinterpret_cast<LPARAM>(task.get()))) {
+          bridge_error = {"bridge.queue.failed", "the browser window refused the change"};
+          return false;
+        }
+        task.release();
+        reply = Json::make_object();
+        reply.set("queued", Json(true));
+        return true;
+      }
       if (channel != rt::Channel::Tab ||
           (method != "tab:new" && method != "tab:activate") ||
           !schemas.validate(method, payload, bridge_error))
@@ -3510,6 +3592,95 @@ struct Browser {
     else if (method == "win:maximize") ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE);
     else if (method == "win:close") PostMessageW(hwnd, WM_CLOSE, 0, 0);
     InvalidateRect(hwnd, nullptr, FALSE);
+  }
+  // --smoke-settings: the real settings page, the real pointer path, the real profile. The page
+  // lists values through psycho.settings, a press on the "Restore tabs on launch" switch sends
+  // psycho.settings.set, the broker validates and the shell applies and saves it.
+  bool settings_smoke_step(DWORD now) {
+    auto finish = [&](bool passed, const std::string &reason) {
+      if (!capture_path.empty()) capture(hwnd, capture_path);
+      Json report = Json::make_object();
+      report.set("result", passed ? "passed" : "failed");
+      report.set("reason", reason);
+      report.set("stage", double(smoke_settings_stage));
+      report.set("elapsedMs", double(now - start_tick));
+      report.set("restoreBefore", smoke_settings_before);
+      report.set("restoreAfter", profile.restore_tabs);
+      report.set("status", status);
+      report.set("note", smoke_settings_note);
+      report.set("profileError", profile_error);
+      if (current().session) {
+        Json notes = Json::make_array();
+        for (const auto &line : current().session->recent_diagnostics()) notes.array.push_back(Json(line));
+        report.set("diagnostics", std::move(notes));
+      }
+      std::string write_error;
+      write_file_atomic(capture_path + ".settings.json", report.dump() + "\n", write_error);
+      smoke_settings_stage = 9;
+      PostQuitMessage(passed ? 0 : 1);
+    };
+    if (smoke_settings_stage >= 9) return true;
+    if (now - start_tick >= 45000) {
+      finish(false, "the settings switch did not change the profile in time");
+      return true;
+    }
+    Tab &tab = current();
+    if (smoke_settings_stage == 0) {
+      if (!settings_page_url(tab.url) || tab.frame.type != Json::Type::Object || tab.loading ||
+          !tab.session || !tab.session->ready || now - start_tick < 2000)
+        return true;
+      const Json *paint = tab.frame.find("paint");
+      double label_y = -1;
+      if (paint && paint->type == Json::Type::Array)
+        for (const Json &command : paint->array)
+          if (command.str("text") == "Restore tabs on launch") {
+            label_y = command.num("y") + command.num("h") / 2.0 - tab.scroll;
+            break;
+          }
+      if (label_y < 0) {
+        finish(false, "the settings page painted no 'Restore tabs on launch' row");
+        return true;
+      }
+      int x = 0, y = 0;
+      bool found = false;
+      for (const Json &command : paint->array) {
+        if (std::fabs(command.num("w") - 44) > 1 || std::fabs(command.num("h") - 24) > 1) continue;
+        const double cy = command.num("y") + command.num("h") / 2.0 - tab.scroll;
+        if (std::fabs(cy - label_y) > 20) continue;
+        x = int(std::lround(command.num("x") + command.num("w") / 2.0));
+        y = int(std::lround(cy));
+        found = true;
+        break;
+      }
+      if (!found) {
+        finish(false, "the settings page painted no switch beside 'Restore tabs on launch'");
+        return true;
+      }
+      smoke_settings_before = profile.restore_tabs;
+      smoke_settings_note = "pressed the switch at " + std::to_string(x) + "," + std::to_string(y);
+      pointer_move(x, y);
+      pointer_down(x, y);
+      pointer_up(x, y);
+      click(x, y);
+      smoke_settings_stage = 1;
+      smoke_settings_tick = now;
+    } else if (smoke_settings_stage == 1) {
+      if (profile.restore_tabs != smoke_settings_before) {
+        // Flush so the check below reads what a restart would read.
+        const bool saved = save_profile();
+        Profile reread = Profile::open(profile.directory, false);
+        smoke_settings_note += saved ? "; saved" : "; save failed";
+        if (reread.restore_tabs == profile.restore_tabs) {
+          smoke_settings_stage = 2;
+          finish(true, "a switch on the settings page changed the profile and the saved profile");
+        } else {
+          finish(false, "the change reached memory but not the saved profile");
+        }
+      } else if (now - smoke_settings_tick > 20000) {
+        finish(false, "pressing the switch did not reach the profile");
+      }
+    }
+    return true;
   }
   // --smoke-chrome: finds the frame's own "+" and close glyphs in its paint list and presses them
   // through the same pointer path a mouse uses. Passing means the page, the bridge, the broker and
@@ -5791,6 +5962,9 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       b->start_chrome();
       b->push_chrome_state();
     }
+    if (b && b->smoke && b->smoke_settings) {
+      if (b->settings_smoke_step(GetTickCount())) return 0;
+    }
     if (b && b->smoke && b->smoke_chrome) {
       if (b->chrome_smoke_step(GetTickCount())) return 0;
     }
@@ -6003,6 +6177,10 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (!b || !task || !b->find_tab(task->tab)) return 0;
     // Only the browser frame may close tabs, navigate or drive the window; a page session reaches
     // this point with tab:new / tab:activate alone (its bridge lambda enforces that).
+    if (task->method == "settings:set") {
+      b->apply_setting(*task);
+      return 0;
+    }
     if (task->method != "tab:new" && task->method != "tab:activate") return 0;
     if (task->method == "tab:new") {
       std::string target = task->payload.str("url", "psychovault://newtab");
@@ -6305,6 +6483,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
   b.smoke_tabs = command.smoke_tabs;
   b.smoke_services = command.smoke_services;
   b.smoke_chrome = command.smoke_chrome;
+  b.smoke_settings = command.smoke_settings;
   if (command.chrome) b.enable_chrome();
   b.start_tick = GetTickCount();
   if (private_mode) {

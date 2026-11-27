@@ -152,7 +152,7 @@ bool RendererWorker::navigate(const Envelope &request, Envelope &response, Error
   // The pages that get the curated psycho bridge: the new tab and the browser chrome.
   static const InternalRegistry bridge_registry = InternalRegistry::stock();
   const std::string bridge_page = plain_internal_page(bridge_registry, url);
-  const bool app_ui_page = bridge_page == "newtab" || bridge_page == "chrome";
+  const bool app_ui_page = bridge_page == "newtab" || bridge_page == "chrome" || bridge_page == "settings";
   host_.reset();
   app_host_.reset();
   Json payload = Json::make_object();

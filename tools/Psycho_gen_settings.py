@@ -106,7 +106,13 @@ def esc(text: str) -> str:
     return html.escape(text, quote=True)
 
 
+# The inventory's extractor cut these defaults at the "//" of the URL, leaving "'psychovault:" and "'https:".
+DEFAULT_FIXES = {"homepage": "psychovault://newtab", "panicUrl": ""}
+
+
 def default_of(defaults: dict, key: str):
+    if key in DEFAULT_FIXES:
+        return DEFAULT_FIXES[key]
     raw = defaults.get(key)
     if raw is None:
         return None
@@ -236,7 +242,7 @@ main{flex:1}
 </head>
 <body>
 <div class="page">
-  <header><h1>Settings</h1><p class="byline">Built by Psycho-Core</p></header>
+  <header><h1>Settings</h1><p class="byline">Built by Psycho-Core</p><span class="save-status" id="save-status"></span></header>
   <div class="layout">
     <nav class="cats card" aria-label="Settings categories"><div class="cats-title">Categories</div>%NAV%</nav>
     <main>%PANELS%</main>

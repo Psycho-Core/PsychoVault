@@ -6,6 +6,7 @@
 #include "../platform/Psycho_host.hpp"
 #include "../platform/Psycho_transport.hpp"
 #include "../platform/Psycho_sandbox.hpp"
+#include "../runtime/settings/Psycho_settings.hpp"
 #include "../platform/Psycho_vault.hpp"
 #include "../platform/Psycho_spell.hpp"
 #include "Psycho_image_fixtures.hpp"
@@ -539,6 +540,15 @@ int main() {
   CHECK(js_eval("(function(x){return x*x})(7)") == "49");
   CHECK(js_eval("[1,2,3].map(x=>x*2).join(',')") == "2,4,6");
   CHECK(js_eval("var n=0;for(var i=0;i<10;i++)n+=i;n") == "45");
+  // var is function-scoped: it survives the block, loop or try it was declared in.
+  CHECK(js_eval("if(true){var q=7}q") == "7");
+  CHECK(js_eval("try{var t=3}catch(e){}t") == "3");
+  CHECK(js_eval("(function(){for(var i=0;i<3;i++){var w=i}return w+':'+i}())") == "2:3");
+  CHECK(js_eval("(function(){if(false){var u=1}return typeof u}())") == "undefined");
+  // for-in and for-of over an existing variable, and a declared one that was never hoisted.
+  CHECK(js_eval("var o={a:1,b:2},r='',k;for(k in o)r+=k;r") == "ab");
+  CHECK(js_eval("var r2='';for(var m in {x:1,y:2})r2+=m;r2") == "xy");
+  CHECK(js_eval("var r3=0,v;for(v of [1,2,3])r3+=v;r3") == "6");
   CHECK(js_eval("JSON.stringify({a:1,b:[true,null]})") == "{\"a\":1,\"b\":[true,null]}");
   CHECK(js_eval("try{throw new Error('ok')}catch(e){e.message}") == "ok");
   CHECK(js_eval("function f(n){return n<2?1:n*f(n-1)}f(6)") == "720");
@@ -2804,6 +2814,40 @@ int main() {
     local_scheme.host = "";
     local_scheme.path = "/etc/passwd";
     CHECK(policy_blocks(policy, local_scheme, reason));
+  }
+  {
+    // ---- S088: the settings service validates against the catalog, applies to the profile, and
+    // refuses a control with no backing field with the step that owns it.
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "pv-settings-test";
+    std::error_code ignored;
+    std::filesystem::remove_all(dir, ignored);
+    Profile profile = Profile::open(dir.string(), false);
+    rt::SettingsService settings(profile);
+    rt::Error e;
+    CHECK(settings.set("restore", Json(false), e) && !profile.restore_tabs);
+    CHECK(settings.set("search", Json("brave"), e) && profile.search_engine == "brave");
+    CHECK(!settings.set("search", Json("nonsense"), e) && e.code == "setting.choice" &&
+             profile.search_engine == "brave");
+    CHECK(!settings.set("restore", Json("yes"), e) && e.code == "setting.type");
+    CHECK(settings.set("vaultLockMin", Json(15), e) && profile.vault_lock_minutes == 15);
+    CHECK(!settings.set("vaultLockMin", Json(7), e) && e.code == "setting.choice");
+    CHECK(settings.set("sleepTabsMin", Json(30), e) && profile.sleep_tabs_minutes == 30);
+    CHECK(!settings.set("sleepTabsMin", Json(-1), e) && e.code == "setting.range");
+    CHECK(!settings.set("panicUrl", Json("javascript:alert(1)"), e) && e.code == "setting.invalid");
+    CHECK(settings.set("panicUrl", Json("https://example.test/"), e));
+    CHECK(!settings.set("remember", Json(false), e) && e.code == "setting.unwired" &&
+             e.message.find("S141-S145") != std::string::npos);
+    CHECK(!settings.set("noSuchSetting", Json(true), e) && e.code == "setting.unknown");
+    CHECK(!settings.set("homepage", Json(std::string("a\nb")), e) && e.code == "setting.text");
+    const Json snapshot = settings.snapshot();
+    CHECK(snapshot.find("values") && snapshot.at("values").str("search") == "brave" &&
+             !snapshot.at("values").flag("restore", true) &&
+             snapshot.at("unwired").find("remember") != nullptr &&
+             snapshot.at("values").find("remember") == nullptr);
+    // A change made while no profile field exists never reaches the snapshot as a value.
+    CHECK(rt::Schemas::stock().validate("settings:set",
+                                       [] { Json j = Json::make_object(); j.set("key", Json("restore")); j.set("value", Json("true")); return j; }(), e));
+    std::filesystem::remove_all(dir, ignored);
   }
   // ---- My new settings survive a profile round trip ----------------------
   {

@@ -206,7 +206,10 @@ Schemas Schemas::stock() {
   s.add("internal:list", fields({}));
   s.add("internal:fetch", fields({{"url", T::String, true}}));
   s.add("settings:get", fields({{"key", T::String, true}}));
-  s.add("settings:set", fields({{"key", T::String, true}, {"value", T::Number, true}}));
+  // The value travels as JSON text so one method carries a boolean, a number or a string; the
+  // settings service decodes and validates it against the key's catalog row.
+  s.add("settings:set", fields({{"key", T::String, true}, {"value", T::String, true}}));
+  s.add("settings:list", fields({}));
   s.add("vault:status", fields({}));
   s.add("spell:status", fields({}));
   return s;

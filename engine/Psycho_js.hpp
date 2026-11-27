@@ -310,7 +310,7 @@ private:
   Value settle_reaction(Object *promise, const PromiseReaction &reaction, int state,
                         const Value &value);
   void install_builtins();
-  void hoist(const std::vector<std::unique_ptr<Stmt>> &statements, Env &env);
+  void hoist(const std::vector<std::unique_ptr<Stmt>> &statements, Env &env, bool vars = true);
   Flow execute(const Stmt &statement, Env &env, Value this_value);
   Flow execute_block(const std::vector<std::unique_ptr<Stmt>> &statements, Env &env,
                      Value this_value);
