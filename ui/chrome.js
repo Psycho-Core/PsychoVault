@@ -40,7 +40,6 @@
       node.appendChild(el("span", "fav", tab.loading ? "•" : title.charAt(0).toUpperCase()));
       node.appendChild(el("span", "title", title));
       var close = el("button", "x", "×");
-      close.setAttribute("data-close", String(tab.id));
       node.appendChild(close);
       tabsEl.appendChild(node);
     }
@@ -56,22 +55,19 @@
   window.psychoChromeState = render;
 
   // Actions
-  function ancestorWith(node, attribute) {
-    // The engine reports the text node under the pointer as the target, so walk up through it.
+  tabsEl.addEventListener("click", function (event) {
+    // A close button is the element with class "x" inside a tab; the tab carries the id.
+    var node = event.target, closing = false;
     while (node) {
-      if (node.getAttribute && node.getAttribute(attribute) !== null) return node;
+      if (node.className === "x") closing = true;
+      if (node.getAttribute && node.getAttribute("data-tab") !== null) {
+        var id = Number(node.getAttribute("data-tab"));
+        if (closing) bridge("tab", "close", { id: id });
+        else bridge("tab", "activate", { id: id });
+        return;
+      }
       node = node.parentNode;
     }
-    return null;
-  }
-  tabsEl.addEventListener("click", function (event) {
-    var closer = ancestorWith(event.target, "data-close");
-    if (closer) {
-      bridge("tab", "close", { id: Number(closer.getAttribute("data-close")) });
-      return;
-    }
-    var tab = ancestorWith(event.target, "data-tab");
-    if (tab) bridge("tab", "activate", { id: Number(tab.getAttribute("data-tab")) });
   });
   function on(id, group, method, args) {
     var node = document.getElementById(id);

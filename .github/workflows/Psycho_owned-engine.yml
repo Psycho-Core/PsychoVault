@@ -210,6 +210,11 @@ jobs:
         run: |
           python tests/Psycho_ui_settings_tests.py 2>&1 | Tee-Object build/ui-settings.txt
           if ($LASTEXITCODE -ne 0) { Write-Host "::error title=UI markup tests::see build/ui-settings.txt"; exit $LASTEXITCODE }
+      - name: Check the browser frame page's behaviour (S081)
+        shell: pwsh
+        run: |
+          python tests/Psycho_ui_chrome_tests.py --engine build/pv-engine.exe 2>&1 | Tee-Object build/ui-chrome.txt
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error title=Frame page tests::see build/ui-chrome.txt"; exit $LASTEXITCODE }
       - name: Measure my pages against the legacy captures (report only)
         shell: pwsh
         run: |
