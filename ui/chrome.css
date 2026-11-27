@@ -1,0 +1,59 @@
+/* Browser chrome geometry, measured from docs/reference/legacy-ui/02-browser-chrome.png. */
+html,body{height:100%;overflow:hidden}
+body{position:relative;margin:0}
+button{border:0;background:transparent;color:inherit;font:inherit;padding:0;cursor:pointer}
+
+.rail{position:absolute;left:0;top:0;bottom:0;width:44px;border-right:1px solid var(--pv-border);background:var(--pv-bg)}
+.avatar{position:absolute;left:11px;top:17px;width:22px;height:22px;border-radius:11px;background:#5865f2}
+.avatar .ring{position:absolute;left:5px;top:6px;width:12px;height:10px;border-radius:5px;background:#fff}
+.services{position:absolute;left:0;top:45px;width:43px}
+.svc{position:relative;display:block;width:43px;height:36px}
+.svc .t{position:absolute;left:0;top:11px;width:43px;text-align:center;font-size:10px;line-height:14px;color:var(--pv-muted)}
+.svc i{display:block;position:absolute;left:10px;top:27px;width:5px;height:2px}
+.rule{position:absolute;left:11px;top:379px;width:22px;height:1px;background:#263449}
+.rail-icon{position:absolute;left:11px;width:22px;height:22px}
+#rail-shield{top:399px}
+.rail-icon svg{display:block;margin:2px auto 0}
+.rail-bottom{position:absolute;left:0;bottom:0;width:43px;height:160px}
+.rail-btn{position:absolute;left:5px;width:34px;height:34px;border-radius:9px}
+.rail-btn svg{display:block;margin:7px auto 0}
+.rail-btn.good{top:0;background:#0d2821}
+.rail-btn.bad{top:38px;background:#2d1c24}
+.rail-bottom .rail-icon{left:11px}
+#rail-settings{top:81px}
+#rail-help{top:119px}
+
+.top{position:absolute;left:44px;right:0;top:0;height:84px}
+.strip{position:absolute;left:0;right:0;top:0;height:38px}
+.app-mark{position:absolute;left:10px;top:8px;width:20px;height:22px}
+.tabs{position:absolute;left:36px;top:4px;height:34px}
+.tab{position:relative;width:122px;height:34px;border-radius:10px 10px 0 0;background:transparent;color:var(--pv-muted)}
+.tab.active{background:var(--pv-surface);border-top:2px solid var(--pv-accent);color:var(--pv-text)}
+.tab .fav{position:absolute;left:12px;top:6px;font-size:9px;line-height:20px;font-weight:700;color:var(--pv-accent)}
+.tab .title{position:absolute;left:32px;top:6px;width:70px;font-size:13px;line-height:20px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tab .x{position:absolute;right:8px;top:6px;width:16px;height:16px;font-size:14px;line-height:16px;color:var(--pv-muted);text-align:center}
+.plus{position:absolute;left:260px;top:8px;width:26px;height:26px;font-size:18px;line-height:24px;color:var(--pv-muted);text-align:center}
+.ws{position:absolute;left:196px;top:12px;height:20px}
+.chip{display:inline-block;height:20px;padding:0 6px 0 9px;border:1px solid var(--pv-accent);border-radius:10px;background:#0c2033;font-size:11px;line-height:18px;color:#cfe8f5}
+.chip .x{display:inline-block;width:14px;height:14px;margin-left:6px;font-size:12px;line-height:14px;color:#cfe8f5}
+.plus.small{position:relative;display:inline-block;left:0;top:0;width:20px;height:20px;margin-left:5px;border:1px solid var(--pv-border);border-radius:10px;font-size:12px;line-height:18px}
+.winctl{position:absolute;right:0;top:0;width:132px;height:38px}
+.winctl button{float:left;width:44px;height:38px}
+.winctl svg{display:block;margin:14px auto 0}
+
+.toolbar{position:absolute;left:0;right:0;top:38px;height:46px;background:var(--pv-surface);border-bottom:1px solid var(--pv-border)}
+.nav{position:absolute;top:10px;width:26px;height:26px}
+.nav svg{display:block;margin:6px auto 0}
+#nav-back{left:10px}
+#nav-forward{left:42px}
+#nav-reload{left:77px}
+#nav-home{left:111px}
+#nav-split{left:145px}
+.omnibox{position:absolute;left:183px;right:49px;top:4px;height:32px;border:1px solid var(--pv-border);border-radius:16px;background:var(--pv-bg)}
+.shield{position:absolute;left:15px;top:8px;height:14px;font-size:10px;line-height:14px;color:var(--pv-accent)}
+.shield svg{position:absolute;left:0;top:1px}
+.shield .count{position:absolute;left:16px;top:0}
+.omnibox input{position:absolute;left:49px;right:40px;top:3px;height:24px;margin:0;padding:0;border:0;background:transparent;color:var(--pv-text);font:13px/24px var(--pv-font)}
+.star{position:absolute;right:12px;top:8px;width:12px;height:14px}
+.menu{position:absolute;right:11px;top:13px;width:18px;height:18px}
+.menu svg{display:block;margin:4px auto 0}

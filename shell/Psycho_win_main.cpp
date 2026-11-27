@@ -176,8 +176,13 @@ static bool settings_page_url(const std::string &text) {
   return rt::plain_internal_page(internal_registry(), text) == "settings";
 }
 // Every address the shell serves as an engine-rendered document.
+// S081: the browser frame (rail, tabs, toolbar) is an engine-rendered page too.
+static bool chrome_page_url(const std::string &text) {
+  return rt::plain_internal_page(internal_registry(), text) == "chrome";
+}
 static bool engine_page_url(const std::string &text) {
-  return app_ui_url(text) || settings_page_url(text) || !diagnostics_page_name(text).empty();
+  return app_ui_url(text) || settings_page_url(text) || chrome_page_url(text) ||
+         !diagnostics_page_name(text).empty();
 }
 static const PVUiAsset *find_ui_asset(const std::string &name) {
   for (const PVUiAsset &asset : kPVUiAssets)
@@ -724,7 +729,7 @@ void Session::run() {
       return resource;
     }
     if (parsed && parsed->scheme == "psychovault" &&
-        (parsed->host == "newtab" || parsed->host == "settings") &&
+        (parsed->host == "newtab" || parsed->host == "settings" || parsed->host == "chrome") &&
         parsed->query.empty() && parsed->fragment.empty()) {
       Resource resource;
       resource.url = parsed->href();
@@ -733,7 +738,9 @@ void Session::run() {
       // The page itself at "/", and only the shared styles and scripts by name. A page's own
       // markup is never served under another page's origin.
       const bool root = parsed->path.empty() || parsed->path == "/";
-      const std::string name = root ? (parsed->host == "newtab" ? "index.html" : "settings.html")
+      const std::string name = root ? (parsed->host == "newtab"   ? "index.html"
+                                       : parsed->host == "chrome" ? "chrome.html"
+                                                                  : "settings.html")
                                     : (parsed->path.size() > 1 ? parsed->path.substr(1) : std::string());
       const PVUiAsset *asset = name.empty() || (!root && name.size() > 5 && name.ends_with(".html"))
                                    ? nullptr : find_ui_asset(name);
@@ -912,6 +919,7 @@ void Session::run() {
   }
   if (!done_posted) post_update(hwnd, WM_DONE, make_update(tab, generation));
 }
+static void capture(HWND hwnd, const std::string &path);
 struct Browser {
   HWND hwnd = nullptr;
   Profile profile;
@@ -955,6 +963,35 @@ struct Browser {
   int settings_category = 0;
   std::vector<Hit> hits;
   Rect content{0, 0, 1000, 700};
+  // S081: with --chrome the frame around the page is itself an engine page (psychovault://chrome),
+  // rendered by its own sandboxed renderer. It owns the window; its middle is transparent and the
+  // active tab's page is drawn under it, in `content`. Its buttons reach the shell only through the
+  // curated bridge (tab/nav/win methods), never through shell-side hit rectangles.
+  static constexpr int kChromeTab = -2;
+  static constexpr uint64_t kChromeGeneration = 1;
+  bool chrome_enabled = false, chrome_started = false, chrome_focus = false;
+  bool chrome_pointer_down = false, chrome_pointer_inside = false;
+  std::shared_ptr<Session> chrome_session;
+  Json chrome_frame;
+  std::string chrome_error, chrome_state_sent;
+  std::map<std::string, Image> chrome_images;
+  bool smoke_chrome = false;
+  int smoke_chrome_stage = 0;
+  DWORD smoke_chrome_tick = 0;
+  std::string smoke_chrome_note;
+  Session *key_target() {
+    return chrome_enabled && chrome_focus && chrome_session ? chrome_session.get()
+                                                           : current().session.get();
+  }
+  void enable_chrome() {
+    chrome_enabled = true;
+    layout_content();
+  }
+  void layout_content() {
+    content = chrome_enabled ? Rect{44, 84, double(std::max(0, width - 44)), double(std::max(0, height - 84))}
+              : app_ui_slice ? Rect{0, 0, double(width), double(height)}
+                             : Rect{44, 84, double(width - 44), double(height - 106)};
+  }
   bool page_pointer_inside = false, page_pointer_down = false, page_composing = false;
   bool document_scroll_drag = false;
   double document_scroll_drag_start_y = 0, document_scroll_drag_start = 0;
@@ -1845,8 +1882,16 @@ struct Browser {
   void resize(int w, int h) {
     width = w;
     height = h;
-    content = app_ui_slice ? Rect{0, 0, double(w), double(h)}
-                           : Rect{44, 84, double(w - 44), double(h - 106)};
+    layout_content();
+    if (chrome_session) {
+      Json j = Json::make_object();
+      j.set("tag", "resize");
+      j.set("width", double(w));
+      j.set("height", double(h));
+      set_resize_media_environment(j, page_device_pixel_ratio(1.0), 8.0, profile.reduce_motion,
+                                   profile.theme, profile.high_contrast);
+      chrome_session->send(j);
+    }
     if (current().session) {
       Json j = Json::make_object();
       j.set("tag", "resize");
@@ -1870,6 +1915,8 @@ struct Browser {
       Tab &tab = current();
       if (tab.frame.type == Json::Type::Object && tab.error.empty()) {
         draw_content(c);
+      } else if (chrome_enabled) {
+        // The frame is drawn below; the page area stays plain until the tab has a frame.
       } else {
         const bool failed = !tab.error.empty();
         const double card_width = std::min(760.0, std::max(320.0, double(width) - 64));
@@ -1896,6 +1943,7 @@ struct Browser {
                  13, TEXT);
         }
       }
+      if (chrome_enabled) draw_chrome(c);
       return;
     }
     c.fill({0, 0, double(width), double(height)}, BG);
@@ -3122,14 +3170,17 @@ struct Browser {
   }
   // I turn a frame into the paint list my raster reads, in window coordinates.
   std::vector<PaintCommand> frame_commands(const Tab &t, double origin_x, double origin_y) const {
+    return commands_of(t.frame, t.zoom, t.scroll, origin_x, origin_y);
+  }
+  static std::vector<PaintCommand> commands_of(const Json &frame, double zoom, double scroll,
+                                               double origin_x, double origin_y) {
     std::vector<PaintCommand> commands;
-    double zoom = t.zoom;
-    for (auto &j : t.frame.at("paint").array) {
+    for (auto &j : frame.at("paint").array) {
       PaintCommand p;
       p.kind = PaintCommand::Kind(int(j.num("kind")));
       const bool fixed = j.flag("fixed");
       p.rect = {j.num("x") * zoom + origin_x,
-                j.num("y") * zoom + origin_y - (fixed ? 0 : t.scroll * zoom),
+                j.num("y") * zoom + origin_y - (fixed ? 0 : scroll * zoom),
                 j.num("w") * zoom, j.num("h") * zoom};
       p.color = uint32_t(j.num("color"));
       p.text = j.str("text");
@@ -3272,6 +3323,280 @@ struct Browser {
     }
     c.clip = old;
   }
+  // The frame page paints over the whole window. Its first paint command is the page background,
+  // which would hide the tab underneath, so it is skipped when it covers the viewport.
+  void draw_chrome(Canvas &c) {
+    if (chrome_frame.type != Json::Type::Object) {
+      if (!chrome_error.empty()) c.text(16, 12, "Browser frame failed: " + chrome_error, 13, 0xfff87171);
+      return;
+    }
+    std::vector<PaintCommand> commands = commands_of(chrome_frame, 1.0, 0.0, 0.0, 0.0);
+    if (!commands.empty() && commands.front().rect.x <= 0 && commands.front().rect.y <= 0 &&
+        commands.front().rect.w >= width && commands.front().rect.h >= height)
+      commands.erase(commands.begin());
+    Rect old = c.clip;
+    c.clip = {0, 0, double(width), double(height)};
+    paint_commands(c, commands, 0, chrome_images);
+    c.clip = old;
+  }
+  void send_chrome_pointer(const char *tag, int x, int y) {
+    if (!chrome_session) return;
+    Json command = Json::make_object();
+    command.set("tag", tag);
+    command.set("x", double(x));
+    command.set("y", double(y));
+    chrome_session->send(command);
+  }
+  // A press outside the page area belongs to the frame; the click is sent on release so a drag off
+  // a button does not fire it.
+  bool chrome_pointer(const char *kind, int x, int y) {
+    if (!chrome_enabled || !chrome_session) return false;
+    const std::string what = kind;
+    if (what == "down") {
+      if (content.contains(x, y)) {
+        chrome_focus = false;
+        return false;
+      }
+      chrome_focus = true;
+      chrome_pointer_down = true;
+      send_chrome_pointer("pointerdown", x, y);
+      return true;
+    }
+    if (what == "up") {
+      if (!chrome_pointer_down) return false;
+      chrome_pointer_down = false;
+      send_chrome_pointer("pointerup", x, y);
+      if (!content.contains(x, y)) send_chrome_pointer("click", x, y);
+      return true;
+    }
+    const bool inside = !content.contains(x, y);
+    if (inside || chrome_pointer_inside || chrome_pointer_down) send_chrome_pointer("pointermove", x, y);
+    chrome_pointer_inside = inside;
+    return inside;
+  }
+  // The shell tells the frame what it shows; the frame never reads the profile itself.
+  void push_chrome_state() {
+    if (!chrome_enabled || !chrome_session || chrome_frame.type != Json::Type::Object) return;
+    Json state = Json::make_object();
+    Json list = Json::make_array();
+    for (const Tab &t : tabs) {
+      Json entry = Json::make_object();
+      entry.set("id", double(t.id));
+      entry.set("title", t.title.substr(0, 120));
+      entry.set("url", t.url.substr(0, 512));
+      entry.set("loading", t.loading);
+      list.array.push_back(std::move(entry));
+    }
+    state.set("tabs", std::move(list));
+    state.set("activeId", double(current().id));
+    state.set("address", app_ui_url(current().url) ? std::string() : current().url.substr(0, 2048));
+    state.set("canBack", current().can_back());
+    state.set("canForward", current().can_forward());
+    state.set("blocked", double(report ? report->blocked.load() : 0));
+    const std::string text = state.dump();
+    if (text == chrome_state_sent) return;
+    chrome_state_sent = text;
+    Json message = Json::make_object();
+    message.set("tag", "appmessage");
+    message.set("state", std::move(state));
+    chrome_session->send(std::move(message));
+  }
+  void start_chrome() {
+    if (!chrome_enabled || chrome_started || !hwnd || !renderer_farm) return;
+    chrome_started = true;
+    auto session = std::make_shared<Session>();
+    session->hwnd = hwnd;
+    session->tab = kChromeTab;
+    session->generation = kChromeGeneration;
+    session->url = "psychovault://chrome";
+    session->policy = policy();
+    session->policy.filter_counts = &session->counts;
+    session->report = report;
+    session->jar = &cookies;
+    session->storage = &local_storage;
+    session->profile_state_mutex = &profile_state_mutex;
+    session->farm = renderer_farm;
+    session->bridge_invoke = [window = hwnd](rt::Channel channel, const std::string &method,
+                                             const Json &payload, Json &reply,
+                                             rt::Error &bridge_error) {
+      static const rt::Schemas schemas = rt::Schemas::stock();
+      bridge_error = rt::Error{};
+      struct Allowed { const char *method; rt::Channel channel; };
+      static const Allowed allowed[] = {
+          {"tab:new", rt::Channel::Tab},      {"tab:activate", rt::Channel::Tab},
+          {"tab:close", rt::Channel::Tab},    {"nav:go", rt::Channel::Nav},
+          {"nav:back", rt::Channel::Nav},     {"nav:forward", rt::Channel::Nav},
+          {"nav:reload", rt::Channel::Nav},   {"nav:home", rt::Channel::Nav},
+          {"win:minimize", rt::Channel::Win}, {"win:maximize", rt::Channel::Win},
+          {"win:close", rt::Channel::Win}};
+      bool known = false;
+      for (const Allowed &entry : allowed)
+        if (method == entry.method && channel == entry.channel) known = true;
+      if (!known) {
+        bridge_error = {"bridge.chrome.method", "the browser frame may not call " + method};
+        return false;
+      }
+      if (!schemas.validate(method, payload, bridge_error)) return false;
+      if (method == "tab:activate" || method == "tab:close") {
+        const double raw_id = payload.num("id", 0);
+        if (!std::isfinite(raw_id) || raw_id <= 0 || raw_id > double(std::numeric_limits<int>::max()) ||
+            raw_id != double(int(raw_id))) {
+          bridge_error = {"bridge.tab.id", "a tab action requires a positive integer id"};
+          return false;
+        }
+      }
+      if (method == "tab:new" || method == "nav:go") {
+        const std::string target = payload.str("url", "psychovault://newtab");
+        if (target.size() > 32768) {
+          bridge_error = {"bridge.url", "address is too long"};
+          return false;
+        }
+        if (method == "tab:new") {
+          auto parsed_target = parse_url(target);
+          if (parsed_target && !parsed_target->network() && !engine_page_url(target)) {
+            bridge_error = {"bridge.tab.url", "new-tab address uses an unsupported scheme"};
+            return false;
+          }
+        }
+      }
+      auto task = std::make_unique<BridgeTask>();
+      task->tab = kChromeTab;
+      task->method = method;
+      task->payload = payload;
+      if (!PostMessageW(window, WM_BRIDGE, 0, reinterpret_cast<LPARAM>(task.get()))) {
+        bridge_error = {"bridge.queue.failed", "the browser window refused the app action"};
+        return false;
+      }
+      task.release();
+      reply = Json::make_object();
+      reply.set("queued", Json(true));
+      return true;
+    };
+    session->width = width;
+    session->height = height;
+    session->device_pixel_ratio = page_device_pixel_ratio(1.0);
+    session->scrollbar_width = 8.0;
+    session->reduce_motion = profile.reduce_motion;
+    session->color_scheme = profile.theme == "light" ? "light" : "dark";
+    session->high_contrast = profile.high_contrast;
+    chrome_session = session;
+    session->worker = std::thread([session] { session->run(); });
+  }
+  // Applies one frame action. Every method here arrived from the frame page through the bridge.
+  void chrome_action(const BridgeTask &task) {
+    const std::string &method = task.method;
+    if (method == "tab:new") {
+      std::string target = task.payload.str("url", "psychovault://newtab");
+      if (target.empty()) target = "psychovault://newtab";
+      new_tab(std::move(target));
+    } else if (method == "tab:activate" || method == "tab:close") {
+      const int id = int(task.payload.num("id", 0));
+      for (size_t i = 0; i < tabs.size(); ++i) {
+        if (tabs[i].id != id) continue;
+        if (method == "tab:activate") select_tab(int(i));
+        else close_tab(int(i));
+        break;
+      }
+    } else if (method == "nav:go") {
+      const std::string target = task.payload.str("url");
+      if (!target.empty()) navigate(target);
+    } else if (method == "nav:back") back();
+    else if (method == "nav:forward") forward();
+    else if (method == "nav:reload") navigate(current().url, false);
+    else if (method == "nav:home") navigate("psychovault://newtab");
+    else if (method == "win:minimize") ShowWindow(hwnd, SW_MINIMIZE);
+    else if (method == "win:maximize") ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE);
+    else if (method == "win:close") PostMessageW(hwnd, WM_CLOSE, 0, 0);
+    InvalidateRect(hwnd, nullptr, FALSE);
+  }
+  // --smoke-chrome: finds the frame's own "+" and close glyphs in its paint list and presses them
+  // through the same pointer path a mouse uses. Passing means the page, the bridge, the broker and
+  // the shell agreed on a new tab and then a close, and the state push redrew the strip between.
+  bool chrome_paint_center(const char *glyph, int nth, int &x, int &y) const {
+    const Json *paint = chrome_frame.find("paint");
+    if (!paint || paint->type != Json::Type::Array) return false;
+    int seen = 0;
+    for (const Json &command : paint->array) {
+      if (command.str("text") != glyph) continue;
+      if (seen++ != nth) continue;
+      x = int(std::lround(command.num("x") + command.num("w") / 2.0));
+      y = int(std::lround(command.num("y") + command.num("h") / 2.0));
+      return true;
+    }
+    return false;
+  }
+  void chrome_press(int x, int y) {
+    chrome_pointer("move", x, y);
+    chrome_pointer("down", x, y);
+    chrome_pointer("up", x, y);
+  }
+  bool chrome_smoke_step(DWORD now) {
+    auto finish = [&](bool passed, const std::string &reason) {
+      if (!capture_path.empty()) capture(hwnd, capture_path);
+      Json report = Json::make_object();
+      report.set("result", passed ? "passed" : "failed");
+      report.set("reason", reason);
+      report.set("stage", double(smoke_chrome_stage));
+      report.set("elapsedMs", double(now - start_tick));
+      report.set("tabCount", double(tabs.size()));
+      report.set("activeUrl", current().url);
+      report.set("chromeError", chrome_error);
+      report.set("chromeFrame", chrome_frame.type == Json::Type::Object);
+      report.set("chromeReady", chrome_session && chrome_session->ready.load());
+      report.set("note", smoke_chrome_note);
+      std::string write_error;
+      write_file_atomic(capture_path + ".chrome.json", report.dump() + "\n", write_error);
+      smoke_chrome_stage = 9;
+      PostQuitMessage(passed ? 0 : 1);
+    };
+    if (smoke_chrome_stage >= 9) return true;
+    if (now - start_tick >= 45000) {
+      finish(false, "the browser frame did not complete its tab actions in time");
+      return true;
+    }
+    if (!chrome_error.empty()) {
+      finish(false, "the browser frame failed to load: " + chrome_error);
+      return true;
+    }
+    const bool ready = chrome_frame.type == Json::Type::Object && !chrome_state_sent.empty() &&
+                       current().frame.type == Json::Type::Object && !current().loading &&
+                       now - start_tick >= 1500;
+    int x = 0, y = 0;
+    if (smoke_chrome_stage == 0) {
+      if (!ready) return true;
+      if (now - smoke_chrome_tick < 400 && smoke_chrome_tick) return true;
+      if (!chrome_paint_center("+", 0, x, y)) {
+        finish(false, "the frame painted no new-tab button");
+        return true;
+      }
+      smoke_chrome_note = std::to_string(tabs.size()) + " tabs before the click";
+      smoke_chrome_tick = now;
+      chrome_press(x, y);
+      smoke_chrome_stage = 1;
+    } else if (smoke_chrome_stage == 1) {
+      if (tabs.size() >= 2) {
+        smoke_chrome_stage = 2;
+        smoke_chrome_tick = now;
+        chrome_state_sent.clear();
+      }
+    } else if (smoke_chrome_stage == 2) {
+      // Wait for the strip to be redrawn with a second tab before pressing its close glyph.
+      if (now - smoke_chrome_tick < 1200) return true;
+      if (!chrome_paint_center("\u00d7", 0, x, y)) {
+        finish(false, "the frame painted no tab close button");
+        return true;
+      }
+      smoke_chrome_tick = now;
+      chrome_press(x, y);
+      smoke_chrome_stage = 3;
+    } else if (smoke_chrome_stage == 3) {
+      if (tabs.size() == 1 && current().frame.type == Json::Type::Object && !current().loading) {
+        finish(true, "the frame opened a tab and closed one through the bridge");
+        return true;
+      }
+    }
+    return true;
+  }
   void send_page_pointer(const char *tag, int x, int y) {
     if (!current().session) return;
     Json command = Json::make_object();
@@ -3291,6 +3616,7 @@ struct Browser {
       scroll_to(position);
       return;
     }
+    chrome_pointer("move", x, y);
     const bool inside = content.contains(x, y);
     if (inside || page_pointer_inside || page_pointer_down) send_page_pointer("pointermove", x, y);
     page_pointer_inside = inside;
@@ -3313,17 +3639,19 @@ struct Browser {
     current().session->send(command);
   }
   void page_key(const std::string &key) {
-    if (!current().session) return;
+    Session *target = key_target();
+    if (!target) return;
     Json command = Json::make_object();
     command.set("tag", "key");
     command.set("key", key);
-    current().session->send(command);
+    target->send(command);
   }
   void edit_clipboard(bool cut) {
-    if (!current().session) return;
+    Session *target = key_target();
+    if (!target) return;
     Json command = Json::make_object();
     command.set("tag", cut ? "cut" : "copy");
-    current().session->send(command);
+    target->send(command);
   }
   // S033 in production for page text fields: every platform composition string
   // passes the ImeService (valid UTF-8, bounded, caret on a character boundary,
@@ -3432,7 +3760,7 @@ struct Browser {
     page_composing = false;
   }
   void key_up(WPARAM wp) {
-    if (address_focus || home_focus || !current().session) return;
+    if (address_focus || home_focus || !key_target()) return;
     std::string key = wp == VK_RETURN ? "Enter" : wp == VK_BACK ? "Backspace"
                       : wp == VK_TAB ? "Tab" : wp == VK_UP ? "ArrowUp"
                       : wp == VK_DOWN ? "ArrowDown" : wp == VK_PRIOR ? "PageUp"
@@ -3455,7 +3783,7 @@ struct Browser {
     Json command = Json::make_object();
     command.set("tag", "keyup");
     command.set("key", key);
-    current().session->send(command);
+    key_target()->send(command);
   }
   void pointer_down(int x, int y) {
     if (!content.contains(x, y)) return;
@@ -4198,12 +4526,12 @@ struct Browser {
         return;
       home_search.insert(home_search_caret, text);
       home_search_caret += text.size();
-    } else if (current().session) {
+    } else if (key_target()) {
       Json j = Json::make_object();
       j.set("tag", "key");
       j.set("key", "");
       j.set("text", text);
-      current().session->send(j);
+      key_target()->send(j);
     }
     InvalidateRect(hwnd, nullptr, FALSE);
   }
@@ -5132,7 +5460,9 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   case WM_LBUTTONDOWN: {
     const int x = GET_X_LPARAM(lp), y = GET_Y_LPARAM(lp);
     if (auto b = browser(hwnd)) {
-      if (b->content.contains(x, y)) {
+      if (b->chrome_pointer("down", x, y)) {
+        SetCapture(hwnd);
+      } else if (b->content.contains(x, y)) {
         SetCapture(hwnd);
         b->pointer_down(x, y);
       } else b->click(x, y);
@@ -5143,6 +5473,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   case WM_LBUTTONUP: {
     const int x = GET_X_LPARAM(lp), y = GET_Y_LPARAM(lp);
     if (auto b = browser(hwnd)) {
+      b->chrome_pointer("up", x, y);
       const bool page_click = b->page_pointer_down && b->content.contains(x, y);
       b->pointer_up(x, y);
       if (page_click) b->click(x, y);
@@ -5222,6 +5553,18 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   case WM_FRAME: {
     std::unique_ptr<Update> up(reinterpret_cast<Update *>(lp));
     auto b = browser(hwnd);
+    if (b && int(wp) == Browser::kChromeTab) {
+      if (up->generation == Browser::kChromeGeneration) {
+        if (!up->error.empty()) b->chrome_error = up->error;
+        else {
+          const bool first = b->chrome_frame.type != Json::Type::Object;
+          b->chrome_frame = std::move(up->frame);
+          if (first) b->chrome_state_sent.clear();
+        }
+        InvalidateRect(hwnd, nullptr, FALSE);
+      }
+      return 0;
+    }
     Tab *tab = b ? b->find_tab(int(wp)) : nullptr;
     if (tab && up->generation == tab->generation) {
       bool full_repaint = !up->error.empty();
@@ -5335,6 +5678,14 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   case WM_IMAGE: {
     std::unique_ptr<Update> up(reinterpret_cast<Update *>(lp));
     auto b = browser(hwnd);
+    if (b && int(wp) == Browser::kChromeTab) {
+      if (up->generation == Browser::kChromeGeneration && up->image && up->image->valid() &&
+          b->chrome_images.size() < 64) {
+        b->chrome_images[up->url] = *up->image;
+        InvalidateRect(hwnd, nullptr, FALSE);
+      }
+      return 0;
+    }
     Tab *tab = b ? b->find_tab(int(wp)) : nullptr;
     // The broker reconstructed renderer pixels from the chunked process reply;
     // keep the per-tab cache bounded before presenting them in the shell.
@@ -5416,6 +5767,13 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       if (b) b->sync_focus();
     }
     if (b) b->reap_sessions();
+    if (b && b->chrome_enabled) {
+      b->start_chrome();
+      b->push_chrome_state();
+    }
+    if (b && b->smoke && b->smoke_chrome) {
+      if (b->chrome_smoke_step(GetTickCount())) return 0;
+    }
     if (b && b->smoke && b->smoke_services) {
       if (!b->smoke_tabs_done && b->services_step(GetTickCount())) {
         b->smoke_tabs_done = true;
@@ -5618,7 +5976,14 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   case WM_BRIDGE: {
     std::unique_ptr<BridgeTask> task(reinterpret_cast<BridgeTask *>(lp));
     auto b = browser(hwnd);
+    if (b && task && task->tab == Browser::kChromeTab) {
+      if (b->chrome_enabled) b->chrome_action(*task);
+      return 0;
+    }
     if (!b || !task || !b->find_tab(task->tab)) return 0;
+    // Only the browser frame may close tabs, navigate or drive the window; a page session reaches
+    // this point with tab:new / tab:activate alone (its bridge lambda enforces that).
+    if (task->method != "tab:new" && task->method != "tab:activate") return 0;
     if (task->method == "tab:new") {
       std::string target = task->payload.str("url", "psychovault://newtab");
       if (target.empty()) target = "psychovault://newtab";
@@ -5657,7 +6022,12 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       POINT p{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
       ScreenToClient(hwnd, &p);
       auto b = browser(hwnd);
-      if (b && p.y < 40 && p.x > 44 && p.x < b->width - 160)
+      if (b && !b->chrome_enabled && p.y < 40 && p.x > 44 && p.x < b->width - 160)
+        return HTCAPTION;
+      // With the engine frame the empty part of the tab strip drags the window; the tabs and the
+      // buttons are inside the strip's left and right edges.
+      if (b && b->chrome_enabled && p.y < 40 && p.x > 44 + 36 + (int(b->tabs.size()) * 126) + 96 &&
+          p.x < b->width - 160)
         return HTCAPTION;
     }
     return hit;
@@ -5914,6 +6284,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
   b.smoke_bridge_url = smoke_bridge_url;
   b.smoke_tabs = command.smoke_tabs;
   b.smoke_services = command.smoke_services;
+  b.smoke_chrome = command.smoke_chrome;
+  if (command.chrome) b.enable_chrome();
   b.start_tick = GetTickCount();
   if (private_mode) {
     b.forget_all_tabs();

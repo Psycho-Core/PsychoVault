@@ -42,6 +42,16 @@ const ExposedEntry kNewTabProfile[] = {
     {Channel::Lifecycle, "lifecycle:ping"},
 };
 
+// The browser frame page: the tab, navigation and window actions the chrome needs, and nothing
+// else. Not exposed to any other page, including the new-tab and settings pages.
+const ExposedEntry kChromeProfile[] = {
+    {Channel::Tab, "tab:new"},     {Channel::Tab, "tab:activate"}, {Channel::Tab, "tab:close"},
+    {Channel::Nav, "nav:go"},      {Channel::Nav, "nav:back"},     {Channel::Nav, "nav:forward"},
+    {Channel::Nav, "nav:reload"},  {Channel::Nav, "nav:home"},
+    {Channel::Win, "win:minimize"}, {Channel::Win, "win:maximize"}, {Channel::Win, "win:close"},
+    {Channel::Lifecycle, "lifecycle:ping"},
+};
+
 const ExposedEntry kPrivateDiagnosticsProfile[] = {
     {Channel::Internal, "internal:list"},
     {Channel::Diagnostics, "diagnostics:stage"},
@@ -77,7 +87,10 @@ AppHost::AppHost(int tab_id, const InternalPage *page, Seams seams,
       count = sizeof(kCrashProfile) / sizeof(kCrashProfile[0]);
     } else if (page->category == "shell") {
       kind_ = PageKind::Shell;
-      if (page->name == "newtab") {
+      if (page->name == "chrome") {
+        profile = kChromeProfile;
+        count = sizeof(kChromeProfile) / sizeof(kChromeProfile[0]);
+      } else if (page->name == "newtab") {
         profile = kNewTabProfile;
         count = sizeof(kNewTabProfile) / sizeof(kNewTabProfile[0]);
       } else if (policy_ == RendererPolicy::Private) {

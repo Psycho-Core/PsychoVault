@@ -52,6 +52,7 @@ public:
   void key_up(const std::string &key);
   std::string edit_clipboard(bool cut);
   void paste_text(const std::string &text);
+  void app_message(const Json &message);
   void composition_start();
   void composition_update(const std::string &text, size_t caret);
   void composition_commit(const std::string &text);

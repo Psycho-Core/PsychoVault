@@ -36,6 +36,7 @@ InternalRegistry InternalRegistry::stock() {
     registry.add({name, "diagnostics", summary, false});
   };
   shell("newtab", "the page every new tab opens into");
+  shell("chrome", "the browser frame: tab strip, toolbar and sidebar rail");
   shell("settings", "every category of my settings UI");
   shell("history", "my browsing history manager");
   shell("downloads", "my downloads manager");

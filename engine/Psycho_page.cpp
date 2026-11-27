@@ -4005,6 +4005,22 @@ void Page::paste_text(const std::string &text) {
   if (dispatch(focused_, "paste", event, true, true)) return;
   replace_editor_selection(focused_, text);
 }
+void Page::app_message(const Json &message) {
+  if (!js_) return;
+  auto &properties = js_->global().properties;
+  auto handler = properties.find("psychoChromeState");
+  if (handler == properties.end() || handler->second.type != js::Value::Type::Object ||
+      !handler->second.object || (!handler->second.object->function && !handler->second.object->native))
+    return;
+  try {
+    js_->call(handler->second, {from_json(*js_, message)});
+  } catch (const js::JsError &error) {
+    diagnostics.push_back({"js", "psychoChromeState threw: " + error.value.to_string()});
+  } catch (const std::exception &error) {
+    diagnostics.push_back({"js", std::string("psychoChromeState failed: ") + error.what()});
+  }
+  dirty_ = true;
+}
 void Page::composition_start() {
   const int node = focused_;
   if (node < 0 || node >= int(doc.nodes.size()) || !text_editor_control(doc.nodes[node])) return;

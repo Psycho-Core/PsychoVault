@@ -176,6 +176,13 @@ bool parse_command_line(const std::vector<std::string> &arguments,
     } else if (argument == "--smoke-services") {
       if (!once(argument)) return false;
       options.smoke_services = true;
+    } else if (argument == "--chrome") {
+      if (!once(argument)) return false;
+      options.chrome = true;
+    } else if (argument == "--smoke-chrome") {
+      if (!once(argument)) return false;
+      options.smoke_chrome = true;
+      options.chrome = true;
     } else if (argument == "--smoke-tabs") {
       if (!once(argument)) return false;
       options.smoke_tabs = true;
@@ -201,6 +208,9 @@ bool parse_command_line(const std::vector<std::string> &arguments,
   if (options.smoke_tabs && (!options.smoke || options.capture_path.empty()))
     return refuse(error, "commandline.smoke-tabs-mode",
                   "--smoke-tabs requires --smoke and --capture");
+  if (options.smoke_chrome && (!options.smoke || options.capture_path.empty()))
+    return refuse(error, "commandline.smoke-chrome-mode",
+                  "--smoke-chrome requires --smoke and --capture");
   return true;
 }
 

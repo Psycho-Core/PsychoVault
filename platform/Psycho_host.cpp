@@ -185,6 +185,12 @@ void Host::paste_text(const std::string &text) {
   settle();
 }
 
+void Host::app_message(const Json &message) {
+  if (!loaded_) return;
+  page_->app_message(message);
+  settle();
+}
+
 void Host::composition_start() {
   if (!loaded_) return;
   page_->composition_start();

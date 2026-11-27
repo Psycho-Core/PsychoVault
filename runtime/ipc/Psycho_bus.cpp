@@ -102,6 +102,16 @@ Schemas Schemas::stock() {
   s.add("tab:error", fields({{"contents", T::Number, true}, {"code", T::String, true},
                              {"message", T::String, true}, {"url", T::String, true}}));
   s.add("tab:activate", fields({{"id", T::Number, true}}));
+  // Browser-chrome actions. Only the chrome page's facade exposes these (see AppHost), and the
+  // shell refuses them from any other source.
+  s.add("tab:close", fields({{"id", T::Number, true}}));
+  s.add("nav:back", fields({}));
+  s.add("nav:forward", fields({}));
+  s.add("nav:reload", fields({}));
+  s.add("nav:home", fields({}));
+  s.add("win:minimize", fields({}));
+  s.add("win:maximize", fields({}));
+  s.add("win:close", fields({}));
   s.add("win:focus", fields({{"id", T::Number, true}}));
   s.add("lifecycle:ping", fields({}));
   s.add("lifecycle:pong", fields({{"uptime_ms", T::Number, true}}));
@@ -135,6 +145,7 @@ Schemas Schemas::stock() {
                                   {"forcedColors", T::String, false},
                                   {"key", T::String, false}, {"text", T::String, false},
                                   {"caret", T::Number, false}, // compositionupdate's cursor offset
+                                  {"state", T::Object, false}, // appmessage: broker state for a chrome page
                                   {"cookie_state", T::Array, false},
                                   {"storage_state", T::Object, false},
                                   {"images", T::Array, false},

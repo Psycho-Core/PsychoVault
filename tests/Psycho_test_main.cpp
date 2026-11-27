@@ -850,6 +850,30 @@ int main() {
           opacity = std::min(opacity, command.num("opacity", 1));
       return opacity;
     };
+    // A chrome page's script receives broker state through psychoChromeState(message); a page with
+    // no such function ignores the message, and a throwing handler cannot take the page down.
+    {
+      Page chrome_page;
+      chrome_page.load(*parse_url("psychovault://chrome/"),
+          "<!doctype html><div id=out>none</div><script>"
+          "function psychoChromeState(m){document.getElementById('out').textContent="
+          "m.address+'|'+m.tabs.length+'|'+m.tabs[1].title+'|'+(m.loading?'busy':'idle');}</script>");
+      chrome_page.render(200, 100, 0);
+      auto message = Json::parse(R"({"address":"a.test","loading":true,"tabs":[{"title":"one"},{"title":"two"}]})");
+      CHECK(message.has_value());
+      chrome_page.app_message(*message);
+      chrome_page.render(200, 100, 0);
+      CHECK(chrome_page.doc.text_content(chrome_page.doc.by_id("out")) == "a.test|2|two|busy");
+      Page silent;
+      silent.load(*parse_url("psychovault://chrome/"), "<!doctype html><div id=out>none</div>");
+      silent.app_message(*message); // no handler: nothing happens
+      CHECK(silent.doc.text_content(silent.doc.by_id("out")) == "none");
+      Page throwing;
+      throwing.load(*parse_url("psychovault://chrome/"),
+          "<!doctype html><div id=out>ok</div><script>function psychoChromeState(m){throw new Error('x');}</script>");
+      throwing.app_message(*message);
+      CHECK(throwing.doc.text_content(throwing.doc.by_id("out")) == "ok");
+    }
     Page animation;
     animation.load(*parse_url("https://animation.test/"),
         "<!doctype html><style>body{margin:0}@keyframes fade{from{opacity:0}to{opacity:1}}"

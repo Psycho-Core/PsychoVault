@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PsychoVault</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="components.css">
+<link rel="stylesheet" href="chrome.css">
+</head>
+<body>
+<!-- The browser frame. The shell draws the active tab's page in the empty area (the slot); this page
+     paints only the chrome around it. Geometry is measured from docs/reference/legacy-ui/02-browser-chrome.png
+     (1440x940): rail 44px, top bar 84px (38px tab strip, 46px toolbar). -->
+<nav class="rail" aria-label="Sidebar">
+  <button class="avatar" id="rail-home" type="button" aria-label="PsychoVault"><span class="ring"></span></button>
+  <div class="services" id="services">
+    <button class="svc" type="button"><span class="t">TW</span><i style="background:#a855f7"></i></button>
+    <button class="svc" type="button"><span class="t">YO</span><i style="background:#ef4444"></i></button>
+    <button class="svc" type="button"><span class="t">YO</span><i style="background:#ef4444"></i></button>
+    <button class="svc" type="button"><span class="t">X</span><i style="background:#64748b"></i></button>
+    <button class="svc" type="button"><span class="t">RE</span><i style="background:#f97316"></i></button>
+    <button class="svc" type="button"><span class="t">GI</span><i style="background:#94a3b8"></i></button>
+    <button class="svc" type="button"><span class="t">WH</span><i style="background:#22c55e"></i></button>
+    <button class="svc" type="button"><span class="t">TE</span><i style="background:#38bdf8"></i></button>
+    <button class="svc" type="button"><span class="t">SP</span><i style="background:#22c55e"></i></button>
+  </div>
+  <div class="rule"></div>
+  <button class="rail-icon" id="rail-shield" type="button" aria-label="Site shield">
+    <svg width="18" height="20" viewBox="0 0 18 20"><path d="M9 1 L16 4 V10 C16 14.5 13 17.5 9 19 C5 17.5 2 14.5 2 10 V4 Z" fill="#94a3b8"/></svg>
+  </button>
+  <div class="rail-bottom">
+    <button class="rail-btn good" id="rail-adblock" type="button" aria-label="Ad blocker"><svg width="18" height="20" viewBox="0 0 18 20"><path d="M9 1 L16 4 V10 C16 14.5 13 17.5 9 19 C5 17.5 2 14.5 2 10 V4 Z" fill="#22c55e"/><rect x="5" y="9" width="8" height="2" fill="#0d2821"/></svg></button>
+    <button class="rail-btn bad" id="rail-vpn" type="button" aria-label="VPN"><svg width="18" height="20" viewBox="0 0 18 20"><path d="M9 1 L16 4 V10 C16 14.5 13 17.5 9 19 C5 17.5 2 14.5 2 10 V4 Z" fill="#f87171"/></svg></button>
+    <button class="rail-icon" id="rail-settings" type="button" aria-label="Settings"><svg width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="6" fill="none" stroke="#94a3b8" stroke-width="3"/><circle cx="9" cy="9" r="2" fill="#94a3b8"/></svg></button>
+    <button class="rail-icon" id="rail-help" type="button" aria-label="About"><svg width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="7" fill="#94a3b8"/></svg></button>
+  </div>
+</nav>
+
+<header class="top">
+  <div class="strip">
+    <span class="app-mark" aria-hidden="true"><svg width="20" height="22" viewBox="0 0 42 48"><path d="M21 2 L40 9 V24 C40 35 32 43 21 47 C10 43 2 35 2 24 V9 Z" fill="none" stroke="#38bdf8" stroke-width="3"/><path d="M24 11 L13 27 H20 L17 39 L29 22 H22 Z" fill="#e6edf7"/></svg></span>
+    <div class="tabs" id="tabs">
+      <div class="tab active" data-tab="1"><span class="fav">N</span><span class="title">New Tab</span><button class="x" type="button" aria-label="Close tab">&times;</button></div>
+    </div>
+    <button class="plus" id="new-tab" type="button" aria-label="New tab">+</button>
+    <div class="ws" id="workspaces"><span class="chip">General<button class="x" type="button" aria-label="Close workspace">&times;</button></span><button class="plus small" type="button" aria-label="New workspace">+</button></div>
+    <div class="winctl"><button id="win-min" type="button" aria-label="Minimize"><svg width="10" height="10" viewBox="0 0 10 10"><rect x="0" y="5" width="10" height="1" fill="#cbd5e1"/></svg></button><button id="win-max" type="button" aria-label="Maximize"><svg width="10" height="10" viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="#cbd5e1"/></svg></button><button id="win-close" type="button" aria-label="Close"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 0 L10 10 M10 0 L0 10" stroke="#cbd5e1" stroke-width="1.2" fill="none"/></svg></button></div>
+  </div>
+  <div class="toolbar">
+    <button class="nav dim" id="nav-back" type="button" aria-label="Back"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M9 2 L4 7 L9 12" stroke="#475569" stroke-width="1.6" fill="none"/></svg></button>
+    <button class="nav dim" id="nav-forward" type="button" aria-label="Forward"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M5 2 L10 7 L5 12" stroke="#475569" stroke-width="1.6" fill="none"/></svg></button>
+    <button class="nav" id="nav-reload" type="button" aria-label="Reload"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M11 5 A5 5 0 1 0 12 8" stroke="#e6edf7" stroke-width="1.6" fill="none"/><path d="M8 1 L12 2 L11 6 Z" fill="#e6edf7"/></svg></button>
+    <button class="nav" id="nav-home" type="button" aria-label="Home"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M1 7 L7 1.5 L13 7 V13 H9 V9 H5 V13 H1 Z" fill="#e6edf7"/></svg></button>
+    <button class="nav" id="nav-split" type="button" aria-label="Split view"><svg width="14" height="14" viewBox="0 0 14 14"><rect x="1" y="2" width="5" height="10" rx="1" fill="#e6edf7"/><rect x="8" y="2" width="5" height="10" rx="1" fill="#e6edf7"/></svg></button>
+    <div class="omnibox" id="omnibox">
+      <span class="shield"><svg width="10" height="12" viewBox="0 0 18 20"><path d="M9 1 L16 4 V10 C16 14.5 13 17.5 9 19 C5 17.5 2 14.5 2 10 V4 Z" fill="#38bdf8"/></svg><span class="count">0</span></span>
+      <input id="address" type="text" placeholder="Search the web or enter an address" aria-label="Address">
+      <button class="star" id="bookmark" type="button" aria-label="Bookmark"><svg width="10" height="13" viewBox="0 0 10 13"><path d="M0 0 H10 V13 L5 9.5 L0 13 Z" fill="#cbd5e1"/></svg></button>
+    </div>
+    <button class="menu" id="menu" type="button" aria-label="Menu"><svg width="12" height="10" viewBox="0 0 12 10"><rect y="0" width="12" height="1.6" fill="#e6edf7"/><rect y="4" width="12" height="1.6" fill="#e6edf7"/><rect y="8" width="12" height="1.6" fill="#e6edf7"/></svg></button>
+  </div>
+</header>
+<script src="chrome.js"></script>
+</body>
+</html>

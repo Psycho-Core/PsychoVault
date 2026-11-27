@@ -1446,10 +1446,10 @@ int run_runtime_bus_tests(int &shared) {
     RT_CHECK(!schemas.validate("internal:fetch", fetchless, e) &&
              e.code == "schema.missing");
 
-    // The stock registry: my nine pages, fixed address space, all web-sealed.
-    const char *names[] = {"newtab",  "settings", "history", "downloads",
+    // The stock registry: my ten pages, fixed address space, all web-sealed.
+    const char *names[] = {"newtab",  "chrome", "settings", "history", "downloads",
                            "extensions", "apps",  "version", "nettest", "crash"};
-    RT_CHECK(registry.pages().size() == 9);
+    RT_CHECK(registry.pages().size() == 10);
     for (const char *name : names) RT_CHECK(registry.find(name) != nullptr);
     RT_CHECK(registry.find("newtab")->category == "shell");
     RT_CHECK(registry.find("nettest")->category == "diagnostics");
@@ -2907,6 +2907,20 @@ int run_runtime_bus_tests(int &shared) {
     RT_CHECK(version_page.kind() == PageKind::Diagnostics &&
              version_page.page_world().run("typeof psycho.diagnostics.version").string ==
                  "function");
+    // The browser-chrome page alone may close tabs, navigate and control the window; the new-tab
+    // page, which also gets a facade, gets none of that.
+    AppHost chrome(78, registry.find("chrome"), {bus, {}});
+    for (const char *call : {"tab.close", "tab.new", "tab.activate", "nav.go", "nav.back", "nav.forward",
+                             "nav.reload", "nav.home", "win.minimize", "win.maximize", "win.close"}) {
+      const std::string probe = std::string("typeof psycho.") + call;
+      RT_CHECK(chrome.page_world().run(probe).string == "function");
+    }
+    RT_CHECK(chrome.page_world().run("typeof psycho.settings").string == "undefined");
+    AppHost newtab_page(79, registry.find("newtab"), {bus, {}});
+    RT_CHECK(newtab_page.page_world().run("typeof psycho.tab.new").string == "function");
+    RT_CHECK(newtab_page.page_world().run("typeof psycho.tab.close").string == "undefined");
+    RT_CHECK(newtab_page.page_world().run("typeof psycho.nav").string == "undefined");
+    RT_CHECK(newtab_page.page_world().run("typeof psycho.win").string == "undefined");
     AppHost web(77, nullptr, {bus, {}});
     RT_CHECK(web.page_world().run("typeof psycho").string == "undefined");
   }
@@ -3310,7 +3324,15 @@ int run_runtime_bus_tests(int &shared) {
       RT_CHECK(parse_command_line({"--smoke", "--capture", "o.png", "--smoke-tabs"},
                                   tabs_options, tabs_error) &&
                tabs_options.smoke_tabs);
+      CommandLineOptions chrome_options;
+      Error chrome_error;
+      RT_CHECK(parse_command_line({"--chrome"}, chrome_options, chrome_error) && chrome_options.chrome &&
+               !chrome_options.smoke_chrome);
+      CommandLineOptions chrome_smoke;
+      RT_CHECK(parse_command_line({"--smoke", "--capture", "o.png", "--smoke-chrome"}, chrome_smoke,
+                                  chrome_error) && chrome_smoke.smoke_chrome && chrome_smoke.chrome);
     }
+    RT_CHECK(rejected({"--smoke-chrome"}, "commandline.smoke-chrome-mode"));
     RT_CHECK(rejected({"--private", "--private"}, "commandline.duplicate-option"));
     RT_CHECK(rejected({"--profile", "one", "--profile", "two"},
                       "commandline.duplicate-option"));

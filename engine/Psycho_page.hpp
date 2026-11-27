@@ -74,6 +74,9 @@ public:
   std::string edit_clipboard(bool cut);
   void paste_text(const std::string &text);
   void composition_start();
+  // Deliver a message from the broker to the page's script: calls the global function
+  // `psychoChromeState(message)` if the page defined one. Used by the browser chrome page.
+  void app_message(const Json &message);
   void composition_update(const std::string &preedit, size_t caret);
   void composition_commit(const std::string &text);
   void composition_cancel();

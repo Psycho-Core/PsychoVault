@@ -34,7 +34,8 @@ bool renderer_url_allowed(const std::string &raw) {
   // (settings, history, ...) is refused here until it has a loader.
   static const InternalRegistry registry = InternalRegistry::stock();
   const std::string page = plain_internal_page(registry, raw);
-  if (page == "newtab" || page == "settings" || page == "version" || page == "nettest") return true;
+  if (page == "newtab" || page == "chrome" || page == "settings" || page == "version" || page == "nettest")
+    return true;
   return parsed && parsed->network();
 }
 
@@ -148,14 +149,10 @@ bool RendererWorker::app_bridge_invoke(Channel channel, const std::string &metho
 
 bool RendererWorker::navigate(const Envelope &request, Envelope &response, Error &error) {
   const std::string url = request.payload.str("url");
-  auto parsed_navigation = parse_url(url);
-  const bool app_ui_page = parsed_navigation &&
-                           parsed_navigation->scheme == "psychovault" &&
-                           parsed_navigation->host == "newtab" &&
-                           (parsed_navigation->path.empty() ||
-                            parsed_navigation->path == "/") &&
-                           parsed_navigation->query.empty() &&
-                           parsed_navigation->fragment.empty();
+  // The pages that get the curated psycho bridge: the new tab and the browser chrome.
+  static const InternalRegistry bridge_registry = InternalRegistry::stock();
+  const std::string bridge_page = plain_internal_page(bridge_registry, url);
+  const bool app_ui_page = bridge_page == "newtab" || bridge_page == "chrome";
   host_.reset();
   app_host_.reset();
   Json payload = Json::make_object();
@@ -221,7 +218,7 @@ bool RendererWorker::navigate(const Envelope &request, Envelope &response, Error
   if (app_ui_page) {
     InternalRegistry registry = InternalRegistry::stock();
     app_host_ = std::make_unique<AppHost>(
-        -1, registry.find("newtab"),
+        -1, registry.find(bridge_page),
         AppHost::Seams{
             [this](Channel channel, const std::string &method, Json input,
                    Json &reply, Error &bridge_error) {
@@ -438,6 +435,13 @@ bool RendererWorker::input(const Envelope &request, Envelope &response, Error &e
     const std::string text = request.payload.str("text");
     if (text.size() > 65536) return reject("paste text exceeds its size limit");
     host_->paste_text(text);
+  } else if (tag == "appmessage") {
+    // Broker state for a chrome page's script (tabs, address, loading). Bounded: it is JSON the
+    // broker built, but it still crosses a trust boundary on its way into page script.
+    const Json *state = request.payload.find("state");
+    if (!state || state->type != Json::Type::Object || state->dump().size() > 262144)
+      return reject("app message needs a state object under 256 KiB");
+    host_->app_message(*state);
   } else if (tag == "compositionstart") {
     host_->composition_start();
   } else if (tag == "compositionupdate") {
