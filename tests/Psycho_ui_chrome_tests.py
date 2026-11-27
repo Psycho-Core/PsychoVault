@@ -229,6 +229,39 @@ class ChromeFrame(unittest.TestCase):
     def test_no_palette_means_no_backdrop(self):
         self.assertFalse(run(("--inspect", "#pscrim"))["inspected"][0].get("hasBox", False))
 
+    OUTLINE = 9   # PaintCommand::Kind::Outline
+
+    def node_paints(self, out, node, kind=None):
+        return [c for c in out["paint"] if int(c.get("node", -1)) == node and (kind is None or int(c["kind"]) == kind)]
+
+    def test_hover_tints_a_frame_button_and_leaving_removes_it(self):
+        info = run(("--inspect", "#nav-reload"))["inspected"][0]
+        node, box = info["node"], info["box"]
+        x, y = int(box["x"] + box["w"] / 2), int(box["y"] + box["h"] / 2)
+        rest = self.node_paints(run(), node, 0)
+        hovered = self.node_paints(run(("--action", f"hover:{x},{y}")), node, 0)
+        self.assertEqual(len(rest), 0)
+        self.assertGreaterEqual(len(hovered), 1)
+        self.assertEqual(len(self.node_paints(run(("--action", f"hover:{x},{y}", "--action", "hover:700,300")), node, 0)), 0)
+
+    def test_window_close_hover_is_red(self):
+        info = run(("--inspect", "#win-close"))["inspected"][0]
+        box = info["box"]
+        out = run(("--action", f"hover:{int(box['x'] + 10)},{int(box['y'] + 10)}"))
+        colors = [int(c["color"]) & 0xffffff for c in self.node_paints(out, info["node"], 0)]
+        self.assertIn(0xc42b1c, colors)
+
+    def test_keyboard_focus_draws_a_visible_ring_and_pointer_focus_does_not(self):
+        info = run(("--inspect", "#nav-reload"))["inspected"][0]
+        node = info["node"]
+        # Tab walks to a button and draws its ring; a mouse press on one does not.
+        walked = run(("--action", "key:Tab"))
+        rings = [c for c in walked["paint"] if int(c["kind"]) == self.OUTLINE]
+        self.assertGreaterEqual(len(rings), 1)
+        box = info["box"]
+        pressed = run(("--action", f"click:{int(box['x'] + 10)},{int(box['y'] + 10)}"))
+        self.assertEqual([c for c in pressed["paint"] if int(c["kind"]) == self.OUTLINE and int(c.get("node", -1)) == node], [])
+
     def test_no_dialog_means_no_scrim(self):
         out = run(("--inspect", "#scrim"))
         self.assertFalse(out["inspected"][0].get("hasBox", False))

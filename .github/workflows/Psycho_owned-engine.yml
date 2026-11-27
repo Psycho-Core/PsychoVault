@@ -222,6 +222,11 @@ jobs:
         run: |
           python tests/Psycho_ui_chrome_tests.py --engine build/pv-engine.exe 2>&1 | Tee-Object build/ui-chrome.txt
           if ($LASTEXITCODE -ne 0) { Write-Host "::error title=Frame page tests::see build/ui-chrome.txt"; exit $LASTEXITCODE }
+      - name: Check my pages across window sizes and display scales (S090)
+        shell: pwsh
+        run: |
+          python tests/Psycho_ui_responsive_tests.py --engine build/pv-engine.exe 2>&1 | Tee-Object build/ui-responsive.txt
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error title=Responsive page tests::see build/ui-responsive.txt"; exit $LASTEXITCODE }
       - name: Measure my pages against the legacy captures (report only)
         shell: pwsh
         run: |
