@@ -57,8 +57,9 @@
 
   // Actions
   function ancestorWith(node, attribute) {
-    while (node && node.getAttribute) {
-      if (node.getAttribute(attribute) !== null) return node;
+    // The engine reports the text node under the pointer as the target, so walk up through it.
+    while (node) {
+      if (node.getAttribute && node.getAttribute(attribute) !== null) return node;
       node = node.parentNode;
     }
     return null;
