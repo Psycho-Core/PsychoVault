@@ -125,6 +125,12 @@ Schemas Schemas::stock() {
   s.add("downloads:cancel", fields({{"id", T::Number, true}}));
   s.add("downloads:remove", fields({{"id", T::Number, true}}));
   s.add("downloads:clear", fields({}));
+  // The frame's extensions, performance and workspaces panels. Sleeping a tab frees its renderer now; a
+  // workspace is opened, created (the shell names it) or closed by its position.
+  s.add("perf:sleep", fields({{"id", T::Number, true}}));
+  s.add("ws:open", fields({{"index", T::Number, true}}));
+  s.add("ws:new", fields({}));
+  s.add("ws:close", fields({{"index", T::Number, true}}));
   // The frame page answers the dialog it is showing: which one, which button, and the text of a prompt.
   s.add("ui:dialog", fields({{"id", T::Number, true}, {"button", T::Number, true}, {"value", T::String, false}}));
   s.add("nav:back", fields({}));

@@ -278,12 +278,16 @@
   var panelFilter = document.getElementById("panel-filter");
   var panelFoot = document.getElementById("panel-foot");
   var panelData = null;
-  var TITLES = { bookmarks: "Bookmarks", history: "History", downloads: "Downloads" };
+  var TITLES = { bookmarks: "Bookmarks", history: "History", downloads: "Downloads", extensions: "Extensions", performance: "Performance", workspaces: "Workspaces" };
   function sizeText(bytes) {
     if (!bytes) return "";
     if (bytes < 1024) return bytes + " B";
     if (bytes < 1048576) return Math.round(bytes / 1024) + " KB";
     return (bytes / 1048576).toFixed(1) + " MB";
+  }
+  var PERF_STATES = { front: "In front", running: "Running in the background", pinned: "Pinned, never sleeps", asleep: "Asleep - wakes when opened", internal: "Browser page" };
+  function extensionDetail(item) {
+    return (item.enabled ? "On" : "Off") + (item.bundled ? " - bundled" : "") + (item.version ? " - v" + item.version : "") + (item.error ? " - " + item.error : "");
   }
   function paintPanel() {
     clear(panelList);
@@ -293,16 +297,21 @@
     var items = panelData.items || [], shown = 0;
     for (var i = 0; i < items.length && shown < 40; i++) {
       var item = items[i];
-      var label = kind === "downloads" ? item.filename : item.title;
-      var detail = kind === "downloads" ? item.state + (item.total ? " " + sizeText(item.received) + " of " + sizeText(item.total) : "") : item.url;
+      var label = kind === "downloads" ? item.filename : kind === "extensions" || kind === "workspaces" ? item.name : item.title;
+      var detail = kind === "downloads" ? item.state + (item.total ? " " + sizeText(item.received) + " of " + sizeText(item.total) : "") : kind === "extensions" ? extensionDetail(item) : kind === "performance" ? PERF_STATES[item.state] || item.state : kind === "workspaces" ? item.tabs + (item.tabs === 1 ? " tab" : " tabs") + (item.current ? " - current" : "") : item.url;
       if (needle && ((label || "") + " " + (detail || "")).toLowerCase().indexOf(needle) < 0) continue;
       var row = el("div", "prow");
       row.setAttribute("data-kind", kind);
-      if (kind === "downloads") row.setAttribute("data-id", String(item.id));
+      if (kind === "downloads" || kind === "performance") row.setAttribute("data-id", String(item.id));
+      else if (kind === "extensions") { row.setAttribute("data-id", item.id); row.setAttribute("data-on", item.enabled ? "1" : "0"); }
+      else if (kind === "workspaces") { row.setAttribute("data-index", String(item.index)); row.setAttribute("data-current", item.current ? "1" : "0"); }
       else row.setAttribute("data-url", item.url);
       row.appendChild(el("span", "t", label || detail));
       row.appendChild(el("span", "u", detail || ""));
-      if (kind !== "history") row.appendChild(el("button", "rm", "×"));
+      if (kind === "extensions") row.appendChild(el("button", "tg", item.enabled ? "On" : "Off"));
+      else if (kind === "performance") { if (item.state === "running") row.appendChild(el("button", "tg", "Sleep")); }
+      else if (kind === "workspaces") { if (!item.current) row.appendChild(el("button", "rm", "×")); }
+      else if (kind !== "history") row.appendChild(el("button", "rm", "×"));
       if (kind === "downloads" && item.total > 0 && item.received < item.total) {
         // A bar for a download still arriving: a track with a fill as wide as the share received.
         var track = el("div", "bar"), fill = el("div", "fill");
@@ -313,11 +322,14 @@
       panelList.appendChild(row);
       shown++;
     }
+    if (kind === "extensions" && panelData.blocked) panelList.appendChild(el("div", "pempty", "Extensions do not run in a private window."));
+    if (kind === "performance") panelList.appendChild(el("div", "pempty", panelData.sleepMinutes > 0 ? "Idle tabs sleep after " + panelData.sleepMinutes + " minutes. Pinned tabs never do." : "Idle tabs do not sleep. Turn that on in Settings."));
     if (!shown) {
-      panelList.appendChild(el("div", "pempty", kind === "downloads" ? "No downloads yet." : needle ? "Nothing matches." : kind === "bookmarks" ? "No bookmarks yet. The star in the address bar saves the page you are on." : "No history yet."));
+      panelList.appendChild(el("div", "pempty", kind === "extensions" ? "No extensions are installed. Add one from Settings." : kind === "downloads" ? "No downloads yet." : needle ? "Nothing matches." : kind === "bookmarks" ? "No bookmarks yet. The star in the address bar saves the page you are on." : "No history yet."));
     }
     if (kind === "history" && items.length) panelFoot.appendChild(el("button", "", "Clear history"));
     if (kind === "downloads" && items.length) panelFoot.appendChild(el("button", "", "Clear finished"));
+    if (kind === "workspaces") panelFoot.appendChild(el("button", "", "New workspace"));
   }
   function renderPanel(panel) {
     if (!panelEl) return;
@@ -348,6 +360,23 @@
     var removing = false, node = event.target;
     while (node && node !== row) { if (node.className === "rm") removing = true; node = node.parentNode; }
     var kind = row.getAttribute("data-kind");
+    var toggling = false;
+    node = event.target;
+    while (node && node !== row) { if (node.className === "tg") toggling = true; node = node.parentNode; }
+    if (kind === "extensions") {
+      if (toggling) bridge("extensions", "toggle", { id: row.getAttribute("data-id"), enabled: row.getAttribute("data-on") !== "1" });
+      return;
+    }
+    if (kind === "performance") {
+      if (toggling) bridge("perf", "sleep", { id: Number(row.getAttribute("data-id")) });
+      return;
+    }
+    if (kind === "workspaces") {
+      var index = Number(row.getAttribute("data-index"));
+      if (removing) bridge("ws", "close", { index: index });
+      else if (row.getAttribute("data-current") !== "1") bridge("ws", "open", { index: index });
+      return;
+    }
     if (kind === "downloads") {
       var id = Number(row.getAttribute("data-id"));
       if (removing) bridge("downloads", "remove", { id: id });
@@ -365,6 +394,8 @@
       });
     } else if (panelData.kind === "downloads") {
       bridge("downloads", "clear");
+    } else if (panelData.kind === "workspaces") {
+      bridge("ws", "new");
     }
   });
   document.getElementById("bookmark").addEventListener("click", function () { bridge("bookmarks", "add"); });

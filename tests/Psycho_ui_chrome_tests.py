@@ -29,6 +29,9 @@ psycho.bookmarks={add:function(){document.title="bm-add";},remove:function(a){do
 psycho.history={clear:function(){document.title="history-clear";}};
 psycho.palette={run:function(a){document.title="palette-run:"+a.id;},close:function(){document.title="palette-close";}};
 psycho.find={step:function(a){document.title="find-step:"+a.delta;},close:function(){document.title="find-close";}};
+psycho.extensions={toggle:function(a){document.title="ext:"+a.id+":"+a.enabled;}};
+psycho.perf={sleep:function(a){document.title="sleep:"+a.id;}};
+psycho.ws={open:function(a){document.title="ws-open:"+a.index;},"new":function(){document.title="ws-new";},close:function(a){document.title="ws-close:"+a.index;}};
 psycho.downloads={remove:function(a){document.title="dl-remove:"+a.id;},clear:function(){document.title="dl-clear";}};
 psychoChromeState({tabs:[{id:1,title:"One"},{id:2,title:"Two"}],activeId:2,address:"https://example.test/",canBack:true,canForward:false,status:"Loading https://example.test/"});
 """
@@ -161,6 +164,36 @@ class ChromeFrame(unittest.TestCase):
         self.assertEqual(bar["box"]["w"], 250)
         self.assertEqual(fill["box"]["w"], 62.5)  # 25% of 250
         self.assertEqual(run(("--inspect", ".bar"), tail=self.panel_state("downloads", items[1:]))["inspected"][0].get("found"), False)
+
+    def press_in(self, tail, selector, nth=0):
+        # --inspect reports the first match, and panel rows are 48px apart, so the nth row is found by offset.
+        box = run(("--inspect", selector), tail=tail)["inspected"][0]["box"]
+        return run(("--action", f"click:{int(box['x'] + box['w'] / 2)},{int(box['y'] + box['h'] / 2) + 48 * nth}"), tail=tail)
+
+    def test_extensions_panel_lists_and_toggles(self):
+        items = [{"id": "ext.a", "name": "Alpha", "version": "1.0", "enabled": True, "bundled": False, "error": ""},
+                 {"id": "ext.b", "name": "Beta", "version": "2.0", "enabled": False, "bundled": True, "error": "needs a restart"}]
+        tail = self.panel_state("extensions", items)
+        self.assertEqual(self.press_in(tail, ".prow .tg", 0)["title"], "ext:ext.a:false")
+        self.assertEqual(self.press_in(tail, ".prow .tg", 1)["title"], "ext:ext.b:true")
+        out = run(tail=tail + 'document.title=document.querySelectorAll(".prow .u")[1].textContent;')
+        self.assertEqual(out["title"], "Off - bundled - v2.0 - needs a restart")
+
+    def test_performance_panel_offers_sleep_only_for_running_tabs(self):
+        items = [{"id": 1, "title": "Front", "state": "front"}, {"id": 2, "title": "Back", "state": "running"},
+                 {"id": 3, "title": "Pinned", "state": "pinned"}, {"id": 4, "title": "Napping", "state": "asleep"}]
+        tail = self.panel_state("performance", items)
+        out = run(tail=tail + 'document.title=String(document.querySelectorAll(".prow .tg").length);')
+        self.assertEqual(out["title"], "1")
+        self.assertEqual(self.press_in(tail, ".prow .tg")["title"], "sleep:2")
+
+    def test_workspaces_panel_opens_creates_and_closes(self):
+        items = [{"index": 0, "name": "Main", "tabs": 3, "current": True}, {"index": 1, "name": "Work", "tabs": 1, "current": False}]
+        tail = self.panel_state("workspaces", items)
+        first = run(("--inspect", ".prow"), tail=tail)["inspected"][0]["box"]
+        self.assertEqual(run(("--action", f"click:{int(first['x']) + 40},{int(first['y']) + 12 + 48}"), tail=tail)["title"], "ws-open:1")
+        self.assertEqual(self.press_in(tail, ".prow .rm")["title"], "ws-close:1")
+        self.assertEqual(self.press_in(tail, "#panel-foot button")["title"], "ws-new")
 
     def test_panel_filter_narrows_the_rows(self):
         tail = self.panel_state("history", self.HISTORY)

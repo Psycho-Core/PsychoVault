@@ -1696,7 +1696,15 @@ int run_runtime_bus_tests(int &shared) {
                                                       other_log.push_back(e4);
                                                     }});
       RT_CHECK(other_host.page_world().run("typeof psycho.vault").string == "undefined");
-      RT_CHECK(other_host.page_world().run("typeof psycho.extensions").string == "undefined");
+      if (std::string(other) == "newtab") {
+        RT_CHECK(other_host.page_world().run("typeof psycho.extensions").string == "undefined");
+      } else {
+        // The frame's Extensions panel may switch an extension on or off, and nothing more.
+        RT_CHECK(other_host.page_world().run("typeof psycho.extensions.toggle").string == "function");
+        RT_CHECK(other_host.page_world().run("typeof psycho.extensions.list").string == "undefined");
+        RT_CHECK(other_host.page_world().run("typeof psycho.extensions.remove").string == "undefined");
+        RT_CHECK(other_host.page_world().run("typeof psycho.extensions.addfolder").string == "undefined");
+      }
     }
     // Extension-less means exactly that: these namespaces do not exist here.
     RT_CHECK(shell.page_world().run("typeof psycho.proton").string == "undefined");

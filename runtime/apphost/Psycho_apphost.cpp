@@ -82,6 +82,8 @@ const ExposedEntry kChromeProfile[] = {
     {Channel::Nav, "nav:go"},      {Channel::Nav, "nav:back"},     {Channel::Nav, "nav:forward"},
     {Channel::Nav, "nav:reload"},  {Channel::Nav, "nav:home"},
     {Channel::Win, "win:minimize"}, {Channel::Win, "win:maximize"}, {Channel::Win, "win:close"},
+    {Channel::Extensions, "extensions:toggle"}, {Channel::Perf, "perf:sleep"},
+    {Channel::Ws, "ws:open"}, {Channel::Ws, "ws:new"}, {Channel::Ws, "ws:close"},
     {Channel::Lifecycle, "lifecycle:ping"},
 };
 

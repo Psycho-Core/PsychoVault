@@ -1295,7 +1295,9 @@ struct Browser {
   // The icon rail is 44px wide unless Settings > Appearance > Hide the sidebar collapses it.
   int rail_width() const { return profile.hide_sidebar ? 0 : 44; }
   bool last_rail_hidden = false;
-  bool chrome_panel_open() const { return chrome_enabled && (panel_bookmarks || panel_history || panel_downloads); }
+  // The frame's other panels ("extensions", "performance", "workspaces"); empty when none is open.
+  std::string panel_other;
+  bool chrome_panel_open() const { return chrome_enabled && (panel_bookmarks || panel_history || panel_downloads || !panel_other.empty()); }
   bool last_panel_open = false;
   void layout_content() {
     const int panel_width = chrome_panel_open() ? 330 : 0;
@@ -1789,13 +1791,16 @@ struct Browser {
       if (!(starts(tab.url, "http://") || starts(tab.url, "https://"))) continue;
       if (tab.last_used == 0) { tab.last_used = now; continue; }
       if (now - tab.last_used < ULONGLONG(minutes) * 60000) continue;
-      stop_session(tab);
-      tab.started = false;
-      tab.frame = Json();
-      tab.images.clear();
-      tab.image_bytes = 0;
-      tab.paint_sig = 0;
+      sleep_tab(tab);
     }
+  }
+  void sleep_tab(Tab &tab) {
+    stop_session(tab);
+    tab.started = false;
+    tab.frame = Json();
+    tab.images.clear();
+    tab.image_bytes = 0;
+    tab.paint_sig = 0;
   }
   void reap_sessions() {
     for (auto it = retired_sessions.begin(); it != retired_sessions.end();) {
@@ -3122,9 +3127,32 @@ struct Browser {
     if (chrome_panel_open()) {
       Json panel = Json::make_object();
       Json items = Json::make_array();
-      const std::string kind = panel_bookmarks ? "bookmarks" : panel_history ? "history" : "downloads";
+      const std::string kind = !panel_other.empty() ? panel_other : panel_bookmarks ? "bookmarks" : panel_history ? "history" : "downloads";
       panel.set("kind", kind);
-      if (kind == "bookmarks") {
+      if (kind == "extensions") {
+        items = build_extensions();
+        panel.set("blocked", Json(!extension_workers_allowed()));
+      } else if (kind == "performance") {
+        for (size_t i = 0; i < tabs.size() && items.array.size() < 100; ++i) {
+          const Tab &tab = tabs[i];
+          Json item = Json::make_object();
+          item.set("id", double(tab.id));
+          item.set("title", (tab.title.empty() ? tab.url : tab.title).substr(0, 120));
+          const bool web = starts(tab.url, "http://") || starts(tab.url, "https://");
+          item.set("state", int(i) == active ? "front" : !web ? "internal" : tab.session ? (tab.pinned ? "pinned" : "running") : "asleep");
+          items.array.push_back(std::move(item));
+        }
+        panel.set("sleepMinutes", double(profile.sleep_tabs_minutes));
+      } else if (kind == "workspaces") {
+        for (size_t i = 0; i < workspaces.size(); ++i) {
+          Json item = Json::make_object();
+          item.set("index", double(i));
+          item.set("name", workspaces[i].name.substr(0, 60));
+          item.set("tabs", double(i == workspace ? tabs.size() : workspaces[i].tabs.size()));
+          item.set("current", Json(i == workspace));
+          items.array.push_back(std::move(item));
+        }
+      } else if (kind == "bookmarks") {
         for (const Bookmark &mark : profile.bookmarks) {
           if (items.array.size() >= 300) break;
           Json item = Json::make_object();
@@ -3258,7 +3286,8 @@ struct Browser {
       }
       if (method == "ui:panel") {
         const std::string kind = payload.str("kind");
-        if (!kind.empty() && kind != "bookmarks" && kind != "history" && kind != "downloads") {
+        if (!kind.empty() && kind != "bookmarks" && kind != "history" && kind != "downloads" && kind != "extensions" &&
+            kind != "performance" && kind != "workspaces") {
           bridge_error = {"bridge.panel.kind", "unknown panel"};
           return false;
         }
@@ -3358,6 +3387,24 @@ struct Browser {
       panel_history = kind == "history";
       panel_downloads = kind == "downloads";
       panel_workspaces = false;
+      panel_other = (kind == "extensions" || kind == "performance" || kind == "workspaces") ? kind : std::string();
+    } else if (method == "extensions:toggle") {
+      BridgeTask forwarded;
+      forwarded.tab = task.tab;
+      forwarded.method = method;
+      forwarded.payload = task.payload;
+      settings_task(forwarded);
+      publish_settings();
+    } else if (method == "perf:sleep") {
+      const int id = int(task.payload.num("id", 0));
+      for (size_t i = 0; i < tabs.size(); ++i)
+        if (tabs[i].id == id && int(i) != active) sleep_tab(tabs[i]);
+    } else if (method == "ws:open") {
+      workspace_switch(size_t(std::max(0.0, task.payload.num("index", 0))));
+    } else if (method == "ws:new") {
+      workspace_new("");
+    } else if (method == "ws:close") {
+      workspace_close(int(task.payload.num("index", -1)));
     } else if (method == "palette:run") {
       run_command(task.payload.str("id"));
     } else if (method == "palette:close") {
@@ -4892,10 +4939,10 @@ struct Browser {
     else if (id == "palette-reload") navigate(current().url, false);
     else if (id == "palette-stop") stop();
     else if (id == "palette-home") navigate(profile.home_page);
-    else if (id == "palette-bookmarks") { panel_bookmarks = true; panel_history = panel_downloads = panel_workspaces = false; }
-    else if (id == "palette-history") { panel_history = true; panel_bookmarks = panel_downloads = panel_workspaces = false; }
-    else if (id == "palette-downloads") { panel_downloads = true; panel_bookmarks = panel_history = panel_workspaces = false; }
-    else if (id == "palette-workspaces") { panel_workspaces = true; panel_bookmarks = panel_history = panel_downloads = false; }
+    else if (id == "palette-bookmarks") { panel_bookmarks = true; panel_history = panel_downloads = panel_workspaces = false; panel_other.clear(); }
+    else if (id == "palette-history") { panel_history = true; panel_bookmarks = panel_downloads = panel_workspaces = false; panel_other.clear(); }
+    else if (id == "palette-downloads") { panel_downloads = true; panel_bookmarks = panel_history = panel_workspaces = false; panel_other.clear(); }
+    else if (id == "palette-workspaces") { panel_bookmarks = panel_history = panel_downloads = panel_workspaces = false; panel_other = "workspaces"; }
     else if (id == "palette-settings") navigate("psychovault://settings");
     else if (id == "palette-find") open_find();
     else if (id == "palette-zoom-in") set_zoom(current().zoom * 1.1);
