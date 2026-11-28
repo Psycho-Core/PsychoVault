@@ -99,7 +99,9 @@ js::Value PreloadBridge::trampoline(js::Runtime &page_world,
     Json reply;
     Error error;
     if (!dispatch(method, payload, reply, error))
-      throw js::JsError{js::Value(std::string("BridgeError: ") + error.code)};
+      // The code names the refusal; the message, when the broker gave one, says why, so a page can show it.
+      throw js::JsError{js::Value(std::string("BridgeError: ") + error.code +
+                                  (error.message.empty() ? std::string() : ": " + error.message))};
     return json_to_value(page_world, reply);
   });
 }

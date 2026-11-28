@@ -7,6 +7,7 @@
 #include "../platform/Psycho_transport.hpp"
 #include "../platform/Psycho_sandbox.hpp"
 #include "../runtime/settings/Psycho_settings.hpp"
+#include "../runtime/vault/Psycho_vault_service.hpp"
 #include "../platform/Psycho_vault.hpp"
 #include "../platform/Psycho_spell.hpp"
 #include "Psycho_image_fixtures.hpp"
@@ -2903,6 +2904,59 @@ int main() {
     local_scheme.host = "";
     local_scheme.path = "/etc/passwd";
     CHECK(policy_blocks(policy, local_scheme, reason));
+  }
+  // ---- S088: the vault service creates, unlocks, locks, auto-locks and keeps entries; a list never carries
+  // a password; a wrong passphrase reveals nothing; the file it writes opens again.
+  {
+    std::string disk;
+    bool have_disk = false;
+    uint64_t clock = 1000;
+    rt::VaultService::Seams seams;
+    seams.read = [&](std::string &blob) { if (!have_disk) return false; blob = disk; return true; };
+    seams.write = [&](const std::string &blob, std::string &) { disk = blob; have_disk = true; return true; };
+    seams.now_ms = [&] { return clock; };
+    rt::Error e;
+    {
+      rt::VaultService vault(seams);
+      CHECK(!vault.status().flag("exists") && vault.status().flag("locked"));
+      CHECK(!vault.unlock("whatever-pass", e) && e.code == "vault.missing");
+      CHECK(!vault.create("short", e) && e.code == "vault.passphrase");
+      CHECK(vault.create("correct horse", e) && have_disk);
+      CHECK(!vault.status().flag("locked") && vault.status().flag("exists"));
+      CHECK(!vault.create("another passphrase", e) && e.code == "vault.exists");
+      CHECK(vault.add("example.test", "me", "s3cret!", "note", e));
+      CHECK(!vault.add("example.test", "me", "other", "", e) && e.code == "vault.duplicate");
+      CHECK(!vault.add("bad.test", "me", "pa | ss", "", e) && e.code == "vault.entry");
+      CHECK(!vault.add("", "me", "pass", "", e) && e.code == "vault.entry");
+      Json entries;
+      CHECK(vault.list(entries, e) && entries.array.size() == 1 && entries.array[0].str("site") == "example.test" &&
+            entries.array[0].str("user") == "me" && entries.dump().find("s3cret") == std::string::npos);
+      std::string password;
+      CHECK(vault.reveal("example.test", password, e) && password == "s3cret!");
+      CHECK(!vault.reveal("nowhere.test", password, e) && e.code == "vault.missing-entry");
+      // Idle auto-lock: not yet, then due.
+      clock += 4 * 60000;
+      CHECK(!vault.auto_lock(5) && !vault.status().flag("locked"));
+      clock += 2 * 60000;
+      CHECK(vault.auto_lock(5) && vault.status().flag("locked"));
+      CHECK(!vault.list(entries, e) && e.code == "vault.locked");
+      CHECK(!vault.reveal("example.test", password, e) && e.code == "vault.locked");
+      CHECK(!vault.unlock("wrong passphrase", e) && e.code == "vault.passphrase" && vault.status().flag("locked"));
+      CHECK(vault.unlock("correct horse", e) && vault.status().num("count") == 1);
+      CHECK(vault.auto_lock(0) == false);  // 0 minutes means never
+    }
+    // A new service over the same file sees the same entry after the right passphrase.
+    {
+      rt::VaultService again(seams);
+      CHECK(again.status().flag("exists") && again.status().flag("locked"));
+      CHECK(again.unlock("correct horse", e));
+      std::string password;
+      CHECK(again.reveal("example.test", password, e) && password == "s3cret!");
+      CHECK(again.remove("example.test", e) && again.status().num("count") == 0);
+      CHECK(!again.remove("example.test", e) && e.code == "vault.missing-entry");
+    }
+    const std::string one = rt::VaultService::generate(), two = rt::VaultService::generate();
+    CHECK(one.size() == 20 && one != two && one.find_first_of("lIO01 ") == std::string::npos);
   }
   // ---- S088: the settings service validates against the catalog, stores in a dedicated profile
   // field or the extra-settings bag, and everything it stored survives a save and a reopen.

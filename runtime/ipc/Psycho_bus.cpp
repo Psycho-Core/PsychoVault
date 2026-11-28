@@ -233,6 +233,18 @@ Schemas Schemas::stock() {
   s.add("settings:set", fields({{"key", T::String, true}, {"value", T::String, true}}));
   s.add("settings:list", fields({}));
   s.add("vault:status", fields({}));
+  // The password vault, reachable only from the settings page. A list carries no password; reveal and copy
+  // answer one entry at a time.
+  s.add("vault:create", fields({{"passphrase", T::String, true}}));
+  s.add("vault:unlock", fields({{"passphrase", T::String, true}}));
+  s.add("vault:lock", fields({}));
+  s.add("vault:list", fields({}));
+  s.add("vault:add", fields({{"site", T::String, true}, {"user", T::String, false}, {"pass", T::String, true},
+                             {"note", T::String, false}}));
+  s.add("vault:remove", fields({{"site", T::String, true}}));
+  s.add("vault:reveal", fields({{"site", T::String, true}}));
+  s.add("vault:copy", fields({{"site", T::String, true}}));
+  s.add("vault:generate", fields({}));
   s.add("spell:status", fields({}));
   return s;
 }

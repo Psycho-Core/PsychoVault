@@ -12,8 +12,23 @@ namespace {
 const ExposedEntry kShellProfile[] = {
     {Channel::Settings, "settings:get"}, {Channel::Settings, "settings:set"},
     {Channel::Settings, "settings:list"}, {Channel::History, "history:list"},
+    {Channel::Tab, "tab:new"},
+    {Channel::Tab, "tab:activate"},      {Channel::Internal, "internal:list"},
+    {Channel::Lifecycle, "lifecycle:ping"},
+};
+
+// The settings page alone: everything a shell page gets, plus clearing history and the password vault.
+// No other page, shell or web, has the vault.
+const ExposedEntry kSettingsProfile[] = {
+    {Channel::Settings, "settings:get"}, {Channel::Settings, "settings:set"},
+    {Channel::Settings, "settings:list"}, {Channel::History, "history:list"},
     {Channel::History, "history:clear"},  {Channel::Tab, "tab:new"},
     {Channel::Tab, "tab:activate"},      {Channel::Internal, "internal:list"},
+    {Channel::Vault, "vault:status"},    {Channel::Vault, "vault:create"},
+    {Channel::Vault, "vault:unlock"},    {Channel::Vault, "vault:lock"},
+    {Channel::Vault, "vault:list"},      {Channel::Vault, "vault:add"},
+    {Channel::Vault, "vault:remove"},    {Channel::Vault, "vault:reveal"},
+    {Channel::Vault, "vault:copy"},      {Channel::Vault, "vault:generate"},
     {Channel::Lifecycle, "lifecycle:ping"},
 };
 
@@ -100,6 +115,9 @@ AppHost::AppHost(int tab_id, const InternalPage *page, Seams seams,
       } else if (page->name == "newtab") {
         profile = kNewTabProfile;
         count = sizeof(kNewTabProfile) / sizeof(kNewTabProfile[0]);
+      } else if (page->name == "settings" && policy_ != RendererPolicy::Private) {
+        profile = kSettingsProfile;
+        count = sizeof(kSettingsProfile) / sizeof(kSettingsProfile[0]);
       } else if (policy_ == RendererPolicy::Private) {
         profile = kPrivateShellProfile;
         count = sizeof(kPrivateShellProfile) / sizeof(kPrivateShellProfile[0]);

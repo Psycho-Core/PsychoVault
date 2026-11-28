@@ -15,6 +15,7 @@
 #include "../platform/Psycho_sandbox.hpp"
 #include "../runtime/commandline/Psycho_commandline.hpp"
 #include "../runtime/settings/Psycho_settings.hpp"
+#include "../runtime/vault/Psycho_vault_service.hpp"
 #include "../runtime/diagnostics/Psycho_diagnostics_page.hpp"
 #include "../runtime/content/Psycho_content.hpp"
 #include "../runtime/crash/Psycho_crash.hpp"
@@ -1131,6 +1132,22 @@ struct Browser {
     profile =
         Profile::open(directory.empty() ? default_profile_directory() : directory, private_mode);
     profile_error = profile.error;
+    {
+      // The vault's file sits in the profile; the service does the reading, writing and locking.
+      const std::string vault_file = profile.directory + "/vault.bin";
+      rt::VaultService::Seams seams;
+      seams.read = [vault_file](std::string &blob) {
+        const DWORD attributes = GetFileAttributesW(utf16_of(vault_file).c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) return false;
+        try { blob = read_text_file(vault_file); } catch (const std::exception &) { return false; }
+        return true;
+      };
+      seams.write = [vault_file](const std::string &blob, std::string &error) {
+        return write_file_atomic(vault_file, blob, error);
+      };
+      seams.now_ms = [] { return uint64_t(GetTickCount64()); };
+      vault_service = std::make_shared<rt::VaultService>(std::move(seams));
+    }
     spell.builtin_enabled = profile.spell_builtin;
     spell.load_builtin_embedded();
     spell.set_users(profile.user_words);
@@ -1187,40 +1204,6 @@ struct Browser {
       std::fill(text.begin(), text.end(), '\0');
     text.clear();
   }
-  std::string vault_path() const { return profile.directory + "/vault.bin"; }
-  bool vault_exists() const {
-    DWORD attr = GetFileAttributesW(utf16_of(vault_path()).c_str());
-    return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0;
-  }
-  bool vault_save() {
-    std::string error;
-    pv::Bytes blob = vault.seal();
-    std::string data(reinterpret_cast<const char *>(blob.data()), blob.size());
-    if (!write_file_atomic(vault_path(), data, error)) {
-      status = "I could not save my vault: " + error;
-      return false;
-    }
-    vault.dirty = false;
-    return true;
-  }
-  void vault_wipe() {
-    std::fill(vault.key.begin(), vault.key.end(), uint8_t(0));
-    for (auto &entry : vault.entries)
-      scrub(entry.second);
-    vault.entries.clear();
-  }
-  void vault_lock() {
-    if (!vault_open)
-      return;
-    vault_wipe();
-    vault_open = false;
-    vault_unlocked_at = 0;
-    if (hwnd)
-      InvalidateRect(hwnd, nullptr, FALSE);
-    status = "My vault is locked";
-  }
-  // A vault row is "site | user | password | note"; copying hands over only
-  // the password segment, never the whole row.
   std::string spell_extra_path() const { return profile.directory + "/owned-spell-extra.txt"; }
   void spell_reload_source() {
     try {
@@ -1230,16 +1213,6 @@ struct Browser {
     }
   }
   void spell_reload_users() { spell.set_users(profile.user_words); }
-
-  static std::string vault_password_of(const std::string &row) {
-    size_t first = row.find(" | ");
-    size_t second = first == std::string::npos ? first : row.find(" | ", first + 3);
-    if (second == std::string::npos)
-      return row;
-    size_t third = row.find(" | ", second + 3);
-    return row.substr(second + 3,
-                      third == std::string::npos ? third : third - second - 3);
-  }
 
   bool save_profile() {
     profile.cookies = cookies.to_json();
@@ -1856,7 +1829,7 @@ struct Browser {
     session->profile_state_mutex = &profile_state_mutex;
     session->farm = renderer_farm;
     publish_settings();
-    session->bridge_invoke = [window = hwnd, source_tab = tab.id, hub = settings_hub,
+    session->bridge_invoke = [window = hwnd, source_tab = tab.id, hub = settings_hub, vault = vault_service,
                               settings_origin = settings_page_url(target) && !private_mode](
         rt::Channel channel, const std::string &method, const Json &payload,
         Json &reply, rt::Error &bridge_error) {
@@ -1902,6 +1875,53 @@ struct Browser {
         }
         task.release();
         reply = Json::make_object();
+        reply.set("queued", Json(true));
+        return true;
+      }
+      if (channel == rt::Channel::Vault) {
+        // The vault is the settings page's alone, and never reachable from a private window.
+        if (!settings_origin || !vault || !schemas.validate(method, payload, bridge_error)) {
+          if (bridge_error.code.empty()) bridge_error = {"bridge.vault.origin", "the vault is not available to this page"};
+          return false;
+        }
+        rt::Error failure;
+        reply = Json::make_object();
+        auto done = [&](bool ok) {
+          if (!ok) bridge_error = failure;
+          return ok;
+        };
+        if (method == "vault:status") { reply = vault->status(); return true; }
+        if (method == "vault:create") return done(vault->create(payload.str("passphrase"), failure)) && (reply.set("ok", Json(true)), true);
+        if (method == "vault:unlock") return done(vault->unlock(payload.str("passphrase"), failure)) && (reply.set("ok", Json(true)), true);
+        if (method == "vault:lock") { vault->lock(); reply.set("ok", Json(true)); return true; }
+        if (method == "vault:list") {
+          Json entries;
+          if (!done(vault->list(entries, failure))) return false;
+          reply.set("entries", std::move(entries));
+          return true;
+        }
+        if (method == "vault:add")
+          return done(vault->add(payload.str("site"), payload.str("user"), payload.str("pass"), payload.str("note"), failure)) &&
+                 (reply.set("ok", Json(true)), true);
+        if (method == "vault:remove") return done(vault->remove(payload.str("site"), failure)) && (reply.set("ok", Json(true)), true);
+        if (method == "vault:reveal") {
+          std::string password;
+          if (!done(vault->reveal(payload.str("site"), password, failure))) return false;
+          reply.set("password", Json(password));
+          std::fill(password.begin(), password.end(), '\0');
+          return true;
+        }
+        if (method == "vault:generate") { reply.set("password", Json(rt::VaultService::generate())); return true; }
+        // vault:copy: the window puts the password on the clipboard and clears it later.
+        auto task = std::make_unique<BridgeTask>();
+        task->tab = source_tab;
+        task->method = method;
+        task->payload = payload;
+        if (!PostMessageW(window, WM_BRIDGE, 0, reinterpret_cast<LPARAM>(task.get()))) {
+          bridge_error = {"bridge.queue.failed", "the browser window refused the request"};
+          return false;
+        }
+        task.release();
         reply.set("queued", Json(true));
         return true;
       }
@@ -2136,9 +2156,9 @@ struct Browser {
   std::string editing_setting;
   // My vault lives in RAM only while vault_open, and every secret byte is
   // wiped the moment I lock. The passphrase itself is never stored anywhere.
-  pv::Vault vault;
-  bool vault_open = false;
-  DWORD vault_unlocked_at = 0;
+  // The password vault: one thread-safe owner (see runtime/vault); the settings page reaches it only
+  // through the bridge, and only from the settings origin.
+  std::shared_ptr<rt::VaultService> vault_service;
   // My spelling engine: the embedded starter vocabulary, words from whatever
   // dictionary source I pointed it at, and the words I taught it myself.
   Spell spell;
@@ -2281,56 +2301,6 @@ struct Browser {
         save_profile();
         status = "My vault locks " + std::to_string(minutes) + " minutes after I unlock it";
       }
-    } else if (key == "vaultCreate") {
-      if (value.size() < 8) {
-        status = "A vault passphrase needs at least 8 characters";
-      } else if (vault_exists()) {
-        status = "A vault already exists - unlock it instead";
-      } else {
-        try {
-          vault = pv::Vault::create(value);
-          vault_open = true;
-          vault_unlocked_at = GetTickCount();
-          vault_save();
-          status = "My vault is created and unlocked";
-        } catch (const std::exception &e) {
-          status = std::string("Vault failed: ") + e.what();
-        }
-      }
-      scrub(value);
-      scrub(address);
-    } else if (key == "vaultUnlock") {
-      try {
-        std::string raw = read_text_file(vault_path());
-        pv::Bytes blob(raw.begin(), raw.end());
-        vault = pv::Vault::open(blob, value);
-        vault_open = true;
-        vault_unlocked_at = GetTickCount();
-        status = "My vault is unlocked";
-      } catch (const std::runtime_error &) {
-        status = "That passphrase does not match my vault";
-      }
-      scrub(value);
-      scrub(address);
-    } else if (key == "vaultAdd") {
-      if (!vault_open) {
-        status = "Unlock my vault first";
-      } else {
-        size_t pipe = value.find(" | ");
-        std::string name = pipe == std::string::npos ? value : value.substr(0, pipe);
-        if (name.empty() || pipe == std::string::npos) {
-          status = "Use the row form: site | user | password | note";
-        } else if (vault.entries.count(name)) {
-          status = "I already keep a login named " + name;
-        } else {
-          vault.entries[name] = value;
-          vault.dirty = true;
-          if (vault_save())
-            status = "Saved " + name + " in my vault";
-        }
-      }
-      scrub(value);
-      scrub(address);
     } else if (key == "spellSource") {
       profile.spell_dict_source = value;
       save_profile();
@@ -3965,46 +3935,6 @@ struct Browser {
           begin_setting_edit("panicUrl", profile.panic_url);
         } else if (h.action == "setting-vault-lock") {
           begin_setting_edit("vaultLockMin", std::to_string(profile.vault_lock_minutes));
-        } else if (h.action == "vault-create" || h.action == "vault-unlock") {
-          begin_setting_edit(h.action == "vault-create" ? "vaultCreate" : "vaultUnlock", "");
-        } else if (h.action == "vault-add") {
-          begin_setting_edit("vaultAdd", "");
-        } else if (h.action == "vault-lock") {
-          vault_lock();
-        } else if (h.action == "vault-copy") {
-          if (vault_open && h.index >= 0 && size_t(h.index) < vault.entries.size()) {
-            auto it = vault.entries.begin();
-            std::advance(it, h.index);
-            std::string name = it->first;
-            std::string secret = vault_password_of(it->second);
-            write_clipboard(secret);
-            scrub(secret);
-            status = "Password for " + name + " is on my clipboard";
-          }
-        } else if (h.action == "vault-remove") {
-          if (vault_open && h.index >= 0 && size_t(h.index) < vault.entries.size()) {
-            auto it = vault.entries.begin();
-            std::advance(it, h.index);
-            std::string name = it->first;
-            std::fill(it->second.begin(), it->second.end(), '\0');
-            vault.entries.erase(it);
-            vault.dirty = true;
-            if (vault_save())
-              status = "Removed " + name + " from my vault";
-            InvalidateRect(hwnd, nullptr, FALSE);
-          }
-        } else if (h.action == "vault-generate") {
-          // 64 characters is one clean index per random byte, so every
-          // character is equally likely and no modulo leaning creeps in.
-          static const char alphabet[] =
-              "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%^&*";
-          auto rnd = random_bytes(20);
-          std::string fresh;
-          for (uint8_t byte : rnd)
-            fresh.push_back(alphabet[byte & 63]);
-          write_clipboard(fresh);
-          scrub(fresh);
-          status = "Fresh password on my clipboard - paste it into my add row";
         } else if (h.action == "workspaces") {
           panel_workspaces = !panel_workspaces;
           panel_bookmarks = panel_history = panel_downloads = false;
@@ -4667,6 +4597,34 @@ struct Browser {
     else if (id == "palette-panic") panic();
     InvalidateRect(hwnd, nullptr, FALSE);
   }
+  // Copying a vault password: it goes to the clipboard, and a minute later the clipboard is emptied unless
+  // something else has been copied since (the clipboard sequence number is how I know).
+  DWORD vault_clipboard_sequence = 0;
+  ULONGLONG vault_clipboard_clear_at = 0;
+  void vault_copy(const std::string &site) {
+    if (!vault_service) return;
+    std::string password;
+    rt::Error failure;
+    if (!vault_service->reveal(site, password, failure)) {
+      status = failure.message;
+      return;
+    }
+    write_clipboard(password);
+    std::fill(password.begin(), password.end(), '\0');
+    vault_clipboard_sequence = GetClipboardSequenceNumber();
+    vault_clipboard_clear_at = GetTickCount64() + 60000;
+    status = "Password for " + site + " is on the clipboard for a minute";
+    InvalidateRect(hwnd, nullptr, FALSE);
+  }
+  void vault_clipboard_tick() {
+    if (!vault_clipboard_clear_at || GetTickCount64() < vault_clipboard_clear_at) return;
+    vault_clipboard_clear_at = 0;
+    if (GetClipboardSequenceNumber() == vault_clipboard_sequence && OpenClipboard(hwnd)) {
+      EmptyClipboard();
+      CloseClipboard();
+      status = "The vault emptied the clipboard";
+    }
+  }
   void write_clipboard(const std::string &text) {
     int n = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()),
                                 nullptr, 0);
@@ -4829,6 +4787,32 @@ struct Browser {
     if (Tab *back = find_tab(services_home_tab)) {
       const size_t index = size_t(back - tabs.data());
       select_tab(int(index));
+    }
+    // --- vault: the service over the real profile directory: create, seal to disk, lock, refuse a wrong
+    // passphrase, unlock, keep and reveal an entry, and never write the password in the clear
+    if (vault_service) {
+      rt::Error vault_error;
+      const std::string vault_file = profile.directory + "/vault.bin";
+      std::string leftover;
+      services_check(!vault_service->status().flag("exists") || true, "vault status answers");
+      services_check(vault_service->create("services smoke passphrase", vault_error), "the vault is created");
+      services_check(vault_service->add("smoke.test", "tester", "Pl4in-Marker-9137", "", vault_error), "an entry is added");
+      vault_service->lock();
+      services_check(vault_service->status().flag("locked") && vault_service->status().flag("exists"),
+                     "a locked vault says so and still exists on disk");
+      services_check(!vault_service->unlock("not the passphrase", vault_error) && vault_error.code == "vault.passphrase",
+                     "a wrong passphrase is refused");
+      services_check(vault_service->unlock("services smoke passphrase", vault_error), "the right passphrase unlocks");
+      std::string revealed;
+      services_check(vault_service->reveal("smoke.test", revealed, vault_error) && revealed == "Pl4in-Marker-9137",
+                     "the entry comes back");
+      try { leftover = read_text_file(vault_file); } catch (const std::exception &) {}
+      services_check(!leftover.empty() && leftover.find("Pl4in-Marker-9137") == std::string::npos &&
+                         leftover.find("smoke.test") == std::string::npos,
+                     "the vault file holds no password or site in the clear");
+      vault_service->lock();
+      std::string ignore_error;
+      DeleteFileW(utf16_of(vault_file).c_str());
     }
     // --- clipboard: accepted, recorded, bounded, and on the OS clipboard
     if (clipboard_service) {
@@ -5855,10 +5839,11 @@ static LRESULT wndproc_inner(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (b && !b->smoke) {
       b->extensions.tick();
       b->flush_history();
-      if (b->vault_open && b->profile.vault_lock_minutes > 0 &&
-          GetTickCount() - b->vault_unlocked_at >
-              DWORD(b->profile.vault_lock_minutes) * 60000)
-        b->vault_lock();
+      b->vault_clipboard_tick();
+      if (b->vault_service && b->vault_service->auto_lock(b->profile.vault_lock_minutes)) {
+        b->status = "The vault locked itself";
+        InvalidateRect(hwnd, nullptr, FALSE);
+      }
       if (b->downloads.active_count() && (GetTickCount() % 8) < 2)
         InvalidateRect(hwnd, nullptr, FALSE);
     }
@@ -5942,6 +5927,10 @@ static LRESULT wndproc_inner(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     // this point with tab:new / tab:activate alone (its bridge lambda enforces that).
     if (task->method == "settings:set") {
       b->apply_setting(*task);
+      return 0;
+    }
+    if (task->method == "vault:copy") {
+      b->vault_copy(task->payload.str("site"));
       return 0;
     }
     if (task->method == "history:clear") {
@@ -6401,7 +6390,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
       pending_forwarded.pop_front();
     }
   }
-  b.vault_wipe();
+  if (b.vault_service) b.vault_service->lock();
   if (!quit_ok) return report_cli_error(quit_error.empty()
       ? "could not save the profile before exit" : quit_error);
   return int(msg.wParam);

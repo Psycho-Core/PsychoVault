@@ -1686,8 +1686,18 @@ int run_runtime_bus_tests(int &shared) {
     RT_CHECK(shell.page_world().run("typeof psycho").string == "object");
     RT_CHECK(shell.page_world().run("typeof psycho.settings.get").string == "function");
     RT_CHECK(shell.page_world().run("typeof psycho.internal.list").string == "function");
+    // The settings page alone has the password vault and history clearing (see kSettingsProfile).
+    RT_CHECK(shell.page_world().run("typeof psycho.vault.unlock").string == "function");
+    RT_CHECK(shell.page_world().run("typeof psycho.history.clear").string == "function");
+    // No other page, internal or web, has the vault.
+    for (const char *other : {"newtab", "chrome"}) {
+      std::vector<Error> other_log;
+      AppHost other_host(72, registry.find(other), {fake_bus, [&other_log](const Error &e4) {
+                                                      other_log.push_back(e4);
+                                                    }});
+      RT_CHECK(other_host.page_world().run("typeof psycho.vault").string == "undefined");
+    }
     // Extension-less means exactly that: these namespaces do not exist here.
-    RT_CHECK(shell.page_world().run("typeof psycho.vault").string == "undefined");
     RT_CHECK(shell.page_world().run("typeof psycho.proton").string == "undefined");
     RT_CHECK(shell.page_world().run("typeof psycho.extensions").string == "undefined");
     // The S029 freeze law holds through the host layer.

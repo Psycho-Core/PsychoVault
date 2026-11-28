@@ -21,6 +21,20 @@ window.psycho={settings:{
   list:function(){return {values:{restore:false,search:"brave",homepage:"psychovault://newtab",spellUserWords:"psycho\\nvault"},unwired:{}};},
   set:function(a){document.title="set:"+a.key+"="+a.value;}},
   history:{clear:function(){document.title="history-clear";}}};
+var vaultState={exists:true,locked:true,count:0};
+psycho.vault={
+  status:function(){return {exists:vaultState.exists,locked:vaultState.locked,count:vaultState.count};},
+  unlock:function(a){document.title="unlock:"+a.passphrase;
+    if(a.passphrase!=="right pass phrase") throw new Error("BridgeError: bridge.invoke.refused: vault.passphrase: no");
+    vaultState.locked=false;vaultState.count=1;return {ok:true};},
+  create:function(a){document.title="create:"+a.passphrase;vaultState.exists=true;vaultState.locked=false;return {ok:true};},
+  lock:function(){vaultState.locked=true;document.title="lock";return {ok:true};},
+  list:function(){return {entries:[{site:"example.test",user:"me",note:""}]};},
+  add:function(a){document.title="add:"+a.site+":"+a.user+":"+a.pass;return {ok:true};},
+  remove:function(a){document.title="remove:"+a.site;return {ok:true};},
+  reveal:function(a){return {password:"s3cret"};},
+  copy:function(a){document.title="copy:"+a.site;return {queued:true};},
+  generate:function(){return {password:"G3nerated"};}};
 """
 
 
@@ -43,6 +57,13 @@ def run(extra=(), tail="", page="psychovault://settings/"):
 
 
 class SettingsWiring(unittest.TestCase):
+    VAULT = "psychovault://settings/#passwords"
+
+    def vault_press(self, button, tail="", extra=()):
+        box = run(("--inspect", f"#{button}"), page=self.VAULT, tail=tail)["inspected"][0]["box"]
+        x, y = int(box["x"] + box["w"] / 2), int(box["y"] + box["h"] / 2)
+        return run(("--action", f"click:{x},{y}") + tuple(extra), page=self.VAULT, tail=tail)
+
     def test_listed_values_fill_the_controls(self):
         out = run(tail='''
 document.title = document.getElementById("search").value + "|" + document.getElementById("restore").checked +
@@ -75,6 +96,32 @@ document.title = document.getElementById("search").value + "|" + document.getEle
         press = f"click:{int(box['x'] + 10)},{int(box['y'] + box['h'] / 2)}"
         self.assertNotEqual(run(("--action", press), page=page)["title"], "history-clear")
         self.assertEqual(run(("--action", press, "--action", press), page=page)["title"], "history-clear")
+
+
+    def test_vault_status_says_locked_and_a_wrong_passphrase_is_explained(self):
+        tail = 'document.getElementById("vpw").value = "bad";'
+        out = run(("--inspect", "#vaultStatus"), page=self.VAULT, tail=tail)
+        self.assertEqual(out["inspected"][0]["text"], "Vault locked.")
+        out = self.vault_press("vgo", tail, ("--inspect", "#save-status", "--inspect", "#vpw"))
+        self.assertIn("does not match", out["inspected"][0]["text"])
+        self.assertEqual(out["inspected"][1].get("value", ""), "bad")  # a refused passphrase stays for another try
+
+    def test_the_right_passphrase_unlocks_lists_entries_and_clears_the_box(self):
+        tail = 'document.getElementById("vpw").value = "right pass phrase";'
+        out = self.vault_press("vgo", tail, ("--inspect", "#vaultStatus", "--inspect", ".vrow", "--inspect", "#vpw"))
+        self.assertEqual(out["title"], "unlock:right pass phrase")
+        self.assertEqual(out["inspected"][0]["text"], "Vault unlocked - 1 entry")
+        self.assertTrue(out["inspected"][1]["found"])
+        self.assertEqual(out["inspected"][2].get("value", ""), "")
+
+    def test_generate_fills_the_password_box_and_save_sends_the_entry(self):
+        tail = 'document.getElementById("eSite").value = "a.test"; document.getElementById("eUser").value = "u";'
+        out = self.vault_press("eGen", tail, ("--inspect", "#ePass"))
+        self.assertEqual(out["inspected"][0].get("value"), "G3nerated")
+
+    def test_set_master_password_creates_the_vault(self):
+        tail = 'document.getElementById("vnew").value = "a long passphrase";'
+        self.assertEqual(self.vault_press("vset", tail)["title"], "create:a long passphrase")
 
 
 if __name__ == "__main__":

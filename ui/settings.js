@@ -100,4 +100,111 @@
       try { psycho.history.clear(); say("History cleared"); } catch (error) { say("History was not cleared"); }
     });
   }
+
+  // ---- Vault. The password vault is sealed with a passphrase and lives only in the broker; this page asks
+  // it to create, unlock, lock and list, and never holds a password except one the user asked to see.
+  var vaultCall = typeof psycho !== "undefined" && psycho.vault ? psycho.vault : null;
+  if (vaultCall) {
+    var vaultNote = controlFor("vaultStatus");
+    var entriesBox = controlFor("dynVaultEntries");
+    var REASONS = {
+      "vault.passphrase": "That passphrase does not match, or it is shorter than 8 characters.",
+      "vault.exists": "A vault already exists. Unlock it instead.",
+      "vault.missing": "There is no vault yet. Set a master password to create one.",
+      "vault.locked": "The vault is locked. Unlock it first.",
+      "vault.duplicate": "The vault already keeps a login for that site.",
+      "vault.entry": "An entry needs a site and a password (no line breaks or \" | \").",
+      "vault.missing-entry": "That login is not in the vault."
+    };
+    var vaultMessage = function (error) {
+      var text = String(error && error.message ? error.message : error);
+      for (var code in REASONS) if (text.indexOf(code) >= 0) return REASONS[code];
+      return "The vault did not accept that.";
+    };
+    var shown = {};
+    var paintEntries = function (entries) {
+      if (!entriesBox) return;
+      while (entriesBox.firstChild) entriesBox.removeChild(entriesBox.firstChild);
+      shown = {};
+      if (!entries.length) {
+        entriesBox.appendChild(document.createTextNode("No entries yet."));
+        return;
+      }
+      for (var i = 0; i < entries.length; i++) {
+        (function (entry) {
+          var row = document.createElement("div");
+          row.className = "vrow";
+          var label = document.createElement("span");
+          label.className = "vsite";
+          label.textContent = entry.site + (entry.user ? "  -  " + entry.user : "");
+          row.appendChild(label);
+          var secret = document.createElement("span");
+          secret.className = "vsecret";
+          row.appendChild(secret);
+          var action = function (name, handler) {
+            var button = document.createElement("button");
+            button.className = "btn";
+            button.type = "button";
+            button.textContent = name;
+            button.addEventListener("click", handler);
+            row.appendChild(button);
+          };
+          action("Show", function () {
+            try { secret.textContent = vaultCall.reveal({ site: entry.site }).password; } catch (error) { say(vaultMessage(error)); }
+          });
+          action("Copy", function () {
+            try { vaultCall.copy({ site: entry.site }); say("Copied; the clipboard is emptied in a minute."); } catch (error) { say(vaultMessage(error)); }
+          });
+          action("Delete", function () {
+            try { vaultCall.remove({ site: entry.site }); refreshVault(); say("Deleted"); } catch (error) { say(vaultMessage(error)); }
+          });
+          entriesBox.appendChild(row);
+        }(entries[i]));
+      }
+    };
+    var refreshVault = function () {
+      var state = null;
+      try { state = vaultCall.status(); } catch (error) { if (vaultNote) vaultNote.textContent = "The vault is not available."; return; }
+      if (vaultNote) {
+        vaultNote.textContent = !state.exists ? "No vault yet - set a master password to create one."
+          : state.locked ? "Vault locked." : "Vault unlocked - " + state.count + (state.count === 1 ? " entry" : " entries");
+      }
+      if (state.exists && !state.locked) {
+        try { paintEntries(vaultCall.list().entries || []); } catch (error) { say(vaultMessage(error)); }
+      } else if (entriesBox) {
+        while (entriesBox.firstChild) entriesBox.removeChild(entriesBox.firstChild);
+        entriesBox.appendChild(document.createTextNode(state.exists ? "Unlock the vault to see its entries." : "No entries yet."));
+      }
+    };
+    var press = function (id, handler) { onPress(id, function () { try { handler(); } catch (error) { say(vaultMessage(error)); } }); };
+    press("vset", function () {
+      var box = controlFor("vnew");
+      vaultCall.create({ passphrase: box.value });
+      box.value = "";
+      say("Vault created and unlocked");
+      refreshVault();
+    });
+    press("vgo", function () {
+      var box = controlFor("vpw");
+      vaultCall.unlock({ passphrase: box.value });
+      box.value = "";
+      say("Vault unlocked");
+      refreshVault();
+    });
+    press("vLock", function () { vaultCall.lock(); say("Vault locked"); refreshVault(); });
+    press("vRefresh", function () { refreshVault(); });
+    press("eGen", function () { controlFor("ePass").value = vaultCall.generate().password; });
+    press("eSave", function () {
+      vaultCall.add({ site: controlFor("eSite").value, user: controlFor("eUser").value, pass: controlFor("ePass").value });
+      controlFor("eSite").value = ""; controlFor("eUser").value = ""; controlFor("ePass").value = "";
+      say("Saved in the vault");
+      refreshVault();
+    });
+    // This vault is always sealed with a passphrase, so there is no "stop using a master password", and
+    // backups and CSV import are not built yet; those buttons say so instead of pretending.
+    ["vforget", "vBackup", "vRestore", "vImport"].forEach(function (id) {
+      onPress(id, function () { say(id === "vforget" ? "This vault is always sealed with a passphrase." : "Backups and import are not built yet."); });
+    });
+    refreshVault();
+  }
 }());
