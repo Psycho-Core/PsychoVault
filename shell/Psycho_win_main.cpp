@@ -143,6 +143,7 @@ struct Tab {
   std::map<std::string, Image> images;
   size_t image_bytes = 0;
   DWORD frame_tick = 0; // when the first frame of this load arrived
+  ULONGLONG last_used = 0; // when this tab was last the one in front, for sleeping idle tabs
   size_t paint_sig = 0; // signature of the last frame's paint list and scroll, to skip identical repaints
 };
 struct Hit {
@@ -1576,7 +1577,16 @@ struct Browser {
     stop_all_sessions();
     profile.clear_running_marker();
     if (profile.clear_on_exit && !private_mode) {
-      profile.clear_history();
+      // "Clear on exit" is a choice: "cache" empties what sites stored (their local storage); "all" also
+      // clears history, cookies and the finished downloads.
+      const std::string mode = profile.extra_settings.str("clearOnExit", "all");
+      { std::lock_guard<std::mutex> state_lock(profile_state_mutex); local_storage.clear_all(); }
+      if (mode != "cache") {
+        profile.clear_history();
+        cookies.clear();
+        profile.cookies = cookies.to_json();
+        downloads.clear_finished();
+      }
       save_profile();
     } else if (!private_mode && profile.history_dirty) {
       profile.history_dirty = false;
@@ -1765,6 +1775,28 @@ struct Browser {
     tab.session->request_stop();
     retired_sessions.push_back(std::move(tab.session));
   }
+  // "Sleep inactive tabs": a web tab that has sat in the background for the chosen number of minutes gives up its
+  // renderer and its decoded images. It keeps its address, title and history, and select_tab loads it again
+  // (started is false) the next time it is in front. Pinned tabs, the front tab and tabs still loading are left
+  // alone. I cannot yet tell that a background tab is playing sound, so pin a tab that must keep playing.
+  void sleep_idle_tabs() {
+    const int minutes = profile.sleep_tabs_minutes;
+    if (minutes <= 0) return;
+    const ULONGLONG now = GetTickCount64();
+    for (size_t i = 0; i < tabs.size(); ++i) {
+      Tab &tab = tabs[i];
+      if (int(i) == active || tab.pinned || tab.loading || !tab.session || !tab.started) continue;
+      if (!(starts(tab.url, "http://") || starts(tab.url, "https://"))) continue;
+      if (tab.last_used == 0) { tab.last_used = now; continue; }
+      if (now - tab.last_used < ULONGLONG(minutes) * 60000) continue;
+      stop_session(tab);
+      tab.started = false;
+      tab.frame = Json();
+      tab.images.clear();
+      tab.image_bytes = 0;
+      tab.paint_sig = 0;
+    }
+  }
   void reap_sessions() {
     for (auto it = retired_sessions.begin(); it != retired_sessions.end();) {
       const auto &session = *it;
@@ -1921,8 +1953,10 @@ struct Browser {
   void select_tab(int index) {
     if (index < 0 || index >= int(tabs.size()))
       return;
+    if (active >= 0 && active < int(tabs.size())) tabs[size_t(active)].last_used = GetTickCount64(); // it goes to the background now
     active = index;
     Tab &tab = current();
+    tab.last_used = GetTickCount64();
     {
       rt::Error activate_error;
       tab_model.activate(tab.id, activate_error);
@@ -6052,6 +6086,7 @@ static LRESULT wndproc_inner(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       if (b) b->sync_focus();
     }
     if (b) b->reap_sessions();
+    if (b) b->sleep_idle_tabs();
     if (b && b->chrome_enabled) {
       b->start_chrome();
       if (b->chrome_panel_open() != b->last_panel_open || b->profile.hide_sidebar != b->last_rail_hidden) {
