@@ -34,6 +34,9 @@ const ExposedEntry kSettingsProfile[] = {
     {Channel::Lifecycle, "app:openlog"}, {Channel::Lifecycle, "app:relaunch"},
     {Channel::Updates, "updates:check"}, {Channel::Updates, "updates:status"},
     {Channel::Downloads, "downloads:pickdir"},
+    {Channel::Extensions, "extensions:list"},   {Channel::Extensions, "extensions:toggle"},
+    {Channel::Extensions, "extensions:remove"}, {Channel::Extensions, "extensions:addfolder"},
+    {Channel::Extensions, "extensions:restore"}, {Channel::Extensions, "proxy:status"},
     {Channel::Lifecycle, "lifecycle:ping"},
 };
 

@@ -445,4 +445,75 @@
       later(700, watch);
     });
   }
+
+  // ---- Extensions and proxy. The window owns the extension host; this page lists what is installed, asks for
+  // an unpacked folder to be added (the system's folder dialog opens), enables, disables or removes one, and
+  // reports what the proxy setting is. A .crx cannot be installed yet and the page says so.
+  if (psycho.extensions) {
+    var extBox = controlFor("dynExtensions");
+    var extResult = controlFor("extResult");
+    var tell = function (text) { if (extResult) extResult.textContent = text; say(text); };
+    var listing2 = function () {
+      try { return psycho.extensions.list(); } catch (error) { return { extensions: [], error: "" }; }
+    };
+    var paintExtensions = function () {
+      if (!extBox) return;
+      var answer = listing2(), items = answer.extensions || [];
+      while (extBox.firstChild) extBox.removeChild(extBox.firstChild);
+      if (!items.length) extBox.appendChild(document.createTextNode("No extensions are installed."));
+      items.forEach(function (item) {
+        var line = document.createElement("div");
+        line.className = "vrow";
+        var label = document.createElement("span");
+        label.className = "vsite";
+        label.textContent = item.name + (item.version ? "  v" + item.version : "") + (item.bundled ? "  (bundled)" : "") +
+          "  -  " + (item.error ? "problem: " + item.error : item.enabled ? "enabled" : "disabled");
+        line.appendChild(label);
+        line.appendChild(button(item.enabled ? "Disable" : "Enable", function () {
+          guarded(function () { psycho.extensions.toggle({ id: item.id, enabled: !item.enabled }); });
+          later(600, paintExtensions);
+        }));
+        if (!item.bundled) {
+          line.appendChild(button("Remove", function () {
+            guarded(function () { psycho.extensions.remove({ id: item.id }); tell("Removed " + item.name); });
+            later(600, paintExtensions);
+          }, true));
+        }
+        extBox.appendChild(line);
+      });
+      if (answer.error) tell(answer.error);
+    };
+    onPress("extReload", function () { paintExtensions(); tell("Reloaded the list"); });
+    onPress("extAddFolder", function () {
+      var before = (listing2().extensions || []).length;
+      guarded(function () { psycho.extensions.addfolder(); });
+      var polls = 0;
+      var watch = function () {
+        var now = listing2();
+        if ((now.extensions || []).length !== before || now.error) { paintExtensions(); tell(now.error || "Extension added"); return; }
+        if (++polls < 120) later(700, watch);
+      };
+      later(700, watch);
+    });
+    onPress("extAddCrx", function () { tell("Installing a .crx file is not built yet. Load an unpacked folder instead."); });
+    onPress("protonVpnRestore", function () { guarded(function () { psycho.extensions.restore(); }); later(600, paintExtensions); tell("Looked for the bundled extensions again"); });
+    onPress("protonVpnStatus", function () {
+      var proton = (listing2().extensions || []).filter(function (item) { return /proton/i.test(item.name) || /proton/i.test(item.id); });
+      tell(proton.length ? proton.map(function (item) { return item.name + ": " + (item.error ? "problem - " + item.error : item.enabled ? "installed and enabled" : "installed but disabled"); }).join(". ")
+                         : "No Proton VPN extension is installed in this build.");
+    });
+    onPress("vpnCheckOpen", function () { guarded(function () { psycho.tab["new"]({ url: "psychovault://nettest" }); }); });
+    var describeProxy = function () {
+      var proxy = null;
+      try { proxy = psycho.proxy.status(); } catch (error) { return "The proxy setting is not available."; }
+      return proxy.active ? "Traffic goes through a proxy (" + proxy.mode + ")." : "No proxy is set: traffic goes direct.";
+    };
+    onPress("proxyStatus", function () { tell(describeProxy()); });
+    onPress("proxySelfTest", function () {
+      tell(describeProxy() + " Run the VPN checks to compare your public address and DNS with and without it.");
+    });
+    var switchBox = controlFor("dynProxySwitch");
+    if (switchBox) { switchBox.textContent = describeProxy(); }
+    paintExtensions();
+  }
 }());

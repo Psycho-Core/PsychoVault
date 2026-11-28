@@ -28,6 +28,15 @@ psycho.data={usage:function(){return {rows:[{id:"history",label:"Browsing histor
 psycho.diagnostics={report:function(){return {text:"Tabs: 3\\nVault: locked\\n"};},copy:function(){document.title="diag-copy";return {queued:true};}};
 psycho.app={openlog:function(){document.title="openlog";return {queued:true};},relaunch:function(){document.title="relaunch";return {queued:true};}};
 psycho.downloads={pickdir:function(){document.title="pickdir";return {queued:true};}};
+psycho.extensions={
+  list:function(){return {extensions:[{id:"bundled-proton",name:"Proton VPN",version:"1.0",enabled:true,bundled:true,error:""},
+                                      {id:"user-1",name:"Mine",version:"0.1",enabled:false,bundled:false,error:""}],error:""};},
+  toggle:function(a){document.title="toggle:"+a.id+":"+a.enabled;return {queued:true};},
+  remove:function(a){document.title="remove-ext:"+a.id;return {queued:true};},
+  addfolder:function(){document.title="addfolder";return {queued:true};},
+  restore:function(){document.title="restore";return {queued:true};}};
+psycho.proxy={status:function(){return {mode:"direct",active:false};}};
+psycho.tab={"new":function(a){document.title="new:"+a.url;}};
 psycho.updates={check:function(){document.title="updates-check";return {queued:true};},status:function(){return {text:"You are up to date"};}};
 var vaultState={exists:true,locked:true,count:0};
 psycho.vault={
@@ -196,6 +205,33 @@ document.title = document.getElementById("search").value + "|" + document.getEle
     def test_the_download_folder_button_asks_the_window_for_its_picker(self):
         page = "psychovault://settings/#downloads"
         self.assertEqual(self.press(page, "downloadDirPick")["title"], "pickdir")
+
+
+    EXT = "psychovault://settings/#extensions"
+
+    def test_extension_list_shows_rows_and_toggles_and_removes(self):
+        out = run(("--inspect", "#dynExtensions .vrow", "--inspect", "#dynExtensions .btn"), page=self.EXT)
+        self.assertTrue(out["inspected"][0]["found"])
+        box = out["inspected"][1]["box"]  # the first row's first button: Disable on the enabled Proton row
+        press = f"click:{int(box['x'] + box['w'] / 2)},{int(box['y'] + box['h'] / 2)}"
+        self.assertEqual(run(("--action", press), page=self.EXT)["title"], "toggle:bundled-proton:false")
+
+    def test_a_bundled_extension_cannot_be_removed_from_the_page(self):
+        out = run(tail='document.title = String(document.querySelectorAll("#dynExtensions .btn").length);', page=self.EXT)
+        # Proton: Disable only; the user's extension: Enable and Remove.
+        self.assertEqual(out["title"], "3")
+
+    def test_add_folder_and_crx_and_proton_status_and_vpn_checks(self):
+        self.assertEqual(self.press(self.EXT, "extAddFolder")["title"], "addfolder")
+        out = self.press(self.EXT, "extAddCrx", extra=("--inspect", "#extResult"))
+        self.assertIn("not built", out["inspected"][0]["text"])
+        out = self.press(self.EXT, "protonVpnStatus", extra=("--inspect", "#extResult"))
+        self.assertIn("installed and enabled", out["inspected"][0]["text"])
+        self.assertEqual(self.press(self.EXT, "vpnCheckOpen")["title"], "new:psychovault://nettest")
+
+    def test_proxy_status_says_what_the_setting_is(self):
+        out = self.press(self.EXT, "proxyStatus", extra=("--inspect", "#extResult"))
+        self.assertIn("traffic goes direct", out["inspected"][0]["text"])
 
 
 if __name__ == "__main__":

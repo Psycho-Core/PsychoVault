@@ -939,6 +939,8 @@ struct SettingsHub {
   // Read-only facts the settings page asks for, refreshed by the window every couple of seconds.
   Json usage = Json::make_object();
   std::string diagnostics, update_status;
+  Json extensions = Json::make_array(), proxy = Json::make_object();
+  std::string extension_error;
 };
 struct Browser {
   HWND hwnd = nullptr;
@@ -1017,12 +1019,37 @@ struct Browser {
     std::lock_guard lock(settings_hub->mutex);
     settings_hub->snapshot = std::move(snapshot);
     settings_hub->usage = std::move(usage);
+    settings_hub->extensions = build_extensions();
+    settings_hub->proxy = build_proxy();
+    settings_hub->extension_error = extension_error;
     if (const Json *values = settings_hub->snapshot.find("values"))
       if (const Json *services = values->find("services")) services_cache = *services;
     settings_hub->diagnostics = std::move(report);
     settings_hub->update_status = std::move(update_text);
   }
   // What the browser keeps, per kind, with a count: the rows of Settings > Privacy > data table.
+  // The installed extensions as the settings page lists them. Nothing from a manifest is shown beyond its
+  // name, version and whether it loaded.
+  Json build_extensions() {
+    Json list = Json::make_array();
+    for (const ExtensionRecord &record : extensions.list()) {
+      Json item = Json::make_object();
+      item.set("id", record.manifest.id);
+      item.set("name", record.manifest.name.empty() ? record.manifest.id : record.manifest.name.substr(0, 80));
+      item.set("version", record.manifest.version.substr(0, 32));
+      item.set("enabled", record.enabled);
+      item.set("bundled", record.bundled);
+      item.set("error", (record.install_error.empty() ? extensions.worker_error(record.manifest.id) : record.install_error).substr(0, 300));
+      list.array.push_back(std::move(item));
+    }
+    return list;
+  }
+  Json build_proxy() {
+    Json out = Json::make_object();
+    out.set("mode", profile.proxy.mode_name());
+    out.set("active", profile.proxy.active());
+    return out;
+  }
   Json services_cache = Json::make_array();
   Json build_usage() {
     Json rows = Json::make_array();
@@ -1109,6 +1136,51 @@ struct Browser {
     }
     if (method == "updates:check") {
       check_for_update();
+      return true;
+    }
+    if (method == "extensions:toggle" || method == "extensions:remove" || method == "extensions:addfolder" ||
+        method == "extensions:restore") {
+      if (!extension_workers_allowed()) {
+        extension_error = "Extensions do not run in a private window";
+        return true;
+      }
+      std::string error;
+      const std::string id = task.payload.str("id");
+      if (method == "extensions:toggle") {
+        const bool enable = task.payload.flag("enabled");
+        if (!extensions.set_enabled(id, enable, error)) extension_error = error;
+        else {
+          auto &off = profile.disabled_extensions;
+          off.erase(std::remove(off.begin(), off.end(), id), off.end());
+          if (!enable) { off.push_back(id); extensions.stop_worker(id); }
+          else if (!extensions.start_worker(id, error)) extension_error = error;
+        }
+      } else if (method == "extensions:remove") {
+        const ExtensionRecord *record = extensions.find(id);
+        const std::string directory = record ? record->directory : std::string();
+        if (!extensions.remove(id, error)) extension_error = error;
+        else {
+          auto &dirs = profile.extension_directories;
+          dirs.erase(std::remove(dirs.begin(), dirs.end(), directory), dirs.end());
+        }
+      } else if (method == "extensions:addfolder") {
+        const std::string folder = pick_folder(hwnd);
+        if (!folder.empty()) {
+          if (!extensions.install_directory(folder, error)) extension_error = error;
+          else {
+            profile.extension_directories.push_back(folder);
+            for (const ExtensionRecord &record : extensions.list())
+              if (record.directory == folder && record.enabled && !extensions.start_worker(record.manifest.id, error))
+                extension_error = error;
+          }
+        }
+      } else {
+        load_bundled_extensions();
+      }
+      if (error.empty() && method != "extensions:restore") extension_error.clear();
+      save_profile();
+      publish_settings();
+      InvalidateRect(hwnd, nullptr, FALSE);
       return true;
     }
     if (method == "downloads:pickdir") {
@@ -2026,8 +2098,8 @@ struct Browser {
       }
       {
         // Read-only facts and window tasks the settings page asks for (see settings_task).
-        static const char *const reads[] = {"data:usage", "diagnostics:report", "updates:status"};
-        static const char *const tasks[] = {"data:clear", "diagnostics:copy", "app:openlog", "app:relaunch", "updates:check", "downloads:pickdir"};
+        static const char *const reads[] = {"data:usage", "diagnostics:report", "updates:status", "extensions:list", "proxy:status"};
+        static const char *const tasks[] = {"data:clear", "diagnostics:copy", "app:openlog", "app:relaunch", "updates:check", "downloads:pickdir", "extensions:toggle", "extensions:remove", "extensions:addfolder", "extensions:restore"};
         const bool is_read = std::any_of(std::begin(reads), std::end(reads), [&](const char *m) { return method == m; });
         const bool is_task = std::any_of(std::begin(tasks), std::end(tasks), [&](const char *m) { return method == m; });
         if (is_read || is_task) {
@@ -2040,6 +2112,8 @@ struct Browser {
             std::lock_guard lock(hub->mutex);
             if (method == "data:usage") reply = hub->usage;
             else if (method == "diagnostics:report") reply.set("text", Json(hub->diagnostics));
+            else if (method == "extensions:list") { reply.set("extensions", hub->extensions); reply.set("error", Json(hub->extension_error)); }
+            else if (method == "proxy:status") reply = hub->proxy;
             else reply.set("text", Json(hub->update_status));
             return true;
           }

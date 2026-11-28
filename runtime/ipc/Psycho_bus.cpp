@@ -256,6 +256,14 @@ Schemas Schemas::stock() {
   s.add("updates:status", fields({}));
   // The new-tab page reads the speed-dial tiles; the settings page asks for a folder picker.
   s.add("ui:tiles", fields({}));
+  // The settings page's extension list and proxy facts. Installing and removing go through the window, which
+  // owns the extension host.
+  s.add("extensions:list", fields({}));
+  s.add("extensions:toggle", fields({{"id", T::String, true}, {"enabled", T::Bool, true}}));
+  s.add("extensions:remove", fields({{"id", T::String, true}}));
+  s.add("extensions:addfolder", fields({}));
+  s.add("extensions:restore", fields({}));
+  s.add("proxy:status", fields({}));
   s.add("downloads:pickdir", fields({}));
   s.add("spell:status", fields({}));
   return s;
