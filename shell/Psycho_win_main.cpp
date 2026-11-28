@@ -2049,6 +2049,9 @@ struct Browser {
           const Json *values = hub->snapshot.find("values");
           const Json *stored = values ? values->find("speedDial") : nullptr;
           if (stored && stored->type == Json::Type::Array) tiles = *stored;
+          for (const char *name : {"theme", "accent"})
+            if (values && values->find(name)) reply.set(name, *values->find(name));
+          if (values && values->find("highContrast")) reply.set("highContrast", *values->find("highContrast"));
         }
         reply.set("tiles", std::move(tiles));
         return true;
@@ -3064,6 +3067,9 @@ struct Browser {
     state.set("address", app_ui_url(current().url) ? std::string() : current().url.substr(0, 2048));
     state.set("blockAds", profile.block_ads);
     state.set("hideSidebar", profile.hide_sidebar);
+    state.set("theme", profile.theme);
+    state.set("accent", profile.accent);
+    state.set("highContrast", profile.high_contrast);
     state.set("services", services_cache);
     if (chrome_panel_open()) {
       Json panel = Json::make_object();

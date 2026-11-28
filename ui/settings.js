@@ -25,6 +25,18 @@
     if (buttons[w].getAttribute("data-cat") === wanted) show(wanted);
   }
 
+
+  // Appearance: the saved theme, accent and contrast become attributes on <html>; tokens.css does the rest.
+  var THEMES = { midnight: 1, graphite: 1, forest: 1, plum: 1, ocean: 1 };
+  var ACCENTS = { cyan: 1, red: 1, purple: 1, green: 1, orange: 1, pink: 1, gold: 1, teal: 1, indigo: 1, rose: 1 };
+  function applyLook(look) {
+    var root = document.documentElement;
+    if (!look || !root) return;
+    if (look.theme && THEMES[look.theme]) root.setAttribute("data-theme", look.theme);
+    if (look.accent && ACCENTS[look.accent]) root.setAttribute("data-accent", look.accent);
+    root.className = look.highContrast ? "hc" : "";
+  }
+
   var bridge = typeof psycho !== "undefined" && psycho.settings ? psycho.settings : null;
   var statusEl = document.getElementById("save-status");
   function say(text) { if (statusEl) statusEl.textContent = text; }
@@ -61,6 +73,15 @@
     return true;
   }
   if (!fill()) return;
+  var look = function () {
+    return { theme: controlFor("theme") && controlFor("theme").value, accent: controlFor("accent") && controlFor("accent").value,
+             highContrast: controlFor("highContrast") && controlFor("highContrast").checked };
+  };
+  applyLook(look());
+  ["theme", "accent", "highContrast"].forEach(function (id) {
+    var node = controlFor(id);
+    if (node) node.addEventListener("change", function () { applyLook(look()); });
+  });
 
   // Every control that holds a value saves when it changes; the textareas also have their own save
   // buttons, which send what is in the box now.

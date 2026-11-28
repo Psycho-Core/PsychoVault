@@ -52,6 +52,7 @@
     renderFind(state.find, !!state.panel);
     renderPalette(state.palette);
     document.body.className = state.hideSidebar ? "norail" : "";
+    applyLook(state);
     renderServices(state.services);
     var shield = document.getElementById("rail-adblock");
     if (shield && typeof state.blockAds === "boolean") shield.className = state.blockAds ? "rail-btn good" : "rail-btn off";
@@ -149,6 +150,17 @@
     }
   });
 
+
+  // Appearance: the saved theme, accent and contrast become attributes on <html>; tokens.css does the rest.
+  var THEMES = { midnight: 1, graphite: 1, forest: 1, plum: 1, ocean: 1 };
+  var ACCENTS = { cyan: 1, red: 1, purple: 1, green: 1, orange: 1, pink: 1, gold: 1, teal: 1, indigo: 1, rose: 1 };
+  function applyLook(look) {
+    var root = document.documentElement;
+    if (!look || !root) return;
+    if (look.theme && THEMES[look.theme]) root.setAttribute("data-theme", look.theme);
+    if (look.accent && ACCENTS[look.accent]) root.setAttribute("data-accent", look.accent);
+    root.className = look.highContrast ? "hc" : "";
+  }
   window.psychoChromeState = render;
 
   // Actions

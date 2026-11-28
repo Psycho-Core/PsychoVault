@@ -1696,10 +1696,13 @@ int run_runtime_bus_tests(int &shared) {
                                                       other_log.push_back(e4);
                                                     }});
       RT_CHECK(other_host.page_world().run("typeof psycho.vault").string == "undefined");
+      RT_CHECK(other_host.page_world().run("typeof psycho.extensions").string == "undefined");
     }
     // Extension-less means exactly that: these namespaces do not exist here.
     RT_CHECK(shell.page_world().run("typeof psycho.proton").string == "undefined");
-    RT_CHECK(shell.page_world().run("typeof psycho.extensions").string == "undefined");
+    // The settings page manages extensions (list, enable, remove, add a folder); nothing else may.
+    RT_CHECK(shell.page_world().run("typeof psycho.extensions.list").string == "function");
+    RT_CHECK(shell.page_world().run("typeof psycho.extensions.install").string == "undefined");
     // The S029 freeze law holds through the host layer.
     RT_CHECK(shell.page_world().run("Object.isFrozen(psycho.settings)").boolean);
     RT_CHECK(shell.page_world().run("psycho.settings.get({key: 'theme'}).value").string ==

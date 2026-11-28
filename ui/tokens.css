@@ -26,3 +26,20 @@
   --pv-font: "PsychoVault UI", "Inter", "Segoe UI", sans-serif;
   --pv-mono: Consolas, "Courier New", monospace;
 }
+
+/* Themes and accents (Settings > Appearance). <html data-theme="..."> swaps the surfaces, <html data-accent="...">
+   swaps the highlight, and <html class="hc"> is the high-contrast set. Midnight and cyan are the defaults above. */
+html[data-theme="graphite"] { --pv-bg: #101214; --pv-surface: #181b1f; --pv-raised: #22262b; --pv-border: #2c3137; --pv-text: #eceff2; --pv-muted: #9aa3ab; --pv-faint: #5d666e; --pv-switch-off: #2c3137; --pv-knob-off: #9aa3ab; }
+html[data-theme="forest"] { --pv-bg: #0a140f; --pv-surface: #101f17; --pv-raised: #172b20; --pv-border: #223a2c; --pv-text: #e4f0e8; --pv-muted: #8fae9b; --pv-faint: #56705f; --pv-switch-off: #223a2c; --pv-knob-off: #8fae9b; }
+html[data-theme="plum"] { --pv-bg: #140d18; --pv-surface: #1d1323; --pv-raised: #2a1b33; --pv-border: #3a2646; --pv-text: #f1e6f4; --pv-muted: #b79fc0; --pv-faint: #72577c; --pv-switch-off: #3a2646; --pv-knob-off: #b79fc0; }
+html[data-theme="ocean"] { --pv-bg: #08141d; --pv-surface: #0d1e2b; --pv-raised: #132a3a; --pv-border: #1c3a4e; --pv-text: #e1f0f7; --pv-muted: #8ab0c2; --pv-faint: #52788a; --pv-switch-off: #1c3a4e; --pv-knob-off: #8ab0c2; }
+html[data-accent="red"] { --pv-accent: #f87171; --pv-accent-weak: #4a1f26; }
+html[data-accent="purple"] { --pv-accent: #a78bfa; --pv-accent-weak: #2f2754; }
+html[data-accent="green"] { --pv-accent: #34d399; --pv-accent-weak: #14423a; }
+html[data-accent="orange"] { --pv-accent: #fb923c; --pv-accent-weak: #4a2f17; }
+html[data-accent="pink"] { --pv-accent: #f472b6; --pv-accent-weak: #4a2038; }
+html[data-accent="gold"] { --pv-accent: #facc15; --pv-accent-weak: #44391a; }
+html[data-accent="teal"] { --pv-accent: #2dd4bf; --pv-accent-weak: #123f3d; }
+html[data-accent="indigo"] { --pv-accent: #818cf8; --pv-accent-weak: #272b55; }
+html[data-accent="rose"] { --pv-accent: #fb7185; --pv-accent-weak: #4a1f2c; }
+html.hc { --pv-bg: #000000; --pv-surface: #0a0a0a; --pv-raised: #1a1a1a; --pv-border: #ffffff; --pv-text: #ffffff; --pv-muted: #e0e0e0; --pv-faint: #bdbdbd; --pv-accent: #ffe600; --pv-accent-weak: #4d4400; --pv-switch-off: #333333; --pv-knob-off: #e0e0e0; }

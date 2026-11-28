@@ -229,7 +229,11 @@ Json SettingsService::snapshot() const {
     else if (key == "batterySaver") values.set(key, Json(profile_.battery_saver));
     else if (key == "sleepTabsMin") values.set(key, Json(profile_.sleep_tabs_minutes));
     else if (key == "cpuLimit") values.set(key, Json(cpu_mode(profile_.cpu_limit)));
-    else if (key == "theme") values.set(key, Json(profile_.theme));
+    else if (key == "theme") {
+      // A profile from before themes existed says "dark"; that is the midnight theme.
+      const auto &choices = spec.choices;
+      values.set(key, Json(std::find(choices.begin(), choices.end(), profile_.theme) != choices.end() ? profile_.theme : std::string("midnight")));
+    }
     else if (key == "accent") values.set(key, Json(profile_.accent));
     else if (key == "hideSidebar") values.set(key, Json(profile_.hide_sidebar));
     else if (key == "highContrast") values.set(key, Json(profile_.high_contrast));
