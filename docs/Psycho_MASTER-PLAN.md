@@ -271,6 +271,8 @@ Order matters: my own UI's CSS comes first, then the web's common CSS, then the 
 
 **Settings update (2026-11-27):** all 51 value controls now persist (dedicated profile fields where they exist, a validated `extraSettings` bag otherwise), remember history is honoured, and 7 buttons work (Save words, Reload status, Save blocker lists, Save shortcuts, Apply mod, Clear, Clear history). Storing a value is not the browser acting on it; effects are tracked under P7. Not wired: vault, extension and proxy buttons, the download folder picker, the six clear-data actions, the update token, the 8 dynamic editors. See the update at the end of `Psycho_P3_GATE_AUDIT.md`.
 
+**Vault update (2026-11-28):** the settings page now creates, unlocks, locks, lists, adds, deletes, shows, copies and generates passwords through a thread-safe `VaultService`, reachable only from the settings page (Windows run 46089100936 green). Backup, CSV import and changing the passphrase are not built. Details at the end of `Psycho_P3_GATE_AUDIT.md`.
+
 **Exit gate:** side-by-side screenshots of old and new chrome, new-tab and all ten settings pages are hard to tell apart at the reference sizes, every control whose backing service exists changes real state, and every other control is listed with the step that will wire it. "Every one of the 125 controls changes real state" is the M4 gate, not this one.
 
 ### P4 - Network service (real web, part one)
