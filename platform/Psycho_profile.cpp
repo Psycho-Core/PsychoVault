@@ -462,6 +462,49 @@ std::string Profile::search_template() const {
     return "https://www.bing.com/search?q=%s";
   return "https://duckduckgo.com/?q=%s";
 }
+bool Profile::parse_search_shortcut(const std::string &line, std::string &shortcut, std::string &name,
+                                    std::string &url) {
+  std::vector<std::string> parts;
+  size_t start = 0;
+  for (int i = 0; i < 2; ++i) {
+    const size_t bar = line.find('|', start);
+    if (bar == std::string::npos) return false;
+    parts.push_back(trim(line.substr(start, bar - start)));
+    start = bar + 1;
+  }
+  parts.push_back(trim(line.substr(start)));
+  shortcut = parts[0];
+  name = parts[1];
+  url = parts[2];
+  if (shortcut.empty() || shortcut.size() > 16 || name.empty() || name.size() > 64) return false;
+  for (unsigned char c : shortcut)
+    if (!(std::isalnum(c) || c == '-' || c == '_')) return false;
+  auto parsed = parse_url(url);
+  return parsed && parsed->scheme == "https" && url.find("%s") != std::string::npos && url.size() <= 2048;
+}
+std::string Profile::search_shortcut_url(const std::string &input) const {
+  const size_t space = input.find(' ');
+  if (space == std::string::npos || space == 0) return {};
+  const std::string typed = lower(input.substr(0, space));
+  const std::string words = trim(input.substr(space + 1));
+  if (words.empty()) return {};
+  const std::string lines = extra_settings.str("customSearchEngines");
+  size_t start = 0;
+  while (start <= lines.size()) {
+    size_t end = lines.find('\n', start);
+    if (end == std::string::npos) end = lines.size();
+    std::string shortcut, name, url;
+    if (parse_search_shortcut(lines.substr(start, end - start), shortcut, name, url) && lower(shortcut) == typed) {
+      std::string out = url;
+      const std::string encoded = percent_encode(words, true);
+      for (size_t at = out.find("%s"); at != std::string::npos; at = out.find("%s", at + encoded.size()))
+        out.replace(at, 2, encoded);
+      return out;
+    }
+    start = end + 1;
+  }
+  return {};
+}
 bool Profile::set_search_engine(const std::string &engine) {
   static const std::set<std::string> allowed = {"duckduckgo", "google",    "bing",  "brave",
                                                 "startpage",  "wikipedia", "custom"};

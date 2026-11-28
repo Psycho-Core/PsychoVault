@@ -217,6 +217,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { Write-Host "::error title=Settings catalog::out of date"; exit $LASTEXITCODE }
           python tests/Psycho_ui_settings_wiring_tests.py --engine build/pv-engine.exe 2>&1 | Tee-Object build/ui-settings-wiring.txt
           if ($LASTEXITCODE -ne 0) { Write-Host "::error title=Settings wiring tests::see build/ui-settings-wiring.txt"; exit $LASTEXITCODE }
+          python tests/Psycho_ui_newtab_tests.py --engine build/pv-engine.exe 2>&1 | Tee-Object build/ui-newtab.txt
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error title=New-tab tests::see build/ui-newtab.txt"; exit $LASTEXITCODE }
       - name: Check the browser frame page's behaviour (S081)
         shell: pwsh
         run: |

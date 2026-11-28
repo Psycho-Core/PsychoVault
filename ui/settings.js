@@ -207,4 +207,242 @@
     });
     refreshVault();
   }
+
+  // ---- Data, diagnostics, error log, restart and updates. Each answer comes from the broker; the page keeps
+  // nothing of its own.
+  var later = function (milliseconds, work) { if (typeof setTimeout === "function") setTimeout(work, milliseconds); };
+  var guarded = function (work) { try { work(); } catch (error) { say("That did not work: " + String(error && error.message ? error.message : error)); } };
+  if (psycho.data) {
+    var usageBox = controlFor("dynDataUsage");
+    var paintUsage = function () {
+      if (!usageBox) return;
+      var rows = [];
+      try { rows = psycho.data.usage().rows || []; } catch (error) { return; }
+      while (usageBox.firstChild) usageBox.removeChild(usageBox.firstChild);
+      for (var i = 0; i < rows.length; i++) {
+        (function (item) {
+          var row = document.createElement("div");
+          row.className = "vrow";
+          var label = document.createElement("span");
+          label.className = "vsite";
+          label.textContent = item.label + "  -  " + item.count + " " + item.unit;
+          row.appendChild(label);
+          var button = document.createElement("button");
+          button.className = "btn danger";
+          button.type = "button";
+          button.textContent = "Clear";
+          var armed = false;
+          button.addEventListener("click", function () {
+            if (!armed) { armed = true; button.textContent = "Press again"; return; }
+            armed = false;
+            button.textContent = "Clear";
+            guarded(function () { psycho.data.clear({ what: item.id }); say("Cleared " + item.label.toLowerCase()); });
+            later(900, paintUsage);
+          });
+          row.appendChild(button);
+          usageBox.appendChild(row);
+        }(rows[i]));
+      }
+    };
+    onPress("dataRefresh", paintUsage);
+    paintUsage();
+  }
+  if (psycho.diagnostics) {
+    var reportBox = controlFor("diagnosticsReport");
+    var fillReport = function () {
+      if (reportBox) reportBox.value = "PsychoVault troubleshooting report\n" + psycho.diagnostics.report().text;
+    };
+    onPress("diagnosticsRefresh", function () { guarded(fillReport); });
+    onPress("diagnosticsCopy", function () { guarded(function () { fillReport(); psycho.diagnostics.copy(); say("Report copied"); }); });
+    guarded(fillReport);
+  }
+  if (psycho.app) {
+    onPress("openErrorLog", function () { guarded(function () { psycho.app.openlog(); say("Opening the error log"); }); });
+    var restartButton = controlFor("relaunch");
+    var restartArmed = false;
+    if (restartButton) {
+      restartButton.addEventListener("click", function () {
+        if (!restartArmed) { restartArmed = true; restartButton.textContent = "Press again to restart"; return; }
+        restartArmed = false;
+        restartButton.textContent = "Restart PsychoVault";
+        guarded(function () { psycho.app.relaunch(); });
+      });
+    }
+  }
+  if (psycho.updates) {
+    var updateBox = controlFor("updateResult");
+    var showUpdate = function (tries) {
+      var text = "";
+      try { text = psycho.updates.status().text; } catch (error) { return; }
+      if (updateBox) updateBox.textContent = text || "No check has run yet.";
+      if (tries > 0 && /Checking|Downloading/.test(text)) later(1500, function () { showUpdate(tries - 1); });
+    };
+    onPress("updateCheckNow", function () {
+      guarded(function () { psycho.updates.check(); if (updateBox) updateBox.textContent = "Checking..."; later(1500, function () { showUpdate(8); }); });
+    });
+    showUpdate(0);
+  }
+  ["updateToken", "updateTokenSave", "updateTokenForget"].forEach(function (id) {
+    var node = controlFor(id);
+    if (node) { node.setAttribute("disabled", ""); node.setAttribute("title", "Not used: update checks read public releases."); }
+  });
+
+  // ---- Structured editors: speed dial tiles, sidebar services, containers and per-site permissions. Each reads
+  // its list from the broker, edits it in rows, and saves the whole list when asked; the broker refuses a bad
+  // row and says which kind of mistake it was.
+  var field = function (placeholder, value, width) {
+    var input = document.createElement("input");
+    input.className = "field";
+    input.type = "text";
+    input.placeholder = placeholder;
+    input.value = value || "";
+    if (width) input.style.width = width;
+    return input;
+  };
+  var button = function (label, handler, danger) {
+    var node = document.createElement("button");
+    node.className = danger ? "btn danger" : "btn";
+    node.type = "button";
+    node.textContent = label;
+    node.addEventListener("click", handler);
+    return node;
+  };
+  var currentValue = function (key, fallback) {
+    try {
+      var values = (bridge.list() || {}).values || {};
+      return values[key] === undefined ? fallback : values[key];
+    } catch (error) { return fallback; }
+  };
+  var saveStructured = function (key, value, what) {
+    try {
+      bridge.set({ key: key, value: JSON.stringify(value) });
+      say(what + " saved");
+      return true;
+    } catch (error) {
+      var text = String(error && error.message ? error.message : error);
+      var at = text.indexOf("setting.structure");
+      say("Not saved: " + (at >= 0 ? text.substr(at + 18) : text));
+      return false;
+    }
+  };
+  // rows: array of objects; fields: [{name, placeholder, width}]
+  var listEditor = function (boxId, addId, saveId, key, noun, fields, blank) {
+    var box = controlFor(boxId);
+    if (!box) return;
+    var rows = [];
+    var paint = function () {
+      while (box.firstChild) box.removeChild(box.firstChild);
+      if (!rows.length) box.appendChild(document.createTextNode("Nothing here yet. Add one."));
+      rows.forEach(function (row, index) {
+        var line = document.createElement("div");
+        line.className = "vrow";
+        row.__inputs = fields.map(function (spec) {
+          var input = field(spec.placeholder, row[spec.name], spec.width);
+          input.addEventListener("change", function () { row[spec.name] = input.value; });
+          line.appendChild(input);
+          return input;
+        });
+        line.appendChild(button("Remove", function () { rows.splice(index, 1); paint(); }, true));
+        box.appendChild(line);
+      });
+    };
+    var load = function () {
+      var stored = currentValue(key, []);
+      rows = stored.map(function (item) {
+        var copy = {};
+        fields.forEach(function (spec) { copy[spec.name] = item[spec.name]; });
+        return copy;
+      });
+      paint();
+    };
+    onPress(addId, function () { var row = {}; fields.forEach(function (spec) { row[spec.name] = blank[spec.name] || ""; }); rows.push(row); paint(); });
+    onPress(saveId, function () {
+      // Read the boxes now: a field's change event only fires when it loses focus.
+      var out = rows.map(function (row) {
+        var copy = {};
+        fields.forEach(function (spec, n) { copy[spec.name] = row.__inputs ? row.__inputs[n].value : row[spec.name]; });
+        return copy;
+      });
+      if (saveStructured(key, out, noun)) { rows = out; paint(); }
+    });
+    load();
+  };
+  listEditor("dynTiles", "tileAdd", "tileSave", "speedDial", "Speed dial tiles",
+             [{ name: "title", placeholder: "Title", width: "200px" }, { name: "url", placeholder: "https://example.com", width: "340px" }], {});
+  listEditor("dynServices", "svcAdd", "svcSave", "services", "Sidebar services",
+             [{ name: "name", placeholder: "Name", width: "200px" }, { name: "url", placeholder: "https://example.com", width: "340px" }], {});
+  listEditor("dynContainers", "contAdd", "contSave", "containers", "Containers",
+             [{ name: "name", placeholder: "Name", width: "200px" }, { name: "color", placeholder: "#38bdf8", width: "120px" }], { color: "#38bdf8" });
+
+  // Per-site permissions: pick a site, set what it may use, save or remove its rules.
+  var permBox = controlFor("dynSitePermissions");
+  var permOrigin = controlFor("permOrigin");
+  var PERM_FIELDS = { camera: "permCamera", microphone: "permMicrophone", location: "permLocation", notifications: "permNotifications" };
+  var originOf = function (text) {
+    var match = /^(https?):\/\/([^\/\s?#]+)/i.exec(String(text || "").replace(/^\s+|\s+$/g, ""));
+    return match ? match[1].toLowerCase() + "://" + match[2].toLowerCase() : "";
+  };
+  var allRules = function () { return currentValue("sitePermissions", {}); };
+  var paintRules = function () {
+    if (!permBox) return;
+    while (permBox.firstChild) permBox.removeChild(permBox.firstChild);
+    var rules = allRules(), any = false;
+    for (var origin in rules) {
+      any = true;
+      (function (site) {
+        var line = document.createElement("div");
+        line.className = "vrow";
+        var label = document.createElement("span");
+        label.className = "vsite";
+        var parts = [];
+        for (var name in rules[site]) parts.push(name + ": " + rules[site][name]);
+        label.textContent = site + "  -  " + parts.join(", ");
+        line.appendChild(label);
+        line.appendChild(button("Edit", function () { permOrigin.value = site; loadSite(); }));
+        permBox.appendChild(line);
+      }(origin));
+    }
+    if (!any) permBox.appendChild(document.createTextNode("No site has its own rules. Defaults apply."));
+  };
+  var loadSite = function () {
+    var origin = originOf(permOrigin.value);
+    if (!origin) { say("Enter a site such as https://example.com"); return null; }
+    permOrigin.value = origin;
+    var rule = allRules()[origin] || {};
+    for (var name in PERM_FIELDS) { var select = controlFor(PERM_FIELDS[name]); if (select) select.value = rule[name] || "default"; }
+    say("Editing " + origin);
+    return origin;
+  };
+  if (permBox && permOrigin) {
+    onPress("permLoad", function () { loadSite(); });
+    onPress("permSave", function () {
+      var origin = originOf(permOrigin.value);
+      if (!origin) { say("Enter a site such as https://example.com"); return; }
+      var rules = allRules(), rule = {};
+      for (var name in PERM_FIELDS) { var value = controlFor(PERM_FIELDS[name]).value; if (value === "allow" || value === "deny") rule[name] = value; }
+      if (Object.keys(rule).length) rules[origin] = rule; else delete rules[origin];
+      if (saveStructured("sitePermissions", rules, "Site rules")) paintRules();
+    });
+    onPress("permRemove", function () {
+      var origin = originOf(permOrigin.value);
+      var rules = allRules();
+      if (origin && rules[origin]) { delete rules[origin]; if (saveStructured("sitePermissions", rules, "Site rules")) paintRules(); }
+    });
+    paintRules();
+  }
+
+  // Download folder: the system's folder dialog opens over the window; this page watches for the answer.
+  if (psycho.downloads && psycho.downloads.pickdir) {
+    onPress("downloadDirPick", function () {
+      var before = currentValue("downloadDir", "");
+      guarded(function () { psycho.downloads.pickdir(); });
+      var polls = 0;
+      var watch = function () {
+        var now = currentValue("downloadDir", "");
+        if (now !== before) { controlFor("downloadDir").value = now; say("Download folder saved"); return; }
+        if (++polls < 120) later(700, watch);
+      };
+      later(700, watch);
+    });
+  }
 }());

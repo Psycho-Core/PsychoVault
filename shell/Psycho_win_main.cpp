@@ -936,6 +936,9 @@ static std::atomic<uint64_t> g_timer_ticks{0}, g_paints{0}, g_chrome_frames{0}, 
 struct SettingsHub {
   std::mutex mutex;
   Json snapshot = Json::make_object();
+  // Read-only facts the settings page asks for, refreshed by the window every couple of seconds.
+  Json usage = Json::make_object();
+  std::string diagnostics, update_status;
 };
 struct Browser {
   HWND hwnd = nullptr;
@@ -1004,8 +1007,131 @@ struct Browser {
   void publish_settings() {
     if (!settings_service) settings_service = std::make_unique<rt::SettingsService>(profile);
     Json snapshot = settings_service->snapshot();
+    Json usage = build_usage();
+    std::string report = build_diagnostics();
+    std::string update_text;
+    {
+      std::lock_guard update_lock(update_mutex);
+      update_text = update_status;
+    }
     std::lock_guard lock(settings_hub->mutex);
     settings_hub->snapshot = std::move(snapshot);
+    settings_hub->usage = std::move(usage);
+    if (const Json *values = settings_hub->snapshot.find("values"))
+      if (const Json *services = values->find("services")) services_cache = *services;
+    settings_hub->diagnostics = std::move(report);
+    settings_hub->update_status = std::move(update_text);
+  }
+  // What the browser keeps, per kind, with a count: the rows of Settings > Privacy > data table.
+  Json services_cache = Json::make_array();
+  Json build_usage() {
+    Json rows = Json::make_array();
+    auto row = [&](const char *id, const char *label, size_t count, const char *unit) {
+      Json item = Json::make_object();
+      item.set("id", id);
+      item.set("label", label);
+      item.set("count", double(count));
+      item.set("unit", unit);
+      rows.array.push_back(std::move(item));
+    };
+    row("history", "Browsing history", profile.history.size(), "pages");
+    row("cookies", "Cookies", cookies.size(), "cookies");
+    {
+      std::lock_guard<std::mutex> state_lock(profile_state_mutex);
+      row("siteData", "Site storage", local_storage.origins(), "sites");
+    }
+    row("tabs", "Saved tabs", profile.session_tabs.size(), "tabs");
+    row("downloads", "Download list", downloads.snapshot().size(), "items");
+    Json out = Json::make_object();
+    out.set("rows", std::move(rows));
+    return out;
+  }
+  // The troubleshooting report: versions and on/off facts only, no paths, URLs, page content or secrets.
+  std::string build_diagnostics() {
+    std::string text;
+    auto line = [&](const std::string &key, const std::string &value) { text += key + ": " + value + "\n"; };
+    line("PsychoVault", g_version_info.runtime_version);
+    line("Engine", g_version_info.engine_version);
+    line("Profile", g_version_info.profile);
+    line("Window", private_mode ? "private" : "normal");
+    line("Tabs", std::to_string(tabs.size()));
+    line("Blocked requests", std::to_string(report ? report->blocked.load() : 0));
+    line("Ad and tracker blocking", profile.block_ads ? "on" : "off");
+    line("Vault", vault_service ? (vault_service->status().flag("exists") ? (vault_service->status().flag("locked") ? "locked" : "unlocked") : "none") : "unavailable");
+    line("Proxy", profile.proxy.active() ? "set" : "none");
+    line("History recording", profile.remember_history ? "on" : "off");
+    for (const std::string &flag : g_version_info.flags) line("Flag", flag);
+    return text;
+  }
+  // Tasks the settings page queues for the window thread. Returns true when the method was one of them.
+  bool settings_task(const BridgeTask &task) {
+    const std::string &method = task.method;
+    if (method == "data:clear") {
+      const std::string what = task.payload.str("what");
+      if (what == "history") profile.clear_history();
+      else if (what == "cookies") { cookies.clear(); profile.cookies = cookies.to_json(); }
+      else if (what == "siteData") { std::lock_guard<std::mutex> state_lock(profile_state_mutex); local_storage.clear_all(); }
+      else if (what == "tabs") { profile.session_tabs.clear(); profile.session_pinned.clear(); profile.session_muted.clear(); }
+      else if (what == "downloads") downloads.clear_finished();
+      else return true;
+      save_profile();
+      publish_settings();
+      status = "Cleared " + what;
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return true;
+    }
+    if (method == "diagnostics:copy") {
+      write_clipboard(build_diagnostics());
+      status = "The report is on the clipboard";
+      return true;
+    }
+    if (method == "app:openlog") {
+      profile.append_error_log("log opened from settings");
+      ShellExecuteW(hwnd, L"open", utf16_of(profile.directory + "/owned-errors.log").c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+      return true;
+    }
+    if (method == "app:relaunch") {
+      // A helper waits for this window to finish closing, then starts a new copy with the same arguments.
+      std::wstring command = L"cmd.exe /c \"ping -n 3 127.0.0.1 >nul & start \"\" ";
+      command += GetCommandLineW();
+      command += L"\"";
+      STARTUPINFOW startup{};
+      startup.cb = sizeof(startup);
+      PROCESS_INFORMATION info{};
+      if (CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &info)) {
+        CloseHandle(info.hProcess);
+        CloseHandle(info.hThread);
+        PostMessageW(hwnd, WM_CLOSE, 0, 0);
+      } else {
+        status = "I could not restart";
+      }
+      return true;
+    }
+    if (method == "updates:check") {
+      check_for_update();
+      return true;
+    }
+    if (method == "downloads:pickdir") {
+      const std::string folder = pick_folder(hwnd);
+      if (!folder.empty()) {
+        apply_setting_value("downloadDir", Json(folder));
+      }
+      return true;
+    }
+    return false;
+  }
+  // Applies one setting the window itself decided on (a picked folder), the way a page's change is applied.
+  void apply_setting_value(const std::string &key, const Json &value) {
+    if (!settings_service) publish_settings();
+    rt::Error error;
+    if (!settings_service->set(key, value, error)) {
+      status = error.message;
+      return;
+    }
+    save_profile();
+    publish_settings();
+    status = "Saved " + key;
+    InvalidateRect(hwnd, nullptr, FALSE);
   }
   // Applies one settings-page change on the UI thread. The change was validated on the session
   // thread; the profile may still refuse it (a folder that cannot be created), which is reported.
@@ -1090,11 +1216,15 @@ struct Browser {
     layout_content();
   }
   // The side panel (history, bookmarks, downloads) takes 330px from the page when it is open.
+  // The icon rail is 44px wide unless Settings > Appearance > Hide the sidebar collapses it.
+  int rail_width() const { return profile.hide_sidebar ? 0 : 44; }
+  bool last_rail_hidden = false;
   bool chrome_panel_open() const { return chrome_enabled && (panel_bookmarks || panel_history || panel_downloads); }
   bool last_panel_open = false;
   void layout_content() {
     const int panel_width = chrome_panel_open() ? 330 : 0;
-    content = chrome_enabled ? Rect{44, 84, double(std::max(0, width - 44 - panel_width)), double(std::max(0, height - 84 - 22))}
+    const int rail = rail_width();
+    content = chrome_enabled ? Rect{double(rail), 84, double(std::max(0, width - rail - panel_width)), double(std::max(0, height - 84 - 22))}
               : app_ui_slice ? Rect{0, 0, double(width), double(height)}
                              : Rect{44, 84, double(width - 44), double(height - 106)};
   }
@@ -1759,7 +1889,9 @@ struct Browser {
     if (index == active && page_composing) composition_cancel();
     stop_session(tab);
     std::string target = input;
-    auto u = navigate_input(input, profile.search_template());
+    std::optional<Url> u;
+    if (const std::string via = profile.search_shortcut_url(input); !via.empty()) u = parse_url(via);
+    if (!u) u = navigate_input(input, profile.search_template());
     if (u)
       target = u->href();
     {
@@ -1830,11 +1962,25 @@ struct Browser {
     session->farm = renderer_farm;
     publish_settings();
     session->bridge_invoke = [window = hwnd, source_tab = tab.id, hub = settings_hub, vault = vault_service,
+                              newtab_origin = app_ui_url(target),
                               settings_origin = settings_page_url(target) && !private_mode](
         rt::Channel channel, const std::string &method, const Json &payload,
         Json &reply, rt::Error &bridge_error) {
       static const rt::Schemas schemas = rt::Schemas::stock();
       bridge_error = rt::Error{};
+      if (newtab_origin && method == "ui:tiles") {
+        // The new-tab page may read the speed-dial tiles and nothing else about the profile.
+        reply = Json::make_object();
+        Json tiles = Json::make_array();
+        {
+          std::lock_guard lock(hub->mutex);
+          const Json *values = hub->snapshot.find("values");
+          const Json *stored = values ? values->find("speedDial") : nullptr;
+          if (stored && stored->type == Json::Type::Array) tiles = *stored;
+        }
+        reply.set("tiles", std::move(tiles));
+        return true;
+      }
       if (channel == rt::Channel::Settings) {
         // Only the settings page may read or change settings, and only through the catalog.
         if (!settings_origin || (method != "settings:list" && method != "settings:get" &&
@@ -1877,6 +2023,46 @@ struct Browser {
         reply = Json::make_object();
         reply.set("queued", Json(true));
         return true;
+      }
+      {
+        // Read-only facts and window tasks the settings page asks for (see settings_task).
+        static const char *const reads[] = {"data:usage", "diagnostics:report", "updates:status"};
+        static const char *const tasks[] = {"data:clear", "diagnostics:copy", "app:openlog", "app:relaunch", "updates:check", "downloads:pickdir"};
+        const bool is_read = std::any_of(std::begin(reads), std::end(reads), [&](const char *m) { return method == m; });
+        const bool is_task = std::any_of(std::begin(tasks), std::end(tasks), [&](const char *m) { return method == m; });
+        if (is_read || is_task) {
+          if (!settings_origin || !schemas.validate(method, payload, bridge_error)) {
+            if (bridge_error.code.empty()) bridge_error = {"bridge.settings.origin", "this is not available to this page"};
+            return false;
+          }
+          reply = Json::make_object();
+          if (is_read) {
+            std::lock_guard lock(hub->mutex);
+            if (method == "data:usage") reply = hub->usage;
+            else if (method == "diagnostics:report") reply.set("text", Json(hub->diagnostics));
+            else reply.set("text", Json(hub->update_status));
+            return true;
+          }
+          if (method == "data:clear") {
+            static const char *const kinds[] = {"history", "cookies", "siteData", "tabs", "downloads"};
+            const std::string what = payload.str("what");
+            if (std::none_of(std::begin(kinds), std::end(kinds), [&](const char *k) { return what == k; })) {
+              bridge_error = {"bridge.data.kind", "that is not something I keep"};
+              return false;
+            }
+          }
+          auto task = std::make_unique<BridgeTask>();
+          task->tab = source_tab;
+          task->method = method;
+          task->payload = payload;
+          if (!PostMessageW(window, WM_BRIDGE, 0, reinterpret_cast<LPARAM>(task.get()))) {
+            bridge_error = {"bridge.queue.failed", "the browser window refused the request"};
+            return false;
+          }
+          task.release();
+          reply.set("queued", Json(true));
+          return true;
+        }
       }
       if (channel == rt::Channel::Vault) {
         // The vault is the settings page's alone, and never reachable from a private window.
@@ -2803,6 +2989,8 @@ struct Browser {
     state.set("activeId", double(current().id));
     state.set("address", app_ui_url(current().url) ? std::string() : current().url.substr(0, 2048));
     state.set("blockAds", profile.block_ads);
+    state.set("hideSidebar", profile.hide_sidebar);
+    state.set("services", services_cache);
     if (chrome_panel_open()) {
       Json panel = Json::make_object();
       Json items = Json::make_array();
@@ -4599,6 +4787,7 @@ struct Browser {
   }
   // Copying a vault password: it goes to the clipboard, and a minute later the clipboard is emptied unless
   // something else has been copied since (the clipboard sequence number is how I know).
+  ULONGLONG hub_refreshed_at = 0;
   DWORD vault_clipboard_sequence = 0;
   ULONGLONG vault_clipboard_clear_at = 0;
   void vault_copy(const std::string &site) {
@@ -5703,8 +5892,9 @@ static LRESULT wndproc_inner(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (b) b->reap_sessions();
     if (b && b->chrome_enabled) {
       b->start_chrome();
-      if (b->chrome_panel_open() != b->last_panel_open) {
+      if (b->chrome_panel_open() != b->last_panel_open || b->profile.hide_sidebar != b->last_rail_hidden) {
         b->last_panel_open = b->chrome_panel_open();
+        b->last_rail_hidden = b->profile.hide_sidebar;
         b->resize(b->width, b->height);
       }
       b->push_chrome_state();
@@ -5840,6 +6030,10 @@ static LRESULT wndproc_inner(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       b->extensions.tick();
       b->flush_history();
       b->vault_clipboard_tick();
+      if (GetTickCount64() - b->hub_refreshed_at > 2000) {
+        b->hub_refreshed_at = GetTickCount64();
+        b->publish_settings();
+      }
       if (b->vault_service && b->vault_service->auto_lock(b->profile.vault_lock_minutes)) {
         b->status = "The vault locked itself";
         InvalidateRect(hwnd, nullptr, FALSE);
@@ -5929,6 +6123,7 @@ static LRESULT wndproc_inner(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       b->apply_setting(*task);
       return 0;
     }
+    if (b->settings_task(*task)) return 0;
     if (task->method == "vault:copy") {
       b->vault_copy(task->payload.str("site"));
       return 0;

@@ -18,9 +18,17 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 ENGINE = ROOT / "build" / ("pv-engine.exe" if sys.platform == "win32" else "pv-engine")
 STUB = """
 window.psycho={settings:{
-  list:function(){return {values:{restore:false,search:"brave",homepage:"psychovault://newtab",spellUserWords:"psycho\\nvault"},unwired:{}};},
+  list:function(){return {values:{restore:false,search:"brave",homepage:"psychovault://newtab",spellUserWords:"psycho\\nvault",
+    speedDial:[{title:"One",url:"https://one.test/"},{title:"Two",url:"https://two.test/"}],
+    services:[{name:"Svc",url:"https://svc.test/"}], containers:[], sitePermissions:{"https://seen.test":{camera:"allow"}}},unwired:{}};},
   set:function(a){document.title="set:"+a.key+"="+a.value;}},
   history:{clear:function(){document.title="history-clear";}}};
+psycho.data={usage:function(){return {rows:[{id:"history",label:"Browsing history",count:3,unit:"pages"},{id:"cookies",label:"Cookies",count:7,unit:"cookies"}]};},
+  clear:function(a){document.title="clear:"+a.what;return {queued:true};}};
+psycho.diagnostics={report:function(){return {text:"Tabs: 3\\nVault: locked\\n"};},copy:function(){document.title="diag-copy";return {queued:true};}};
+psycho.app={openlog:function(){document.title="openlog";return {queued:true};},relaunch:function(){document.title="relaunch";return {queued:true};}};
+psycho.downloads={pickdir:function(){document.title="pickdir";return {queued:true};}};
+psycho.updates={check:function(){document.title="updates-check";return {queued:true};},status:function(){return {text:"You are up to date"};}};
 var vaultState={exists:true,locked:true,count:0};
 psycho.vault={
   status:function(){return {exists:vaultState.exists,locked:vaultState.locked,count:vaultState.count};},
@@ -122,6 +130,72 @@ document.title = document.getElementById("search").value + "|" + document.getEle
     def test_set_master_password_creates_the_vault(self):
         tail = 'document.getElementById("vnew").value = "a long passphrase";'
         self.assertEqual(self.vault_press("vset", tail)["title"], "create:a long passphrase")
+
+
+    def press(self, page, button, tail="", extra=()):
+        box = run(("--inspect", f"#{button}"), page=page, tail=tail)["inspected"][0]["box"]
+        x, y = int(box["x"] + box["w"] / 2), int(box["y"] + box["h"] / 2)
+        return run(("--action", f"click:{x},{y}") + tuple(extra), page=page, tail=tail)
+
+    def test_data_table_lists_what_is_kept_and_clearing_asks_twice(self):
+        page = "psychovault://settings/#privacy"
+        out = run(("--inspect", "#dynDataUsage .vrow", "--inspect", "#dynDataUsage .btn"), page=page)
+        self.assertTrue(out["inspected"][0]["found"])
+        box = out["inspected"][1]["box"]
+        x, y = int(box["x"] + box["w"] / 2), int(box["y"] + box["h"] / 2)
+        once = run(("--action", f"click:{x},{y}"), page=page)["title"]
+        self.assertFalse(once.startswith("clear:"), once)
+        self.assertEqual(run(("--action", f"click:{x},{y}", "--action", f"click:{x},{y}"), page=page)["title"], "clear:history")
+
+    def test_diagnostics_report_fills_the_box_and_copy_asks_the_broker(self):
+        page = "psychovault://settings/#about"
+        out = run(tail='document.title = document.getElementById("diagnosticsReport").value;', page=page)
+        self.assertIn("Tabs: 3", out["title"])
+        self.assertEqual(self.press(page, "diagnosticsCopy")["title"], "diag-copy")
+        self.assertEqual(self.press(page, "openErrorLog")["title"], "openlog")
+
+    def test_update_check_is_requested_and_the_token_controls_are_disabled(self):
+        page = "psychovault://settings/#about"
+        self.assertEqual(self.press(page, "updateCheckNow")["title"], "updates-check")
+        out = run(tail='document.title = String(document.getElementById("updateToken").disabled);', page=page)
+        self.assertEqual(out["title"], "true")
+
+    def test_restart_asks_twice(self):
+        page = "psychovault://settings/#privacy"
+        box = run(("--inspect", "#relaunch"), page=page)["inspected"][0]["box"]
+        x, y = int(box["x"] + 10), int(box["y"] + box["h"] / 2)
+        self.assertNotEqual(run(("--action", f"click:{x},{y}"), page=page)["title"], "relaunch")
+        self.assertEqual(run(("--action", f"click:{x},{y}", "--action", f"click:{x},{y}"), page=page)["title"], "relaunch")
+
+
+    def test_speed_dial_editor_lists_rows_and_saves_the_whole_list(self):
+        page = "psychovault://settings/#appearance"
+        out = run(("--inspect", "#dynTiles .vrow"), page=page)
+        self.assertTrue(out["inspected"][0]["found"])
+        saved = self.press(page, "tileSave")["title"]
+        self.assertEqual(saved, 'set:speedDial=[{"title":"One","url":"https://one.test/"},{"title":"Two","url":"https://two.test/"}]')
+
+    def test_adding_a_service_row_and_saving_sends_it_too(self):
+        page = "psychovault://settings/#appearance"
+        out = self.press(page, "svcAdd", extra=())
+        box = run(("--inspect", "#svcSave"), page=page)["inspected"][0]["box"]
+        x, y = int(box["x"] + box["w"] / 2), int(box["y"] + box["h"] / 2)
+        add = run(("--inspect", "#svcAdd"), page=page)["inspected"][0]["box"]
+        ax, ay = int(add["x"] + add["w"] / 2), int(add["y"] + add["h"] / 2)
+        out = run(("--action", f"click:{ax},{ay}", "--action", f"click:{x},{y}"), page=page)
+        self.assertEqual(out["title"], 'set:services=[{"name":"Svc","url":"https://svc.test/"},{"name":"","url":""}]')
+
+    def test_site_permissions_save_the_rules_the_selects_show(self):
+        page = "psychovault://settings/#privacy"
+        tail = 'document.getElementById("permOrigin").value = "https://example.test/path"; document.getElementById("permCamera").value = "deny";'
+        out = self.press(page, "permSave", tail)
+        self.assertTrue(out["title"].startswith("set:sitePermissions="), out["title"])
+        self.assertEqual(json.loads(out["title"][len("set:sitePermissions="):]),
+                         {"https://seen.test": {"camera": "allow"}, "https://example.test": {"camera": "deny"}})
+
+    def test_the_download_folder_button_asks_the_window_for_its_picker(self):
+        page = "psychovault://settings/#downloads"
+        self.assertEqual(self.press(page, "downloadDirPick")["title"], "pickdir")
 
 
 if __name__ == "__main__":

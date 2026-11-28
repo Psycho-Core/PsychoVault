@@ -94,6 +94,10 @@ public:
   bool remove_bookmark(const std::string &url);
   void clear_history();
   std::string search_template() const;
+  // One line of Settings > Search shortcuts is "shortcut | name | https://...%s"; true when it is well formed.
+  static bool parse_search_shortcut(const std::string &line, std::string &shortcut, std::string &name, std::string &url);
+  // "gh some words" with a gh shortcut becomes that engine's address for the words; empty when none matches.
+  std::string search_shortcut_url(const std::string &input) const;
   bool set_search_engine(const std::string &engine);
   bool set_home_page(const std::string &url);
   bool set_custom_search(const std::string &template_url);

@@ -72,7 +72,59 @@ struct Normalized {
   bool flag = false;
   std::string text;
   int number = 0;
+  Json json;
 };
+
+bool plain_text(const std::string &text, size_t shortest, size_t longest) {
+  return text.size() >= shortest && text.size() <= longest &&
+         std::none_of(text.begin(), text.end(), [](unsigned char c) { return c < 0x20 || c == 0x7f; });
+}
+bool hex_colour(const std::string &text) {
+  return text.size() == 7 && text[0] == '#' &&
+         std::all_of(text.begin() + 1, text.end(), [](unsigned char c) { return std::isxdigit(c) != 0; });
+}
+bool web_address(const std::string &text) {
+  auto parsed = parse_url(text);
+  return text.size() <= 2048 && parsed && parsed->network();
+}
+
+// Each structured setting has its own shape; anything else is refused whole.
+bool check_structure(const std::string &key, const Json &value, Error &error) {
+  auto bad = [&](const std::string &why) {
+    error = {"setting.structure", "'" + key + "': " + why};
+    return false;
+  };
+  if (key == "containers") {
+    if (value.type != Json::Type::Array || value.array.size() > 12) return bad("a list of at most 12 containers");
+    for (const Json &item : value.array)
+      if (item.type != Json::Type::Object || !plain_text(item.str("name"), 1, 32) || !hex_colour(item.str("color")))
+        return bad("each container needs a name and a #rrggbb colour");
+  } else if (key == "services") {
+    if (value.type != Json::Type::Array || value.array.size() > 24) return bad("a list of at most 24 services");
+    for (const Json &item : value.array)
+      if (item.type != Json::Type::Object || !plain_text(item.str("name"), 1, 32) || !web_address(item.str("url")))
+        return bad("each service needs a name and an http or https address");
+  } else if (key == "speedDial") {
+    if (value.type != Json::Type::Array || value.array.size() > 24) return bad("a list of at most 24 tiles");
+    for (const Json &item : value.array)
+      if (item.type != Json::Type::Object || !plain_text(item.str("title"), 1, 120) || !web_address(item.str("url")))
+        return bad("each tile needs a title and an http or https address");
+  } else if (key == "sitePermissions") {
+    if (value.type != Json::Type::Object || value.object.size() > 500) return bad("rules for at most 500 sites");
+    for (const auto &[origin, rule] : value.object) {
+      auto parsed = parse_url(origin);
+      if (!parsed || !parsed->network() || rule.type != Json::Type::Object || rule.object.size() > 4)
+        return bad("each site is an http or https origin with up to four rules");
+      for (const auto &[name, setting] : rule.object)
+        if ((name != "camera" && name != "microphone" && name != "location" && name != "notifications") ||
+            setting.type != Json::Type::String || (setting.string != "allow" && setting.string != "deny"))
+          return bad("a rule is camera, microphone, location or notifications set to allow or deny");
+    }
+  } else {
+    return bad("no such structured setting");
+  }
+  return true;
+}
 
 bool normalize(const std::string &key, const Json &value, Normalized &out, Error &error) {
   error = Error{};
@@ -113,6 +165,10 @@ bool normalize(const std::string &key, const Json &value, Normalized &out, Error
     }
     out.text = value.string;
     break;
+  case SettingKind::Json:
+    if (!check_structure(key, value, error)) return false;
+    out.json = value;
+    break;
   case SettingKind::Lines:
     if (value.type != Json::Type::String || value.string.size() > 65536 ||
         std::any_of(value.string.begin(), value.string.end(),
@@ -132,6 +188,25 @@ bool SettingsService::validate(const std::string &key, const Json &value, Error 
   Normalized ignored;
   return normalize(key, value, ignored, error);
 }
+
+namespace {
+// The rail's services before the owner changes the list.
+Json default_services() {
+  static const char *const names[][2] = {{"Twitch", "https://www.twitch.tv/"}, {"YouTube Music", "https://music.youtube.com/"},
+                                         {"YouTube", "https://www.youtube.com/"}, {"X", "https://x.com/"},
+                                         {"Reddit", "https://www.reddit.com/"}, {"GitHub", "https://github.com/"},
+                                         {"WhatsApp", "https://web.whatsapp.com/"}, {"Telegram", "https://web.telegram.org/"},
+                                         {"Spotify", "https://open.spotify.com/"}};
+  Json list = Json::make_array();
+  for (const auto &entry : names) {
+    Json item = Json::make_object();
+    item.set("name", entry[0]);
+    item.set("url", entry[1]);
+    list.array.push_back(std::move(item));
+  }
+  return list;
+}
+} // namespace
 
 Json SettingsService::snapshot() const {
   Json values = Json::make_object();
@@ -170,7 +245,20 @@ Json SettingsService::snapshot() const {
     else if (key == "blockAllowSites") values.set(key, Json(join_lines(profile_.block_allow_sites)));
     else if (key == "blockCustomDomains") values.set(key, Json(join_lines(profile_.blocked_hosts)));
     else if (key == "vaultLockMin") values.set(key, Json(profile_.vault_lock_minutes));
+    else if (key == "speedDial") {
+      Json tiles = Json::make_array();
+      for (const Bookmark &tile : profile_.speed_dial) {
+        Json item = Json::make_object();
+        item.set("title", tile.title);
+        item.set("url", tile.url);
+        tiles.array.push_back(std::move(item));
+      }
+      values.set(key, std::move(tiles));
+    }
     else if (const Json *stored = profile_.extra_settings.find(key)) values.set(key, *stored);
+    else if (key == "services") values.set(key, default_services());
+    else if (key == "containers") values.set(key, Json::make_array());
+    else if (key == "sitePermissions") values.set(key, Json::make_object());
   }
   Json out = Json::make_object();
   out.set("values", std::move(values));
@@ -185,10 +273,25 @@ bool SettingsService::set(const std::string &key, const Json &value, Error &erro
   const bool flag = normalized.flag;
   const std::string &text = normalized.text;
   const int number = normalized.number;
-  auto refuse = [&](const char *why) {
+  auto refuse = [&](const std::string &why) {
     error = {"setting.invalid", "'" + key + "': " + why};
     return false;
   };
+  if (key == "customSearchEngines") {
+    // Every non-empty line must be "shortcut | name | https://...%s", or nothing is saved.
+    size_t start = 0, number = 0;
+    while (start <= text.size()) {
+      size_t end = text.find('\n', start);
+      if (end == std::string::npos) end = text.size();
+      ++number;
+      std::string line = text.substr(start, end - start);
+      while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+      std::string shortcut, name, url;
+      if (!line.empty() && !Profile::parse_search_shortcut(line, shortcut, name, url))
+        return refuse("line " + std::to_string(number) + " is not 'shortcut | name | https://address-with-%s'");
+      start = end + 1;
+    }
+  }
   if (key == "search") { if (!profile_.set_search_engine(text)) return refuse("unsupported engine"); }
   else if (key == "homepage") { if (!profile_.set_home_page(text)) return refuse("not an address I can open"); }
   else if (key == "restore") profile_.restore_tabs = flag;
@@ -226,6 +329,10 @@ bool SettingsService::set(const std::string &key, const Json &value, Error &erro
   else if (key == "blockAllowSites") profile_.block_allow_sites = split_lines(text, 4096, 253);
   else if (key == "blockCustomDomains") profile_.blocked_hosts = split_lines(text, 4096, 253);
   else if (key == "vaultLockMin") profile_.vault_lock_minutes = std::atoi(text.c_str());
+  else if (key == "speedDial") {
+    profile_.speed_dial.clear();
+    for (const Json &item : normalized.json.array) profile_.speed_dial.push_back({item.str("title"), item.str("url")});
+  }
   else {
     // No dedicated field: the profile keeps the validated value in its extra-settings bag.
     Json stored;
@@ -235,6 +342,7 @@ bool SettingsService::set(const std::string &key, const Json &value, Error &erro
     case SettingKind::Choice: stored = numeric_choices(*spec) ? Json(std::atoi(text.c_str())) : Json(text); break;
     case SettingKind::Text:
     case SettingKind::Lines: stored = Json(text); break;
+    case SettingKind::Json: stored = normalized.json; break;
     }
     profile_.extra_settings.set(key, std::move(stored));
   }

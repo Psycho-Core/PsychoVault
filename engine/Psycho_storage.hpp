@@ -20,6 +20,7 @@ public:
   bool remove(const std::string &origin, const std::string &name);
   std::string get(const std::string &origin, const std::string &name, bool *found = nullptr) const;
   void clear(const std::string &origin);
+  void clear_all() { data_.clear(); }
   size_t length(const std::string &origin) const;
   // I return keys in the order they were first written, which is what a page
   // walking key(0), key(1)... expects.

@@ -53,6 +53,9 @@ def rows():
                 shape = "Text"
             options = [o["value"] for o in control["options"]] if shape == "Choice" else []
             out.append((cid, shape, options, True))
+    # Structured settings edited by the dynamic editors, not by one control: validated per key.
+    for cid in ("containers", "services", "speedDial", "sitePermissions"):
+        out.append((cid, "Json", [], True))
     return out
 
 

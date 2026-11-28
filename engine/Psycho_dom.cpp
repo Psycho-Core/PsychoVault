@@ -159,25 +159,34 @@ int Document::element(std::string_view name, int parent) const {
       return c;
   return -1;
 }
+// Only nodes that are still in the tree count: a node that was removed keeps its slot but not its place.
+static bool connected_to(const Document &doc, int id) {
+  for (int p = id; p >= 0; p = doc.nodes[p].parent)
+    if (p == doc.root) return true;
+  return false;
+}
 int Document::by_id(std::string_view id) const {
   for (auto &n : nodes)
-    if (n.type == Node::Type::Element && n.attribute("id") == id)
+    if (n.type == Node::Type::Element && n.attribute("id") == id && connected_to(*this, n.id))
       return n.id;
   return -1;
 }
+// Matches come back in document order (a walk of the tree), not in the order the nodes were created, so an
+// element inserted before another is found before it.
 std::vector<int> Document::query(std::string_view selector, int scope) const {
   std::vector<int> out;
-  for (auto &n : nodes) {
-    if (n.type != Node::Type::Element || (scope >= 0 && n.id == scope))
-      continue;
-    bool descendant = scope < 0;
-    for (int p = n.parent; scope >= 0 && p >= 0; p = nodes[p].parent)
-      if (p == scope) {
-        descendant = true;
-        break;
-      }
-    if (descendant && matches_selector(*this, n.id, selector))
-      out.push_back(n.id);
+  const int start = scope >= 0 ? scope : root;
+  if (start < 0 || start >= int(nodes.size())) return out;
+  std::vector<int> stack;
+  if (scope < 0) stack.push_back(start);
+  else
+    for (auto it = nodes[start].children.rbegin(); it != nodes[start].children.rend(); ++it) stack.push_back(*it);
+  while (!stack.empty()) {
+    const int id = stack.back();
+    stack.pop_back();
+    const Node &n = nodes[id];
+    if (n.type == Node::Type::Element && matches_selector(*this, id, selector)) out.push_back(id);
+    for (auto it = n.children.rbegin(); it != n.children.rend(); ++it) stack.push_back(*it);
   }
   return out;
 }

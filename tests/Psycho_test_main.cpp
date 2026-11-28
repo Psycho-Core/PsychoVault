@@ -1307,6 +1307,18 @@ int main() {
     keys.key_up("Space");
     CHECK(keys.render(300, 100, 0).str("title") == "plain;send;|send");
   }
+  // Queries find only what is still in the document, in document order.
+  {
+    Page order;
+    order.load(*parse_url("https://local.test/"),
+      "<div id=d><i class=x id=a></i></div>"
+      "<script>var d=document.getElementById('d'),a=document.getElementById('a');"
+      "var b=document.createElement('i');b.className='x';b.id='b';d.insertBefore(b,a);"
+      "var first=document.querySelectorAll('.x')[0].id;"
+      "d.removeChild(a);"
+      "document.title=first+','+document.querySelectorAll('.x').length+','+(document.getElementById('a')===null);</script>");
+    CHECK(order.render(200, 100, 0).str("title") == "b,1,true");
+  }
   // Tree walking and removeChild: a page can empty a container with while(firstChild).
   {
     Page tree;
@@ -3003,6 +3015,55 @@ int main() {
           snapshot.at("values").str("cpuLimit") == "low" &&
           snapshot.at("values").str("spellUserWords").find("vault") != std::string::npos &&
           snapshot.at("unwired").object.empty());
+    // Structured settings: each key has its own shape and a bad one is refused whole.
+    {
+      Json containers = Json::make_array();
+      Json one = Json::make_object();
+      one.set("name", "Work");
+      one.set("color", "#38bdf8");
+      containers.array.push_back(one);
+      CHECK(settings.set("containers", containers, e) && profile.extra_settings.find("containers"));
+      one.set("color", "red");
+      Json bad = Json::make_array();
+      bad.array.push_back(one);
+      CHECK(!settings.set("containers", bad, e) && e.code == "setting.structure");
+      Json tiles = Json::make_array();
+      Json tile = Json::make_object();
+      tile.set("title", "Example");
+      tile.set("url", "https://example.test/");
+      tiles.array.push_back(tile);
+      CHECK(settings.set("speedDial", tiles, e) && profile.speed_dial.size() == 1 && profile.speed_dial[0].title == "Example");
+      tile.set("url", "javascript:alert(1)");
+      Json bad_tiles = Json::make_array();
+      bad_tiles.array.push_back(tile);
+      CHECK(!settings.set("speedDial", bad_tiles, e) && profile.speed_dial.size() == 1);
+      Json rules = Json::make_object();
+      Json rule = Json::make_object();
+      rule.set("camera", "deny");
+      rules.set("https://example.test", rule);
+      CHECK(settings.set("sitePermissions", rules, e));
+      rule.set("camera", "maybe");
+      Json bad_rules = Json::make_object();
+      bad_rules.set("https://example.test", rule);
+      CHECK(!settings.set("sitePermissions", bad_rules, e) && e.code == "setting.structure");
+      CHECK(!settings.set("containers", Json("not a list"), e));
+      const Json values = settings.snapshot().at("values");
+      CHECK(values.at("services").array.size() == 9 && values.at("containers").array.size() == 1 &&
+            values.at("speedDial").array.size() == 1 && values.at("sitePermissions").find("https://example.test"));
+    }
+    // Search shortcuts: a well-formed list is kept and used; a list with a bad line is refused whole.
+    CHECK(settings.set("customSearchEngines",
+                       Json(std::string("gh | GitHub | https://github.com/search?q=%s\nwiki | Wikipedia | https://en.wikipedia.org/w/index.php?search=%s")), e));
+    CHECK(profile.search_shortcut_url("gh rust lang") == "https://github.com/search?q=rust+lang" ||
+          profile.search_shortcut_url("gh rust lang") == "https://github.com/search?q=rust%20lang");
+    CHECK(profile.search_shortcut_url("GH x").find("github.com") != std::string::npos);
+    CHECK(profile.search_shortcut_url("nope x").empty() && profile.search_shortcut_url("gh").empty() &&
+          profile.search_shortcut_url("gh   ").empty());
+    CHECK(!settings.set("customSearchEngines", Json(std::string("ok | Ok | https://ok.test/?q=%s\nbroken line")), e) &&
+          e.code == "setting.invalid" && e.message.find("line 2") != std::string::npos &&
+          profile.search_shortcut_url("gh x").find("github.com") != std::string::npos);
+    CHECK(!settings.set("customSearchEngines", Json(std::string("x | X | http://plain.test/?q=%s")), e));
+    CHECK(!settings.set("customSearchEngines", Json(std::string("x | X | https://nohole.test/")), e));
     // It all persists: save, reopen, and the snapshot reads the same.
     CHECK(profile.save());
     Profile reopened = Profile::open(dir.string(), false);
@@ -3018,6 +3079,9 @@ int main() {
       case rt::SettingKind::Bool: probe = Json(true); break;
       case rt::SettingKind::Number: probe = Json(1); break;
       case rt::SettingKind::Choice: probe = Json(spec.choices.front()); break;
+      case rt::SettingKind::Json:
+        probe = std::string(spec.key) == "sitePermissions" ? Json::make_object() : Json::make_array();
+        break;
       default: probe = Json("https://example.test/"); break;
       }
       rt::Error each;

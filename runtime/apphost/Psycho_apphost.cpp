@@ -29,6 +29,11 @@ const ExposedEntry kSettingsProfile[] = {
     {Channel::Vault, "vault:list"},      {Channel::Vault, "vault:add"},
     {Channel::Vault, "vault:remove"},    {Channel::Vault, "vault:reveal"},
     {Channel::Vault, "vault:copy"},      {Channel::Vault, "vault:generate"},
+    {Channel::Settings, "data:usage"},   {Channel::Settings, "data:clear"},
+    {Channel::Diagnostics, "diagnostics:report"}, {Channel::Diagnostics, "diagnostics:copy"},
+    {Channel::Lifecycle, "app:openlog"}, {Channel::Lifecycle, "app:relaunch"},
+    {Channel::Updates, "updates:check"}, {Channel::Updates, "updates:status"},
+    {Channel::Downloads, "downloads:pickdir"},
     {Channel::Lifecycle, "lifecycle:ping"},
 };
 
@@ -53,6 +58,7 @@ const ExposedEntry kPrivateShellProfile[] = {
 // The new-tab app surface gets only the calls its address and tab controls need.
 // It has no settings, history, diagnostics, extension, vault or network facade.
 const ExposedEntry kNewTabProfile[] = {
+    {Channel::Ui, "ui:tiles"},
     {Channel::Tab, "tab:new"},
     {Channel::Tab, "tab:activate"},
     {Channel::Lifecycle, "lifecycle:ping"},

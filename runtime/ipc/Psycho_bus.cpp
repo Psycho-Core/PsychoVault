@@ -245,6 +245,18 @@ Schemas Schemas::stock() {
   s.add("vault:reveal", fields({{"site", T::String, true}}));
   s.add("vault:copy", fields({{"site", T::String, true}}));
   s.add("vault:generate", fields({}));
+  // The settings page's data table, diagnostics, error log, restart and update check.
+  s.add("data:usage", fields({}));
+  s.add("data:clear", fields({{"what", T::String, true}}));
+  s.add("diagnostics:report", fields({}));
+  s.add("diagnostics:copy", fields({}));
+  s.add("app:openlog", fields({}));
+  s.add("app:relaunch", fields({}));
+  s.add("updates:check", fields({}));
+  s.add("updates:status", fields({}));
+  // The new-tab page reads the speed-dial tiles; the settings page asks for a folder picker.
+  s.add("ui:tiles", fields({}));
+  s.add("downloads:pickdir", fields({}));
   s.add("spell:status", fields({}));
   return s;
 }

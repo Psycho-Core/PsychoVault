@@ -112,7 +112,7 @@ GROUPS = {
     "accessibility": [("Page translation", ["translateTarget", "@translate_note"]),
                       ("Accessibility", ["highContrast", "reduceMotion", "showTabCloseButtons", "@a11y_tip"])],
     "about": [("About", ["openErrorLog", "diagnosticsRefresh+diagnosticsCopy", "diagnosticsReport", "@about_notes",
-                         "updateCheckNow", "updateToken", "updateTokenSave", "updateTokenForget"])],
+                         "updateCheckNow", "@update_result", "@token_note", "updateToken", "updateTokenSave", "updateTokenForget"])],
 }
 # Raw snippets placed between rows. "@name" in a GROUPS list inserts RAW[name]; "+id" after a control id
 # puts that control's bare element on the same row (see combo()).
@@ -131,6 +131,8 @@ RAW = {
     "pw_empty": '<div class="note">No entries yet.<br>Add an entry by hand - or right-click a password field on a real site and choose \u201cSave password for this site\u201d.</div>',
     "translate_note": '<div class="note">Choose <b>Menu \u2192 Translate current page</b> or press <b>Ctrl+K</b> and search \u201ctranslate\u201d. Google Translate receives the page URL and fetches its contents; PsychoVault asks first and opens the translated copy in a new tab. This needs internet access and may not work on every site. Do not use it for private or sensitive pages.</div>',
     "a11y_tip": '<div class="note">Keyboard tip: use <b>Ctrl++</b> / <b>Ctrl+-</b> to zoom the current page and the left/right arrow keys while focused on a tab to switch tabs. Keyboard focus is outlined.</div>',
+    "update_result": '<div class="note" id="updateResult"></div>',
+    "token_note": '<div class="note">Update checks read this project\u2019s public releases and need no token, so the token controls below do nothing in this build.</div>',
     "about_notes": '<div class="note">If an update fails while Proton VPN is on, disconnect it and retry. PsychoVault does not bypass the VPN automatically. It removes an updater-downloaded installer only after the new version starts and the file is verified unchanged; older untracked installers are kept.</div><div class="note"><span class="strong">PsychoVault</span></div><div class="note">Browser application (this UI, tabs, bookmarks, history, downloads, blocking) and the rendering engine: written for this project.</div><div class="note">Bookmark, history and settings files live in your user data folder.</div><div class="note">Licensed MIT. Third-party components under their own licences - see THIRD-PARTY-NOTICES.md.</div>',
 }
 # the eight dynamic editors in the inventory, as empty containers in the card they belong to

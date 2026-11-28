@@ -51,6 +51,8 @@
     renderPanel(state.panel);
     renderFind(state.find, !!state.panel);
     renderPalette(state.palette);
+    document.body.className = state.hideSidebar ? "norail" : "";
+    renderServices(state.services);
     var shield = document.getElementById("rail-adblock");
     if (shield && typeof state.blockAds === "boolean") shield.className = state.blockAds ? "rail-btn good" : "rail-btn off";
     setDim("nav-back", !state.canBack);
@@ -221,6 +223,41 @@
   document.getElementById("find-prev").addEventListener("click", function () { bridge("find", "step", { delta: -1 }); });
   document.getElementById("find-next").addEventListener("click", function () { bridge("find", "step", { delta: 1 }); });
   document.getElementById("find-done").addEventListener("click", function () { bridge("find", "close"); });
+
+  // ---- Rail services: the owner's list from Settings, one button each; a press opens the service in a tab.
+  var servicesEl = document.getElementById("services");
+  var servicesDrawn = "";
+  var SERVICE_COLOURS = ["#a855f7", "#ef4444", "#64748b", "#f97316", "#94a3b8", "#22c55e", "#38bdf8", "#eab308"];
+  function renderServices(list) {
+    if (!servicesEl || !list) return;
+    var signature = JSON.stringify(list);
+    if (signature === servicesDrawn) return;
+    servicesDrawn = signature;
+    clear(servicesEl);
+    for (var i = 0; i < list.length; i++) {
+      var name = list[i].name || "?";
+      var button = el("button", "svc");
+      button.setAttribute("data-url", list[i].url);
+      button.setAttribute("title", name);
+      button.appendChild(el("span", "t", name.replace(/[^A-Za-z0-9]/g, "").substr(0, 2).toUpperCase() || "?"));
+      var bar = el("i");
+      bar.style.background = SERVICE_COLOURS[(name.length + name.charCodeAt(0)) % SERVICE_COLOURS.length];
+      button.appendChild(bar);
+      servicesEl.appendChild(button);
+    }
+  }
+  if (servicesEl) {
+    servicesEl.addEventListener("click", function (event) {
+      var node = event.target;
+      while (node && node !== servicesEl) {
+        if (node.getAttribute && node.getAttribute("data-url")) {
+          bridge("tab", "new", { url: node.getAttribute("data-url") });
+          return;
+        }
+        node = node.parentNode;
+      }
+    });
+  }
 
   // ---- Side panel: bookmarks, history or downloads. The shell sends the list with the state and
   // shrinks the page by 330px while it is open; rows act through the bridge.

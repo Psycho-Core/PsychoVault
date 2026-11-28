@@ -262,6 +262,22 @@ class ChromeFrame(unittest.TestCase):
         pressed = run(("--action", f"click:{int(box['x'] + 10)},{int(box['y'] + 10)}"))
         self.assertEqual([c for c in pressed["paint"] if int(c["kind"]) == self.OUTLINE and int(c.get("node", -1)) == node], [])
 
+    def test_rail_services_come_from_the_state_and_a_press_opens_one(self):
+        tail = ("psychoChromeState({tabs:[{id:1,title:'One'}],activeId:1,address:'',"
+                "services:[{name:'Alpha',url:'https://alpha.test/'},{name:'Beta',url:'https://beta.test/'}]});")
+        out = run(("--inspect", ".svc"), tail=tail + 'document.title = String(document.querySelectorAll(".svc").length);')
+        self.assertEqual(out["title"], "2")
+        box = out["inspected"][0]["box"]
+        pressed = run(("--action", f"click:{int(box['x'] + 20)},{int(box['y'] + 15)}"), tail=tail)
+        self.assertEqual(pressed["title"], "new:https://alpha.test/")
+
+    def test_hide_sidebar_removes_the_rail_and_the_top_bar_takes_its_width(self):
+        tail = "psychoChromeState({tabs:[{id:1,title:'One'}],activeId:1,address:'',hideSidebar:true});"
+        out = run(("--inspect", ".rail", "--inspect", ".top", "--inspect", ".statusbar"), tail=tail)
+        self.assertFalse(out["inspected"][0].get("hasBox", False))
+        self.assertEqual(out["inspected"][1]["box"]["x"], 0)
+        self.assertEqual(out["inspected"][2]["box"]["x"], 0)
+
     def test_no_dialog_means_no_scrim(self):
         out = run(("--inspect", "#scrim"))
         self.assertFalse(out["inspected"][0].get("hasBox", False))

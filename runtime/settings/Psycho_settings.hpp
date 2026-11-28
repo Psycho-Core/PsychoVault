@@ -11,7 +11,7 @@
 
 namespace pv::rt {
 
-enum class SettingKind { Bool, Choice, Text, Number, Lines };
+enum class SettingKind { Bool, Choice, Text, Number, Lines, Json };
 struct SettingSpec {
   const char *key;
   SettingKind kind;

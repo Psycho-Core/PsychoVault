@@ -51,3 +51,7 @@
 {"highContrast", SettingKind::Bool, {}, true},
 {"reduceMotion", SettingKind::Bool, {}, true},
 {"showTabCloseButtons", SettingKind::Bool, {}, true},
+{"containers", SettingKind::Json, {}, true},
+{"services", SettingKind::Json, {}, true},
+{"speedDial", SettingKind::Json, {}, true},
+{"sitePermissions", SettingKind::Json, {}, true},
