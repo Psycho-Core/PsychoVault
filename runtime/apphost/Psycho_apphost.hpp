@@ -27,6 +27,11 @@ namespace pv::rt {
 enum class PageKind { Web, Shell, Diagnostics, Crash };
 enum class RendererPolicy { Regular, Private };
 
+// True when the browser frame page is exposed this method on this channel. The shell's bridge for the
+// frame refuses everything else, and it asks this function rather than keeping a second list, so a
+// method added to the frame's profile cannot be forgotten by the shell (or the other way round).
+bool chrome_profile_allows(Channel channel, const std::string &method);
+
 class AppHost {
 public:
   struct Seams {

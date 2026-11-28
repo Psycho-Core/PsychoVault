@@ -14,14 +14,17 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .rail-icon{position:absolute;left:11px;width:22px;height:22px}
 #rail-shield{top:399px}
 .rail-icon svg{display:block;margin:2px auto 0}
-.rail-bottom{position:absolute;left:0;bottom:0;width:43px;height:160px}
+.rail-bottom{position:absolute;left:0;bottom:0;width:43px;height:200px}
 .rail-btn{position:absolute;left:5px;width:34px;height:34px;border-radius:9px}
 .rail-btn svg{display:block;margin:7px auto 0}
-.rail-btn.good{top:0;background:#0d2821}
-.rail-btn.bad{top:38px;background:#2d1c24}
+.rail-btn.good{background:#0d2821}
+.rail-btn.bad{background:#2d1c24}
+#rail-adblock{top:0}
+#rail-vpn{top:38px}
 .rail-bottom .rail-icon{left:11px}
 #rail-settings{top:81px}
-#rail-help{top:119px}
+#rail-help{top:157px}
+#rail-private{top:119px}
 
 .top{position:absolute;left:44px;right:0;top:0;height:84px}
 .strip{position:absolute;left:0;right:0;top:0;height:38px}
@@ -63,7 +66,7 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 
 .ctx{position:absolute;z-index:50;left:0;top:0;width:176px;padding:6px 0;border:1px solid var(--pv-border);border-radius:10px;background:var(--pv-surface)}
 .ctx button{display:block;width:176px;height:30px;padding:0 14px;text-align:left;font-size:13px;line-height:30px;color:var(--pv-text)}
-.rail-btn.off{top:0;background:#2d1c24}
+.rail-btn.off{background:#2d1c24}
 .tab .mute{position:absolute;right:26px;top:6px;font-size:10px;line-height:20px;color:var(--pv-muted)}
 .tab.pinned .title{width:86px}
 

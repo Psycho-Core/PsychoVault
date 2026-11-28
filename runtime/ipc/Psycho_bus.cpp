@@ -109,6 +109,8 @@ Schemas Schemas::stock() {
   // page (so the shell routes pointer input to the frame), and toggle the ad blocker.
   s.add("tab:pin", fields({{"id", T::Number, true}}));
   s.add("tab:mute", fields({{"id", T::Number, true}}));
+  // Dragging a tab in the strip: put tab `id` at position `index` (the model keeps pinned tabs in front).
+  s.add("tab:move", fields({{"id", T::Number, true}, {"index", T::Number, true}}));
   s.add("ui:overlay", fields({{"open", T::Bool, true}}));
   s.add("rail:adblock", fields({}));
   // The frame's side panel: which one is open ("" closes it) and the actions its rows and footer offer.
@@ -138,6 +140,8 @@ Schemas Schemas::stock() {
   s.add("nav:reload", fields({}));
   s.add("nav:home", fields({}));
   s.add("win:minimize", fields({}));
+  // A private window is a second copy of the browser started with --private (its own session, nothing saved).
+  s.add("win:private", fields({}));
   s.add("win:maximize", fields({}));
   s.add("win:close", fields({}));
   s.add("win:focus", fields({{"id", T::Number, true}}));

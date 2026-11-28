@@ -1696,6 +1696,14 @@ int run_runtime_bus_tests(int &shared) {
                                                       other_log.push_back(e4);
                                                     }});
       RT_CHECK(other_host.page_world().run("typeof psycho.vault").string == "undefined");
+      if (std::string(other) == "chrome") {
+        // The shell's frame bridge asks this same table, so every method the frame page can call is also
+        // one the shell lets through, and nothing else is.
+        RT_CHECK(chrome_profile_allows(Channel::Ws, "ws:open") && chrome_profile_allows(Channel::Perf, "perf:sleep") &&
+                 chrome_profile_allows(Channel::Tab, "tab:move") && chrome_profile_allows(Channel::Extensions, "extensions:toggle"));
+        RT_CHECK(!chrome_profile_allows(Channel::Vault, "vault:list") && !chrome_profile_allows(Channel::Extensions, "extensions:remove") &&
+                 !chrome_profile_allows(Channel::Tab, "ws:open"));
+      }
       if (std::string(other) == "newtab") {
         RT_CHECK(other_host.page_world().run("typeof psycho.extensions").string == "undefined");
       } else {

@@ -20,6 +20,8 @@ STUB = """
 window.psycho={tab:{close:function(a){document.title="close:"+a.id;},activate:function(a){document.title="activate:"+a.id;},
   new:function(a){document.title="new:"+a.url;}},nav:{back:function(){document.title="back";},go:function(a){document.title="go:"+a.url;}},
   win:{close:function(){document.title="win-close";}}};
+psycho.win.private=function(){document.title="private";};
+psycho.tab.move=function(a){document.title="move:"+a.id+">"+a.index;};
 psycho.tab.pin=function(a){document.title="pin:"+a.id;};
 psycho.tab.mute=function(a){document.title="mute:"+a.id;};
 psycho.ui={overlay:function(a){window.__overlay=a.open;},dialog:function(a){document.title="dialog:"+a.id+":"+a.button+":"+a.value;}};
@@ -169,6 +171,25 @@ class ChromeFrame(unittest.TestCase):
         # --inspect reports the first match, and panel rows are 48px apart, so the nth row is found by offset.
         box = run(("--inspect", selector), tail=tail)["inspected"][0]["box"]
         return run(("--action", f"click:{int(box['x'] + box['w'] / 2)},{int(box['y'] + box['h'] / 2) + 48 * nth}"), tail=tail)
+
+    def test_dragging_a_tab_sideways_asks_the_shell_to_move_it(self):
+        # Tabs are 122px wide with a 4px gap; the first tab starts after the 36px of window controls.
+        tail = ("psychoChromeState({tabs:[{id:1,title:'One'},{id:2,title:'Two'},{id:3,title:'Three'}],activeId:1,address:''});")
+        box = run(("--inspect", ".tab"), tail=tail)["inspected"][0]["box"]
+        x, y = int(box["x"]) + 50, int(box["y"]) + 12
+        out = run(("--action", f"drag:{x},{y},{x + 2 * 126},{y}"), tail=tail)
+        self.assertEqual(out["title"], "move:1>2")
+        # A press that barely moves is a click, not a move.
+        out = run(("--action", f"drag:{x},{y},{x + 2},{y}"), tail=tail)
+        self.assertNotEqual(out["title"], "move:1>0")
+        self.assertFalse(out["title"].startswith("move:"))
+
+    def test_rail_buttons_do_what_their_labels_say(self):
+        tail = "psychoChromeState({tabs:[{id:1,title:'One'}],activeId:1,address:'',vpn:false});"
+        for button, title in (("rail-private", "private"), ("rail-vpn", "panel:extensions"),
+                              ("rail-shield", "new:psychovault://settings/#privacy"),
+                              ("rail-help", "new:psychovault://settings/#about")):
+            self.assertEqual(self.press_in(tail, "#" + button)["title"], title, button)
 
     def test_extensions_panel_lists_and_toggles(self):
         items = [{"id": "ext.a", "name": "Alpha", "version": "1.0", "enabled": True, "bundled": False, "error": ""},

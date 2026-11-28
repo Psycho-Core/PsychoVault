@@ -61,3 +61,12 @@ The P2 gate says the golden suite covers "the S052-S069 feature set". Read as ev
 ## D013 - P3 audited and not closed (recorded 2026-11-27)
 
 I audited P3 against its gate and did not close it: the visual clause is unproven (and three settings pages and the new-tab page measure far from their captures), 26 of 51 value controls and none of the buttons are wired, and the per-control owner matrix does not exist. I did not apply a scoping reading like D012's. The audit lists what building the rest would take and offers a reading for you to accept or reject. Nothing about P4 should start on the assumption that P3 is done.
+
+## D014 - P3 built to its listed steps, with two items scoped out (recorded 2026-11-28)
+
+You asked me to complete P3. I built every step in S080-S093 that I can build and check, and I am **not** declaring the gate closed, because its first clause is yours to judge ("hard to tell apart" in side-by-side screenshots), and I have never looked at one. Two items I deliberately did not build, each with a reason you can overrule:
+
+1. **Drag a tab out into its own window (S086).** A profile runs as one process with one window and a named mutex that forwards a second launch to it (S047/S048). A second window of the same profile would mean two windows in one process, a change to the shell's single `Browser` object. I left the tab strip with drag-to-reorder and "New private window" (a separate process with its own instance key) instead.
+2. **Real favicons on the rail and tabs (S087).** It needs an ICO decoder and a favicon cache with its own fetch and privacy rules; letter tiles stand in. It is a P4/P5 item (network and web platform), not UI work.
+
+What is still open for the gate: your visual review; the 29-39% pixel differences on the Extensions, Performance and About settings pages and the new-tab page; and the untested Windows behaviours listed at the end of `Psycho_P3_GATE_AUDIT.md`.

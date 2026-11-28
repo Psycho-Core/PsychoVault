@@ -102,6 +102,15 @@ int main(int argc, char **argv) {
         else if (type == "click") page.click(x, y);
         else if (type == "contextmenu") page.context_menu(x, y);
         else page.wheel(x, y, std::stod(values[2]));
+      } else if (type == "drag") {
+        // drag:x1,y1,x2,y2 presses at the first point, moves to the second and releases there.
+        const auto values = split(value, ',');
+        if (values.size() != 4) throw std::runtime_error("invalid drag coordinates");
+        const double x1 = std::stod(values[0]), y1 = std::stod(values[1]), x2 = std::stod(values[2]), y2 = std::stod(values[3]);
+        page.pointer_down(x1, y1);
+        page.pointer_move((x1 + x2) / 2, (y1 + y2) / 2);
+        page.pointer_move(x2, y2);
+        page.pointer_up(x2, y2);
       } else throw std::runtime_error("unknown action: " + action);
     }
     auto frame = page.render(width, height, scroll);

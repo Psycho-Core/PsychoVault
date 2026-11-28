@@ -73,7 +73,8 @@ const ExposedEntry kNewTabProfile[] = {
 // else. Not exposed to any other page, including the new-tab and settings pages.
 const ExposedEntry kChromeProfile[] = {
     {Channel::Tab, "tab:new"},     {Channel::Tab, "tab:activate"}, {Channel::Tab, "tab:close"},
-    {Channel::Tab, "tab:pin"},     {Channel::Tab, "tab:mute"},     {Channel::Ui, "ui:overlay"},
+    {Channel::Tab, "tab:pin"},     {Channel::Tab, "tab:mute"},     {Channel::Tab, "tab:move"},
+    {Channel::Ui, "ui:overlay"},
     {Channel::Rail, "rail:adblock"}, {Channel::Ui, "ui:dialog"}, {Channel::Ui, "ui:panel"},
     {Channel::Bookmarks, "bookmarks:add"}, {Channel::Bookmarks, "bookmarks:remove"},
     {Channel::History, "history:clear"}, {Channel::Find, "find:step"}, {Channel::Find, "find:close"},
@@ -81,11 +82,21 @@ const ExposedEntry kChromeProfile[] = {
     {Channel::Downloads, "downloads:remove"}, {Channel::Downloads, "downloads:clear"},
     {Channel::Nav, "nav:go"},      {Channel::Nav, "nav:back"},     {Channel::Nav, "nav:forward"},
     {Channel::Nav, "nav:reload"},  {Channel::Nav, "nav:home"},
-    {Channel::Win, "win:minimize"}, {Channel::Win, "win:maximize"}, {Channel::Win, "win:close"},
+    {Channel::Win, "win:minimize"}, {Channel::Win, "win:maximize"}, {Channel::Win, "win:close"}, {Channel::Win, "win:private"},
     {Channel::Extensions, "extensions:toggle"}, {Channel::Perf, "perf:sleep"},
     {Channel::Ws, "ws:open"}, {Channel::Ws, "ws:new"}, {Channel::Ws, "ws:close"},
     {Channel::Lifecycle, "lifecycle:ping"},
 };
+
+}  // namespace
+
+bool chrome_profile_allows(Channel channel, const std::string &method) {
+  for (const ExposedEntry &entry : kChromeProfile)
+    if (entry.channel == channel && method == entry.method) return true;
+  return false;
+}
+
+namespace {
 
 const ExposedEntry kPrivateDiagnosticsProfile[] = {
     {Channel::Internal, "internal:list"},

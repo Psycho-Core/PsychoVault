@@ -16,6 +16,7 @@
 #include "../runtime/commandline/Psycho_commandline.hpp"
 #include "../runtime/settings/Psycho_settings.hpp"
 #include "../runtime/vault/Psycho_vault_service.hpp"
+#include "../runtime/apphost/Psycho_apphost.hpp"
 #include "../runtime/diagnostics/Psycho_diagnostics_page.hpp"
 #include "../runtime/content/Psycho_content.hpp"
 #include "../runtime/crash/Psycho_crash.hpp"
@@ -3120,6 +3121,8 @@ struct Browser {
     state.set("address", app_ui_url(current().url) ? std::string() : current().url.substr(0, 2048));
     state.set("blockAds", profile.block_ads);
     state.set("hideSidebar", profile.hide_sidebar);
+    state.set("vpn", Json(profile.proxy.active()));
+    state.set("private", Json(private_mode));
     state.set("theme", profile.theme);
     state.set("accent", profile.accent);
     state.set("highContrast", profile.high_contrast);
@@ -3252,30 +3255,23 @@ struct Browser {
                                              rt::Error &bridge_error) {
       static const rt::Schemas schemas = rt::Schemas::stock();
       bridge_error = rt::Error{};
-      struct Allowed { const char *method; rt::Channel channel; };
-      static const Allowed allowed[] = {
-          {"tab:new", rt::Channel::Tab},      {"tab:activate", rt::Channel::Tab},
-          {"tab:close", rt::Channel::Tab},    {"nav:go", rt::Channel::Nav},
-          {"tab:pin", rt::Channel::Tab},      {"tab:mute", rt::Channel::Tab},
-          {"ui:overlay", rt::Channel::Ui},    {"rail:adblock", rt::Channel::Rail},
-          {"ui:dialog", rt::Channel::Ui},      {"ui:panel", rt::Channel::Ui},
-          {"bookmarks:add", rt::Channel::Bookmarks}, {"bookmarks:remove", rt::Channel::Bookmarks},
-          {"history:clear", rt::Channel::History},   {"downloads:cancel", rt::Channel::Downloads},
-          {"find:step", rt::Channel::Find},          {"find:close", rt::Channel::Find},
-          {"palette:run", rt::Channel::Ui},          {"palette:close", rt::Channel::Ui},
-          {"downloads:remove", rt::Channel::Downloads}, {"downloads:clear", rt::Channel::Downloads},
-          {"nav:back", rt::Channel::Nav},     {"nav:forward", rt::Channel::Nav},
-          {"nav:reload", rt::Channel::Nav},   {"nav:home", rt::Channel::Nav},
-          {"win:minimize", rt::Channel::Win}, {"win:maximize", rt::Channel::Win},
-          {"win:close", rt::Channel::Win}};
-      bool known = false;
-      for (const Allowed &entry : allowed)
-        if (method == entry.method && channel == entry.channel) known = true;
+      const bool known = rt::chrome_profile_allows(channel, method);
       if (!known) {
         bridge_error = {"bridge.chrome.method", "the browser frame may not call " + method};
         return false;
       }
       if (!schemas.validate(method, payload, bridge_error)) return false;
+      if (method == "tab:move" || method == "perf:sleep" || method == "ws:open" || method == "ws:close") {
+        const double raw = payload.num(method == "tab:move" || method == "perf:sleep" ? "id" : "index", -1);
+        if (!std::isfinite(raw) || raw < 0 || raw > 100000 || raw != std::floor(raw)) {
+          bridge_error = {"bridge.number", "that action needs a whole number"};
+          return false;
+        }
+        if (method == "tab:move" && (payload.num("index", -1) < 0 || payload.num("index", -1) > 1000)) {
+          bridge_error = {"bridge.number", "that position is out of range"};
+          return false;
+        }
+      }
       if (method == "tab:activate" || method == "tab:close" || method == "tab:pin" || method == "tab:mute") {
         const double raw_id = payload.num("id", 0);
         if (!std::isfinite(raw_id) || raw_id <= 0 || raw_id > double(std::numeric_limits<int>::max()) ||
@@ -3388,6 +3384,10 @@ struct Browser {
       panel_downloads = kind == "downloads";
       panel_workspaces = false;
       panel_other = (kind == "extensions" || kind == "performance" || kind == "workspaces") ? kind : std::string();
+    } else if (method == "tab:move") {
+      const int id = int(task.payload.num("id", 0)), to = int(task.payload.num("index", 0));
+      for (size_t i = 0; i < tabs.size(); ++i)
+        if (tabs[i].id == id) { swap_tabs(int(i), std::clamp(to, 0, int(tabs.size()) - 1)); break; }
     } else if (method == "extensions:toggle") {
       BridgeTask forwarded;
       forwarded.tab = task.tab;
@@ -3455,6 +3455,24 @@ struct Browser {
     else if (method == "win:minimize") ShowWindow(hwnd, SW_MINIMIZE);
     else if (method == "win:maximize") ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE);
     else if (method == "win:close") PostMessageW(hwnd, WM_CLOSE, 0, 0);
+    else if (method == "win:private") {
+      // A private window is another copy of this program with --private; it has its own instance key, so
+      // it opens beside this window instead of being forwarded to it.
+      if (private_mode) { status = "This already is a private window"; }
+      else {
+        wchar_t self[MAX_PATH * 2] = {0};
+        GetModuleFileNameW(nullptr, self, DWORD(std::size(self)));
+        std::wstring command = L"\"" + std::wstring(self) + L"\" --private";
+        STARTUPINFOW startup{};
+        startup.cb = sizeof(startup);
+        PROCESS_INFORMATION info{};
+        if (CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &info)) {
+          CloseHandle(info.hProcess);
+          CloseHandle(info.hThread);
+          status = "Opened a private window";
+        } else status = "I could not open a private window";
+      }
+    }
     InvalidateRect(hwnd, nullptr, FALSE);
   }
   // --smoke-settings: the real settings page, the real pointer path, the real profile. The page

@@ -54,6 +54,8 @@
     document.body.className = state.hideSidebar ? "norail" : "";
     applyLook(state);
     renderServices(state.services);
+    var vpn = document.getElementById("rail-vpn");
+    if (vpn && typeof state.vpn === "boolean") vpn.className = state.vpn ? "rail-btn good" : "rail-btn bad";
     var shield = document.getElementById("rail-adblock");
     if (shield && typeof state.blockAds === "boolean") shield.className = state.blockAds ? "rail-btn good" : "rail-btn off";
     setDim("nav-back", !state.canBack);
@@ -178,6 +180,38 @@
       node = node.parentNode;
     }
   });
+  // Dragging a tab sideways reorders the strip: the tab under the pointer decides the new place, and the
+  // shell (which keeps pinned tabs in front) does the move. A press that never moves is an ordinary click.
+  var drag = null;
+  function tabIdOf(node) {
+    while (node) {
+      if (node.getAttribute && node.getAttribute("data-tab") !== null) return Number(node.getAttribute("data-tab"));
+      node = node.parentNode;
+    }
+    return 0;
+  }
+  tabsEl.addEventListener("pointerdown", function (event) {
+    var id = tabIdOf(event.target);
+    if (!id || event.target.className === "x") { drag = null; return; }
+    var tabs = (current && current.tabs) || [];
+    var at = -1;
+    for (var i = 0; i < tabs.length; i++) if (tabs[i].id === id) at = i;
+    drag = { id: id, index: at, x: event.clientX, moved: false };
+  });
+  document.addEventListener("pointermove", function (event) {
+    if (!drag || !event.buttons) return;
+    if (!drag.moved && Math.abs(event.clientX - drag.x) < 6) return;
+    drag.moved = true;
+    var count = ((current && current.tabs) || []).length;
+    var left = tabsEl.getBoundingClientRect().left;
+    var to = Math.floor((event.clientX - left) / (TAB_WIDTH + TAB_GAP));
+    to = Math.max(0, Math.min(count - 1, to));
+    if (to !== drag.index) {
+      drag.index = to;
+      bridge("tab", "move", { id: drag.id, index: to });
+    }
+  });
+  document.addEventListener("pointerup", function () { drag = null; });
   // ---- Command palette. The shell owns the text, the filtered list and the selection (typing, arrows,
   // Enter and Escape are its keys); this page draws them and sends a pressed row or a press outside.
   var pscrim = document.getElementById("pscrim");
@@ -494,6 +528,11 @@
   on("nav-home", "nav", "home");
   on("rail-settings", "tab", "new", { url: "psychovault://settings" });
   on("rail-home", "nav", "home");
+  on("rail-private", "win", "private");
+  on("rail-shield", "tab", "new", { url: "psychovault://settings/#privacy" });
+  on("rail-help", "tab", "new", { url: "psychovault://settings/#about" });
+  // The Proton VPN button lives with the other extensions: it opens that panel, where Proton is switched on or off.
+  on("rail-vpn", "ui", "panel", { kind: "extensions" });
   on("win-min", "win", "minimize");
   on("win-max", "win", "maximize");
   on("win-close", "win", "close");
