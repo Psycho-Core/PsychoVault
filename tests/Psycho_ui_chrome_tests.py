@@ -152,6 +152,16 @@ class ChromeFrame(unittest.TestCase):
         box = out["inspected"][1]["box"]
         self.assertEqual(run(("--action", f"click:{int(box['x']) + 40},{int(box['y']) + 12}"), tail=tail)["title"], "go:https://a.test/")
 
+    def test_download_row_shows_a_progress_bar_only_while_arriving(self):
+        items = [{"id": 1, "filename": "a.zip", "state": "downloading", "received": 250, "total": 1000},
+                 {"id": 2, "filename": "b.zip", "state": "complete", "received": 500, "total": 500}]
+        out = run(("--inspect", ".bar", "--inspect", ".fill"), tail=self.panel_state("downloads", items))
+        bar, fill = out["inspected"]
+        self.assertTrue(bar["found"] and fill["found"])
+        self.assertEqual(bar["box"]["w"], 250)
+        self.assertEqual(fill["box"]["w"], 62.5)  # 25% of 250
+        self.assertEqual(run(("--inspect", ".bar"), tail=self.panel_state("downloads", items[1:]))["inspected"][0].get("found"), False)
+
     def test_panel_filter_narrows_the_rows(self):
         tail = self.panel_state("history", self.HISTORY)
         box = run(("--inspect", "#panel-filter"), tail=tail)["inspected"][0]["box"]

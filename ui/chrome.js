@@ -303,6 +303,13 @@
       row.appendChild(el("span", "t", label || detail));
       row.appendChild(el("span", "u", detail || ""));
       if (kind !== "history") row.appendChild(el("button", "rm", "×"));
+      if (kind === "downloads" && item.total > 0 && item.received < item.total) {
+        // A bar for a download still arriving: a track with a fill as wide as the share received.
+        var track = el("div", "bar"), fill = el("div", "fill");
+        fill.style.width = Math.max(1, Math.min(100, Math.round(item.received * 100 / item.total))) + "%";
+        track.appendChild(fill);
+        row.appendChild(track);
+      }
       panelList.appendChild(row);
       shown++;
     }
