@@ -132,7 +132,7 @@ def main():
             cmd+=["-pthread","-o",str(out/name)]
             cmd+= ["-l"+l for l in libs]
         run(cmd,env)
-    winlibs=["kernel32","user32","gdi32","d2d1","dwrite","advapi32","userenv","bcrypt","winhttp","shell32","ole32","dwmapi","ws2_32","crypt32","secur32","avrt"]
+    winlibs=["kernel32","user32","gdi32","d2d1","dwrite","advapi32","userenv","bcrypt","winhttp","shell32","ole32","dwmapi","ws2_32","crypt32","secur32","avrt","comdlg32"]
     if args.target in ("all","engine"):
         target("pv-engine",ENGINE+["tools/Psycho_engine_cli.cpp"],winlibs if windows else [])
     if args.target in ("all","tests"):

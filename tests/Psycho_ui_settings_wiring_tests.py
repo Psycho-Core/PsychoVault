@@ -51,7 +51,11 @@ psycho.vault={
   remove:function(a){document.title="remove:"+a.site;return {ok:true};},
   reveal:function(a){return {password:"s3cret"};},
   copy:function(a){document.title="copy:"+a.site;return {queued:true};},
-  generate:function(){return {password:"G3nerated"};}};
+  generate:function(){return {password:"G3nerated"};},
+  rekey:function(a){document.title="rekey:"+a.current+">"+a.next;return {ok:true};},
+  backup:function(a){document.title="backup:"+a.password;return {queued:true};},
+  restore:function(a){document.title="restore:"+a.password;return {queued:true};},
+  "import":function(){document.title="import";return {queued:true};}};
 """
 
 
@@ -137,8 +141,23 @@ document.title = document.getElementById("search").value + "|" + document.getEle
         self.assertEqual(out["inspected"][0].get("value"), "G3nerated")
 
     def test_set_master_password_creates_the_vault(self):
-        tail = 'document.getElementById("vnew").value = "a long passphrase";'
+        tail = 'vaultState.exists = false; document.getElementById("vnew").value = "a long passphrase";'
         self.assertEqual(self.vault_press("vset", tail)["title"], "create:a long passphrase")
+
+    def test_set_master_password_on_an_existing_vault_changes_it(self):
+        tail = 'document.getElementById("vpw").value = "old one"; document.getElementById("vnew").value = "a new passphrase";'
+        self.assertEqual(self.vault_press("vset", tail)["title"], "rekey:old one>a new passphrase")
+
+    def test_backup_needs_matching_passwords_then_asks_the_broker(self):
+        tail = 'document.getElementById("vbackupPassword").value = "backup pass 1"; document.getElementById("vbackupConfirm").value = "%s";'
+        self.assertEqual(self.vault_press("vBackup", tail % "backup pass 1")["title"], "backup:backup pass 1")
+        out = self.vault_press("vBackup", tail % "different", ("--inspect", "#save-status"))
+        self.assertNotEqual(out["title"], "backup:backup pass 1")
+
+    def test_restore_and_import_ask_the_broker(self):
+        tail = 'document.getElementById("vbackupPassword").value = "backup pass 1";'
+        self.assertEqual(self.vault_press("vRestore", tail)["title"], "restore:backup pass 1")
+        self.assertEqual(self.vault_press("vImport")["title"], "import")
 
 
     def press(self, page, button, tail="", extra=()):

@@ -36,6 +36,16 @@ public:
            const std::string &note, Error &error);
   bool remove(const std::string &site, Error &error);
   bool reveal(const std::string &site, std::string &password, Error &error);
+  // Backups and imports. A backup is the entries sealed under its own password (any 8+ characters), as a
+  // blob the page's window writes to a file. Restore and CSV import only ever add: a site the vault already
+  // keeps is skipped, never replaced. `added` and `skipped` count the rows of each kind.
+  bool backup(const std::string &backup_password, std::string &blob, Error &error);
+  bool restore(const std::string &blob, const std::string &backup_password, int &added, int &skipped, Error &error);
+  // CSV with a header row naming a site column (name, url, site or origin), and optionally username/user/login,
+  // password, and note/notes. Quoted fields, doubled quotes and line breaks inside quotes are understood.
+  bool import_csv(const std::string &text, int &added, int &skipped, Error &error);
+  // Seals the same entries under a new master password after checking the current one.
+  bool rekey(const std::string &current, const std::string &next, Error &error);
   // 20 characters from an alphabet without look-alikes, one random byte each (64 symbols, no modulo bias).
   static std::string generate();
 

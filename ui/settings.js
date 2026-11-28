@@ -124,6 +124,7 @@
 
   // ---- Vault. The password vault is sealed with a passphrase and lives only in the broker; this page asks
   // it to create, unlock, lock and list, and never holds a password except one the user asked to see.
+  var later = function (milliseconds, work) { if (typeof setTimeout === "function") setTimeout(work, milliseconds); };
   var vaultCall = typeof psycho !== "undefined" && psycho.vault ? psycho.vault : null;
   if (vaultCall) {
     var vaultNote = controlFor("vaultStatus");
@@ -135,7 +136,9 @@
       "vault.locked": "The vault is locked. Unlock it first.",
       "vault.duplicate": "The vault already keeps a login for that site.",
       "vault.entry": "An entry needs a site and a password (no line breaks or \" | \").",
-      "vault.missing-entry": "That login is not in the vault."
+      "vault.missing-entry": "That login is not in the vault.",
+      "vault.backup": "That is not a PsychoVault backup, or the backup password is wrong.",
+      "vault.csv": "That file is not a CSV with a site (or url) column and a password column."
     };
     var vaultMessage = function (error) {
       var text = String(error && error.message ? error.message : error);
@@ -199,10 +202,17 @@
     };
     var press = function (id, handler) { onPress(id, function () { try { handler(); } catch (error) { say(vaultMessage(error)); } }); };
     press("vset", function () {
-      var box = controlFor("vnew");
-      vaultCall.create({ passphrase: box.value });
-      box.value = "";
-      say("Vault created and unlocked");
+      var box = controlFor("vnew"), current = controlFor("vpw");
+      if (vaultCall.status().exists) {
+        // An existing, unlocked vault: the master password field holds the current one.
+        vaultCall.rekey({ current: current.value, next: box.value });
+        current.value = ""; box.value = "";
+        say("Master password changed");
+      } else {
+        vaultCall.create({ passphrase: box.value });
+        box.value = "";
+        say("Vault created and unlocked");
+      }
       refreshVault();
     });
     press("vgo", function () {
@@ -221,17 +231,34 @@
       say("Saved in the vault");
       refreshVault();
     });
-    // This vault is always sealed with a passphrase, so there is no "stop using a master password", and
-    // backups and CSV import are not built yet; those buttons say so instead of pretending.
-    ["vforget", "vBackup", "vRestore", "vImport"].forEach(function (id) {
-      onPress(id, function () { say(id === "vforget" ? "This vault is always sealed with a passphrase." : "Backups and import are not built yet."); });
-    });
+    // This vault is always sealed with a passphrase, so there is no "stop using a master password".
+    onPress("vforget", function () { say("This vault is always sealed with a passphrase."); });
+    // Backup, restore and import choose their file in a window dialog; the answer comes back as the vault's
+    // notice a moment later, so the page asks for it a few times.
+    var awaitNotice = function () {
+      var tries = 0;
+      var look = function () {
+        var note = "";
+        try { note = vaultCall.status().notice || ""; } catch (error) { note = ""; }
+        if (note) { say(note); refreshVault(); return; }
+        tries += 1;
+        if (tries < 120) later(500, look);
+      };
+      later(500, look);
+    };
+    var backupPassword = function (needConfirm) {
+      var password = controlFor("vbackupPassword"), confirm = controlFor("vbackupConfirm");
+      if (needConfirm && password.value !== confirm.value) throw new Error("The two backup passwords differ.");
+      return password.value;
+    };
+    press("vBackup", function () { vaultCall.backup({ password: backupPassword(true) }); say("Choose where to save the backup."); awaitNotice(); });
+    press("vRestore", function () { vaultCall.restore({ password: backupPassword(false) }); say("Choose the backup file."); awaitNotice(); });
+    press("vImport", function () { vaultCall["import"](); say("Choose the CSV file."); awaitNotice(); });
     refreshVault();
   }
 
   // ---- Data, diagnostics, error log, restart and updates. Each answer comes from the broker; the page keeps
   // nothing of its own.
-  var later = function (milliseconds, work) { if (typeof setTimeout === "function") setTimeout(work, milliseconds); };
   var guarded = function (work) { try { work(); } catch (error) { say("That did not work: " + String(error && error.message ? error.message : error)); } };
   if (psycho.data) {
     var usageBox = controlFor("dynDataUsage");

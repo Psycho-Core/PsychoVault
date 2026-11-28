@@ -2967,6 +2967,52 @@ int main() {
       CHECK(again.remove("example.test", e) && again.status().num("count") == 0);
       CHECK(!again.remove("example.test", e) && e.code == "vault.missing-entry");
     }
+    // Backup, restore, CSV import and changing the master password.
+    {
+      rt::VaultService box(seams);
+      CHECK(box.unlock("correct horse", e));
+      CHECK(box.add("a.test", "ann", "pw-a", "", e) && box.add("b.test", "bob", "pw-b", "n", e));
+      std::string blob;
+      CHECK(!box.backup("short", blob, e) && e.code == "vault.passphrase");
+      CHECK(box.backup("backup pass 1", blob, e) && !blob.empty() && blob.find("pw-a") == std::string::npos);
+      // A second vault restores it: only new sites are added, existing ones are skipped, never replaced.
+      std::string other_disk;
+      bool other_have = false;
+      rt::VaultService::Seams other_seams;
+      other_seams.read = [&](std::string &b) { if (!other_have) return false; b = other_disk; return true; };
+      other_seams.write = [&](const std::string &b, std::string &) { other_disk = b; other_have = true; return true; };
+      rt::VaultService other(other_seams);
+      int added = -1, skipped = -1;
+      CHECK(!other.restore(blob, "backup pass 1", added, skipped, e) && e.code == "vault.locked");
+      CHECK(other.create("another pass 1", e) && other.add("a.test", "someone", "keep-me", "", e));
+      CHECK(!other.restore(blob, "wrong password", added, skipped, e) && e.code == "vault.backup");
+      CHECK(!other.restore("not a backup", "backup pass 1", added, skipped, e) && e.code == "vault.backup");
+      CHECK(other.restore(blob, "backup pass 1", added, skipped, e) && added == 1 && skipped == 1);
+      std::string password;
+      CHECK(other.reveal("a.test", password, e) && password == "keep-me");
+      CHECK(other.reveal("b.test", password, e) && password == "pw-b");
+      // CSV import: header names, quotes, doubled quotes, commas and line breaks inside quotes, CRLF, BOM.
+      int imported = -1, passed = -1;
+      const std::string csv = "\xEF\xBB\xBFname,url,username,password,note\r\n"
+                              "Site C,https://c.test/,carl,\"p,w\"\"c\",\"line one\"\r\n"
+                              "dup,b.test,bob,again,\r\n"
+                              "nopass,https://d.test/,dan,,\r\n"
+                              "\"Site E\",https://e.test/,eve,pw-e,ok\r\n";
+      CHECK(other.import_csv(csv, imported, passed, e) && imported == 2 && passed == 2);
+      CHECK(other.reveal("https://c.test/", password, e) && password == "p,w\"c");
+      CHECK(other.reveal("https://e.test/", password, e) && password == "pw-e");
+      CHECK(!other.import_csv("a,b\n1,2\n", imported, passed, e) && e.code == "vault.csv");
+      CHECK(!other.import_csv("url,password\n\"open,pw\n", imported, passed, e) && e.code == "vault.csv");
+      CHECK(other.import_csv("url,username,password\nhttps://f.test/,fay,pw-f\n", imported, passed, e) && imported == 1);
+      // Changing the master password: the old one must match; afterwards only the new one opens the file.
+      CHECK(!other.rekey("not my pass", "new master pass", e) && e.code == "vault.passphrase");
+      CHECK(!other.rekey("another pass 1", "short", e) && e.code == "vault.passphrase");
+      CHECK(other.rekey("another pass 1", "new master pass", e));
+      other.lock();
+      CHECK(!other.unlock("another pass 1", e) && e.code == "vault.passphrase");
+      CHECK(other.unlock("new master pass", e) && other.status().num("count") == 5);
+      CHECK(other.reveal("a.test", password, e) && password == "keep-me");
+    }
     const std::string one = rt::VaultService::generate(), two = rt::VaultService::generate();
     CHECK(one.size() == 20 && one != two && one.find_first_of("lIO01 ") == std::string::npos);
   }

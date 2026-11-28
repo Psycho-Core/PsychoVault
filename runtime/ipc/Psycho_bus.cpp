@@ -245,6 +245,12 @@ Schemas Schemas::stock() {
   s.add("vault:reveal", fields({{"site", T::String, true}}));
   s.add("vault:copy", fields({{"site", T::String, true}}));
   s.add("vault:generate", fields({}));
+  // Backup, restore and CSV import choose their file in a window dialog, so they only queue; the outcome
+  // is read back as the notice in vault:status. Changing the master password answers directly.
+  s.add("vault:backup", fields({{"password", T::String, true}}));
+  s.add("vault:restore", fields({{"password", T::String, true}}));
+  s.add("vault:import", fields({}));
+  s.add("vault:rekey", fields({{"current", T::String, true}, {"next", T::String, true}}));
   // The settings page's data table, diagnostics, error log, restart and update check.
   s.add("data:usage", fields({}));
   s.add("data:clear", fields({{"what", T::String, true}}));

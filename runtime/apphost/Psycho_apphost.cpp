@@ -29,6 +29,8 @@ const ExposedEntry kSettingsProfile[] = {
     {Channel::Vault, "vault:list"},      {Channel::Vault, "vault:add"},
     {Channel::Vault, "vault:remove"},    {Channel::Vault, "vault:reveal"},
     {Channel::Vault, "vault:copy"},      {Channel::Vault, "vault:generate"},
+    {Channel::Vault, "vault:backup"},    {Channel::Vault, "vault:restore"},
+    {Channel::Vault, "vault:import"},    {Channel::Vault, "vault:rekey"},
     {Channel::Settings, "data:usage"},   {Channel::Settings, "data:clear"},
     {Channel::Diagnostics, "diagnostics:report"}, {Channel::Diagnostics, "diagnostics:copy"},
     {Channel::Lifecycle, "app:openlog"}, {Channel::Lifecycle, "app:relaunch"},

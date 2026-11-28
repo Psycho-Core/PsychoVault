@@ -52,6 +52,7 @@
 #include <limits>
 #include <shellapi.h>
 #include <shlobj.h>
+#include <commdlg.h>
 #include <thread>
 #include <windows.h>
 #include <windowsx.h>
@@ -941,6 +942,8 @@ struct SettingsHub {
   std::string diagnostics, update_status;
   Json extensions = Json::make_array(), proxy = Json::make_object();
   std::string extension_error;
+  // What the last backup, restore or import did; the page reads it through vault:status.
+  std::string vault_notice;
 };
 struct Browser {
   HWND hwnd = nullptr;
@@ -2153,7 +2156,14 @@ struct Browser {
           if (!ok) bridge_error = failure;
           return ok;
         };
-        if (method == "vault:status") { reply = vault->status(); return true; }
+        if (method == "vault:status") {
+          reply = vault->status();
+          std::lock_guard lock(hub->mutex);
+          reply.set("notice", Json(hub->vault_notice));
+          return true;
+        }
+        if (method == "vault:rekey")
+          return done(vault->rekey(payload.str("current"), payload.str("next"), failure)) && (reply.set("ok", Json(true)), true);
         if (method == "vault:create") return done(vault->create(payload.str("passphrase"), failure)) && (reply.set("ok", Json(true)), true);
         if (method == "vault:unlock") return done(vault->unlock(payload.str("passphrase"), failure)) && (reply.set("ok", Json(true)), true);
         if (method == "vault:lock") { vault->lock(); reply.set("ok", Json(true)); return true; }
@@ -2175,7 +2185,11 @@ struct Browser {
           return true;
         }
         if (method == "vault:generate") { reply.set("password", Json(rt::VaultService::generate())); return true; }
-        // vault:copy: the window puts the password on the clipboard and clears it later.
+        // vault:copy, backup, restore and import: the window does the clipboard or file dialog on its own thread.
+        if (method == "vault:backup" || method == "vault:restore" || method == "vault:import") {
+          std::lock_guard lock(hub->mutex);
+          hub->vault_notice.clear();
+        }
         auto task = std::make_unique<BridgeTask>();
         task->tab = source_tab;
         task->method = method;
@@ -4885,6 +4899,74 @@ struct Browser {
     status = "Password for " + site + " is on the clipboard for a minute";
     InvalidateRect(hwnd, nullptr, FALSE);
   }
+  // Backup, restore and CSV import. The file is chosen in a standard dialog and read or written here, on the
+  // window thread; the vault service does the sealing and merging. The page reads the outcome as the notice.
+  static std::string file_dialog(HWND owner, bool save, const wchar_t *filter, const wchar_t *title,
+                                 const wchar_t *default_name, const wchar_t *extension) {
+    wchar_t path[MAX_PATH * 2] = {0};
+    if (default_name) wcsncpy_s(path, default_name, _TRUNCATE);
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = owner;
+    ofn.lpstrFilter = filter;
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = DWORD(std::size(path));
+    ofn.lpstrTitle = title;
+    ofn.lpstrDefExt = extension;
+    ofn.Flags = OFN_NOCHANGEDIR | OFN_HIDEREADONLY | (save ? OFN_OVERWRITEPROMPT : OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST);
+    if (!(save ? GetSaveFileNameW(&ofn) : GetOpenFileNameW(&ofn))) return {};
+    const int size = WideCharToMultiByte(CP_UTF8, 0, path, -1, nullptr, 0, nullptr, nullptr);
+    std::string out(size > 0 ? size_t(size - 1) : 0, '\0');
+    if (size > 0) WideCharToMultiByte(CP_UTF8, 0, path, -1, out.data(), size, nullptr, nullptr);
+    return out;
+  }
+  void vault_file_task(const BridgeTask &task) {
+    if (!vault_service) return;
+    std::string notice;
+    rt::Error failure;
+    int added = 0, skipped = 0;
+    if (task.method == "vault:backup") {
+      std::string blob;
+      if (!vault_service->backup(task.payload.str("password"), blob, failure)) notice = failure.message;
+      else {
+        const std::string file = file_dialog(hwnd, true, L"PsychoVault backup (*.pvbackup)\0*.pvbackup\0All files\0*.*\0",
+                                             L"Save a vault backup", L"psychovault.pvbackup", L"pvbackup");
+        std::string write_error;
+        if (file.empty()) notice = "Backup cancelled";
+        else if (!write_file_atomic(file, blob, write_error)) notice = "The backup could not be written: " + write_error;
+        else notice = "Backup saved. Keep its password safe - it cannot be recovered.";
+      }
+    } else if (task.method == "vault:restore") {
+      const std::string file = file_dialog(hwnd, false, L"PsychoVault backup (*.pvbackup)\0*.pvbackup\0All files\0*.*\0",
+                                           L"Restore a vault backup", nullptr, nullptr);
+      if (file.empty()) notice = "Restore cancelled";
+      else {
+        std::string blob;
+        try { blob = read_text_file(file); } catch (const std::exception &) { blob.clear(); }
+        if (blob.empty()) notice = "That file could not be read";
+        else if (!vault_service->restore(blob, task.payload.str("password"), added, skipped, failure)) notice = failure.message;
+        else notice = "Restored " + std::to_string(added) + " login(s); skipped " + std::to_string(skipped) + " already in the vault.";
+      }
+    } else {
+      const std::string file = file_dialog(hwnd, false, L"CSV files (*.csv)\0*.csv\0All files\0*.*\0",
+                                           L"Import logins from a CSV file", nullptr, nullptr);
+      if (file.empty()) notice = "Import cancelled";
+      else {
+        std::string text;
+        try { text = read_text_file(file); } catch (const std::exception &) { text.clear(); }
+        if (text.empty()) notice = "That file could not be read";
+        else if (!vault_service->import_csv(text, added, skipped, failure)) notice = failure.message;
+        else notice = "Imported " + std::to_string(added) + " login(s); skipped " + std::to_string(skipped) + ".";
+        std::fill(text.begin(), text.end(), '\0');
+      }
+    }
+    {
+      std::lock_guard lock(settings_hub->mutex);
+      settings_hub->vault_notice = notice;
+    }
+    status = notice;
+    InvalidateRect(hwnd, nullptr, FALSE);
+  }
   void vault_clipboard_tick() {
     if (!vault_clipboard_clear_at || GetTickCount64() < vault_clipboard_clear_at) return;
     vault_clipboard_clear_at = 0;
@@ -6204,6 +6286,10 @@ static LRESULT wndproc_inner(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       return 0;
     }
     if (b->settings_task(*task)) return 0;
+    if (task->method == "vault:backup" || task->method == "vault:restore" || task->method == "vault:import") {
+      b->vault_file_task(*task);
+      return 0;
+    }
     if (task->method == "vault:copy") {
       b->vault_copy(task->payload.str("site"));
       return 0;
